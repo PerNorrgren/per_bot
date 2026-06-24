@@ -253,28 +253,25 @@ async function startListening() {
     let lastTranscript = '';
 
     deepgramWs.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'transcript') {
-        const txt = data.text?.trim();
+      try {
+        const data = JSON.parse(event.data);
+        console.log('DG message:', JSON.stringify(data).slice(0, 200));
+        const txt = data?.channel?.alternatives?.[0]?.transcript?.trim();
         if (!txt) return;
-        // Show interim text
         document.getElementById('interim-text').textContent = txt;
         lastTranscript = txt;
-        // Reset silence timer
         clearTimeout(silenceTimer);
-        if (data.is_final) {
-          silenceTimer = setTimeout(() => {
-            if (lastTranscript) {
-              const t = lastTranscript;
-              lastTranscript = '';
-              document.getElementById('interim-text').textContent = '';
-              stopListening();
-              addMsg('user', t);
-              ask(t);
-            }
-          }, 800);
-        }
-      }
+        silenceTimer = setTimeout(() => {
+          if (lastTranscript) {
+            const t = lastTranscript;
+            lastTranscript = '';
+            document.getElementById('interim-text').textContent = '';
+            stopListening();
+            addMsg('user', t);
+            ask(t);
+          }
+        }, 1200);
+      } catch(e) { console.error('parse error:', e); }
     };
 
     deepgramWs.onerror = (e) => {
