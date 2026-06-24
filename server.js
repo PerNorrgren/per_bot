@@ -45,7 +45,7 @@ app.post('/api/speak', async (req, res) => {
         voice_settings: {
           stability: 0.75,
           similarity_boost: 0.75,
-          speed: 0.90
+          speed: 0.75
         }
       })
     });
