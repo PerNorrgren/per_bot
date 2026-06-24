@@ -126,7 +126,25 @@ async function go() {
     setTimeout(() => ring.classList.remove('on'), 8000);
   }, 600);
 
+  // Pre-warm Deepgram connection so mic is instant on first tap
+  prewarmDeepgram();
+
   await ask(null);
+}
+
+function prewarmDeepgram() {
+  try {
+    const ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      // Connected — keep warm for 30 seconds then close
+      window._prewarmWs = ws;
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.close();
+        window._prewarmWs = null;
+      }, 30000);
+    };
+    ws.onerror = () => {};
+  } catch(e) {}
 }
 
 function setStatus(txt) {
@@ -212,8 +230,13 @@ async function startListening() {
     audioContext = new AudioContext({ sampleRate: 16000 });
     const source = audioContext.createMediaStreamSource(mediaStream);
 
-    // Connect to Deepgram via WebSocket
-    deepgramWs = new WebSocket(WS_URL);
+    // Use pre-warmed connection if available, otherwise create new
+    if (window._prewarmWs && window._prewarmWs.readyState === WebSocket.OPEN) {
+      deepgramWs = window._prewarmWs;
+      window._prewarmWs = null;
+    } else {
+      deepgramWs = new WebSocket(WS_URL);
+    }
 
     deepgramWs.onopen = () => {
       isListening = true;
