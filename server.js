@@ -75,7 +75,7 @@ wss.on('connection', (clientWs) => {
 
   // Connect to Deepgram
   const deepgramWs = new WebSocket(
-    'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&endpointing=300',
+    'wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&endpointing=500&utterance_end_ms=1500&interim_results=true',
     { headers: { Authorization: `Token ${DEEPGRAM_KEY}` } }
   );
 
