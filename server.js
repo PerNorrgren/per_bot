@@ -84,14 +84,10 @@ wss.on('connection', (clientWs) => {
   });
 
   deepgramWs.on('message', (data) => {
-    try {
-      const parsed = JSON.parse(data);
-      const transcript = parsed?.channel?.alternatives?.[0]?.transcript;
-      const isFinal = parsed?.is_final;
-      if (transcript && isFinal) {
-        clientWs.send(JSON.stringify({ type: 'transcript', text: transcript }));
-      }
-    } catch(e) {}
+    // Forward raw Deepgram message directly to client
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(data);
+    }
   });
 
   deepgramWs.on('error', (err) => {
