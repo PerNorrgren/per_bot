@@ -307,11 +307,15 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'text_input') {
       const text = msg.text?.trim();
       if (!text) return;
+      const detailed = msg.detailed || false;
+      const promptedText = detailed
+        ? text
+        : text + '\n\n[Respond in 2-3 sentences maximum. Short and sharp — facilitator is in session.]';
       sessionTranscript.push(`FACILITATOR: ${text}`);
-      conversationHistory.push({ role: 'user', content: text });
+      conversationHistory.push({ role: 'user', content: promptedText });
 
       try {
-        const reply = await callClaude(systemPrompt, conversationHistory, 500);
+        const reply = await callClaude(systemPrompt, conversationHistory, detailed ? 500 : 150);
         conversationHistory.push({ role: 'assistant', content: reply });
         sessionTranscript.push(`BOT: ${reply}`);
         ws.send(JSON.stringify({ type: 'response_text', text: reply }));
