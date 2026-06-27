@@ -500,8 +500,7 @@ wss.on('connection', (ws, req) => {
       sessionTranscript.push(`BOT: ${greeting}`);
 
       ws.send(JSON.stringify({ type: 'greeting', text: greeting }));
-      const greetAudio = await textToSpeech(greeting);
-      ws.send(JSON.stringify({ type: 'audio', data: greetAudio.toString('base64'), final: true }));
+      await textToSpeechSentences(greeting, ws);
 
     } else if (botType === 'facilitator') {
       systemPrompt = prompts.FACILITATOR_SYSTEM_PROMPT(fogLevel);
@@ -548,8 +547,7 @@ wss.on('connection', (ws, req) => {
           conversationHistory.push({ role: 'assistant', content: reply });
           sessionTranscript.push(`BOT: ${reply}`);
           ws.send(JSON.stringify({ type: 'response_text', text: reply }));
-          const audio = await textToSpeech(reply);
-              ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
+          await textToSpeechSentences(reply, ws);
           isProcessing = false;
         } catch (e) { console.error('Claude error:', e); isProcessing = false; }
       });
@@ -580,8 +578,7 @@ wss.on('connection', (ws, req) => {
         conversationHistory.push({ role: 'assistant', content: reply });
         sessionTranscript.push(`BOT: ${reply}`);
         ws.send(JSON.stringify({ type: 'response_text', text: reply }));
-        const audio = await textToSpeech(reply);
-              ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
+        await textToSpeechSentences(reply, ws);
       } catch (e) { console.error(e); }
     }
 
@@ -601,8 +598,7 @@ wss.on('connection', (ws, req) => {
           300
         );
         ws.send(JSON.stringify({ type: 'explanation', text: explanation }));
-        const explAudio = await textToSpeech(explanation);
-        ws.send(JSON.stringify({ type: 'audio', data: explAudio.toString('base64'), final: true }));
+        await textToSpeechSentences(explanation, ws);
       } catch (e) { console.error(e); }
     }
 
