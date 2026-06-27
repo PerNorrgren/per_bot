@@ -306,6 +306,7 @@
     let micPermissionGranted = false;
     let isSpeaking = false;
     let currentAudio = null;
+    let pendingText = null;
 
     function setState(s) {
       waveEl.classList.remove('on'); dotsEl.classList.remove('on');
@@ -341,6 +342,12 @@
       if(msg.type==='audio'){
         // Stop listening if active before playing response
         if (isListening) stopListening();
+        // Show the text now that audio is ready
+        if (pendingText) {
+          transcriptEl.textContent = pendingText;
+          transcriptEl.className = 'transcript-text';
+          pendingText = null;
+        }
         setState('speaking');
         await playAudio(msg.data);
         // Gap between sentences
@@ -359,7 +366,10 @@
       if(msg.type==='listening_stopped'){ setState('processing'); }
       if(msg.type==='interim_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text dim'; }
       if(msg.type==='final_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text user'; setState('processing'); }
-      if(msg.type==='response_text'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text'; }
+      if(msg.type==='response_text'){
+        // Store text but don't show yet — wait for audio to arrive together
+        pendingText = msg.text;
+      }
     };
 
     async function startListening() {
