@@ -315,35 +315,66 @@
       else if(s==='speaking'){ waveEl.classList.add('on'); }
     }
 
-    // ── Audio — simple HTTP fetch, native Audio element ──
-    // Mirror-proven: no AudioContext, no base64, just fetch and play
-    let currentAudio = null;
+    // ── Audio — decodeAudioData approach (Mare Bot proven) ──
+    // Fetch full buffer first, decode completely, then play.
+    // Avoids new Audio() partial-buffer rush/pause issue.
+    let audioCtx = null;
+    let activeSource = null;
+
+    function ensureAudioCtx() {
+      if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
 
     function playAudioToken(token) {
-      return new Promise((res) => {
-        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-        const audio = new Audio('/api/audio/' + token);
-        currentAudio = audio;
-        isSpeaking   = true;
-        audio.onended = () => { currentAudio=null; isSpeaking=false; res(); };
-        audio.onerror = (e) => { console.error('Audio error',e); currentAudio=null; isSpeaking=false; res(); };
-        audio.play().catch(e => { console.error('Play failed',e); isSpeaking=false; res(); });
+      return new Promise(async (res) => {
+        try {
+          if (activeSource) { try { activeSource.stop(); } catch {} activeSource = null; }
+          const ctx = ensureAudioCtx();
+          const response = await fetch('/api/audio/' + token);
+          if (!response.ok) throw new Error('Audio fetch failed');
+          const arrayBuffer = await response.arrayBuffer();
+          const decoded = await ctx.decodeAudioData(arrayBuffer);
+          const source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          activeSource = source;
+          isSpeaking = true;
+          source.onended = () => { activeSource = null; isSpeaking = false; res(); };
+          source.start(0);
+        } catch (e) {
+          console.error('Audio error', e);
+          isSpeaking = false;
+          res();
+        }
       });
     }
 
+    // Legacy base64 path (greeting fallback) — same approach
     function playAudio(b64) {
-      return new Promise((res) => {
-        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-        const bytes = atob(b64);
-        const arr   = new Uint8Array(bytes.length);
-        for (let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
-        const url   = URL.createObjectURL(new Blob([arr],{type:'audio/mpeg'}));
-        const audio = new Audio(url);
-        currentAudio = audio;
-        isSpeaking   = true;
-        audio.onended = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
-        audio.play().catch(() => { isSpeaking=false; res(); });
+      return new Promise(async (res) => {
+        try {
+          if (activeSource) { try { activeSource.stop(); } catch {} activeSource = null; }
+          const ctx = ensureAudioCtx();
+          const bytes = atob(b64);
+          const arr = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+          const decoded = await ctx.decodeAudioData(arr.buffer);
+          const source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          activeSource = source;
+          isSpeaking = true;
+          source.onended = () => { activeSource = null; isSpeaking = false; res(); };
+          source.start(0);
+        } catch (e) {
+          console.error('Audio error', e);
+          isSpeaking = false;
+          res();
+        }
       });
     }
 
