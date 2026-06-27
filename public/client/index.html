@@ -317,22 +317,46 @@
       else if(s==='speaking'){ waveEl.classList.add('on'); }
     }
 
+    // AudioContext for reliable full-buffer playback
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+
+    let currentSource = null;
+
     function playAudio(b64) {
       // Stop any currently playing audio
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.src = '';
-        currentAudio = null;
+      if (currentSource) {
+        try { currentSource.stop(); } catch(e) {}
+        currentSource = null;
       }
-      return new Promise(res => {
-        const bytes=atob(b64), arr=new Uint8Array(bytes.length);
-        for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
-        const audio=new Audio(URL.createObjectURL(new Blob([arr],{type:'audio/mpeg'})));
-        currentAudio = audio;
-        audio.onended = () => { currentAudio = null; isSpeaking = false; res(); };
-        audio.onerror = () => { currentAudio = null; isSpeaking = false; res(); };
-        isSpeaking = true;
-        audio.play().catch(() => { isSpeaking = false; res(); });
+      return new Promise(async (res) => {
+        try {
+          const bytes  = atob(b64);
+          const arr    = new Uint8Array(bytes.length);
+          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+
+          const ctx    = getAudioCtx();
+          // decodeAudioData ensures full buffer decoded before playback starts
+          const buffer = await ctx.decodeAudioData(arr.buffer);
+
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.onended = () => { currentSource = null; isSpeaking = false; res(); };
+          currentSource = source;
+          isSpeaking = true;
+          source.start(0);
+        } catch(e) {
+          console.error('Audio error:', e);
+          isSpeaking = false;
+          res();
+        }
       });
     }
 
