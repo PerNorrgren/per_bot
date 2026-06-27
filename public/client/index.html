@@ -317,34 +317,62 @@
       else if(s==='speaking'){ waveEl.classList.add('on'); }
     }
 
-    let currentAudio = null;
+    // ── Audio — Mare Bot proven approach ──
+    let audioCtx = null;
+    let audioSource = null;
 
-    function playAudioUrl(url) {
-      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-      return new Promise((res) => {
-        const audio = new Audio(url);
-        currentAudio = audio;
-        isSpeaking   = true;
-        audio.onended = () => { currentAudio=null; isSpeaking=false; res(); };
-        audio.onerror = () => { currentAudio=null; isSpeaking=false; res(); };
-        audio.play().catch(() => { isSpeaking=false; res(); });
-      });
+    function ensureAudioCtx() {
+      if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
     }
 
     function playAudio(b64) {
-      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-      return new Promise((res) => {
-        const bytes = atob(b64);
-        const arr   = new Uint8Array(bytes.length);
-        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-        const url   = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' }));
-        const audio = new Audio(url);
-        currentAudio = audio;
-        isSpeaking   = true;
-        audio.onended = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
-        audio.onerror = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
-        audio.play().catch(() => { isSpeaking=false; res(); });
+      return new Promise(async (res) => {
+        try {
+          if (audioSource) { try { audioSource.stop(); } catch {} audioSource = null; }
+          const ctx    = ensureAudioCtx();
+          const binary = atob(b64);
+          const buf    = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
+          const decoded = await ctx.decodeAudioData(buf.buffer);
+          const source  = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          source.onended = () => { audioSource = null; isSpeaking = false; res(); };
+          audioSource = source;
+          isSpeaking  = true;
+          source.start(0);
+        } catch(e) {
+          console.error('Audio error:', e);
+          isSpeaking = false;
+          res();
+        }
       });
+    }
+
+    function playAudioUrl(url) {
+      // Fallback — fetch URL and play via AudioContext
+      return fetch(url)
+        .then(r => r.arrayBuffer())
+        .then(buf => {
+          const ctx = ensureAudioCtx();
+          return ctx.decodeAudioData(buf);
+        })
+        .then(decoded => new Promise(res => {
+          if (audioSource) { try { audioSource.stop(); } catch {} audioSource = null; }
+          const ctx    = ensureAudioCtx();
+          const source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          source.onended = () => { audioSource = null; isSpeaking = false; res(); };
+          audioSource = source;
+          isSpeaking  = true;
+          source.start(0);
+        }))
+        .catch(e => { console.error('AudioURL error:', e); isSpeaking = false; });
     }
 
     ws.onmessage = async (e) => {
@@ -352,7 +380,7 @@
       if(msg.type==='greeting'){
         pendingText = msg.text; // Hold until audio ready
       }
-      if(msg.type==='audio_url'){
+      if(msg.type==='audio'){
         if (isListening) stopListening();
         if (pendingText) {
           transcriptEl.textContent = pendingText;
@@ -360,7 +388,7 @@
           pendingText = null;
         }
         setState('speaking');
-        await playAudioUrl(msg.url);
+        await playAudio(msg.data);
         if (msg.final !== false) {
           setState('idle');
           if (micPermissionGranted && !isListening) setTimeout(()=>startListening(), 400);
@@ -382,6 +410,7 @@
 
     async function startListening() {
       if(isListening) return;
+      ensureAudioCtx(); // Ensure AudioContext created on user gesture
       try { mediaStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
       catch(e){ statusEl.textContent='mic access needed'; return; }
       micPermissionGranted = true;
