@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Content — Deeper Mindfulness</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow:hidden; }
+    .app { display:flex; height:100vh; flex-direction:column; }
+
+    /* Topbar */
+    .topbar { padding:14px 24px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:16px; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:16px; color:rgba(255,255,255,0.75); }
+    .nav-tabs { display:flex; gap:4px; margin-left:24px; }
+    .nav-tab { padding:6px 16px; border-radius:6px; border:none; background:none; color:rgba(255,255,255,0.4); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .nav-tab.active { background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); }
+    .nav-tab:hover { color:rgba(255,255,255,0.7); }
+    .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; }
+    .btn-sm { padding:6px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .btn-sm:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn-sm.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn-sm.primary:hover { background:rgba(180,230,200,0.1); }
+
+    /* Content area */
+    .content { flex:1; overflow:hidden; display:flex; }
+    .main { flex:1; overflow-y:auto; padding:28px 32px; }
+    .main::-webkit-scrollbar { width:4px; }
+    .main::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); }
+
+    /* Section */
+    .section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    .section-title { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+
+    /* Cards grid */
+    .cards-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:14px; margin-bottom:32px; }
+
+    .card {
+      background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+      border-radius:12px; overflow:hidden; transition:border-color 0.2s;
+    }
+    .card:hover { border-color:rgba(255,255,255,0.15); }
+    .card-body { padding:16px; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.82); margin-bottom:6px; }
+    .card-meta { font-size:11px; color:rgba(255,255,255,0.3); line-height:1.6; }
+    .card-tags { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+    .tag { font-size:10px; letter-spacing:0.06em; padding:3px 8px; border-radius:4px; background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.65); }
+    .tag.guest { background:rgba(255,200,100,0.1); color:rgba(255,200,100,0.65); }
+    .card-footer { padding:10px 16px; border-top:1px solid rgba(255,255,255,0.05); display:flex; gap:8px; }
+
+    .btn-xs { padding:4px 10px; border-radius:5px; border:1px solid rgba(255,255,255,0.1); background:none; color:rgba(255,255,255,0.4); font-size:10px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .btn-xs:hover { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7); }
+    .btn-xs.danger { border-color:rgba(255,100,80,0.2); color:rgba(255,100,80,0.5); }
+    .btn-xs.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.8); }
+
+    .empty-state { padding:40px; text-align:center; color:rgba(255,255,255,0.2); font-style:italic; font-size:14px; }
+
+    /* Filter bar */
+    .filter-bar { display:flex; gap:10px; margin-bottom:20px; align-items:center; flex-wrap:wrap; }
+    .filter-select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:7px 12px; font-size:12px; color:rgba(255,255,255,0.65); font-family:'Georgia',serif; outline:none; cursor:pointer; }
+    .filter-select option { background:#1a2420; }
+
+    /* Lesson list inside course */
+    .lesson-list { display:flex; flex-direction:column; gap:8px; }
+    .lesson-item { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:12px 14px; display:flex; align-items:flex-start; gap:12px; }
+    .lesson-num { font-size:18px; font-weight:bold; color:rgba(255,255,255,0.2); min-width:28px; }
+    .lesson-info { flex:1; }
+    .lesson-title { font-size:13px; color:rgba(255,255,255,0.75); }
+    .lesson-files { font-size:11px; color:rgba(255,255,255,0.3); margin-top:4px; }
+    .lesson-guest { font-size:10px; color:rgba(255,200,100,0.6); margin-top:3px; }
+
+    /* Track list */
+    .track-list { display:flex; flex-direction:column; gap:6px; }
+    .track-item { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:10px 14px; display:flex; align-items:center; gap:10px; }
+    .track-icon { font-size:16px; }
+    .track-info { flex:1; }
+    .track-title { font-size:13px; color:rgba(255,255,255,0.75); }
+    .track-meta { font-size:11px; color:rgba(255,255,255,0.3); }
+
+    /* Modal */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:flex-start; justify-content:center; padding:40px 20px; overflow-y:auto; }
+    .modal-overlay.visible { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:560px; display:flex; flex-direction:column; gap:16px; margin:auto; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .modal label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:6px; }
+    .modal input, .modal textarea, .modal select {
+      width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+      border-radius:8px; padding:10px 14px; font-size:14px; color:rgba(255,255,255,0.82);
+      font-family:'Georgia',serif; outline:none; margin-bottom:4px;
+    }
+    .modal select option { background:#1a2420; }
+    .modal textarea { resize:vertical; min-height:70px; }
+    .modal input:focus, .modal textarea:focus, .modal select:focus { border-color:rgba(180,230,200,0.3); }
+    .modal-row { display:flex; gap:12px; }
+    .modal-row > div { flex:1; }
+    .modal-check { display:flex; align-items:center; gap:10px; font-size:13px; color:rgba(255,255,255,0.55); }
+    .modal-check input[type=checkbox] { accent-color:#b4e6c8; width:16px; height:16px; }
+    .modal-error { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-size:13px; font-family:'Georgia',serif; }
+    .modal-confirm { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-size:13px; font-family:'Georgia',serif; }
+
+    /* File upload */
+    .file-upload-area { border:1.5px dashed rgba(255,255,255,0.15); border-radius:8px; padding:20px; text-align:center; cursor:pointer; transition:all 0.2s; }
+    .file-upload-area:hover { border-color:rgba(180,230,200,0.3); }
+    .file-upload-area input { display:none; }
+    .file-upload-label { font-size:13px; color:rgba(255,255,255,0.4); }
+    .file-preview { margin-top:8px; font-size:12px; color:rgba(180,230,200,0.7); }
+
+    /* Lesson builder inside modal */
+    .lesson-builder { border:1px solid rgba(255,255,255,0.08); border-radius:10px; overflow:hidden; }
+    .lesson-builder-header { padding:12px 16px; background:rgba(255,255,255,0.04); display:flex; align-items:center; justify-content:space-between; }
+    .lesson-builder-title { font-size:12px; color:rgba(255,255,255,0.5); letter-spacing:0.08em; text-transform:uppercase; }
+    .lesson-entries { max-height:300px; overflow-y:auto; }
+    .lesson-entry { padding:12px 16px; border-bottom:1px solid rgba(255,255,255,0.05); display:flex; gap:10px; align-items:flex-start; }
+    .lesson-entry-num { font-size:12px; color:rgba(255,255,255,0.3); min-width:24px; padding-top:2px; }
+    .lesson-entry-fields { flex:1; display:flex; flex-direction:column; gap:6px; }
+    .lesson-entry input { margin-bottom:0 !important; font-size:13px; padding:8px 12px; }
+    .lesson-entry-remove { background:none; border:none; color:rgba(255,100,80,0.4); cursor:pointer; font-size:16px; padding:2px 6px; }
+    .lesson-entry-remove:hover { color:rgba(255,100,80,0.8); }
+    .add-lesson-btn { width:100%; padding:10px; background:none; border:none; border-top:1px solid rgba(255,255,255,0.05); color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .add-lesson-btn:hover { color:rgba(180,230,200,0.7); background:rgba(180,230,200,0.04); }
+
+    /* Tabs inside view */
+    .view-panel { display:none; }
+    .view-panel.active { display:block; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div>
+      <div class="logo">Deeper Mindfulness</div>
+      <div class="logo-name">Content</div>
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" data-tab="courses">Courses</button>
+      <button class="nav-tab" data-tab="playlists">Playlists</button>
+      <button class="nav-tab" data-tab="files">Files</button>
+      <button class="nav-tab" data-tab="categories">Categories</button>
+    </div>
+    <div class="topbar-right">
+      <a href="/admin/" class="btn-sm">← Admin</a>
+      <button class="btn-sm" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="main">
+
+      <!-- COURSES -->
+      <div class="view-panel active" id="tab-courses">
+        <div class="section-header">
+          <div class="section-title">Courses</div>
+          <button class="btn-sm primary" onclick="openNewCourse()">+ New course</button>
+        </div>
+        <div class="filter-bar">
+          <select class="filter-select" id="courseFilterCat" onchange="filterCourses()">
+            <option value="">All categories</option>
+          </select>
+          <select class="filter-select" id="courseFilterSub" onchange="filterCourses()">
+            <option value="">All subcategories</option>
+          </select>
+        </div>
+        <div class="cards-grid" id="coursesList"></div>
+      </div>
+
+      <!-- PLAYLISTS -->
+      <div class="view-panel" id="tab-playlists">
+        <div class="section-header">
+          <div class="section-title">Playlists</div>
+          <button class="btn-sm primary" onclick="openNewPlaylist()">+ New playlist</button>
+        </div>
+        <div class="filter-bar">
+          <select class="filter-select" id="playlistFilterCat" onchange="filterPlaylists()">
+            <option value="">All categories</option>
+          </select>
+        </div>
+        <div class="cards-grid" id="playlistsList"></div>
+      </div>
+
+      <!-- FILES -->
+      <div class="view-panel" id="tab-files">
+        <div class="section-header">
+          <div class="section-title">Standalone files</div>
+          <button class="btn-sm primary" onclick="openNewFile()">+ Upload file</button>
+        </div>
+        <div class="cards-grid" id="filesList"></div>
+      </div>
+
+      <!-- CATEGORIES -->
+      <div class="view-panel" id="tab-categories">
+        <div class="section-header">
+          <div class="section-title">Categories</div>
+          <button class="btn-sm primary" onclick="openNewCategory()">+ New category</button>
+        </div>
+        <div id="categoriesList"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- New Course Modal -->
+<div class="modal-overlay" id="newCourseModal">
+  <div class="modal">
+    <h3 id="courseModalTitle">New course</h3>
+    <div>
+      <label>Course title</label>
+      <input type="text" id="courseTitle" placeholder="e.g. Finding Calm — 10 Sessions"/>
+    </div>
+    <div>
+      <label>Description</label>
+      <textarea id="courseDesc" placeholder="Brief description of this course…"></textarea>
+    </div>
+    <div class="modal-row">
+      <div>
+        <label>Category</label>
+        <select id="courseCat" onchange="loadSubsForSelect('courseCat','courseSub')">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div>
+        <label>Subcategory</label>
+        <select id="courseSub">
+          <option value="">Select…</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-check">
+      <input type="checkbox" id="courseGuest"/>
+      <span>Visible to guests (individual lessons can still be locked)</span>
+    </div>
+
+    <!-- Lesson builder -->
+    <div class="lesson-builder" id="lessonBuilder">
+      <div class="lesson-builder-header">
+        <span class="lesson-builder-title">Lessons</span>
+        <span style="font-size:11px;color:rgba(255,255,255,0.25)">Add files after saving</span>
+      </div>
+      <div class="lesson-entries" id="lessonEntries"></div>
+      <button class="add-lesson-btn" onclick="addLessonEntry()">+ Add lesson</button>
+    </div>
+
+    <div class="modal-error" id="courseError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('newCourseModal')">Cancel</button>
+      <button class="modal-confirm" onclick="saveCourse()">Save course</button>
+    </div>
+  </div>
+</div>
+
+<!-- Course Detail Modal (lessons + file upload) -->
+<div class="modal-overlay" id="courseDetailModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="courseDetailTitle"></h3>
+    <div id="courseDetailLessons"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('courseDetailModal')">Close</button>
+      <button class="btn-sm primary" onclick="openAddLesson()">+ Add lesson</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Lesson Modal -->
+<div class="modal-overlay" id="addLessonModal">
+  <div class="modal">
+    <h3>Add lesson</h3>
+    <input type="hidden" id="lessonCourseId"/>
+    <div class="modal-row">
+      <div>
+        <label>Lesson number</label>
+        <input type="number" id="lessonNum" min="1" value="1"/>
+      </div>
+      <div>
+        <label>Lesson title</label>
+        <input type="text" id="lessonTitle" placeholder="e.g. The Grounded Body"/>
+      </div>
+    </div>
+    <div>
+      <label>Description (optional)</label>
+      <textarea id="lessonDesc" rows="2" placeholder="What this lesson covers…"></textarea>
+    </div>
+    <div class="modal-check">
+      <input type="checkbox" id="lessonGuest"/>
+      <span>Accessible to guests</span>
+    </div>
+    <div>
+      <label>Upload files for this lesson</label>
+      <div class="file-upload-area" onclick="document.getElementById('lessonFiles').click()">
+        <input type="file" id="lessonFiles" multiple accept=".pdf,.mp3,.mp4,.doc,.docx,.ppt,.pptx,.jpg,.png"/>
+        <div class="file-upload-label">Click to select files (pdf, mp3, mp4, doc, ppt, images)</div>
+        <div class="file-preview" id="lessonFilesPreview"></div>
+      </div>
+    </div>
+    <div class="modal-error" id="lessonError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('addLessonModal')">Cancel</button>
+      <button class="modal-confirm" onclick="saveLesson()">Save lesson</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Playlist Modal -->
+<div class="modal-overlay" id="newPlaylistModal">
+  <div class="modal">
+    <h3>New playlist</h3>
+    <div>
+      <label>Playlist title</label>
+      <input type="text" id="playlistTitle" placeholder="e.g. Grounding Practices"/>
+    </div>
+    <div>
+      <label>Description</label>
+      <textarea id="playlistDesc" placeholder="What this playlist is for…"></textarea>
+    </div>
+    <div class="modal-row">
+      <div>
+        <label>Category</label>
+        <select id="playlistCat" onchange="loadSubsForSelect('playlistCat','playlistSub')">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div>
+        <label>Subcategory / Topic</label>
+        <select id="playlistSub">
+          <option value="">Select…</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-check">
+      <input type="checkbox" id="playlistGuest"/>
+      <span>Visible to guests (tracks can be individually locked)</span>
+    </div>
+    <div class="modal-error" id="playlistError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('newPlaylistModal')">Cancel</button>
+      <button class="modal-confirm" onclick="savePlaylist()">Save &amp; add tracks</button>
+    </div>
+  </div>
+</div>
+
+<!-- Playlist Detail Modal -->
+<div class="modal-overlay" id="playlistDetailModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="playlistDetailTitle"></h3>
+    <div class="track-list" id="playlistDetailTracks"></div>
+    <div style="margin-top:16px">
+      <label>Add track</label>
+      <input type="hidden" id="trackPlaylistId"/>
+      <input type="text" id="trackTitle" placeholder="Track title" style="margin-bottom:8px"/>
+      <div class="file-upload-area" onclick="document.getElementById('trackFile').click()">
+        <input type="file" id="trackFile" accept=".mp3,.mp4,.m4a,.wav,.pdf"/>
+        <div class="file-upload-label">Click to select audio or video file</div>
+        <div class="file-preview" id="trackFilePreview"></div>
+      </div>
+      <div class="modal-check" style="margin-top:10px">
+        <input type="checkbox" id="trackGuest"/>
+        <span>Accessible to guests</span>
+      </div>
+    </div>
+    <div class="modal-error" id="trackError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('playlistDetailModal')">Close</button>
+      <button class="modal-confirm" onclick="saveTrack()">Add track</button>
+    </div>
+  </div>
+</div>
+
+<!-- New File Modal -->
+<div class="modal-overlay" id="newFileModal">
+  <div class="modal">
+    <h3>Upload file</h3>
+    <div>
+      <label>Title</label>
+      <input type="text" id="fileTitle" placeholder="File title"/>
+    </div>
+    <div>
+      <label>Description (optional)</label>
+      <textarea id="fileDesc" rows="2" placeholder="What this file is…"></textarea>
+    </div>
+    <div class="modal-row">
+      <div>
+        <label>Category</label>
+        <select id="fileCat" onchange="loadSubsForSelect('fileCat','fileSub')">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div>
+        <label>Subcategory</label>
+        <select id="fileSub"><option value="">Select…</option></select>
+      </div>
+    </div>
+    <div class="modal-check">
+      <input type="checkbox" id="fileGuest"/>
+      <span>Accessible to guests</span>
+    </div>
+    <div class="file-upload-area" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept=".pdf,.mp3,.mp4,.doc,.docx,.ppt,.pptx,.jpg,.png,.zip"/>
+      <div class="file-upload-label">Click to select file</div>
+      <div class="file-preview" id="fileInputPreview"></div>
+    </div>
+    <div class="modal-error" id="fileError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('newFileModal')">Cancel</button>
+      <button class="modal-confirm" onclick="saveFile()">Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Category Modal -->
+<div class="modal-overlay" id="newCatModal">
+  <div class="modal">
+    <h3>New category</h3>
+    <div>
+      <label>Name</label>
+      <input type="text" id="catName" placeholder="e.g. Mindfulness"/>
+    </div>
+    <div>
+      <label>Parent category (leave blank for top-level)</label>
+      <select id="catParent">
+        <option value="">Top level</option>
+      </select>
+    </div>
+    <div class="modal-error" id="catError"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('newCatModal')">Cancel</button>
+      <button class="modal-confirm" onclick="saveCategory()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──
+  let allCategories = [];
+  let allCourses    = [];
+  let allPlaylists  = [];
+  let allFiles      = [];
+  let currentCourseId   = null;
+  let currentPlaylistId = null;
+  let lessonEntryCount  = 0;
+
+  // ── Nav tabs ──
+  document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ── Helpers ──
+  function closeModal(id) { document.getElementById(id).classList.remove('visible'); }
+  function openModal(id)  { document.getElementById(id).classList.add('visible'); }
+
+  function formatSize(bytes) {
+    if (!bytes) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/1024/1024).toFixed(1) + ' MB';
+  }
+
+  function fileIcon(type) {
+    if (!type) return '📄';
+    if (type.includes('audio') || type.includes('mp3')) return '🎵';
+    if (type.includes('video') || type.includes('mp4')) return '🎬';
+    if (type.includes('pdf')) return '📕';
+    if (type.includes('image')) return '🖼️';
+    if (type.includes('word') || type.includes('doc')) return '📝';
+    if (type.includes('presentation') || type.includes('ppt')) return '📊';
+    return '📄';
+  }
+
+  async function logout() {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/login';
+  }
+
+  // ── Load categories into selects ──
+  function populateCategorySelects() {
+    const tops = allCategories.filter(c => !c.parent_id);
+    const selects = ['courseCat','playlistCat','fileCat','courseFilterCat','playlistFilterCat','catParent'];
+    selects.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const current = el.value;
+      const isFilter = id.includes('Filter');
+      const isParent = id === 'catParent';
+      el.innerHTML = isFilter ? '<option value="">All categories</option>' :
+                     isParent ? '<option value="">Top level</option>' :
+                     '<option value="">Select…</option>';
+      tops.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id; opt.textContent = c.name;
+        el.appendChild(opt);
+      });
+      if (current) el.value = current;
+    });
+  }
+
+  function loadSubsForSelect(catSelectId, subSelectId) {
+    const catId = document.getElementById(catSelectId).value;
+    const subEl = document.getElementById(subSelectId);
+    subEl.innerHTML = '<option value="">Select…</option>';
+    if (!catId) return;
+    const subs = allCategories.filter(c => c.parent_id === catId);
+    subs.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id; opt.textContent = s.name;
+      subEl.appendChild(opt);
+    });
+  }
+
+  // ── Load all data ──
+  async function loadAll() {
+    const [cats, courses, playlists, files] = await Promise.all([
+      fetch('/api/content/categories').then(r => r.json()),
+      fetch('/api/content/courses').then(r => r.json()),
+      fetch('/api/content/playlists').then(r => r.json()),
+      fetch('/api/content/files').then(r => r.json()),
+    ]);
+    allCategories = cats;
+    allCourses    = courses;
+    allPlaylists  = playlists;
+    allFiles      = files;
+    populateCategorySelects();
+    renderCourses(courses);
+    renderPlaylists(playlists);
+    renderFiles(files);
+    renderCategories(cats);
+  }
+
+  // ── Courses ──
+  function filterCourses() {
+    const catId = document.getElementById('courseFilterCat').value;
+    const subId = document.getElementById('courseFilterSub').value;
+    // Update sub filter
+    const subEl = document.getElementById('courseFilterSub');
+    subEl.innerHTML = '<option value="">All subcategories</option>';
+    if (catId) {
+      allCategories.filter(c => c.parent_id === catId).forEach(s => {
+        const opt = document.createElement('option'); opt.value = s.id; opt.textContent = s.name;
+        subEl.appendChild(opt);
+      });
+    }
+    const filtered = allCourses.filter(c =>
+      (!catId || c.category_id === catId) && (!subId || c.subcategory_id === subId)
+    );
+    renderCourses(filtered);
+  }
+
+  function renderCourses(courses) {
+    const el = document.getElementById('coursesList');
+    if (!courses.length) { el.innerHTML = '<div class="empty-state">No courses yet. Create one to get started.</div>'; return; }
+    el.innerHTML = courses.map(c => `
+      <div class="card">
+        <div class="card-body">
+          <div class="card-title">${c.title}</div>
+          <div class="card-meta">${c.description || ''}</div>
+          <div class="card-tags">
+            ${c.category_name ? `<span class="tag">${c.category_name}</span>` : ''}
+            ${c.subcategory_name ? `<span class="tag">${c.subcategory_name}</span>` : ''}
+            ${c.guest_visible ? '<span class="tag guest">Guest visible</span>' : ''}
+          </div>
+        </div>
+        <div class="card-footer">
+          <button class="btn-xs" onclick="openCourseDetail('${c.id}')">Lessons</button>
+          <button class="btn-xs danger" onclick="deleteCourse('${c.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openNewCourse() {
+    document.getElementById('courseTitle').value = '';
+    document.getElementById('courseDesc').value = '';
+    document.getElementById('courseCat').value = '';
+    document.getElementById('courseSub').innerHTML = '<option value="">Select…</option>';
+    document.getElementById('courseGuest').checked = false;
+    document.getElementById('lessonEntries').innerHTML = '';
+    document.getElementById('courseError').textContent = '';
+    lessonEntryCount = 0;
+    addLessonEntry();
+    openModal('newCourseModal');
+  }
+
+  function addLessonEntry() {
+    lessonEntryCount++;
+    const div = document.createElement('div');
+    div.className = 'lesson-entry';
+    div.id = `lesson-entry-${lessonEntryCount}`;
+    div.innerHTML = `
+      <div class="lesson-entry-num">${lessonEntryCount}</div>
+      <div class="lesson-entry-fields">
+        <input type="text" placeholder="Lesson title" id="le-title-${lessonEntryCount}"/>
+        <div class="modal-check">
+          <input type="checkbox" id="le-guest-${lessonEntryCount}" style="accent-color:#b4e6c8"/>
+          <span style="font-size:11px;color:rgba(255,255,255,0.35)">Guest accessible</span>
+        </div>
+      </div>
+      <button class="lesson-entry-remove" onclick="this.parentElement.remove()">×</button>
+    `;
+    document.getElementById('lessonEntries').appendChild(div);
+  }
+
+  async function saveCourse() {
+    const title = document.getElementById('courseTitle').value.trim();
+    const desc  = document.getElementById('courseDesc').value.trim();
+    const catId = document.getElementById('courseCat').value;
+    const subId = document.getElementById('courseSub').value;
+    const guest = document.getElementById('courseGuest').checked;
+    const err   = document.getElementById('courseError');
+
+    if (!title || !catId) { err.textContent = 'Title and category required.'; return; }
+
+    // Collect lessons
+    const lessons = [];
+    document.querySelectorAll('.lesson-entry').forEach((el, i) => {
+      const num = i + 1;
+      const titleEl = el.querySelector('input[type=text]');
+      const guestEl = el.querySelector('input[type=checkbox]');
+      if (titleEl?.value.trim()) {
+        lessons.push({ number: num, title: titleEl.value.trim(), guestAccessible: guestEl?.checked || false });
+      }
+    });
+
+    const res  = await fetch('/api/content/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description: desc, categoryId: catId, subcategoryId: subId || null, guestVisible: guest, lessons })
+    });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newCourseModal');
+    loadAll();
+  }
+
+  async function openCourseDetail(courseId) {
+    currentCourseId = courseId;
+    const res     = await fetch(`/api/content/courses/${courseId}`);
+    const course  = await res.json();
+    document.getElementById('courseDetailTitle').textContent = course.title;
+    document.getElementById('lessonCourseId').value = courseId;
+
+    const lessonsRes = await fetch(`/api/content/courses/${courseId}/lessons`);
+    const lessons    = await lessonsRes.json();
+
+    const el = document.getElementById('courseDetailLessons');
+    if (!lessons.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:20px">No lessons yet.</div>';
+    } else {
+      el.innerHTML = '<div class="lesson-list">' + lessons.map(l => `
+        <div class="lesson-item">
+          <div class="lesson-num">${l.lesson_number}</div>
+          <div class="lesson-info">
+            <div class="lesson-title">${l.title}</div>
+            <div class="lesson-files">Files: loading…</div>
+            ${l.guest_accessible ? '<div class="lesson-guest">✓ Guest accessible</div>' : ''}
+          </div>
+          <button class="btn-xs danger" onclick="deleteLesson('${l.id}')">Delete</button>
+        </div>
+      `).join('') + '</div>';
+    }
+    openModal('courseDetailModal');
+  }
+
+  function openAddLesson() {
+    document.getElementById('lessonNum').value = '';
+    document.getElementById('lessonTitle').value = '';
+    document.getElementById('lessonDesc').value = '';
+    document.getElementById('lessonGuest').checked = false;
+    document.getElementById('lessonFilesPreview').textContent = '';
+    document.getElementById('lessonError').textContent = '';
+    document.getElementById('lessonFiles').value = '';
+    openModal('addLessonModal');
+  }
+
+  async function saveLesson() {
+    const courseId = document.getElementById('lessonCourseId').value || currentCourseId;
+    const num      = document.getElementById('lessonNum').value;
+    const title    = document.getElementById('lessonTitle').value.trim();
+    const desc     = document.getElementById('lessonDesc').value.trim();
+    const guest    = document.getElementById('lessonGuest').checked;
+    const files    = document.getElementById('lessonFiles').files;
+    const err      = document.getElementById('lessonError');
+
+    if (!title || !num) { err.textContent = 'Lesson number and title required.'; return; }
+
+    const fd = new FormData();
+    fd.append('courseId', courseId);
+    fd.append('lessonNumber', num);
+    fd.append('title', title);
+    fd.append('description', desc);
+    fd.append('guestAccessible', guest);
+    for (const file of files) fd.append('files', file);
+
+    const res  = await fetch('/api/content/lessons', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('addLessonModal');
+    openCourseDetail(courseId);
+  }
+
+  async function deleteLesson(id) {
+    if (!confirm('Delete this lesson and its files?')) return;
+    await fetch(`/api/content/lessons/${id}`, { method: 'DELETE' });
+    openCourseDetail(currentCourseId);
+  }
+
+  async function deleteCourse(id) {
+    if (!confirm('Delete this course and all its lessons?')) return;
+    await fetch(`/api/content/courses/${id}`, { method: 'DELETE' });
+    loadAll();
+  }
+
+  // ── Playlists ──
+  function filterPlaylists() {
+    const catId = document.getElementById('playlistFilterCat').value;
+    renderPlaylists(allPlaylists.filter(p => !catId || p.category_id === catId));
+  }
+
+  function renderPlaylists(playlists) {
+    const el = document.getElementById('playlistsList');
+    if (!playlists.length) { el.innerHTML = '<div class="empty-state">No playlists yet.</div>'; return; }
+    el.innerHTML = playlists.map(p => `
+      <div class="card">
+        <div class="card-body">
+          <div class="card-title">${p.title}</div>
+          <div class="card-meta">${p.description || ''}</div>
+          <div class="card-tags">
+            ${p.category_name ? `<span class="tag">${p.category_name}</span>` : ''}
+            ${p.subcategory_name ? `<span class="tag">${p.subcategory_name}</span>` : ''}
+            ${p.guest_visible ? '<span class="tag guest">Guest visible</span>' : ''}
+          </div>
+        </div>
+        <div class="card-footer">
+          <button class="btn-xs" onclick="openPlaylistDetail('${p.id}')">Tracks</button>
+          <button class="btn-xs danger" onclick="deletePlaylist('${p.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openNewPlaylist() {
+    document.getElementById('playlistTitle').value = '';
+    document.getElementById('playlistDesc').value = '';
+    document.getElementById('playlistCat').value = '';
+    document.getElementById('playlistSub').innerHTML = '<option value="">Select…</option>';
+    document.getElementById('playlistGuest').checked = false;
+    document.getElementById('playlistError').textContent = '';
+    openModal('newPlaylistModal');
+  }
+
+  async function savePlaylist() {
+    const title = document.getElementById('playlistTitle').value.trim();
+    const desc  = document.getElementById('playlistDesc').value.trim();
+    const catId = document.getElementById('playlistCat').value;
+    const subId = document.getElementById('playlistSub').value;
+    const guest = document.getElementById('playlistGuest').checked;
+    const err   = document.getElementById('playlistError');
+    if (!title || !catId) { err.textContent = 'Title and category required.'; return; }
+    const res  = await fetch('/api/content/playlists', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description: desc, categoryId: catId, subcategoryId: subId || null, guestVisible: guest })
+    });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newPlaylistModal');
+    currentPlaylistId = data.id;
+    await loadAll();
+    openPlaylistDetail(data.id);
+  }
+
+  async function openPlaylistDetail(playlistId) {
+    currentPlaylistId = playlistId;
+    const playlist = allPlaylists.find(p => p.id === playlistId);
+    document.getElementById('playlistDetailTitle').textContent = playlist?.title || 'Playlist';
+    document.getElementById('trackPlaylistId').value = playlistId;
+    document.getElementById('trackTitle').value = '';
+    document.getElementById('trackGuest').checked = false;
+    document.getElementById('trackError').textContent = '';
+    document.getElementById('trackFilePreview').textContent = '';
+    document.getElementById('trackFile').value = '';
+
+    const res    = await fetch(`/api/content/playlists/${playlistId}/tracks`);
+    const tracks = await res.json();
+    const el     = document.getElementById('playlistDetailTracks');
+    if (!tracks.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:16px">No tracks yet.</div>';
+    } else {
+      el.innerHTML = tracks.map(t => `
+        <div class="track-item">
+          <span class="track-icon">${fileIcon(t.file_type)}</span>
+          <div class="track-info">
+            <div class="track-title">${t.title}</div>
+            <div class="track-meta">${t.original_name} · ${formatSize(t.file_size)} ${t.guest_accessible ? '· Guest ✓' : ''}</div>
+          </div>
+          <button class="btn-xs danger" onclick="deleteTrack('${t.id}')">×</button>
+        </div>
+      `).join('');
+    }
+    openModal('playlistDetailModal');
+  }
+
+  document.getElementById('trackFile').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    document.getElementById('trackFilePreview').textContent = f ? f.name + ' (' + formatSize(f.size) + ')' : '';
+  });
+
+  async function saveTrack() {
+    const playlistId = document.getElementById('trackPlaylistId').value;
+    const title      = document.getElementById('trackTitle').value.trim();
+    const guest      = document.getElementById('trackGuest').checked;
+    const file       = document.getElementById('trackFile').files[0];
+    const err        = document.getElementById('trackError');
+    if (!title || !file) { err.textContent = 'Title and file required.'; return; }
+    const fd = new FormData();
+    fd.append('playlistId', playlistId);
+    fd.append('title', title);
+    fd.append('guestAccessible', guest);
+    fd.append('file', file);
+    const res  = await fetch('/api/content/tracks', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    document.getElementById('trackTitle').value = '';
+    document.getElementById('trackFile').value = '';
+    document.getElementById('trackFilePreview').textContent = '';
+    openPlaylistDetail(playlistId);
+  }
+
+  async function deleteTrack(id) {
+    if (!confirm('Remove this track?')) return;
+    await fetch(`/api/content/tracks/${id}`, { method: 'DELETE' });
+    openPlaylistDetail(currentPlaylistId);
+  }
+
+  async function deletePlaylist(id) {
+    if (!confirm('Delete this playlist and all tracks?')) return;
+    await fetch(`/api/content/playlists/${id}`, { method: 'DELETE' });
+    loadAll();
+  }
+
+  // ── Files ──
+  function renderFiles(files) {
+    const el = document.getElementById('filesList');
+    if (!files.length) { el.innerHTML = '<div class="empty-state">No files uploaded yet.</div>'; return; }
+    el.innerHTML = files.map(f => `
+      <div class="card">
+        <div class="card-body">
+          <div class="card-title">${fileIcon(f.file_type)} ${f.title}</div>
+          <div class="card-meta">${f.original_name} · ${formatSize(f.file_size)}</div>
+          <div class="card-meta" style="margin-top:4px">${f.description || ''}</div>
+          <div class="card-tags">
+            ${f.category_name ? `<span class="tag">${f.category_name}</span>` : ''}
+            ${f.subcategory_name ? `<span class="tag">${f.subcategory_name}</span>` : ''}
+            ${f.guest_accessible ? '<span class="tag guest">Guest</span>' : ''}
+          </div>
+        </div>
+        <div class="card-footer">
+          <a class="btn-xs" href="/uploads/${f.filename}" target="_blank">Open</a>
+          <button class="btn-xs danger" onclick="deleteFile('${f.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openNewFile() {
+    document.getElementById('fileTitle').value = '';
+    document.getElementById('fileDesc').value = '';
+    document.getElementById('fileCat').value = '';
+    document.getElementById('fileSub').innerHTML = '<option value="">Select…</option>';
+    document.getElementById('fileGuest').checked = false;
+    document.getElementById('fileInput').value = '';
+    document.getElementById('fileInputPreview').textContent = '';
+    document.getElementById('fileError').textContent = '';
+    openModal('newFileModal');
+  }
+
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    document.getElementById('fileInputPreview').textContent = f ? f.name + ' (' + formatSize(f.size) + ')' : '';
+  });
+
+  async function saveFile() {
+    const title = document.getElementById('fileTitle').value.trim();
+    const desc  = document.getElementById('fileDesc').value.trim();
+    const catId = document.getElementById('fileCat').value;
+    const subId = document.getElementById('fileSub').value;
+    const guest = document.getElementById('fileGuest').checked;
+    const file  = document.getElementById('fileInput').files[0];
+    const err   = document.getElementById('fileError');
+    if (!title || !catId || !file) { err.textContent = 'Title, category and file required.'; return; }
+    const fd = new FormData();
+    fd.append('title', title); fd.append('description', desc);
+    fd.append('categoryId', catId); fd.append('subcategoryId', subId || '');
+    fd.append('guestAccessible', guest); fd.append('file', file);
+    const res  = await fetch('/api/content/files', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newFileModal');
+    loadAll();
+  }
+
+  async function deleteFile(id) {
+    if (!confirm('Delete this file?')) return;
+    await fetch(`/api/content/files/${id}`, { method: 'DELETE' });
+    loadAll();
+  }
+
+  // ── Categories ──
+  function renderCategories(cats) {
+    const tops = cats.filter(c => !c.parent_id);
+    const el   = document.getElementById('categoriesList');
+    el.innerHTML = tops.map(cat => {
+      const subs = cats.filter(c => c.parent_id === cat.id);
+      return `
+        <div style="margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <div style="font-size:14px;color:rgba(255,255,255,0.75)">${cat.name}</div>
+            <button class="btn-xs danger" onclick="deleteCategory('${cat.id}')">Delete</button>
+          </div>
+          ${subs.map(s => `
+            <div style="display:flex;align-items:center;gap:10px;padding:6px 0 6px 20px;border-left:1px solid rgba(255,255,255,0.08)">
+              <div style="font-size:13px;color:rgba(255,255,255,0.5)">${s.name}</div>
+              <button class="btn-xs danger" onclick="deleteCategory('${s.id}')">Delete</button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }).join('');
+  }
+
+  function openNewCategory() {
+    document.getElementById('catName').value = '';
+    document.getElementById('catParent').value = '';
+    document.getElementById('catError').textContent = '';
+    openModal('newCatModal');
+  }
+
+  async function saveCategory() {
+    const name     = document.getElementById('catName').value.trim();
+    const parentId = document.getElementById('catParent').value || null;
+    const err      = document.getElementById('catError');
+    if (!name) { err.textContent = 'Name required.'; return; }
+    const res  = await fetch('/api/content/categories', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, parentId })
+    });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newCatModal');
+    loadAll();
+  }
+
+  async function deleteCategory(id) {
+    if (!confirm('Delete this category? Content assigned to it will become uncategorised.')) return;
+    await fetch(`/api/content/categories/${id}`, { method: 'DELETE' });
+    loadAll();
+  }
+
+  document.getElementById('lessonFiles').addEventListener('change', (e) => {
+    const files = e.target.files;
+    document.getElementById('lessonFilesPreview').textContent =
+      files.length ? Array.from(files).map(f => f.name).join(', ') : '';
+  });
+
+  loadAll();
+</script>
+</body>
+</html>
