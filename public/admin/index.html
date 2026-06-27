@@ -72,13 +72,18 @@
 </head>
 <body>
   <div class="topbar">
-    <div>
+    <div style="position:relative">
       <div class="logo">Deeper Mindfulness</div>
-      <div class="logo-name">Admin</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Admin</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
     </div>
     <div class="topbar-right">
       <a href="/admin/content" class="btn">Content library</a>
-      <button class="btn" onclick="logout()">Sign out</button>
     </div>
   </div>
 
@@ -108,10 +113,13 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">All clients across facilitators</div>
-          <label class="show-archived-wrap">
-            <input type="checkbox" id="showArchivedClients" onchange="loadClients()"/>
-            Show archived
-          </label>
+          <div style="display:flex;gap:12px;align-items:center">
+            <label class="show-archived-wrap">
+              <input type="checkbox" id="showArchivedClients" onchange="loadClients()"/>
+              Show archived
+            </label>
+            <button class="btn primary" onclick="openNewClient()">+ Add client</button>
+          </div>
         </div>
         <div class="table" id="clientTable"><div class="loading">Loading…</div></div>
       </div>
@@ -196,10 +204,69 @@
     </div>
   </div>
 
+<!-- New Client Modal -->
+<div class="modal-overlay" id="newClientModal">
+  <div class="modal">
+    <h3>Add client</h3>
+    <div>
+      <label>Name</label>
+      <input type="text" id="ncName" placeholder="First name"/>
+    </div>
+    <div>
+      <label>Email <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0;text-transform:none">(optional — needed for login)</span></label>
+      <input type="email" id="ncEmail" placeholder="client@example.com"/>
+    </div>
+    <div>
+      <label>Assign to facilitator</label>
+      <select id="ncFacilitator">
+        <option value="">Select facilitator…</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1">
+        <label>Programme</label>
+        <select id="ncCat" onchange="loadNcSubs()">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label>Track</label>
+        <select id="ncSub">
+          <option value="">Select…</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-err" id="ncErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('newClientModal')">Cancel</button>
+      <button class="modal-ok" onclick="createClient()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Client Created Modal -->
+<div class="modal-overlay" id="clientCreatedModal">
+  <div class="modal">
+    <h3>Client created</h3>
+    <div id="clientCreatedBody"></div>
+    <div class="modal-btns">
+      <button class="modal-ok" onclick="closeModal('clientCreatedModal');loadClients()">Done</button>
+    </div>
+  </div>
+</div>
+
 <script>
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
   function openModal(id)  { document.getElementById(id).classList.add('open'); }
   async function logout()  { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
 
   // ── Facilitators ──
   async function loadFacilitators() {
@@ -319,6 +386,76 @@
     await fetch(`/api/admin/facilitators/${id}`, { method: 'DELETE' });
     closeModal('confirmDeleteModal');
     loadFacilitators();
+  }
+
+  // ── Clients ──
+  let allCats = [], allFacs = [];
+
+  async function openNewClient() {
+    document.getElementById('ncName').value  = '';
+    document.getElementById('ncEmail').value = '';
+    document.getElementById('ncErr').textContent = '';
+
+    // Load facilitators
+    const facRes = await fetch('/api/admin/facilitators');
+    allFacs = await facRes.json();
+    const facEl = document.getElementById('ncFacilitator');
+    facEl.innerHTML = '<option value="">Select facilitator…</option>';
+    allFacs.forEach(f => { facEl.innerHTML += `<option value="${f.id}">${f.name}</option>`; });
+
+    // Load categories
+    const catRes = await fetch('/api/content/categories');
+    allCats = await catRes.json();
+    const catEl = document.getElementById('ncCat');
+    catEl.innerHTML = '<option value="">Select…</option>';
+    allCats.filter(c => !c.parent_id).forEach(c => { catEl.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
+    document.getElementById('ncSub').innerHTML = '<option value="">Select…</option>';
+
+    openModal('newClientModal');
+    document.getElementById('ncName').focus();
+  }
+
+  function loadNcSubs() {
+    const catId = document.getElementById('ncCat').value;
+    const subEl = document.getElementById('ncSub');
+    subEl.innerHTML = '<option value="">Select…</option>';
+    allCats.filter(c => c.parent_id === catId).forEach(s => { subEl.innerHTML += `<option value="${s.id}">${s.name}</option>`; });
+  }
+
+  async function createClient() {
+    const name         = document.getElementById('ncName').value.trim();
+    const email        = document.getElementById('ncEmail').value.trim();
+    const facilitatorId = document.getElementById('ncFacilitator').value;
+    const categoryId   = document.getElementById('ncCat').value;
+    const subcategoryId = document.getElementById('ncSub').value;
+    const err          = document.getElementById('ncErr');
+
+    if (!name)         { err.textContent = 'Name required.'; return; }
+    if (!facilitatorId){ err.textContent = 'Please assign a facilitator.'; return; }
+
+    const res  = await fetch('/api/clients', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email: email||null, facilitator_id: facilitatorId,
+        categoryId: categoryId||null, subcategoryId: subcategoryId||null })
+    });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+
+    closeModal('newClientModal');
+
+    const body = document.getElementById('clientCreatedBody');
+    if (email && data.tempPassword) {
+      body.innerHTML = `
+        <div style="background:rgba(180,230,200,0.07);border:1px solid rgba(180,230,200,0.2);border-radius:10px;padding:16px">
+          <div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(180,230,200,0.45);margin-bottom:6px">Temporary password</div>
+          <div style="font-size:20px;font-family:monospace;color:rgba(180,230,200,1);letter-spacing:0.06em">${data.tempPassword}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.3);margin-top:8px">Welcome email sent to ${email}. Keep this as backup.</div>
+        </div>`;
+    } else {
+      body.innerHTML = `<div style="font-size:14px;color:rgba(255,255,255,0.65);line-height:1.6">${name} created${email?'':' — no email set. Add one later to enable login.'}.</div>`;
+    }
+    openModal('clientCreatedModal');
+    loadClients();
   }
 
   // ── Clients ──
