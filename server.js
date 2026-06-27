@@ -11,32 +11,36 @@ const db         = require('./db');
 const auth       = require('./auth');
 const prompts    = require('./prompts');
 
-// ── Email via MailerLite ──
-const MAILERLITE_API_KEY = process.env.MAILERLITE_API_KEY;
-const EMAIL_FROM         = process.env.EMAIL_FROM || 'per@deepermindfulness.org';
-const APP_URL            = process.env.APP_URL || 'https://mirror-production-018d.up.railway.app';
+// ── Email via Brevo ──
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const EMAIL_FROM    = process.env.EMAIL_FROM || 'per@deepermindfulness.org';
+const APP_URL       = process.env.APP_URL || 'https://mirror-production-018d.up.railway.app';
 
 async function sendEmail(to, subject, html) {
-  if (!MAILERLITE_API_KEY) { console.log('MAILERLITE_API_KEY not set — skipping email to', to); return; }
+  if (!BREVO_API_KEY) { console.log('BREVO_API_KEY not set — skipping email to', to); return; }
   try {
-    const res = await fetch('https://connect.mailerlite.com/api/emails', {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${MAILERLITE_API_KEY}`,
+        'api-key': BREVO_API_KEY,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
       body: JSON.stringify({
-        from: EMAIL_FROM,
-        from_name: 'Deeper Mindfulness',
+        sender: { name: 'Deeper Mindfulness', email: EMAIL_FROM },
         to: [{ email: to }],
         subject,
-        html
+        htmlContent: html
       })
     });
-    const data = await res.json();
-    if (!res.ok) console.error('MailerLite error:', JSON.stringify(data));
-    else console.log('Email sent to', to);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+    if (!res.ok) {
+      console.error('Brevo error:', res.status, JSON.stringify(data));
+    } else {
+      console.log('Email sent to', to, '— messageId:', data.messageId);
+    }
   } catch (e) { console.error('Email error:', e.message); }
 }
 

@@ -180,6 +180,19 @@ async function getDb() {
     played_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Migrations — add columns if they don't exist ──
+  const migrations = [
+    "ALTER TABLE clients ADD COLUMN category_id TEXT",
+    "ALTER TABLE clients ADD COLUMN subcategory_id TEXT",
+    "ALTER TABLE clients ADD COLUMN must_change_password INTEGER DEFAULT 1",
+    "ALTER TABLE facilitators ADD COLUMN must_change_password INTEGER DEFAULT 1",
+    "ALTER TABLE sessions ADD COLUMN facilitator_id TEXT",
+    "ALTER TABLE sessions ADD COLUMN client_summary TEXT DEFAULT ''",
+  ];
+  migrations.forEach(sql => {
+    try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
+  });
+
   // Seed categories if empty
   const existing = queryAll('SELECT id FROM categories LIMIT 1');
   if (!existing.length) seedCategories();
