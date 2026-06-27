@@ -266,6 +266,7 @@
     </div>
     <button class="new-client-btn" id="newClientBtn">+ New Client</button>
     <div class="client-list" id="clientList"></div>
+    <div style="padding:8px 12px"><label style="font-size:11px;color:rgba(255,255,255,0.25);cursor:pointer"><input type="checkbox" id="showArchived" style="margin-right:6px">Show archived</label></div>
     <div class="sidebar-footer">
       <div class="fog-label">Language level</div>
       <div class="fog-btns">
@@ -285,6 +286,7 @@
       <div id="sessionActions" style="display:none; display:flex; gap:8px; flex-wrap:wrap">
         <button class="action-btn primary" id="explainBtn">Explain to me</button>
         <button class="action-btn" id="addPracticeBtn">Add practice</button>
+        <button class="action-btn" id="archiveBtn">Archive client</button>
         <button class="action-btn danger" id="endSessionBtn">End session</button>
       </div>
     </div>
@@ -386,7 +388,8 @@
 
   // ── Load clients ──
   async function loadClients() {
-    const res = await fetch('/api/clients');
+    const showArchived = document.getElementById("showArchived")?.checked;
+    const res = await fetch('/api/clients?archived=' + (showArchived ? 1 : 0));
     const clients = await res.json();
     const list = document.getElementById('clientList');
     list.innerHTML = '';
@@ -708,6 +711,22 @@
     document.getElementById('addPracticeModal').classList.remove('visible');
     loadClientData();
   });
+
+  // ── Archive ──
+  document.getElementById('archiveBtn').addEventListener('click', async () => {
+    if (!currentClientId) return;
+    await fetch('/api/clients/' + currentClientId + '/archive', { method: 'PATCH' });
+    currentClientId = null;
+    document.getElementById('leftCol').style.display = 'none';
+    document.getElementById('rightCol').style.display = 'none';
+    document.getElementById('clientNameDisplay').style.display = 'none';
+    document.getElementById('sessionActions').style.display = 'none';
+    document.getElementById('noClientMsg').style.display = '';
+    document.getElementById('emptyState').style.display = '';
+    loadClients();
+  });
+
+  document.getElementById('showArchived').addEventListener('change', loadClients);
 
   // ── Init ──
   loadClients();
