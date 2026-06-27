@@ -100,7 +100,6 @@ const PORT               = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cookieParser());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/tmp-audio', express.static(path.join(__dirname, 'tmp-audio')));
 
 // ── File upload ──
 const storage = multer.diskStorage({
@@ -421,19 +420,10 @@ async function textToSpeech(text) {
   return Buffer.concat(chunks);
 }
 
-// ── Single-chunk TTS wrapper — serve as file URL ──
-const crypto = require('crypto');
+// ── Single-chunk TTS — send as base64 ──
 async function textToSpeechSentences(text, ws) {
-  const audio    = await textToSpeech(text);
-  const fname    = 'tts_' + crypto.randomBytes(8).toString('hex') + '.mp3';
-  const tmpDir   = path.join(__dirname, 'tmp-audio');
-  fs.mkdirSync(tmpDir, { recursive: true });
-  const fpath    = path.join(tmpDir, fname);
-  fs.writeFileSync(fpath, audio);
-  // Send URL — no auth required for tmp-audio
-  ws.send(JSON.stringify({ type: 'audio_url', url: '/tmp-audio/' + fname, final: true }));
-  // Clean up after 60 seconds
-  setTimeout(() => { try { fs.unlinkSync(fpath); } catch {} }, 60000);
+  const audio = await textToSpeech(text);
+  ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
 }
 
 // ── Deepgram STT ──
