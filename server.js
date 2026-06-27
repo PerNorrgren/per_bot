@@ -400,17 +400,53 @@ async function callClaude(systemPrompt, messages, maxTokens = 400) {
 }
 
 // ── ElevenLabs TTS ──
-async function textToSpeech(text) {
-  // Prepend a soft ellipsis to prime the model into the right register
-  // before the actual content begins — eliminates the warm-up artefact
-  const primedText = '... ' + text;
+// ── ElevenLabs streaming TTS ──
+// Streams audio chunks as they are generated — no waiting for full response
+// Client plays each chunk as it arrives for smooth continuous audio
+async function textToSpeechStream(text, ws) {
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
     {
       method: 'POST',
       headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: primedText,
+        text,
+        model_id: 'eleven_turbo_v2',
+        voice_settings: { stability: 0.85, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
+        speed: VOICE_SPEED,
+        optimize_streaming_latency: 3,
+      }),
+    }
+  );
+  if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
+
+  // Signal client: streaming audio is starting
+  ws.send(JSON.stringify({ type: 'audio_start' }));
+
+  // Stream chunks as they arrive
+  let chunkIndex = 0;
+  for await (const chunk of response.body) {
+    if (ws.readyState !== 1) break; // WebSocket closed
+    ws.send(JSON.stringify({
+      type: 'audio_chunk',
+      data: chunk.toString('base64'),
+      index: chunkIndex++,
+    }));
+  }
+
+  // Signal client: stream complete
+  ws.send(JSON.stringify({ type: 'audio_end' }));
+}
+
+// Keep textToSpeech for non-streaming use (practices, etc.)
+async function textToSpeech(text) {
+  const response = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
+    {
+      method: 'POST',
+      headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
         model_id: 'eleven_turbo_v2',
         voice_settings: { stability: 0.85, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
         speed: VOICE_SPEED,
@@ -420,17 +456,11 @@ async function textToSpeech(text) {
   if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
   const chunks = [];
   for await (const chunk of response.body) chunks.push(chunk);
-  const fullAudio = Buffer.concat(chunks);
-  // Strip the first ~0.4 seconds of audio (the primer) — MP3 frame is ~26ms
-  // Skip first ~15 frames worth of bytes to remove the primer
-  const skipBytes = Math.min(8000, Math.floor(fullAudio.length * 0.06));
-  return fullAudio.slice(skipBytes);
+  return Buffer.concat(chunks);
 }
 
-// ── Single-chunk TTS — send as base64 ──
 async function textToSpeechSentences(text, ws) {
-  const audio = await textToSpeech(text);
-  ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
+  await textToSpeechStream(text, ws);
 }
 
 // ── Deepgram STT ──
