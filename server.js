@@ -420,10 +420,17 @@ async function textToSpeech(text) {
   return Buffer.concat(chunks);
 }
 
-// ── Single-chunk TTS wrapper ──
+// ── Single-chunk TTS wrapper — serve as file URL ──
+const crypto = require('crypto');
 async function textToSpeechSentences(text, ws) {
-  const audio = await textToSpeech(text);
-  ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
+  const audio    = await textToSpeech(text);
+  const fname    = 'tts_' + crypto.randomBytes(8).toString('hex') + '.mp3';
+  const fpath    = path.join(__dirname, 'uploads', fname);
+  fs.writeFileSync(fpath, audio);
+  // Send URL instead of base64 — browser fetches directly, no WebSocket size limit
+  ws.send(JSON.stringify({ type: 'audio_url', url: '/uploads/' + fname, final: true }));
+  // Clean up after 60 seconds
+  setTimeout(() => { try { fs.unlinkSync(fpath); } catch {} }, 60000);
 }
 
 // ── Deepgram STT ──
