@@ -400,48 +400,14 @@ async function callClaude(systemPrompt, messages, maxTokens = 400) {
 }
 
 // ── ElevenLabs TTS ──
-// ── ElevenLabs streaming TTS ──
-// Streams audio chunks as they are generated — no waiting for full response
-// Client plays each chunk as it arrives for smooth continuous audio
-async function textToSpeechStream(text, ws) {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
-    {
-      method: 'POST',
-      headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        model_id: 'eleven_turbo_v2',
-        voice_settings: { stability: 0.85, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
-        speed: VOICE_SPEED,
-        optimize_streaming_latency: 3,
-      }),
-    }
-  );
-  if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
+// ── ElevenLabs TTS — Mirror architecture ──
+// Server fetches full audio, sends token over WebSocket
+// Client fetches audio via HTTP /api/audio/:token — proven approach
+const audioStore = new Map(); // token -> audio buffer, expires in 60s
 
-  // Signal client: streaming audio is starting
-  ws.send(JSON.stringify({ type: 'audio_start' }));
-
-  // Stream chunks as they arrive
-  let chunkIndex = 0;
-  for await (const chunk of response.body) {
-    if (ws.readyState !== 1) break; // WebSocket closed
-    ws.send(JSON.stringify({
-      type: 'audio_chunk',
-      data: chunk.toString('base64'),
-      index: chunkIndex++,
-    }));
-  }
-
-  // Signal client: stream complete
-  ws.send(JSON.stringify({ type: 'audio_end' }));
-}
-
-// Keep textToSpeech for non-streaming use (practices, etc.)
 async function textToSpeech(text) {
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
     {
       method: 'POST',
       headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
@@ -460,7 +426,12 @@ async function textToSpeech(text) {
 }
 
 async function textToSpeechSentences(text, ws) {
-  await textToSpeechStream(text, ws);
+  const audio = await textToSpeech(text);
+  // Store with random token, send token to client
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  audioStore.set(token, audio);
+  setTimeout(() => audioStore.delete(token), 60000);
+  ws.send(JSON.stringify({ type: 'audio_token', token, final: true }));
 }
 
 // ── Deepgram STT ──
@@ -699,6 +670,16 @@ wss.on('connection', (ws, req) => {
 // ════════════════════════════════════════════
 // CONTENT MANAGEMENT API
 // ════════════════════════════════════════════
+
+// ── Audio serving — Mirror approach ──
+// Client fetches audio by token via HTTP — no WebSocket binary issues
+app.get('/api/audio/:token', (req, res) => {
+  const audio = audioStore.get(req.params.token);
+  if (!audio) return res.status(404).send('Not found');
+  res.set('Content-Type', 'audio/mpeg');
+  res.set('Cache-Control', 'no-cache');
+  res.send(audio);
+});
 
 // Content pages
 app.get('/admin/content',  auth.requireAuth(['admin']), (req, res) =>
