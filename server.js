@@ -420,43 +420,10 @@ async function textToSpeech(text) {
   return Buffer.concat(chunks);
 }
 
-// ── Add natural sentence pauses via SSML ──
-// One API call, pauses baked into the audio — no warm-up artefacts
-const SENTENCE_PAUSE_MS = parseInt(process.env.SENTENCE_PAUSE_MS || '500');
-
-function addSentencePauses(text) {
-  // Insert SSML break tags after sentence-ending punctuation
-  const pause = `<break time="${SENTENCE_PAUSE_MS}ms"/>`;
-  return text
-    .replace(/([.!?])\s+(?=[A-Z])/g, `$1 ${pause} `)
-    .replace(/([.!?])$/g, `$1 ${pause}`);
-}
-
+// ── Single-chunk TTS wrapper ──
 async function textToSpeechSentences(text, ws) {
-  // Use SSML to add pauses — single API call, consistent pacing throughout
-  const textWithPauses = addSentencePauses(text);
-  const audio = await textToSpeechSSML(textWithPauses);
+  const audio = await textToSpeech(text);
   ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
-}
-
-async function textToSpeechSSML(ssmlText) {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
-    {
-      method: 'POST',
-      headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: ssmlText,
-        model_id: 'eleven_turbo_v2',
-        voice_settings: { stability: 0.78, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
-        speed: VOICE_SPEED,
-      }),
-    }
-  );
-  if (!response.ok) throw new Error(`ElevenLabs ${response.status}`);
-  const chunks = [];
-  for await (const chunk of response.body) chunks.push(chunk);
-  return Buffer.concat(chunks);
 }
 
 // ── Deepgram STT ──
