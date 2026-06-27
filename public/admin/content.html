@@ -211,6 +211,10 @@
     <input type="hidden" id="efId"/>
     <div><label>Title</label><input type="text" id="efTitle"/></div>
     <div><label>Description</label><textarea id="efDesc" rows="2"></textarea></div>
+    <div>
+      <label>Filename on disk <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(without extension)</span></label>
+      <input type="text" id="efFilename" placeholder="e.g. FindingJoy_Session1_Handout"/>
+    </div>
     <div class="modal-row">
       <div><label>Category</label><select id="efCat" onchange="populateSub('efCat','efSub')"><option value="">Select…</option></select></div>
       <div><label>Subcategory</label><select id="efSub"><option value="">Select…</option></select></div>
@@ -476,24 +480,88 @@ dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');addToQ(e.dataTransfer.files);});
 document.getElementById('bulkInput').addEventListener('change',e=>addToQ(e.target.files));
 
+// ── Filename inference ──
+const CAT_KEYWORDS = {
+  'cat-mindfulness': ['mindfulness','mbct','mbsr','meditation'],
+  'cat-felt':        ['felt','fibre','fiber','findingjoy','findingcalm','finding-joy','finding-calm','finding_joy','finding_calm'],
+  'cat-girls':       ['girls','girlsprogramme','girls-programme','girls_programme','hfpm'],
+  'cat-therapy':     ['therapy','therapist','cbt','counsell'],
+};
+const SUB_KEYWORDS = {
+  'sub-mfl':          ['forlife','for-life','for_life','mfl'],
+  'sub-mbct':         ['mbct'],
+  'sub-mbsr':         ['mbsr'],
+  'sub-mind-intro':   ['mindintro','mind-intro','mindfulness-intro'],
+  'sub-deeper':       ['deepermindfulness','deeper-mindfulness','deeper_mindfulness','deeper'],
+  'sub-felt-intro':   ['feltintro','felt-intro','felt_intro'],
+  'sub-felt-prac':    ['practitioner','prac'],
+  'sub-finding-calm': ['findingcalm','finding-calm','finding_calm'],
+  'sub-finding-joy':  ['findingjoy','finding-joy','finding_joy'],
+  'sub-girls-y':      ['youngergirls','younger-girls','younger_girls','yg'],
+  'sub-girls-o':      ['oldergirls','older-girls','older_girls','og'],
+  'sub-cbt':          ['cbt'],
+  'sub-felt-therapy': ['felttherapy','felt-therapy','felt_therapy'],
+  'sub-therapy-gen':  ['general','gen'],
+};
+const VIS_KEYWORDS = {
+  facilitator: ['facilitator','facilitatornotes','admin','adminnotes','slides','pptx','trainers','trainer','facilitatorsguide'],
+  guest:       ['intro','introduction','welcome','overview','public','promo','about'],
+  client:      ['student','handout','studenthandout','practice','audio','client'],
+};
+
+function inferFromFilename(name) {
+  const n = name.toLowerCase().replace(/[\s._-]+/g,'');
+
+  // Infer visibility
+  let vis = 'client';
+  for (const [v, keys] of Object.entries(VIS_KEYWORDS)) {
+    if (keys.some(k => n.includes(k))) { vis = v; break; }
+  }
+
+  // Infer category
+  let catId = '', subId = '';
+  for (const [cat, keys] of Object.entries(CAT_KEYWORDS)) {
+    if (keys.some(k => n.includes(k))) { catId = cat; break; }
+  }
+
+  // Infer subcategory
+  for (const [sub, keys] of Object.entries(SUB_KEYWORDS)) {
+    if (keys.some(k => n.includes(k))) { subId = sub; break; }
+  }
+
+  return { vis, catId, subId };
+}
+
 function addToQ(files){
-  Array.from(files).forEach(f=>upQueue.push({file:f,vis:'client'}));
+  Array.from(files).forEach(f=>{
+    const inferred = inferFromFilename(f.name);
+    upQueue.push({file:f, vis:inferred.vis, catId:inferred.catId, subId:inferred.subId, inferred:true});
+  });
   renderQ();
 }
+function getCatName(id){return allCats.find(c=>c.id===id)?.name||'';}
+
 function renderQ(){
-  document.getElementById('upQueue').innerHTML=upQueue.map((it,i)=>`
-    <div class="upload-item">
+  document.getElementById('upQueue').innerHTML=upQueue.map((it,i)=>{
+    const inferredLabel = it.inferred && (it.catId||it.subId||it.vis!=='client')
+      ? `<span style="font-size:10px;color:rgba(180,230,200,0.5);margin-left:4px">↳ ${getCatName(it.catId)||'?'} ${getCatName(it.subId)?'/ '+getCatName(it.subId):''} · ${it.vis}</span>` : '';
+    return `
+    <div class="upload-item" style="flex-wrap:wrap;gap:6px">
       <span style="font-size:16px">${ficon(it.file.type)}</span>
-      <div class="upload-item-name">${it.file.name} <span style="color:rgba(255,255,255,0.2)">${fsize(it.file.size)}</span></div>
-      <select class="vis-sel" onchange="upQueue[${i}].vis=this.value">
+      <div class="upload-item-name" style="flex:1;min-width:0">
+        <input type="text" value="${it.file.name.replace(/\.[^.]+$/,'')}" onchange="upQueue[${i}].customTitle=this.value"
+          style="background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.78);font-size:12px;font-family:Georgia,serif;outline:none;width:100%;padding:2px 0"/>
+        <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:2px">${fsize(it.file.size)}${inferredLabel}</div>
+      </div>
+      <select class="vis-sel" onchange="upQueue[${i}].vis=this.value;upQueue[${i}].inferred=false">
         <option value="guest"${it.vis==='guest'?' selected':''}>Guest</option>
         <option value="client"${it.vis==='client'?' selected':''}>Client</option>
         <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
         <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
       </select>
       <button onclick="upQueue.splice(${i},1);renderQ()" style="background:none;border:none;color:rgba(255,100,80,0.5);cursor:pointer;font-size:18px">×</button>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function doUpload(){
@@ -507,10 +575,12 @@ async function doUpload(){
   for(const it of upQueue){
     const fd=new FormData();
     fd.append('file',it.file);
-    fd.append('title',it.file.name.replace(/\.[^.]+$/,''));
-    fd.append('categoryId',cat);
-    fd.append('subcategoryId',sub||'');
-    fd.append('visibility',it.vis);
+    const title = it.customTitle || it.file.name.replace(/\.[^.]+$/,'');
+    fd.append('title', title);
+    // Use global selectors if set, otherwise use inferred values
+    fd.append('categoryId',    cat  || it.catId || '');
+    fd.append('subcategoryId', sub  || it.subId || '');
+    fd.append('visibility',    it.vis);
     await fetch('/api/content/library',{method:'POST',body:fd});
   }
   btn.disabled=false;btn.textContent='Upload all';
@@ -526,6 +596,11 @@ function openEditFile(id){
   document.getElementById('efDesc').value=f.description||'';
   document.getElementById('efVis').value=f.visibility||'client';
   document.getElementById('efErr').textContent='';
+  // Show filename without extension and uuid prefix
+  const rawName = f.filename || '';
+  const ext = rawName.lastIndexOf('.')>0 ? rawName.slice(rawName.lastIndexOf('.')) : '';
+  const nameNoExt = rawName.slice(0, rawName.length - ext.length);
+  document.getElementById('efFilename').value=f.original_name ? f.original_name.replace(/\.[^.]+$/,'') : nameNoExt;
   populateCatSels('efCat');
   document.getElementById('efCat').value=f.category_id||'';
   populateSub('efCat','efSub',f.subcategory_id||'');
@@ -535,7 +610,9 @@ function openEditFile(id){
 async function saveFileEdit(){
   const id=document.getElementById('efId').value;
   const title=document.getElementById('efTitle').value.trim();
+  const newFilename=document.getElementById('efFilename').value.trim();
   if(!title){document.getElementById('efErr').textContent='Title required.';return;}
+  // Update metadata
   await fetch(`/api/content/library/${id}`,{
     method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({title,description:document.getElementById('efDesc').value,
@@ -543,6 +620,13 @@ async function saveFileEdit(){
       subcategory_id:document.getElementById('efSub').value||null,
       visibility:document.getElementById('efVis').value})
   });
+  // Rename file if changed
+  if(newFilename){
+    await fetch(`/api/content/library/${id}/rename`,{
+      method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:newFilename})
+    });
+  }
   closeModal('editFileModal');loadAll();
 }
 
