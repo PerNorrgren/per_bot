@@ -317,43 +317,49 @@
       else if(s==='speaking'){ waveEl.classList.add('on'); }
     }
 
-    // AudioContext for reliable full-buffer playback
-    let audioCtx = null;
-    function getAudioCtx() {
-      if (!audioCtx || audioCtx.state === 'closed') {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      return audioCtx;
-    }
-
-    let currentSource = null;
+    let currentAudio = null;
 
     function playAudio(b64) {
       // Stop any currently playing audio
-      if (currentSource) {
-        try { currentSource.stop(); } catch(e) {}
-        currentSource = null;
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
       }
-      return new Promise(async (res) => {
+      return new Promise((res) => {
         try {
-          const bytes  = atob(b64);
-          const arr    = new Uint8Array(bytes.length);
+          const bytes = atob(b64);
+          const arr   = new Uint8Array(bytes.length);
           for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+          const blob  = new Blob([arr], { type: 'audio/mpeg' });
+          const url   = URL.createObjectURL(blob);
+          const audio = new Audio();
 
-          const ctx    = getAudioCtx();
-          // decodeAudioData ensures full buffer decoded before playback starts
-          const buffer = await ctx.decodeAudioData(arr.buffer);
-
-          const source = ctx.createBufferSource();
-          source.buffer = buffer;
-          source.connect(ctx.destination);
-          source.onended = () => { currentSource = null; isSpeaking = false; res(); };
-          currentSource = source;
-          isSpeaking = true;
-          source.start(0);
+          audio.oncanplaythrough = () => {
+            // Full buffer ready — play now
+            currentAudio = audio;
+            isSpeaking   = true;
+            audio.play().catch(e => { console.error('Play error:', e); isSpeaking = false; res(); });
+          };
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            currentAudio = null;
+            isSpeaking   = false;
+            res();
+          };
+          audio.onerror = (e) => {
+            console.error('Audio error:', e);
+            URL.revokeObjectURL(url);
+            currentAudio = null;
+            isSpeaking   = false;
+            res();
+          };
+          // Load the full blob before playing
+          audio.preload = 'auto';
+          audio.src = url;
+          audio.load();
         } catch(e) {
-          console.error('Audio error:', e);
+          console.error('playAudio error:', e);
           isSpeaking = false;
           res();
         }
