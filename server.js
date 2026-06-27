@@ -409,7 +409,7 @@ async function textToSpeech(text) {
       body: JSON.stringify({
         text,
         model_id: 'eleven_turbo_v2',
-        voice_settings: { stability: 0.75, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
+        voice_settings: { stability: 0.78, similarity_boost: 0.85, style: 0.0, use_speaker_boost: true },
         speed: VOICE_SPEED,
       }),
     }
@@ -418,6 +418,43 @@ async function textToSpeech(text) {
   const chunks = [];
   for await (const chunk of response.body) chunks.push(chunk);
   return Buffer.concat(chunks);
+}
+
+// ── Split text into sentences and send as sequence ──
+function splitSentences(text) {
+  // Split on sentence-ending punctuation, keep the punctuation
+  const raw = text.match(/[^.!?]+[.!?]+[\s]*/g) || [text];
+  return raw.map(s => s.trim()).filter(s => s.length > 0);
+}
+
+const SENTENCE_GAP_MS = parseInt(process.env.SENTENCE_GAP_MS || '420');
+
+async function textToSpeechSentences(text, ws) {
+  const sentences = splitSentences(text);
+  
+  if (sentences.length <= 1) {
+    // Single sentence — send as before
+    const audio = await textToSpeech(text);
+    ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64'), final: true }));
+    return;
+  }
+
+  // Multiple sentences — send each with a gap marker
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i];
+    if (!sentence.trim()) continue;
+    try {
+      const audio = await textToSpeech(sentence);
+      ws.send(JSON.stringify({
+        type: 'audio',
+        data: audio.toString('base64'),
+        gap: SENTENCE_GAP_MS,
+        final: i === sentences.length - 1
+      }));
+    } catch (e) {
+      console.error('TTS error for sentence:', e.message);
+    }
+  }
 }
 
 // ── Deepgram STT ──
@@ -459,6 +496,7 @@ wss.on('connection', (ws, req) => {
   let fogLevel            = 12;
   let deepgramWs          = null;
   let systemPrompt        = '';
+  let isProcessing        = false;
 
   console.log(`[${botType}] ${wsUser.name} connected`);
 
@@ -484,9 +522,8 @@ wss.on('connection', (ws, req) => {
       conversationHistory.push({ role: 'assistant', content: greeting });
       sessionTranscript.push(`BOT: ${greeting}`);
 
-      const audio = await textToSpeech(greeting);
       ws.send(JSON.stringify({ type: 'greeting', text: greeting }));
-      ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64') }));
+      await textToSpeechSentences(greeting, ws);
 
     } else if (botType === 'facilitator') {
       systemPrompt = prompts.FACILITATOR_SYSTEM_PROMPT(fogLevel);
@@ -517,8 +554,10 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'start_listening') {
       deepgramWs = openDeepgram(async (transcript, isFinal) => {
         if (!isFinal) { ws.send(JSON.stringify({ type: 'interim_transcript', text: transcript })); return; }
+        if (isProcessing) return; // Drop if still processing previous response
         ws.send(JSON.stringify({ type: 'final_transcript', text: transcript }));
         sessionTranscript.push(`USER: ${transcript}`);
+        isProcessing = true;
 
         const detailed = msg.detailed || false;
         const content  = (botType === 'facilitator' && !detailed)
@@ -531,9 +570,9 @@ wss.on('connection', (ws, req) => {
           conversationHistory.push({ role: 'assistant', content: reply });
           sessionTranscript.push(`BOT: ${reply}`);
           ws.send(JSON.stringify({ type: 'response_text', text: reply }));
-          const audio = await textToSpeech(reply);
-          ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64') }));
-        } catch (e) { console.error('Claude error:', e); }
+          await textToSpeechSentences(reply, ws);
+          isProcessing = false;
+        } catch (e) { console.error('Claude error:', e); isProcessing = false; }
       });
       ws.send(JSON.stringify({ type: 'listening_started' }));
     }
@@ -562,8 +601,7 @@ wss.on('connection', (ws, req) => {
         conversationHistory.push({ role: 'assistant', content: reply });
         sessionTranscript.push(`BOT: ${reply}`);
         ws.send(JSON.stringify({ type: 'response_text', text: reply }));
-        const audio = await textToSpeech(reply);
-        ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64') }));
+        await textToSpeechSentences(reply, ws);
       } catch (e) { console.error(e); }
     }
 
@@ -583,8 +621,7 @@ wss.on('connection', (ws, req) => {
           300
         );
         ws.send(JSON.stringify({ type: 'explanation', text: explanation }));
-        const audio = await textToSpeech(explanation);
-        ws.send(JSON.stringify({ type: 'audio', data: audio.toString('base64') }));
+        await textToSpeechSentences(explanation, ws);
       } catch (e) { console.error(e); }
     }
 
