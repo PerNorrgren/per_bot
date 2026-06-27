@@ -74,7 +74,10 @@
         </div>
         <div class="field">
           <label>Password</label>
-          <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"/>
+          <div style="position:relative">
+            <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" style="padding-right:44px"/>
+            <button type="button" id="togglePw" onclick="togglePassword()" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;padding:4px;line-height:1">👁</button>
+          </div>
         </div>
         <div class="error" id="error"></div>
         <button class="submit-btn" id="submitBtn">Sign in</button>
@@ -113,6 +116,18 @@
     }
     if (params.get('error') === 'session') {
       document.getElementById('error').textContent = 'Session expired. Please sign in again.';
+    }
+
+    function togglePassword() {
+      const input = document.getElementById('password');
+      const btn   = document.getElementById('togglePw');
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.style.color = 'rgba(180,230,200,0.6)';
+      } else {
+        input.type = 'password';
+        btn.style.color = 'rgba(255,255,255,0.3)';
+      }
     }
 
     async function doLogin() {
