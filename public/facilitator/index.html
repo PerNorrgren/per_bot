@@ -365,10 +365,43 @@
 <div class="modal-overlay" id="newClientModal">
   <div class="modal">
     <h3>New client</h3>
-    <input type="text" id="newClientName" placeholder="First name"/>
+    <div>
+      <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:5px">Name</label>
+      <input type="text" id="newClientName" placeholder="First name"/>
+    </div>
+    <div>
+      <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:5px">Email <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(optional — needed for login)</span></label>
+      <input type="email" id="newClientEmail" placeholder="client@example.com"/>
+    </div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1">
+        <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:5px">Programme</label>
+        <select id="newClientCat" onchange="loadNewClientSubs()" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none">
+          <option value="">Select…</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:5px">Track</label>
+        <select id="newClientSub" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none">
+          <option value="">Select…</option>
+        </select>
+      </div>
+    </div>
+    <div id="newClientErr" style="font-size:12px;color:rgba(255,120,100,0.8);min-height:16px"></div>
     <div class="modal-btns">
       <button class="modal-cancel" id="cancelNewClient">Cancel</button>
       <button class="modal-confirm" id="confirmNewClient">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Client Created Modal -->
+<div class="modal-overlay" id="clientCreatedModal">
+  <div class="modal">
+    <h3>Client created</h3>
+    <div id="clientCreatedBody"></div>
+    <div class="modal-btns">
+      <button class="modal-confirm" onclick="document.getElementById('clientCreatedModal').classList.remove('visible');loadClients()">Done</button>
     </div>
   </div>
 </div>
@@ -659,27 +692,80 @@
   });
 
   // ── New client ──
+  // Load categories into new client modal
+  async function loadCatsForNewClient() {
+    const res  = await fetch('/api/content/categories');
+    const cats = await res.json();
+    const tops = cats.filter(c => !c.parent_id);
+    const el   = document.getElementById('newClientCat');
+    el.innerHTML = '<option value="">Select programme…</option>';
+    tops.forEach(c => { el.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
+    el._allCats = cats;
+  }
+
+  function loadNewClientSubs() {
+    const catId  = document.getElementById('newClientCat').value;
+    const cats   = document.getElementById('newClientCat')._allCats || [];
+    const subEl  = document.getElementById('newClientSub');
+    const subs   = cats.filter(c => c.parent_id === catId);
+    subEl.innerHTML = '<option value="">Select track…</option>';
+    subs.forEach(s => { subEl.innerHTML += `<option value="${s.id}">${s.name}</option>`; });
+  }
+
   document.getElementById('newClientBtn').addEventListener('click', () => {
     document.getElementById('newClientModal').classList.add('visible');
-    document.getElementById('newClientName').value = '';
+    document.getElementById('newClientName').value  = '';
+    document.getElementById('newClientEmail').value = '';
+    document.getElementById('newClientCat').value   = '';
+    document.getElementById('newClientSub').innerHTML = '<option value="">Select track…</option>';
+    document.getElementById('newClientErr').textContent = '';
     document.getElementById('newClientName').focus();
+    loadCatsForNewClient();
   });
+
   document.getElementById('cancelNewClient').addEventListener('click', () => {
     document.getElementById('newClientModal').classList.remove('visible');
   });
+
   document.getElementById('confirmNewClient').addEventListener('click', async () => {
-    const name = document.getElementById('newClientName').value.trim();
-    if (!name) return;
-    const res = await fetch('/api/clients', {
+    const name  = document.getElementById('newClientName').value.trim();
+    const email = document.getElementById('newClientEmail').value.trim();
+    const catId = document.getElementById('newClientCat').value;
+    const subId = document.getElementById('newClientSub').value;
+    const err   = document.getElementById('newClientErr');
+
+    if (!name) { err.textContent = 'Name required.'; return; }
+
+    const res  = await fetch('/api/clients', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, email: email || null, categoryId: catId || null, subcategoryId: subId || null })
     });
     const client = await res.json();
+    if (client.error) { err.textContent = client.error; return; }
+
     document.getElementById('newClientModal').classList.remove('visible');
+
+    // Show confirmation
+    const body = document.getElementById('clientCreatedBody');
+    if (email && client.tempPassword) {
+      body.innerHTML = `
+        <div style="background:rgba(180,230,200,0.07);border:1px solid rgba(180,230,200,0.2);border-radius:10px;padding:16px;margin-bottom:10px">
+          <div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(180,230,200,0.45);margin-bottom:6px">Temporary password</div>
+          <div style="font-size:20px;font-family:monospace;color:rgba(180,230,200,1);letter-spacing:0.06em">${client.tempPassword}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.3);margin-top:8px">A welcome email has been sent to ${email}. Keep this as backup.</div>
+        </div>`;
+    } else {
+      body.innerHTML = `<div style="font-size:14px;color:rgba(255,255,255,0.65)">${name} has been created. No email set — share the login URL manually when ready.</div>`;
+    }
+    document.getElementById('clientCreatedModal').classList.add('visible');
     await loadClients();
     selectClient(client.id, client.name);
   });
+
   document.getElementById('newClientName').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('newClientEmail').focus();
+  });
+  document.getElementById('newClientEmail').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('confirmNewClient').click();
   });
 
