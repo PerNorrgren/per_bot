@@ -11,6 +11,67 @@ const db         = require('./db');
 const auth       = require('./auth');
 const prompts    = require('./prompts');
 
+// ── Email via Resend ──
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const EMAIL_FROM     = process.env.EMAIL_FROM || 'noreply@deepermindfulness.org';
+const APP_URL        = process.env.APP_URL || 'https://mirror-production-018d.up.railway.app';
+
+async function sendEmail(to, subject, html) {
+  if (!RESEND_API_KEY) { console.log('RESEND_API_KEY not set — skipping email to', to); return; }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: EMAIL_FROM, to, subject, html })
+    });
+    const data = await res.json();
+    if (!res.ok) console.error('Resend error:', data);
+    else console.log('Email sent to', to);
+  } catch (e) { console.error('Email error:', e.message); }
+}
+
+function emailWelcomeFacilitator(name, email, tempPassword) {
+  return sendEmail(email, 'Welcome to Deeper Mindfulness — your facilitator account',
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">Deeper Mindfulness</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, ${name}</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your facilitator account has been created. You can sign in using the details below.</p>
+      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Login URL</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="${APP_URL}" style="color:#2d6a4f">${APP_URL}</a></div>
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Email</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">${email}</div>
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">${tempPassword}</div>
+      </div>
+      <p style="font-size:14px;line-height:1.7;color:#666">You will be asked to set a new password when you first sign in.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Norrgren</div>
+    </div>`
+  );
+}
+
+function emailWelcomeClient(name, email, tempPassword) {
+  return sendEmail(email, 'Welcome to Deeper Mindfulness',
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">Deeper Mindfulness</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, ${name}</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready. Sign in to access your practices and connect with your guide.</p>
+      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="${APP_URL}" style="color:#2d6a4f">${APP_URL}</a></div>
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Email</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">${email}</div>
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">${tempPassword}</div>
+      </div>
+      <p style="font-size:14px;line-height:1.7;color:#666">You will be asked to choose a new password when you first sign in.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Norrgren</div>
+    </div>`
+  );
+}
+
 const app    = express();
 const server = http.createServer(app);
 const wss    = new WebSocket.Server({ server });
@@ -86,11 +147,24 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.post('/api/change-password', auth.requireAuthApi(), async (req, res) => {
-  const { password } = req.body;
+  const { password, currentPassword } = req.body;
   if (!password || password.length < 8) return res.json({ error: 'Password must be at least 8 characters.' });
 
-  const hash = await auth.hashPassword(password);
   const user = req.user;
+
+  // If current password provided, verify it first (in-app change)
+  if (currentPassword) {
+    let record;
+    if (user.role === 'client') {
+      record = db.getClient(user.id);
+    } else {
+      record = db.getFacilitatorById(user.id);
+    }
+    const valid = record ? await auth.verifyPassword(currentPassword, record.password_hash) : false;
+    if (!valid) return res.json({ error: 'Current password is incorrect.' });
+  }
+
+  const hash = await auth.hashPassword(password);
 
   if (user.role === 'client') {
     db.updateClientPassword(user.id, hash);
@@ -98,8 +172,13 @@ app.post('/api/change-password', auth.requireAuthApi(), async (req, res) => {
     db.updateFacilitatorPassword(user.id, hash);
   }
 
-  const redirectMap = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/' };
-  res.json({ redirect: redirectMap[user.role] || '/login' });
+  // First-time change via change-password page — redirect
+  if (!currentPassword) {
+    const redirectMap = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/' };
+    return res.json({ redirect: redirectMap[user.role] || '/login' });
+  }
+
+  res.json({ ok: true });
 });
 
 // ── Admin API ──
@@ -118,6 +197,7 @@ app.post('/api/admin/facilitators', auth.requireAuthApi(['admin']), async (req, 
   const hash = await auth.hashPassword(tempPassword);
   const id   = uuidv4();
   db.createFacilitator(id, name.trim(), email.trim(), hash, 'facilitator');
+  emailWelcomeFacilitator(name.trim(), email.trim(), tempPassword);
   res.json({ id, name, tempPassword });
 });
 
@@ -154,6 +234,7 @@ app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (re
   }
 
   db.createClient(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash);
+  if (email && tempPassword) emailWelcomeClient(name.trim(), email.trim(), tempPassword);
   res.json({ id, name: name.trim(), tempPassword });
 });
 
@@ -556,6 +637,25 @@ app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res)
 
 app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getFileUsage(req.params.id));
+});
+
+app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
+  const { filename } = req.body;
+  if (!filename) return res.status(400).json({ error: 'Filename required.' });
+  const file = db.getLibraryFile(req.params.id);
+  if (!file) return res.status(404).json({ error: 'Not found.' });
+  const fs   = require('fs');
+  const ext  = path.extname(file.filename);
+  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_') + ext;
+  const oldPath = path.join(__dirname, 'uploads', file.filename);
+  const newPath = path.join(__dirname, 'uploads', safe);
+  try {
+    if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
+    db.renameLibraryFile(req.params.id, safe);
+    res.json({ ok: true, filename: safe });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res) => {

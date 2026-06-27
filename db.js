@@ -312,6 +312,11 @@ function updateLibraryFile(id, fields) {
   save();
 }
 
+function renameLibraryFile(id, filename) {
+  getDbSync().run('UPDATE library_files SET filename=? WHERE id=?', [filename, id]);
+  save();
+}
+
 function deleteLibraryFile(id) {
   // Remove refs first
   getDbSync().run('DELETE FROM lesson_file_refs WHERE file_id=?', [id]);
@@ -509,7 +514,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   // Library
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
-  deleteLibraryFile, getFileUsage,
+  renameLibraryFile, deleteLibraryFile, getFileUsage,
   // Courses
   createCourse, getCourse, getAllCourses, deleteCourse,
   // Lessons
