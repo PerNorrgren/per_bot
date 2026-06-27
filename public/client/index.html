@@ -22,42 +22,31 @@
       background:rgba(255,255,255,0.08);
       backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
       border:1px solid rgba(255,255,255,0.13);
-      border-radius:22px;
-      overflow:hidden;
+      border-radius:22px; overflow:hidden;
       display:flex; flex-direction:column;
+      max-height:90vh;
     }
 
     /* Header */
-    .header { padding:22px 28px 16px; text-align:center; border-bottom:1px solid rgba(255,255,255,0.07); }
+    .header { padding:18px 24px 14px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
     .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
+    .header-right { display:flex; gap:10px; align-items:center; }
+    .hdr-btn { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.22); background:none; border:none; cursor:pointer; padding:3px; font-family:'Georgia',serif; }
+    .hdr-btn:hover { color:rgba(255,255,255,0.5); }
 
-    /* Tab bar */
-    .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.07); }
-    .tab {
-      flex:1; padding:12px; text-align:center;
-      font-size:11px; letter-spacing:0.15em; text-transform:uppercase;
-      color:rgba(255,255,255,0.35); cursor:pointer;
-      background:none; border:none; transition:all 0.2s ease;
-    }
+    /* Tabs */
+    .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; }
+    .tab { flex:1; padding:11px; text-align:center; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.35); cursor:pointer; background:none; border:none; font-family:'Georgia',serif; transition:all 0.2s; }
     .tab.active { color:rgba(255,255,255,0.85); border-bottom:1.5px solid rgba(180,230,200,0.6); }
 
     /* Talk tab */
-    .talk-view { padding:28px 28px 24px; display:flex; flex-direction:column; align-items:center; gap:22px; }
-    .arc-banner {
-      width:100%; background:rgba(180,230,200,0.08);
-      border:1px solid rgba(180,230,200,0.2); border-radius:10px;
-      padding:12px 16px; font-size:13px; line-height:1.6;
-      color:rgba(180,230,200,0.8); display:none;
-    }
-    .arc-banner.visible { display:block; }
-
+    .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; }
     .transcript-area { width:100%; min-height:80px; display:flex; align-items:center; justify-content:center; text-align:center; }
     .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.88); font-style:italic; transition:opacity 0.3s; }
     .transcript-text.dim { opacity:0.4; }
     .transcript-text.user { font-style:normal; color:rgba(255,255,255,0.5); font-size:14px; }
 
-    /* Wave & dots */
-    .indicators { height:22px; display:flex; align-items:center; justify-content:center; gap:8px; }
+    .indicators { height:22px; display:flex; align-items:center; justify-content:center; }
     .wave { display:none; gap:4px; align-items:flex-end; height:20px; }
     .wave.on { display:flex; }
     .wave span { display:block; width:3px; border-radius:2px; background:rgba(180,230,200,0.7); animation:wv 1.1s ease-in-out infinite; }
@@ -67,7 +56,6 @@
     .wave span:nth-child(4){height:14px;animation-delay:0.45s}
     .wave span:nth-child(5){height:8px;animation-delay:0.6s}
     @keyframes wv { 0%,100%{transform:scaleY(0.4);opacity:0.5} 50%{transform:scaleY(1);opacity:1} }
-
     .dots { display:none; gap:6px; align-items:center; }
     .dots.on { display:flex; }
     .dots span { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.35); animation:db 1.2s ease-in-out infinite; }
@@ -76,68 +64,62 @@
     .dots span:nth-child(3){animation-delay:0.4s}
     @keyframes db { 0%,80%,100%{transform:translateY(0);opacity:0.35} 40%{transform:translateY(-6px);opacity:1} }
 
-    /* Mic */
     .mic-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
-    .mic-btn {
-      width:68px; height:68px; border-radius:50%;
-      border:1.5px solid rgba(255,255,255,0.22);
-      background:rgba(255,255,255,0.06);
-      cursor:pointer; display:flex; align-items:center; justify-content:center;
-      transition:all 0.25s ease; outline:none;
-    }
+    .mic-btn { width:68px; height:68px; border-radius:50%; border:1.5px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.06); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.25s ease; outline:none; }
     .mic-btn:hover { background:rgba(255,255,255,0.12); border-color:rgba(255,255,255,0.38); }
     .mic-btn.active { background:rgba(180,230,200,0.13); border-color:rgba(180,230,200,0.5); animation:pulse 2s ease-in-out infinite; }
     @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(180,230,200,0.4)} 70%{box-shadow:0 0 0 16px rgba(180,230,200,0)} 100%{box-shadow:0 0 0 0 rgba(180,230,200,0)} }
     .mic-btn svg { width:26px; height:26px; fill:rgba(255,255,255,0.65); transition:fill 0.25s; }
     .mic-btn.active svg { fill:rgba(180,230,200,0.9); }
-    
     .status { font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.25); text-transform:uppercase; height:14px; }
     .status.on { color:rgba(180,230,200,0.65); }
 
     /* Practices tab */
-    .practices-view { display:none; flex-direction:column; max-height:420px; }
+    .practices-view { display:none; flex-direction:column; overflow:hidden; }
     .practices-view.visible { display:flex; }
-    .practices-scroll { overflow-y:auto; flex:1; padding:16px 20px; }
-    .practices-scroll::-webkit-scrollbar { width:4px; }
-    .practices-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:2px; }
+    .practices-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:400px; }
+    .practices-scroll::-webkit-scrollbar { width:3px; }
+    .practices-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
 
-    .practice-item {
-      display:flex; align-items:center; gap:12px;
-      padding:12px 14px; margin-bottom:8px;
-      background:rgba(255,255,255,0.05);
-      border:1px solid rgba(255,255,255,0.08);
-      border-radius:12px; cursor:pointer;
-      transition:background 0.2s;
-    }
+    .practice-item { display:flex; align-items:center; gap:12px; padding:11px 13px; margin-bottom:7px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:11px; cursor:pointer; transition:background 0.2s; }
     .practice-item:hover { background:rgba(255,255,255,0.09); }
-    .practice-item.playing { border-color:rgba(180,230,200,0.4); background:rgba(180,230,200,0.07); }
-
     .practice-icon { font-size:18px; flex-shrink:0; }
     .practice-info { flex:1; min-width:0; }
     .practice-title { font-size:14px; color:rgba(255,255,255,0.82); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .practice-meta { font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px; }
-
-    .heart-btn {
-      background:none; border:none; cursor:pointer;
-      font-size:18px; opacity:0.4; transition:all 0.2s; flex-shrink:0; padding:4px;
-    }
+    .heart-btn { background:none; border:none; cursor:pointer; font-size:18px; opacity:0.35; transition:all 0.2s; flex-shrink:0; padding:4px; }
     .heart-btn.fav { opacity:1; }
     .heart-btn:hover { opacity:0.8; transform:scale(1.15); }
-
     .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
 
-    /* Practice player overlay */
-    .player-overlay {
-      display:none; position:absolute; inset:0; z-index:10;
-      background:rgba(10,15,13,0.92); backdrop-filter:blur(12px);
-      border-radius:22px; flex-direction:column;
-      align-items:center; justify-content:center; gap:20px; padding:32px;
-    }
+    /* Sessions tab */
+    .sessions-view { display:none; flex-direction:column; overflow:hidden; }
+    .sessions-view.visible { display:flex; }
+    .sessions-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:400px; }
+    .session-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:14px; margin-bottom:8px; }
+    .session-date { font-size:11px; color:rgba(255,255,255,0.3); margin-bottom:6px; letter-spacing:0.05em; }
+    .session-summary { font-size:13px; color:rgba(255,255,255,0.65); line-height:1.65; }
+    .no-sessions { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+
+    /* Player overlay */
+    .player-overlay { display:none; position:absolute; inset:0; z-index:10; background:rgba(10,15,13,0.94); backdrop-filter:blur(12px); border-radius:22px; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:32px; }
     .player-overlay.visible { display:flex; }
-    .player-title { font-size:18px; color:rgba(255,255,255,0.88); text-align:center; }
+    .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
-    .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; transition:all 0.2s; }
+    .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; transition:all 0.2s; }
     .player-close:hover { border-color:rgba(255,255,255,0.4); color:rgba(255,255,255,0.8); }
+
+    /* Change password modal */
+    .pw-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .pw-overlay.visible { display:flex; }
+    .pw-modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:340px; display:flex; flex-direction:column; gap:14px; }
+    .pw-modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .pw-field label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
+    .pw-field input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none; }
+    .pw-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .pw-btns { display:flex; gap:10px; justify-content:flex-end; }
+    .pw-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .pw-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
   </style>
 </head>
 <body>
@@ -148,21 +130,21 @@
     <div class="glass" style="position:relative">
 
       <div class="header">
-        <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
-        <div class="wordmark" style="flex:1">Deeper Mindfulness</div>
-        <button onclick="openChangePw()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.2);background:none;border:none;cursor:pointer;padding:4px;margin-right:8px">Password</button>
-        <button onclick="logout()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.2);background:none;border:none;cursor:pointer;padding:4px">Sign out</button>
-      </div>
+        <div class="wordmark">Deeper Mindfulness</div>
+        <div class="header-right">
+          <button class="hdr-btn" onclick="openChangePw()">Password</button>
+          <button class="hdr-btn" onclick="logout()">Sign out</button>
+        </div>
       </div>
 
       <div class="tabs">
-        <button class="tab active" id="tabTalk">Talk</button>
-        <button class="tab" id="tabPractices">Practices</button>
+        <button class="tab active" id="tabTalk" onclick="switchTab('talk')">Talk</button>
+        <button class="tab" id="tabPractices" onclick="switchTab('practices')">Practices</button>
+        <button class="tab" id="tabSessions" onclick="switchTab('sessions')">Sessions</button>
       </div>
 
       <!-- Talk -->
       <div class="talk-view" id="talkView">
-        <div class="arc-banner" id="arcBanner"></div>
         <div class="transcript-area">
           <p class="transcript-text" id="transcript">—</p>
         </div>
@@ -174,7 +156,6 @@
           <button class="mic-btn" id="micBtn">
             <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
           </button>
-          
         </div>
         <div class="status" id="status"></div>
       </div>
@@ -182,7 +163,14 @@
       <!-- Practices -->
       <div class="practices-view" id="practicesView">
         <div class="practices-scroll" id="practicesList">
-          <div class="no-practices" id="noPractices">No practices yet.</div>
+          <div class="no-practices">No practices yet.</div>
+        </div>
+      </div>
+
+      <!-- Sessions -->
+      <div class="sessions-view" id="sessionsView">
+        <div class="sessions-scroll" id="sessionsList">
+          <div class="no-sessions">No sessions yet.</div>
         </div>
       </div>
 
@@ -193,6 +181,21 @@
         <button class="player-close" id="playerClose">Close</button>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Change Password -->
+  <div class="pw-overlay" id="pwOverlay">
+    <div class="pw-modal">
+      <h3>Change password</h3>
+      <div class="pw-field"><label>Current password</label><input type="password" id="pwCurrent"/></div>
+      <div class="pw-field"><label>New password</label><input type="password" id="pwNew"/></div>
+      <div class="pw-field"><label>Confirm</label><input type="password" id="pwConfirm"/></div>
+      <div class="pw-err" id="pwErr"></div>
+      <div class="pw-btns">
+        <button class="pw-cancel" onclick="document.getElementById('pwOverlay').classList.remove('visible')">Cancel</button>
+        <button class="pw-ok" onclick="doChangePw()">Save</button>
+      </div>
     </div>
   </div>
 
@@ -221,27 +224,60 @@
       slideEls[cur].classList.add('active');
     }, 9000);
 
-    // State
-    const clientId = ''; // Identity comes from login session
+    // Tabs
+    function switchTab(tab) {
+      ['talk','practices','sessions'].forEach(t => {
+        document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+      });
+      document.getElementById('talkView').style.display      = tab === 'talk'      ? '' : 'none';
+      document.getElementById('practicesView').classList.toggle('visible', tab === 'practices');
+      document.getElementById('sessionsView').classList.toggle('visible',  tab === 'sessions');
+      if (tab === 'practices') loadPractices();
+      if (tab === 'sessions')  loadSessions();
+    }
+
+    // Auth
+    async function logout() { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+
+    function openChangePw() {
+      document.getElementById('pwCurrent').value='';
+      document.getElementById('pwNew').value='';
+      document.getElementById('pwConfirm').value='';
+      document.getElementById('pwErr').textContent='';
+      document.getElementById('pwOverlay').classList.add('visible');
+    }
+    async function doChangePw() {
+      const current = document.getElementById('pwCurrent').value;
+      const nw      = document.getElementById('pwNew').value;
+      const confirm = document.getElementById('pwConfirm').value;
+      const err     = document.getElementById('pwErr');
+      if (!current||!nw) { err.textContent='All fields required.'; return; }
+      if (nw.length<8)   { err.textContent='At least 8 characters.'; return; }
+      if (nw!==confirm)  { err.textContent='Passwords do not match.'; return; }
+      const res  = await fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({currentPassword:current,password:nw})});
+      const data = await res.json();
+      if (data.error) { err.textContent=data.error; return; }
+      document.getElementById('pwOverlay').classList.remove('visible');
+    }
+
+    // WebSocket
     const wsUrl = (location.protocol==='https:'?'wss':'ws')+'://'+location.host+'?type=client';
     const ws = new WebSocket(wsUrl);
 
     const transcriptEl = document.getElementById('transcript');
     const statusEl     = document.getElementById('status');
     const micBtn       = document.getElementById('micBtn');
-    const micHint      = document.getElementById('micHint');
     const waveEl       = document.getElementById('wave');
     const dotsEl       = document.getElementById('dots');
-    const arcBanner    = document.getElementById('arcBanner');
 
-    let isListening=false, mediaStream=null, mediaRecorder=null, dgWs=null;
+    let isListening=false, mediaStream=null, mediaRecorder=null;
 
     function setState(s) {
       waveEl.classList.remove('on'); dotsEl.classList.remove('on');
       micBtn.classList.remove('active'); statusEl.classList.remove('on');
-      if(s==='idle'){ statusEl.textContent=''; micHint.textContent='hold to speak'; }
-      else if(s==='listening'){ micBtn.classList.add('active'); statusEl.classList.add('on'); statusEl.textContent='listening'; micHint.textContent='release when done'; }
-      else if(s==='processing'){ dotsEl.classList.add('on'); micHint.textContent='hold to speak'; }
+      if(s==='idle'){ statusEl.textContent=''; }
+      else if(s==='listening'){ micBtn.classList.add('active'); statusEl.classList.add('on'); statusEl.textContent='listening'; }
+      else if(s==='processing'){ dotsEl.classList.add('on'); }
       else if(s==='speaking'){ waveEl.classList.add('on'); }
     }
 
@@ -257,13 +293,7 @@
     ws.onmessage = async (e) => {
       const msg = JSON.parse(e.data);
       if(msg.type==='greeting'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text'; }
-      if(msg.type==='audio'){
-        setState('speaking');
-        await playAudio(msg.data);
-        setState('idle');
-        // Auto-open mic after bot finishes speaking
-        setTimeout(() => startListening(), 400);
-      }
+      if(msg.type==='audio'){ setState('speaking'); await playAudio(msg.data); setState('idle'); setTimeout(()=>startListening(),400); }
       if(msg.type==='listening_started'){ setState('listening'); }
       if(msg.type==='listening_stopped'){ setState('processing'); }
       if(msg.type==='interim_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text dim'; }
@@ -286,7 +316,6 @@
       };
       mediaRecorder.start(200);
     }
-
     function stopListening() {
       if(!isListening) return; isListening=false;
       mediaRecorder?.state!=='inactive' && mediaRecorder.stop();
@@ -300,22 +329,7 @@
     micBtn.addEventListener('touchstart', e=>{ e.preventDefault(); startListening(); },{passive:false});
     micBtn.addEventListener('touchend', e=>{ e.preventDefault(); stopListening(); });
     document.addEventListener('keydown', e=>{ if(e.code==='Space'&&!e.repeat){ e.preventDefault(); startListening(); } });
-    document.addEventListener('keyup', e=>{ if(e.code==='Space'){ e.preventDefault(); stopListening(); } });
-
-    // Tabs
-    const talkView      = document.getElementById('talkView');
-    const practicesView = document.getElementById('practicesView');
-    document.getElementById('tabTalk').addEventListener('click', ()=>{
-      document.getElementById('tabTalk').classList.add('active');
-      document.getElementById('tabPractices').classList.remove('active');
-      talkView.style.display=''; practicesView.classList.remove('visible');
-    });
-    document.getElementById('tabPractices').addEventListener('click', ()=>{
-      document.getElementById('tabPractices').classList.add('active');
-      document.getElementById('tabTalk').classList.remove('active');
-      talkView.style.display='none'; practicesView.classList.add('visible');
-      loadPractices();
-    });
+    document.addEventListener('keyup',   e=>{ if(e.code==='Space'){ e.preventDefault(); stopListening(); } });
 
     // Practices
     async function loadPractices() {
@@ -326,97 +340,63 @@
 
     function renderPractices(list) {
       const el = document.getElementById('practicesList');
-      const np = document.getElementById('noPractices');
-      if(!list.length){ np.style.display=''; el.innerHTML=''; el.appendChild(np); return; }
-      np.style.display='none';
-      el.innerHTML='';
-      list.forEach(p => {
-        const item = document.createElement('div');
-        item.className='practice-item';
-        item.innerHTML=`
+      if(!list.length){ el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
+      const favs   = list.filter(p=>p.is_favourite);
+      const others = list.filter(p=>!p.is_favourite);
+      const sorted = [...favs, ...others];
+      el.innerHTML = sorted.map(p=>`
+        <div class="practice-item" onclick="openPractice('${p.id}','${p.title.replace(/'/g,"\\'")}','${p.type}','${p.content?.replace(/'/g,"\\'")||''}','${p.filename||''}')">
           <span class="practice-icon">${p.type==='audio'?'🎵':'📄'}</span>
           <div class="practice-info">
             <div class="practice-title">${p.title}</div>
-            <div class="practice-meta">${p.type==='audio'?'Audio':'Text'} · Used ${p.use_count} times</div>
+            <div class="practice-meta">${p.type==='audio'?'Audio':'Text'} · Used ${p.use_count||0} times</div>
           </div>
-          <button class="heart-btn ${p.is_favourite?'fav':''}" data-id="${p.id}">♥</button>
-        `;
-        // Heart toggle
-        item.querySelector('.heart-btn').addEventListener('click', async(e)=>{
-          e.stopPropagation();
-          await fetch(`/api/practices/${p.id}/favourite`,{method:'PATCH'});
-          loadPractices();
-        });
-        // Open practice
-        item.addEventListener('click', ()=>openPractice(p));
-        el.appendChild(item);
-      });
+          <button class="heart-btn ${p.is_favourite?'fav':''}" onclick="event.stopPropagation();toggleFav('${p.id}')">♥</button>
+        </div>
+      `).join('');
     }
 
-    function openPractice(p) {
-      const overlay = document.getElementById('playerOverlay');
-      document.getElementById('playerTitle').textContent=p.title;
-      if(p.type==='text'){
-        document.getElementById('playerText').textContent=p.content;
-        overlay.classList.add('visible');
-        fetch(`/api/practices/${p.id}/use`,{method:'PATCH'});
+    async function toggleFav(id) {
+      await fetch(`/api/practices/${id}/favourite`,{method:'PATCH'});
+      loadPractices();
+    }
+
+    function openPractice(id, title, type, content, filename) {
+      document.getElementById('playerTitle').textContent = title;
+      if(type==='text'){
+        document.getElementById('playerText').textContent = content || '';
+        document.getElementById('playerOverlay').classList.add('visible');
+        fetch(`/api/practices/${id}/use`,{method:'PATCH'});
       } else {
-        // Play audio file
-        const audio=new Audio(`/uploads/${p.filename}`);
-        document.getElementById('playerText').textContent='Playing…';
-        overlay.classList.add('visible');
+        const audio = new Audio(`/uploads/${filename}`);
+        document.getElementById('playerText').textContent = 'Playing…';
+        document.getElementById('playerOverlay').classList.add('visible');
         audio.play();
-        fetch(`/api/practices/${p.id}/use`,{method:'PATCH'});
-        audio.onended=()=>{ document.getElementById('playerText').textContent='Done.'; };
+        fetch(`/api/practices/${id}/use`,{method:'PATCH'});
+        audio.onended = () => { document.getElementById('playerText').textContent='Done.'; };
       }
     }
-
     document.getElementById('playerClose').addEventListener('click',()=>{
       document.getElementById('playerOverlay').classList.remove('visible');
     });
-  async function logout() {
-    await fetch('/api/logout', { method: 'POST' });
-    window.location.href = '/login';
-  }
+
+    // Sessions
+    async function loadSessions() {
+      const res  = await fetch('/api/my/profile');
+      const data = await res.json();
+      renderSessions(data.sessions || []);
+    }
+
+    function renderSessions(list) {
+      const el = document.getElementById('sessionsList');
+      if(!list.length){ el.innerHTML='<div class="no-sessions">No sessions recorded yet.</div>'; return; }
+      el.innerHTML = list.map(s=>`
+        <div class="session-item">
+          <div class="session-date">${s.created_at?.slice(0,10)||''}</div>
+          <div class="session-summary">${s.client_summary||'Session recorded.'}</div>
+        </div>
+      `).join('');
+    }
   </script>
-
-<!-- Change Password Modal -->
-<div id="changePwModal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.65);backdrop-filter:blur(12px);align-items:center;justify-content:center;padding:20px">
-  <div style="background:rgba(20,26,23,0.95);border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:28px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px">
-    <div style="font-size:16px;color:rgba(255,255,255,0.85)">Change password</div>
-    <div><div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:6px">Current password</div>
-      <input type="password" id="cpCurrent" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none"/></div>
-    <div><div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:6px">New password</div>
-      <input type="password" id="cpNew" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none"/></div>
-    <div><div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:6px">Confirm</div>
-      <input type="password" id="cpConfirm" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none"/></div>
-    <div id="cpErr" style="font-size:12px;color:rgba(255,120,100,0.8);min-height:16px"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end">
-      <button onclick="document.getElementById('changePwModal').style.display='none'" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:none;color:rgba(255,255,255,0.45);cursor:pointer;font-family:Georgia,serif">Cancel</button>
-      <button onclick="doChangePw()" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.8);cursor:pointer;font-family:Georgia,serif">Save</button>
-    </div>
-  </div>
-</div>
-<script>
-function openChangePw(){
-  document.getElementById('cpCurrent').value='';document.getElementById('cpNew').value='';
-  document.getElementById('cpConfirm').value='';document.getElementById('cpErr').textContent='';
-  document.getElementById('changePwModal').style.display='flex';
-}
-async function doChangePw(){
-  const current=document.getElementById('cpCurrent').value;
-  const nw=document.getElementById('cpNew').value;
-  const confirm=document.getElementById('cpConfirm').value;
-  const err=document.getElementById('cpErr');
-  if(!current||!nw){err.textContent='All fields required.';return;}
-  if(nw.length<8){err.textContent='At least 8 characters.';return;}
-  if(nw!==confirm){err.textContent='Passwords do not match.';return;}
-  const res=await fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({currentPassword:current,password:nw})});
-  const data=await res.json();
-  if(data.error){err.textContent=data.error;return;}
-  document.getElementById('changePwModal').style.display='none';
-}
-</script>
-
 </body>
 </html>
