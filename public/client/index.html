@@ -131,9 +131,15 @@
 
       <div class="header">
         <div class="wordmark">Deeper Mindfulness</div>
-        <div class="header-right">
-          <button class="hdr-btn" onclick="openChangePw()">Password</button>
-          <button class="hdr-btn" onclick="logout()">Sign out</button>
+        <div style="position:relative">
+          <button onclick="toggleClientMenu()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:3px 0">
+            <span style="font-size:13px;color:rgba(255,255,255,0.5);font-family:Georgia,serif;letter-spacing:0.05em">My account</span>
+            <span style="color:rgba(255,255,255,0.25);font-size:10px">▾</span>
+          </button>
+          <div id="clientMenu" style="display:none;position:absolute;top:100%;right:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:150px;overflow:hidden">
+            <button onclick="openChangePw();toggleClientMenu()" style="width:100%;padding:11px 14px;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Change password</button>
+            <button onclick="logout()" style="width:100%;padding:11px 14px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+          </div>
         </div>
       </div>
 
@@ -238,6 +244,14 @@
 
     // Auth
     async function logout() { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+    function toggleClientMenu() {
+      const m = document.getElementById('clientMenu');
+      m.style.display = m.style.display === 'none' ? 'block' : 'none';
+    }
+    document.addEventListener('click', e => {
+      const m = document.getElementById('clientMenu');
+      if (m && !e.target.closest('.header')) m.style.display = 'none';
+    });
 
     function openChangePw() {
       document.getElementById('pwCurrent').value='';
@@ -260,6 +274,24 @@
       document.getElementById('pwOverlay').classList.remove('visible');
     }
 
+    // ── Request mic permission on load ──
+    async function requestPermissions() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Permission granted — stop the stream immediately, we just needed the grant
+        stream.getTracks().forEach(t => t.stop());
+        micPermissionGranted = true;
+        console.log('Mic permission granted');
+      } catch(e) {
+        console.log('Mic permission denied or unavailable:', e.message);
+        statusEl.textContent = 'mic access needed — check browser settings';
+        statusEl.classList.add('on');
+      }
+    }
+
+    // Request on load
+    requestPermissions();
+
     // WebSocket
     const wsUrl = (location.protocol==='https:'?'wss':'ws')+'://'+location.host+'?type=client';
     const ws = new WebSocket(wsUrl);
@@ -271,6 +303,9 @@
     const dotsEl       = document.getElementById('dots');
 
     let isListening=false, mediaStream=null, mediaRecorder=null;
+    let micPermissionGranted = false;
+    let isSpeaking = false;
+    let currentAudio = null;
 
     function setState(s) {
       waveEl.classList.remove('on'); dotsEl.classList.remove('on');
@@ -282,18 +317,44 @@
     }
 
     function playAudio(b64) {
+      // Stop any currently playing audio
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+      }
       return new Promise(res => {
         const bytes=atob(b64), arr=new Uint8Array(bytes.length);
         for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
         const audio=new Audio(URL.createObjectURL(new Blob([arr],{type:'audio/mpeg'})));
-        audio.onended=res; audio.onerror=res; audio.play().catch(res);
+        currentAudio = audio;
+        audio.onended = () => { currentAudio = null; isSpeaking = false; res(); };
+        audio.onerror = () => { currentAudio = null; isSpeaking = false; res(); };
+        isSpeaking = true;
+        audio.play().catch(() => { isSpeaking = false; res(); });
       });
     }
 
     ws.onmessage = async (e) => {
       const msg = JSON.parse(e.data);
       if(msg.type==='greeting'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text'; }
-      if(msg.type==='audio'){ setState('speaking'); await playAudio(msg.data); setState('idle'); setTimeout(()=>startListening(),400); }
+      if(msg.type==='audio'){
+        // Stop listening if active before playing response
+        if (isListening) stopListening();
+        setState('speaking');
+        await playAudio(msg.data);
+        // Gap between sentences
+        if (msg.gap) await new Promise(r => setTimeout(r, msg.gap));
+        // Only auto-listen after final sentence
+        if (msg.final !== false) {
+          setState('idle');
+          if (micPermissionGranted && !isListening) setTimeout(()=>startListening(), 400);
+          else {
+            document.getElementById('status').textContent = 'tap mic to respond';
+            document.getElementById('status').classList.add('on');
+          }
+        }
+      }
       if(msg.type==='listening_started'){ setState('listening'); }
       if(msg.type==='listening_stopped'){ setState('processing'); }
       if(msg.type==='interim_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text dim'; }
@@ -305,6 +366,7 @@
       if(isListening) return;
       try { mediaStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
       catch(e){ statusEl.textContent='mic access needed'; return; }
+      micPermissionGranted = true;
       isListening=true;
       ws.send(JSON.stringify({type:'start_listening'}));
       mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});

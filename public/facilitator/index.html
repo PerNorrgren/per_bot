@@ -260,11 +260,17 @@
 
   <!-- Sidebar -->
   <div class="sidebar">
-    <div class="sidebar-header" style="display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div class="logo">Deeper Mindfulness</div>
-        <div class="logo-name">Facilitator</div>
+    <div class="sidebar-header" style="padding:16px 14px;border-bottom:1px solid rgba(255,255,255,0.07);position:relative">
+      <div style="font-size:9px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(255,255,255,0.3)">Deeper Mindfulness</div>
+      <button onclick="toggleMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span style="font-size:16px;color:rgba(255,255,255,0.78);font-family:Georgia,serif">Facilitator</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="facMenu" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-top:none;z-index:50">
+        <button onclick="openChangePw();toggleMenu()" style="width:100%;padding:12px 16px;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.6);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Change password</button>
+        <button onclick="logout()" style="width:100%;padding:12px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
       </div>
+    </div>
       <button onclick="openChangePw()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);background:none;border:1px solid rgba(255,255,255,0.08);padding:5px 10px;border-radius:6px;cursor:pointer;margin-right:4px">Password</button>
       <button onclick="logout()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);background:none;border:1px solid rgba(255,255,255,0.08);padding:5px 10px;border-radius:6px;cursor:pointer">Out</button>
     </div>
@@ -830,6 +836,16 @@
   });
 
   document.getElementById('showArchived').addEventListener('change', loadClients);
+
+  // ── Menu ──
+  function toggleMenu() {
+    const m = document.getElementById('facMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const menu = document.getElementById('facMenu');
+    if (menu && !e.target.closest('.sidebar-header')) menu.style.display = 'none';
+  });
 
   // ── Logout ──
   async function logout() {
