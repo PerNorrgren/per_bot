@@ -129,14 +129,29 @@ app.get('/login',           (req, res) => res.sendFile(path.join(__dirname, 'pub
 app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'change-password.html')));
 app.get('/',                (req, res) => res.redirect('/login'));
 
-app.get('/admin',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html')));
-app.get('/admin/',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'index.html')));
+// ── Role-aware page routing ──
+function roleRouter(allowedRoles, file) {
+  return (req, res) => {
+    const token = req.cookies?.[auth.COOKIE_NAME];
+    const user  = token ? auth.verifyToken(token) : null;
+    if (!user) return res.redirect('/login');
+    if (!allowedRoles.includes(user.role)) {
+      // Redirect to correct interface
+      const map = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/' };
+      return res.redirect(map[user.role] || '/login');
+    }
+    res.sendFile(path.join(__dirname, file));
+  };
+}
 
-app.get('/facilitator',  auth.requireAuth(['admin','facilitator']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'facilitator', 'index.html')));
-app.get('/facilitator/', auth.requireAuth(['admin','facilitator']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'facilitator', 'index.html')));
+app.get('/admin',    roleRouter(['admin'], 'public/admin/index.html'));
+app.get('/admin/',   roleRouter(['admin'], 'public/admin/index.html'));
 
-app.get('/client',  auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'client', 'index.html')));
-app.get('/client/', auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'client', 'index.html')));
+app.get('/facilitator',  roleRouter(['admin','facilitator'], 'public/facilitator/index.html'));
+app.get('/facilitator/', roleRouter(['admin','facilitator'], 'public/facilitator/index.html'));
+
+app.get('/client',  roleRouter(['client'], 'public/client/index.html'));
+app.get('/client/', roleRouter(['client'], 'public/client/index.html'));
 
 // ── Auth API ──
 app.post('/api/login', async (req, res) => {
@@ -272,7 +287,7 @@ app.get('/api/clients', auth.requireAuthApi(['admin','facilitator']), (req, res)
 });
 
 app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (req, res) => {
-  const { name, email } = req.body;
+  const { name, email, categoryId, subcategoryId } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required.' });
 
   const facilitatorId = req.user.role === 'admin' ? req.body.facilitator_id : req.user.id;
@@ -285,7 +300,7 @@ app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (re
     passwordHash = await auth.hashPassword(tempPassword);
   }
 
-  db.createClient(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash);
+  db.createClient(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash, categoryId || null, subcategoryId || null);
   if (email && tempPassword) emailWelcomeClient(name.trim(), email.trim(), tempPassword);
   res.json({ id, name: name.trim(), tempPassword });
 });
