@@ -20,9 +20,15 @@ const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const PORT               = process.env.PORT || 3000;
 
 // ── Static & middleware ──
-app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Explicit routes for each interface
+app.get('/', (req, res) => res.redirect('/client/'));
+app.get('/client', (req, res) => res.sendFile(path.join(__dirname, 'public', 'client', 'index.html')));
+app.get('/client/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'client', 'index.html')));
+app.get('/facilitator', (req, res) => res.sendFile(path.join(__dirname, 'public', 'facilitator', 'index.html')));
+app.get('/facilitator/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'facilitator', 'index.html')));
 
 // ── File upload (mp3s) ──
 const storage = multer.diskStorage({
