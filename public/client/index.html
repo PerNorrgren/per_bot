@@ -319,50 +319,31 @@
 
     let currentAudio = null;
 
-    function playAudio(b64) {
-      // Stop any currently playing audio
-      if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.src = '';
-        currentAudio = null;
-      }
+    function playAudioUrl(url) {
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
       return new Promise((res) => {
-        try {
-          const bytes = atob(b64);
-          const arr   = new Uint8Array(bytes.length);
-          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-          const blob  = new Blob([arr], { type: 'audio/mpeg' });
-          const url   = URL.createObjectURL(blob);
-          const audio = new Audio();
+        const audio = new Audio(url);
+        currentAudio = audio;
+        isSpeaking   = true;
+        audio.onended = () => { currentAudio=null; isSpeaking=false; res(); };
+        audio.onerror = () => { currentAudio=null; isSpeaking=false; res(); };
+        audio.play().catch(() => { isSpeaking=false; res(); });
+      });
+    }
 
-          audio.oncanplaythrough = () => {
-            // Full buffer ready — play now
-            currentAudio = audio;
-            isSpeaking   = true;
-            audio.play().catch(e => { console.error('Play error:', e); isSpeaking = false; res(); });
-          };
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            currentAudio = null;
-            isSpeaking   = false;
-            res();
-          };
-          audio.onerror = (e) => {
-            console.error('Audio error:', e);
-            URL.revokeObjectURL(url);
-            currentAudio = null;
-            isSpeaking   = false;
-            res();
-          };
-          // Load the full blob before playing
-          audio.preload = 'auto';
-          audio.src = url;
-          audio.load();
-        } catch(e) {
-          console.error('playAudio error:', e);
-          isSpeaking = false;
-          res();
-        }
+    function playAudio(b64) {
+      if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+      return new Promise((res) => {
+        const bytes = atob(b64);
+        const arr   = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        const url   = URL.createObjectURL(new Blob([arr], { type: 'audio/mpeg' }));
+        const audio = new Audio(url);
+        currentAudio = audio;
+        isSpeaking   = true;
+        audio.onended = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); currentAudio=null; isSpeaking=false; res(); };
+        audio.play().catch(() => { isSpeaking=false; res(); });
       });
     }
 
@@ -371,20 +352,15 @@
       if(msg.type==='greeting'){
         pendingText = msg.text; // Hold until audio ready
       }
-      if(msg.type==='audio'){
-        // Stop listening if active before playing response
+      if(msg.type==='audio_url'){
         if (isListening) stopListening();
-        // Show the text now that audio is ready
         if (pendingText) {
           transcriptEl.textContent = pendingText;
           transcriptEl.className = 'transcript-text';
           pendingText = null;
         }
         setState('speaking');
-        await playAudio(msg.data);
-        // Gap between sentences
-        if (msg.gap) await new Promise(r => setTimeout(r, msg.gap));
-        // Only auto-listen after final sentence
+        await playAudioUrl(msg.url);
         if (msg.final !== false) {
           setState('idle');
           if (micPermissionGranted && !isListening) setTimeout(()=>startListening(), 400);
