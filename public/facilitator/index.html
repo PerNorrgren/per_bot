@@ -923,5 +923,23 @@ async function doChangePw() {
 }
 </script>
 
+<!-- Invite Client Modal -->
+<div class="modal-overlay" id="inviteModal">
+  <div class="modal">
+    <h3>Invite a client</h3>
+    <p style="font-size:13px;color:rgba(255,255,255,0.4);line-height:1.6;margin-bottom:4px">Enter their email address. They'll receive an invitation link. If they're already registered, they'll be linked to you automatically. If not, they'll be guided to create an account.</p>
+    <div>
+      <label>Email address</label>
+      <input type="email" id="inviteEmail" placeholder="client@example.com"/>
+    </div>
+    <div class="modal-err" id="inviteErr"></div>
+    <div id="inviteSuccess" style="display:none;font-size:13px;color:rgba(180,230,200,0.8);padding:10px 0">✓ Invitation sent.</div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('inviteModal')">Close</button>
+      <button class="modal-ok" id="inviteSendBtn" onclick="sendInvitation()">Send invitation</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
