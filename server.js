@@ -590,13 +590,13 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
   try {
     const client = req.user.role === 'client' ? db.getClient(req.user.id) : null;
     const userFlags = {
-      isRegistered:  true,
-      isMember:      client?.is_member === 1,
+      isRegistered:  true, // all logged-in users are at least registered
+      isMember:      client?.is_member === 1 || req.user.role !== 'client',
       isClient:      client?.is_client === 1,
       isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
       isAdmin:       req.user.role === 'admin',
     };
-    const files = db.getAllLibraryFilesWithAccess(userFlags);
+    const files  = db.getAllLibraryFilesWithAccess(userFlags);
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }

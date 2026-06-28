@@ -669,36 +669,34 @@ function markAsSystemClient(id) {
   save();
 }
 
-// ── Content visibility — filter by user access flags ──
+// ── Content visibility — cascade model ──
+// Levels: registered(0) < member(1) < client(2) < facilitator(3) < admin(4)
+// Each level sees its own content plus everything below it.
+const LEVEL_RANK = { registered:0, member:1, client:2, facilitator:3, admin:4 };
+
+function userMaxLevel(flags) {
+  if (flags.isAdmin)       return 4;
+  if (flags.isFacilitator) return 3;
+  if (flags.isClient)      return 2;
+  if (flags.isMember)      return 1;
+  return 0; // registered = minimum for any logged-in user
+}
+
+function canSeeFile(file, userLevel) {
+  const fileLevel = LEVEL_RANK[file.visibility] ?? 0;
+  return userLevel >= fileLevel;
+}
+
 function getLibraryFilesForUser(userFlags) {
-  // userFlags: { isRegistered, isMember, isClient, isFacilitator, isAdmin }
-  const files = queryAll('SELECT * FROM library_files WHERE 1=1 ORDER BY title ASC');
-  return files.filter(f => {
-    if (userFlags.isAdmin)       return true;
-    if (userFlags.isFacilitator) return true;
-    if (f.visibility_client      && userFlags.isClient)     return true;
-    if (f.visibility_member      && userFlags.isMember)     return true;
-    if (f.visibility_registered  && userFlags.isRegistered) return true;
-    return false;
-  }).map(f => ({
-    ...f,
-    accessible: true // all returned files are accessible to this user
-  }));
+  const level = userMaxLevel(userFlags);
+  const files = queryAll('SELECT * FROM library_files ORDER BY title ASC');
+  return files.filter(f => canSeeFile(f, level)).map(f => ({ ...f, accessible: true }));
 }
 
 function getAllLibraryFilesWithAccess(userFlags) {
-  // Returns all files, marks each with accessibility — for guest/explore view
+  const level = userMaxLevel(userFlags);
   const files = queryAll('SELECT * FROM library_files ORDER BY title ASC');
-  return files.map(f => ({
-    ...f,
-    accessible: (
-      userFlags.isAdmin ||
-      userFlags.isFacilitator ||
-      (f.visibility_client     && userFlags.isClient) ||
-      (f.visibility_member     && userFlags.isMember) ||
-      (f.visibility_registered && userFlags.isRegistered)
-    )
-  }));
+  return files.map(f => ({ ...f, accessible: canSeeFile(f, level) }));
 }
 
 // ── Invitations ──
