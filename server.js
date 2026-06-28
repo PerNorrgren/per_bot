@@ -114,7 +114,9 @@ function emailWelcomeClient(name, email, tempPassword) {
 }
 
 // ── Page routes ──
-app.get('/login',           (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
+app.get('/register/',(req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'change-password.html')));
 app.get('/',                (req, res) => res.redirect('/login'));
 
@@ -163,6 +165,52 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => {
   res.clearCookie(auth.COOKIE_NAME);
   res.json({ ok: true });
+});
+
+// ── Self-registration ──
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email.' });
+
+    const emailLower = email.toLowerCase().trim();
+
+    // Check not already registered as facilitator
+    const existingFac = db.getFacilitatorByEmail(emailLower);
+    if (existingFac) return res.status(400).json({ error: 'An account with this email already exists.' });
+
+    // Check not already a client
+    const existingClient = db.getClientByEmail(emailLower);
+    if (existingClient) return res.status(400).json({ error: 'An account with this email already exists.' });
+
+    const id   = uuidv4();
+    const hash = await auth.hashPassword(password);
+    db.registerUser(id, name.trim(), emailLower, hash);
+
+    // Log them in immediately
+    const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
+    res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    res.json({ redirect: '/client/' });
+  } catch(e) {
+    console.error('register error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+// ── Switch to client role — swaps session cookie for dual-role users ──
+app.post('/api/switch-to-client', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
+  try {
+    const fac    = db.getFacilitatorById(req.user.id);
+    const client = fac ? db.getClientByEmail(fac.email) : null;
+    if (!client) return res.status(404).json({ error: 'No client record found for this email.' });
+    const token = auth.createToken({ role: 'client', id: client.id, name: client.name, email: client.email });
+    res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    res.json({ redirect: '/client/' });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/change-password', auth.requireAuthApi(), async (req, res) => {
@@ -440,14 +488,33 @@ app.post('/api/guest/chat', async (req, res) => {
   }
 });
 
-// ── /api/guest/content — returns all content, visibility flagged ──
-app.get('/api/guest/content', async (req, res) => {
+// ── /api/client/content — returns content accessible to this user ──
+app.get('/api/client/content', auth.requireAuthApi(['client', 'facilitator', 'admin']), (req, res) => {
   try {
-    const files = db.getLibraryFiles({});
-    res.json(files.map(f => ({ ...f, accessible: f.visibility === 'guest' })));
+    const client = req.user.role === 'client' ? db.getClient(req.user.id) : null;
+    const userFlags = {
+      isRegistered:  true,
+      isMember:      client?.is_member === 1,
+      isClient:      client?.is_client === 1,
+      isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
+      isAdmin:       req.user.role === 'admin',
+    };
+    res.json(db.getAllLibraryFilesWithAccess(userFlags));
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── /api/admin/users — all registered users ──
+app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getAllClientsAdmin(false));
+});
+
+// ── /api/admin/users/:id/upgrade — upgrade to member ──
+app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), (req, res) => {
+  const { level } = req.body;
+  db.upgradeToMember(req.params.id, level || 'member');
+  res.json({ ok: true });
 });
 
 // ── /api/speak — ElevenLabs, piped directly (Mare Bot architecture) ──

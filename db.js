@@ -197,6 +197,14 @@ async function getDb() {
     "ALTER TABLE sessions ADD COLUMN facilitator_id TEXT",
     "ALTER TABLE sessions ADD COLUMN client_summary TEXT DEFAULT ''",
     "ALTER TABLE clients ADD COLUMN is_system_client INTEGER DEFAULT 0",
+    "ALTER TABLE clients ADD COLUMN is_member INTEGER DEFAULT 0",
+    "ALTER TABLE clients ADD COLUMN membership_level TEXT DEFAULT 'registered'",
+    "ALTER TABLE clients ADD COLUMN is_client INTEGER DEFAULT 0",
+    "ALTER TABLE clients ADD COLUMN registered_at TEXT DEFAULT (datetime('now'))",
+    "ALTER TABLE library_files ADD COLUMN visibility_registered INTEGER DEFAULT 0",
+    "ALTER TABLE library_files ADD COLUMN visibility_member INTEGER DEFAULT 0",
+    "ALTER TABLE library_files ADD COLUMN visibility_client INTEGER DEFAULT 1",
+    "ALTER TABLE library_files ADD COLUMN visibility_facilitator INTEGER DEFAULT 0",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -542,10 +550,68 @@ function recordPlay(id, userId, userType, contentType, contentId) {
     [id, userId, userType, contentType, contentId]); save();
 }
 
+// ── Self-registration ──
+function registerUser(id, name, email, passwordHash) {
+  getDbSync().run(
+    `INSERT INTO clients (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,is_member,membership_level,is_client,is_system_client)
+     VALUES (?,?,?,?,NULL,'',0,0,0,'registered',0,1)`,
+    [id, name, email.toLowerCase()]
+  );
+  // Set password separately since it's optional in some flows
+  getDbSync().run('UPDATE clients SET password_hash=? WHERE id=?', [passwordHash, id]);
+  save();
+}
+
+function getUserByEmail(email) {
+  return queryOne('SELECT * FROM clients WHERE email=? AND archived=0', [email.toLowerCase()]);
+}
+
+function upgradeToMember(clientId, level = 'member') {
+  getDbSync().run('UPDATE clients SET is_member=1, membership_level=? WHERE id=?', [level, clientId]);
+  save();
+}
+
+function markAsClient(clientId, facilitatorId) {
+  getDbSync().run('UPDATE clients SET is_client=1, facilitator_id=? WHERE id=?', [facilitatorId, clientId]);
+  save();
+}
+
 // ── System client flag ──
 function markAsSystemClient(id) {
   getDbSync().run('UPDATE clients SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]);
   save();
+}
+
+// ── Content visibility — filter by user access flags ──
+function getLibraryFilesForUser(userFlags) {
+  // userFlags: { isRegistered, isMember, isClient, isFacilitator, isAdmin }
+  const files = queryAll('SELECT * FROM library_files WHERE 1=1 ORDER BY title ASC');
+  return files.filter(f => {
+    if (userFlags.isAdmin)       return true;
+    if (userFlags.isFacilitator) return true;
+    if (f.visibility_client      && userFlags.isClient)     return true;
+    if (f.visibility_member      && userFlags.isMember)     return true;
+    if (f.visibility_registered  && userFlags.isRegistered) return true;
+    return false;
+  }).map(f => ({
+    ...f,
+    accessible: true // all returned files are accessible to this user
+  }));
+}
+
+function getAllLibraryFilesWithAccess(userFlags) {
+  // Returns all files, marks each with accessibility — for guest/explore view
+  const files = queryAll('SELECT * FROM library_files ORDER BY title ASC');
+  return files.map(f => ({
+    ...f,
+    accessible: (
+      userFlags.isAdmin ||
+      userFlags.isFacilitator ||
+      (f.visibility_client     && userFlags.isClient) ||
+      (f.visibility_member     && userFlags.isMember) ||
+      (f.visibility_registered && userFlags.isRegistered)
+    )
+  }));
 }
 
 // ── Guest leads ──
@@ -593,6 +659,10 @@ module.exports = {
   assignProgramme, getProgrammesForUser,
   // History
   recordPlay,
+  // Registration
+  registerUser, getUserByEmail, upgradeToMember, markAsClient,
+  // Content visibility
+  getLibraryFilesForUser, getAllLibraryFilesWithAccess,
   // System client
   markAsSystemClient,
   // Guest leads
