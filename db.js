@@ -171,6 +171,14 @@ async function getDb() {
   )`);
 
   // ── Content play history ──
+  db.run(`CREATE TABLE IF NOT EXISTS guest_leads (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    source TEXT DEFAULT 'guest_page'
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS content_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -533,6 +541,18 @@ function recordPlay(id, userId, userType, contentType, contentId) {
     [id, userId, userType, contentType, contentId]); save();
 }
 
+// ── Guest leads ──
+function addGuestLead(id, name, email, source) {
+  getDbSync().run(
+    'INSERT OR IGNORE INTO guest_leads (id,name,email,source) VALUES (?,?,?,?)',
+    [id, name||null, email||null, source||'guest_page']
+  );
+  save();
+}
+function getGuestLeads() {
+  return queryAll('SELECT * FROM guest_leads ORDER BY created_at DESC');
+}
+
 module.exports = {
   getDb, save,
   // Facilitators
@@ -566,4 +586,6 @@ module.exports = {
   assignProgramme, getProgrammesForUser,
   // History
   recordPlay,
+  // Guest leads
+  addGuestLead, getGuestLeads,
 };

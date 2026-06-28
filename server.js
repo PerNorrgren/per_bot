@@ -358,6 +358,24 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   }
 });
 
+// ── /api/guest/lead — capture name + email, no auth ──
+app.post('/api/guest/lead', async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!email && !name) return res.json({ ok: true }); // both empty — skip silently
+    db.addGuestLead(uuidv4(), name?.trim() || null, email?.trim()?.toLowerCase() || null, 'guest_page');
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('guest lead error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── /api/admin/guest-leads — view leads (admin only) ──
+app.get('/api/admin/guest-leads', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getGuestLeads());
+});
+
 // ── /api/guest/chat — no auth, same bot, lighter system prompt ──
 const guestSessions = new Map();
 
