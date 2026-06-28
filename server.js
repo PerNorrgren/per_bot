@@ -402,7 +402,7 @@ async function callClaude(systemPrompt, messages, maxTokens = 400) {
 // ── ElevenLabs TTS ──
 // ── ElevenLabs TTS — Mare Bot architecture ──
 // Server sends text to client over WebSocket.
-// Client POSTs text to /api/speak — server pipes ElevenLabs response directly back.
+// Client POSTs text to /api/speak — server pipes Deepgram Aura response directly back.
 // Proven working in Mare Bot. No buffering, no token, no store.
 
 function sendSpeakText(text, ws) {
@@ -645,24 +645,25 @@ wss.on('connection', (ws, req) => {
 // CONTENT MANAGEMENT API
 // ════════════════════════════════════════════
 
-// ── Audio — Mare Bot architecture ──
-// Client POSTs text here; server calls ElevenLabs and pipes response directly back.
-// No buffering, no token store — same as Mare Bot which works perfectly.
+// ── Audio — Deepgram Aura TTS ──
+// Client sends text + chosen voice. Server calls Deepgram and pipes audio back directly.
+// No artefacts, no warm-up issues, no priming needed.
+const DEFAULT_VOICE = process.env.DEFAULT_VOICE || 'aura-zeus-en';
+
 app.post('/api/speak', auth.requireAuthApi(['client', 'facilitator', 'admin']), async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, voice } = req.body;
     if (!text) return res.status(400).json({ error: 'No text' });
+    const model = voice || DEFAULT_VOICE;
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
+      `https://api.deepgram.com/v1/speak?model=${model}&encoding=mp3`,
       {
         method: 'POST',
-        headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          model_id: 'eleven_multilingual_v2',
-          voice_settings: { stability: 0.65, similarity_boost: 0.80 },
-          speed: VOICE_SPEED,
-        }),
+        headers: {
+          'Authorization': `Token ${DEEPGRAM_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
       }
     );
     if (!response.ok) {
