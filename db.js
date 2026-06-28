@@ -629,6 +629,18 @@ function deleteGuestLead(id) {
   getDbSync().run('DELETE FROM guest_leads WHERE id=?', [id]);
   save();
 }
+function getGuestLead(id) {
+  return queryOne('SELECT * FROM guest_leads WHERE id=?', [id]);
+}
+function updateClientDetails(id, name, email, facilitatorId) {
+  getDbSync().run('UPDATE clients SET name=?,email=?,facilitator_id=? WHERE id=?',
+    [name, email||null, facilitatorId||null, id]);
+  save();
+}
+function deleteClient(id) {
+  getDbSync().run('DELETE FROM clients WHERE id=?', [id]);
+  save();
+}
 
 module.exports = {
   getDb, save,
@@ -670,5 +682,7 @@ module.exports = {
   // System client
   markAsSystemClient,
   // Guest leads
-  addGuestLead, getGuestLeads, deleteGuestLead,
+  addGuestLead, getGuestLeads, deleteGuestLead, getGuestLead,
+  // Client management
+  updateClientDetails, deleteClient,
 };

@@ -466,6 +466,39 @@ app.get('/api/admin/guest-leads', auth.requireAuthApi(['admin']), (req, res) => 
   res.json(db.getGuestLeads());
 });
 
+// ── Client edit / delete ──
+app.patch('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  const { name, email, facilitator_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required.' });
+  db.updateClientDetails(req.params.id, name.trim(), email?.trim()||null, facilitator_id||null);
+  res.json({ ok: true });
+});
+app.delete('/api/clients/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteClient(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Guest lead convert to registered ──
+app.post('/api/admin/guest-leads/:id/convert', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const lead = db.getGuestLead(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+    if (!lead.email) return res.status(400).json({ error: 'Lead has no email.' });
+    // Check not already registered
+    const existing = db.getClientByEmail(lead.email);
+    if (existing) { db.deleteGuestLead(req.params.id); return res.json({ ok: true, note: 'Already registered.' }); }
+    const tempPassword = Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,4).toUpperCase();
+    const hash = await auth.hashPassword(tempPassword);
+    const id   = uuidv4();
+    db.registerUser(id, lead.name || 'Guest', lead.email, hash);
+    emailWelcomeClient(lead.name || 'Guest', lead.email, tempPassword);
+    db.deleteGuestLead(req.params.id);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Admin user management ──
 app.patch('/api/admin/users/:id/assign-facilitator', auth.requireAuthApi(['admin']), (req, res) => {
   const { facilitatorId } = req.body;
