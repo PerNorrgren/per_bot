@@ -67,7 +67,11 @@
     .vis-sel { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:4px 8px; font-size:11px; color:rgba(255,255,255,0.55); font-family:'Georgia',serif; outline:none; }
     .vis-sel option { background:#1a2420; }
     .vis-badge { display:inline-block; font-size:10px; padding:2px 7px; border-radius:4px; }
-    .vis-guest { background:rgba(255,200,100,0.12); color:rgba(255,200,100,0.7); }
+    .vis-registered { background:rgba(255,200,100,0.12); color:rgba(255,200,100,0.7); }
+    .vis-member     { background:rgba(180,230,200,0.1);  color:rgba(180,230,200,0.6); }
+    .vis-client      { background:rgba(200,150,255,0.12); color:rgba(200,150,255,0.7); }
+    .vis-facilitator { background:rgba(255,150,100,0.12); color:rgba(255,150,100,0.7); }
+    .vis-admin       { background:rgba(255,100,100,0.12); color:rgba(255,100,100,0.7); }
     .vis-client { background:rgba(100,180,255,0.12); color:rgba(100,180,255,0.7); }
     .vis-facilitator { background:rgba(200,150,255,0.12); color:rgba(200,150,255,0.7); }
     .vis-admin { background:rgba(255,120,80,0.12); color:rgba(255,120,80,0.7); }
@@ -138,7 +142,11 @@
           <select class="filter" id="libSub" onchange="filterLib()"><option value="">All subcategories</option></select>
           <select class="filter" id="libVis" onchange="filterLib()">
             <option value="">All visibility</option>
-            <option value="guest">Guest</option>
+            <option value="registered">Registered</option>
+            <option value="member">Member</option>
+            <option value="client">Client</option>
+            <option value="facilitator">Facilitator</option>
+            <option value="admin">Admin</option>
             <option value="client">Client</option>
             <option value="facilitator">Facilitator</option>
             <option value="admin">Admin</option>
@@ -221,7 +229,11 @@
     </div>
     <div><label>Visibility</label>
       <select id="efVis">
-        <option value="guest">Guest — anyone</option>
+        <option value="registered">Registered — anyone who has signed up (free)</option>
+        <option value="member">Member — paying or upgraded accounts</option>
+        <option value="client">Client — facilitator-assigned clients</option>
+        <option value="facilitator">Facilitator — facilitators only</option>
+        <option value="admin">Admin — admin only</option>
         <option value="client">Client — logged in clients</option>
         <option value="facilitator">Facilitator — facilitators only</option>
         <option value="admin">Admin only</option>
@@ -293,7 +305,8 @@
       <select id="alVis">
         <option value="client">Client</option>
         <option value="facilitator">Facilitator</option>
-        <option value="guest">Guest</option>
+        <option value="registered">Registered</option>
+        <option value="member">Member</option>
       </select>
     </div>
     <div><label>Pick files from library</label>
@@ -390,7 +403,7 @@ function ficon(t=''){
   return'📄';
 }
 function fsize(b){if(!b)return'';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
-function vbadge(v){const m={guest:'Guest',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
+function vbadge(v){const m={registered:'Registered',member:'Member',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
 
 function populateCatSels(...ids){
   const tops=allCats.filter(c=>!c.parent_id);
@@ -505,7 +518,8 @@ const SUB_KEYWORDS = {
 };
 const VIS_KEYWORDS = {
   facilitator: ['facilitator','facilitatornotes','admin','adminnotes','slides','pptx','trainers','trainer','facilitatorsguide'],
-  guest:       ['intro','introduction','welcome','overview','public','promo','about'],
+  registered:  ['intro','introduction','welcome','overview','public','promo','about'],
+  member:      ['free','open','member','premium','paid'],
   client:      ['student','handout','studenthandout','practice','audio','client'],
 };
 
@@ -513,7 +527,7 @@ function inferFromFilename(name) {
   const n = name.toLowerCase().replace(/[\s._-]+/g,'');
 
   // Infer visibility
-  let vis = 'client';
+  let vis = 'registered';
   for (const [v, keys] of Object.entries(VIS_KEYWORDS)) {
     if (keys.some(k => n.includes(k))) { vis = v; break; }
   }
@@ -554,7 +568,8 @@ function renderQ(){
         <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:2px">${fsize(it.file.size)}${inferredLabel}</div>
       </div>
       <select class="vis-sel" onchange="upQueue[${i}].vis=this.value;upQueue[${i}].inferred=false">
-        <option value="guest"${it.vis==='guest'?' selected':''}>Guest</option>
+        <option value="registered"${it.vis==='registered'?' selected':''}>Registered</option>
+        <option value="member"${it.vis==='member'?' selected':''}>Member</option>
         <option value="client"${it.vis==='client'?' selected':''}>Client</option>
         <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
         <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
