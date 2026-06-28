@@ -23,7 +23,7 @@
     .logo-name { font-size:16px; color:rgba(255,255,255,0.75); margin-top:4px; letter-spacing:0.05em; }
 
     .new-client-btn {
-      margin:12px 12px 0;
+      margin:0;
       background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.25);
       color:rgba(180,230,200,0.8); font-size:11px; letter-spacing:0.12em;
       text-transform:uppercase; padding:9px 12px; border-radius:8px;
@@ -274,8 +274,10 @@
       <button onclick="openChangePw()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);background:none;border:1px solid rgba(255,255,255,0.08);padding:5px 10px;border-radius:6px;cursor:pointer;margin-right:4px">Password</button>
       <button onclick="logout()" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);background:none;border:1px solid rgba(255,255,255,0.08);padding:5px 10px;border-radius:6px;cursor:pointer">Out</button>
     </div>
-    <button class="new-client-btn" id="newClientBtn">+ New Client</button>
-    <button class="new-client-btn" id="mySpaceBtn" style="margin-top:6px;border-color:rgba(255,255,255,0.2);color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.04)" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.04)'">My Space</button>
+    <div style="display:flex;gap:6px;margin:10px 12px 0;flex-shrink:0">
+      <button class="new-client-btn" id="newClientBtn" style="flex:1;margin:0">+ New Client</button>
+      <button id="mySpaceBtn" style="flex:0 0 auto;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.45);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;font-family:Georgia,serif;transition:all 0.2s;white-space:nowrap" onmouseover="this.style.background='rgba(255,255,255,0.09)';this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.background='rgba(255,255,255,0.04)';this.style.color='rgba(255,255,255,0.45)'">My Space</button>
+    </div>
     <div class="client-list" id="clientList"></div>
     <div style="padding:8px 12px"><label style="font-size:11px;color:rgba(255,255,255,0.25);cursor:pointer"><input type="checkbox" id="showArchived" style="margin-right:6px">Show archived</label></div>
     <div class="sidebar-footer">
