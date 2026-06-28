@@ -270,11 +270,7 @@ app.post('/api/my-space', auth.requireAuthApi(['facilitator', 'admin']), async (
       const id = uuidv4();
       const hash = await auth.hashPassword(Math.random().toString(36).slice(2, 18));
       db.createClient(id, fac.name, null, fac.email, hash, null, null);
-      // Mark as system client and link to facilitator
-      db.getDbSync().run(
-        'UPDATE clients SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]
-      );
-      db.save();
+        db.markAsSystemClient(id);
       client = db.getClient(id);
     }
 

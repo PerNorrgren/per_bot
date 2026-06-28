@@ -542,6 +542,12 @@ function recordPlay(id, userId, userType, contentType, contentId) {
     [id, userId, userType, contentType, contentId]); save();
 }
 
+// ── System client flag ──
+function markAsSystemClient(id) {
+  getDbSync().run('UPDATE clients SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]);
+  save();
+}
+
 // ── Guest leads ──
 function addGuestLead(id, name, email, source) {
   getDbSync().run(
@@ -587,6 +593,8 @@ module.exports = {
   assignProgramme, getProgrammesForUser,
   // History
   recordPlay,
+  // System client
+  markAsSystemClient,
   // Guest leads
   addGuestLead, getGuestLeads,
 };
