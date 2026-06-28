@@ -44,7 +44,15 @@
     .col-fac    { flex:1; font-size:12px; color:rgba(255,255,255,0.3); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .col-actions { display:flex; gap:6px; flex-shrink:0; }
     .table-hdr  { display:flex; align-items:center; padding:8px 20px; gap:14px; border-bottom:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); }
-    .table-hdr-cell { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); }
+    .table-hdr-cell { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); cursor:pointer; user-select:none; display:flex; align-items:center; gap:4px; }
+    .table-hdr-cell:hover { color:rgba(255,255,255,0.5); }
+    .sort-ind { font-size:9px; opacity:0.5; }
+    .sort-ind.active { opacity:1; color:rgba(180,230,200,0.8); }
+    .card-search { width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); border-radius:8px; padding:8px 12px; font-size:13px; color:rgba(255,255,255,0.7); font-family:'Georgia',serif; outline:none; transition:border-color 0.2s; }
+    .card-search:focus { border-color:rgba(180,230,200,0.3); }
+    .card-search::placeholder { color:rgba(255,255,255,0.2); }
+    .card-search-wrap { padding:10px 16px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .btn.disabled { opacity:0.3; pointer-events:none; }
     .status-badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.06em; }
     .status-active { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
     .status-archived { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.3); }
@@ -103,12 +111,13 @@
           <div class="card-title">All facilitators</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="show-archived-wrap"><input type="checkbox" id="showArchivedFac" onchange="loadFacilitators()"/> Show archived</label>
-            <button class="btn sm" id="facEditBtn"    style="display:none" onclick="editSelectedFac()">Edit</button>
-            <button class="btn sm warn" id="facArchBtn" style="display:none" onclick="archiveSelectedFac()">Archive</button>
-            <button class="btn sm danger" id="facDelBtn" style="display:none" onclick="deleteSelectedFac()">Delete</button>
+            <button class="btn sm disabled" id="facEditBtn" onclick="editSelectedFac()">Edit</button>
+            <button class="btn sm warn disabled" id="facArchBtn" onclick="archiveSelectedFac()">Archive</button>
+            <button class="btn sm danger disabled" id="facDelBtn" onclick="deleteSelectedFac()">Delete</button>
             <button class="btn primary" onclick="openNewFac()">+ Add</button>
           </div>
         </div>
+        <div class="card-search-wrap"><input class="card-search" id="facSearch" placeholder="Search facilitators… (* and ? wildcards)" oninput="renderFacilitators()"/></div>
         <div class="table" id="facTable"><div class="loading">Loading…</div></div>
       </div>
     </div>
@@ -121,12 +130,13 @@
           <div class="card-title">All clients across facilitators</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="show-archived-wrap"><input type="checkbox" id="showArchivedClients" onchange="loadClients()"/> Show archived</label>
-            <button class="btn sm" id="clientEditBtn"  style="display:none" onclick="editSelectedClient()">Edit</button>
-            <button class="btn sm warn" id="clientArchBtn" style="display:none" onclick="archiveSelectedClient()">Archive</button>
-            <button class="btn sm danger" id="clientDelBtn" style="display:none" onclick="deleteSelectedClient()">Delete</button>
+            <button class="btn sm disabled" id="clientEditBtn" onclick="editSelectedClient()">Edit</button>
+            <button class="btn sm warn disabled" id="clientArchBtn" onclick="archiveSelectedClient()">Archive</button>
+            <button class="btn sm danger disabled" id="clientDelBtn" onclick="deleteSelectedClient()">Delete</button>
             <button class="btn primary" onclick="openNewClient()">+ Add</button>
           </div>
         </div>
+        <div class="card-search-wrap"><input class="card-search" id="clientSearch" placeholder="Search clients… (* and ? wildcards)" oninput="renderClients()"/></div>
         <div class="table" id="clientTable"><div class="loading">Loading…</div></div>
       </div>
     </div>
@@ -139,10 +149,11 @@
         <div class="card-header">
           <div class="card-title">Self-registered accounts</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm" id="userUpgradeBtn" style="display:none" onclick="upgradeSelected()">Upgrade</button>
-            <button class="btn sm danger" id="userDelBtn" style="display:none" onclick="deleteSelectedUsers()">Delete</button>
+            <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
+            <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
           </div>
         </div>
+        <div class="card-search-wrap"><input class="card-search" id="userSearch" placeholder="Search users… (* and ? wildcards)" oninput="renderUsers()"/></div>
         <div class="table" id="usersTable"><div class="loading">Loading…</div></div>
       </div>
     </div>
@@ -154,11 +165,12 @@
         <div class="card-header">
           <div class="card-title">Captured emails</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm" id="leadUpgradeBtn" style="display:none" onclick="upgradeSelectedLeads()">Convert to registered</button>
-            <button class="btn sm primary" id="leadSyncBtn" style="display:none" onclick="syncLeads()">Sync to Brevo</button>
-            <button class="btn sm danger" id="leadDelBtn" style="display:none" onclick="deleteSelectedLeads()">Delete</button>
+            <button class="btn sm disabled" id="leadUpgradeBtn" onclick="upgradeSelectedLeads()">Convert</button>
+            <button class="btn sm primary disabled" id="leadSyncBtn" onclick="syncLeads()">Sync to Brevo</button>
+            <button class="btn sm danger disabled" id="leadDelBtn" onclick="deleteSelectedLeads()">Delete</button>
           </div>
         </div>
+        <div class="card-search-wrap"><input class="card-search" id="leadSearch" placeholder="Search leads… (* and ? wildcards)" oninput="renderLeads()"/></div>
         <div class="table" id="leadsTable"><div class="loading">Loading…</div></div>
       </div>
     </div>
@@ -363,6 +375,76 @@
     if (m && !e.target.closest('.topbar')) m.style.display = 'none';
   });
 
+  // ── Wildcard search ──
+  // Supports * (any string) and ? (single char), case-insensitive
+  function wildcardMatch(str, pattern) {
+    if (!pattern) return true;
+    str = (str || '').toLowerCase();
+    pattern = pattern.toLowerCase();
+    // Escape regex special chars except * and ?
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*').replace(/\?/g, '.');
+    try { return new RegExp('^' + escaped + '$').test(str) || str.includes(pattern.replace(/\*/g,'').replace(/\?/g,'')); }
+    catch { return str.includes(pattern); }
+  }
+  function matchesSearch(item, query, fields) {
+    if (!query) return true;
+    return fields.some(f => wildcardMatch(item[f] || '', query));
+  }
+
+  // ── Sort state ──
+  const sortState = {};
+  function getSort(key) { return sortState[key] || { col: null, dir: 1 }; }
+  function setSort(key, col) {
+    const cur = getSort(key);
+    sortState[key] = { col, dir: cur.col === col ? -cur.dir : 1 };
+  }
+  function sortIndicator(key, col) {
+    const s = getSort(key);
+    if (s.col !== col) return '<span class="sort-ind">⇅</span>';
+    return `<span class="sort-ind active">${s.dir === 1 ? '▲' : '▼'}</span>`;
+  }
+  function sortList(list, key, field) {
+    const s = getSort(key);
+    if (!s.col) return list;
+    return [...list].sort((a, b) => {
+      const av = (a[s.col] || '').toString().toLowerCase();
+      const bv = (b[s.col] || '').toString().toLowerCase();
+      return av < bv ? -s.dir : av > bv ? s.dir : 0;
+    });
+  }
+
+  // ── Selection helpers ──
+  function makeSelection(btnIds, editBtnId) {
+    const sel = new Set();
+    function updateBtns() {
+      const has = sel.size > 0;
+      const one = sel.size === 1;
+      btnIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const isEdit = id === editBtnId;
+        if (isEdit) { el.classList.toggle('disabled', !one); }
+        else        { el.classList.toggle('disabled', !has); }
+      });
+    }
+    return {
+      sel,
+      toggle(id, checked) { if (checked) sel.add(id); else sel.delete(id); updateBtns(); },
+      toggleAll(tableId, masterCb) {
+        const boxes = document.querySelectorAll(`#${tableId} .row-cb`);
+        const willCheck = masterCb.checked;
+        boxes.forEach(b => {
+          b.checked = willCheck;
+          if (willCheck) sel.add(b.value); else sel.delete(b.value);
+        });
+        updateBtns();
+      },
+      clear() { sel.clear(); updateBtns(); },
+      updateBtns,
+    };
+  }
+
   // ── Confirm modal ──
   let _confirmFn = null;
   function showConfirm(title, msg, fn) {
@@ -373,62 +455,43 @@
   }
   function confirmAction() { closeModal('confirmModal'); if (_confirmFn) _confirmFn(); _confirmFn = null; }
 
-  // ── Selection helpers ──
-  function makeSelectionHelper(prefix) {
-    const sel = new Set();
-    return {
-      sel,
-      toggle(id, checked) {
-        if (checked) sel.add(id); else sel.delete(id);
-        updateBtns();
-      },
-      selectAll(tableId) {
-        const boxes = document.querySelectorAll(`#${tableId} input[type=checkbox]`);
-        const all   = [...boxes].every(b => b.checked);
-        boxes.forEach(b => { b.checked = !all; if (!all) sel.add(b.value); else sel.delete(b.value); });
-        updateBtns();
-      },
-      clear() { sel.clear(); updateBtns(); },
-    };
-    function updateBtns() {
-      const has = sel.size > 0;
-      const one = sel.size === 1;
-      [prefix+'EditBtn', prefix+'ArchBtn', prefix+'UpgradeBtn', prefix+'SyncBtn'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = (id.includes('Edit') ? one : has) ? 'inline-flex' : 'none';
-      });
-      [prefix+'DelBtn', prefix+'ArchBtn'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = has ? 'inline-flex' : 'none';
-      });
-      const leadUpgrade = document.getElementById('leadUpgradeBtn');
-      if (leadUpgrade) leadUpgrade.style.display = has ? 'inline-flex' : 'none';
-    }
-  }
-
+  // ══════════════════════════════════════════
   // ── FACILITATORS ──
-  const facSel = makeSelectionHelper('fac');
+  // ══════════════════════════════════════════
+  let _facData = [];
+  const facSel = makeSelection(['facEditBtn','facArchBtn','facDelBtn'], 'facEditBtn');
 
   async function loadFacilitators() {
-    facSel.sel.clear();
+    facSel.clear();
     const archived = document.getElementById('showArchivedFac').checked ? 1 : 0;
     const res  = await fetch(`/api/admin/facilitators?archived=${archived}`);
-    const list = await res.json();
-    const el   = document.getElementById('facTable');
-    if (!list.length) { el.innerHTML = '<div class="empty">No facilitators yet.</div>'; return; }
+    _facData   = await res.json();
+    renderFacilitators();
+  }
+
+  function renderFacilitators() {
+    facSel.clear();
+    const el    = document.getElementById('facTable');
+    const query = document.getElementById('facSearch').value.trim();
+    const s     = getSort('fac');
+    let list    = _facData.filter(f => matchesSearch(f, query, ['name','email']));
+    if (s.col)  list = [...list].sort((a,b) => {
+      const av = (a[s.col]||'').toLowerCase(), bv = (b[s.col]||'').toLowerCase();
+      return av < bv ? -s.dir : av > bv ? s.dir : 0;
+    });
+    if (!list.length) { el.innerHTML = '<div class="empty">No results.</div>'; return; }
     el.innerHTML =
       `<div class="table-hdr">
-        <div class="col-cb"><input type="checkbox" onchange="facSel.selectAll('facTable')"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-level">Status</div>
-        <div class="table-hdr-cell col-status">Level</div>
+        <div class="col-cb"><input type="checkbox" id="facAllCb" onchange="facSel.toggleAll('facTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="facSort('name')">Name ${sortIndicator('fac','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="facSort('email')">Email ${sortIndicator('fac','email')}</div>
+        <div class="table-hdr-cell col-level" onclick="facSort('role')">Status ${sortIndicator('fac','role')}</div>
       </div>` +
       list.map(f => {
         const isArchived = f.role === 'facilitator_archived';
         const isPending  = f.must_change_password;
         return `<div class="table-row ${isArchived?'archived':''}">
-          <div class="col-cb"><input type="checkbox" value="${f.id}" onchange="facSel.toggle('${f.id}',this.checked)"/></div>
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${f.id}" onchange="facSel.toggle('${f.id}',this.checked)"/></div>
           <div class="col-name">${f.name}</div>
           <div class="col-email">${f.email}</div>
           <div class="col-level">
@@ -436,20 +499,14 @@
               ${isArchived?'Archived':isPending?'Pending':'Active'}
             </span>
           </div>
-          <div class="col-status"><span class="status-badge" style="background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)">Facilitator</span></div>
         </div>`;
       }).join('');
   }
+  function facSort(col) { setSort('fac', col); renderFacilitators(); }
 
   function editSelectedFac() {
-    const id = [...facSel.sel][0];
-    openFacEdit(id);
-  }
-  async function openFacEdit(id) {
-    const res  = await fetch('/api/admin/facilitators');
-    const list = await res.json();
-    const f    = list.find(x => x.id === id);
-    if (!f) return;
+    const id = [...facSel.sel][0]; if (!id) return;
+    const f = _facData.find(x => x.id === id); if (!f) return;
     document.getElementById('editFacId').value   = f.id;
     document.getElementById('editFacName').value  = f.name;
     document.getElementById('editFacEmail').value = f.email;
@@ -457,25 +514,23 @@
     openModal('editFacModal');
   }
   async function archiveSelectedFac() {
-    const ids = [...facSel.sel];
+    const ids = [...facSel.sel]; if (!ids.length) return;
     showConfirm('Archive facilitator' + (ids.length>1?'s':''),
       `Archive ${ids.length} facilitator${ids.length>1?'s':''}? Their clients will remain.`,
       async () => {
-        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'archive'})})));
-        facSel.clear(); loadFacilitators();
+        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'archive'})})));
+        loadFacilitators();
       });
   }
   async function deleteSelectedFac() {
-    const ids = [...facSel.sel];
+    const ids = [...facSel.sel]; if (!ids.length) return;
     showConfirm('Delete facilitator' + (ids.length>1?'s':''),
       `Permanently delete ${ids.length} facilitator${ids.length>1?'s':''}? This cannot be undone.`,
       async () => {
-        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`, {method:'DELETE'})));
-        facSel.clear(); loadFacilitators();
+        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`,{method:'DELETE'})));
+        loadFacilitators();
       });
   }
-
-  // Existing facilitator create/edit functions
   async function openNewFac() {
     document.getElementById('facName').value = '';
     document.getElementById('facEmail').value = '';
@@ -489,7 +544,7 @@
     const err   = document.getElementById('facErr');
     if (!name)  { err.textContent = 'Name required.'; return; }
     if (!email) { err.textContent = 'Email required.'; return; }
-    const res  = await fetch('/api/admin/facilitators', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    const res  = await fetch('/api/admin/facilitators',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
     const data = await res.json();
     if (data.error) { err.textContent = data.error; return; }
     closeModal('newFacModal');
@@ -497,44 +552,56 @@
     openModal('tempPassModal');
   }
   async function saveEditFac() {
-    const id    = document.getElementById('editFacId').value;
-    const name  = document.getElementById('editFacName').value.trim();
-    const email = document.getElementById('editFacEmail').value.trim();
-    const err   = document.getElementById('editFacErr');
-    if (!name||!email) { err.textContent = 'Name and email required.'; return; }
-    await fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    const id=document.getElementById('editFacId').value, name=document.getElementById('editFacName').value.trim(), email=document.getElementById('editFacEmail').value.trim(), err=document.getElementById('editFacErr');
+    if (!name||!email) { err.textContent='Name and email required.'; return; }
+    await fetch(`/api/admin/facilitators/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
     closeModal('editFacModal'); loadFacilitators();
   }
   async function resetFacPassword() {
-    const id = document.getElementById('editFacId').value;
-    const res = await fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset_password'})});
-    const data = await res.json();
+    const id=document.getElementById('editFacId').value;
+    const res=await fetch(`/api/admin/facilitators/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset_password'})});
+    const data=await res.json();
     closeModal('editFacModal');
-    document.getElementById('resetPassValue').textContent = data.tempPassword || '';
+    document.getElementById('resetPassValue').textContent=data.tempPassword||'';
     openModal('resetPassModal');
   }
 
+  // ══════════════════════════════════════════
   // ── CLIENTS ──
-  const clientSel = makeSelectionHelper('client');
+  // ══════════════════════════════════════════
+  let _clientData = [];
+  const clientSel = makeSelection(['clientEditBtn','clientArchBtn','clientDelBtn'], 'clientEditBtn');
 
   async function loadClients() {
-    clientSel.sel.clear();
+    clientSel.clear();
     const archived = document.getElementById('showArchivedClients').checked ? 1 : 0;
     const res  = await fetch(`/api/admin/clients?archived=${archived}`);
-    const list = await res.json();
-    const el   = document.getElementById('clientTable');
-    if (!list.length) { el.innerHTML = '<div class="empty">No clients yet.</div>'; return; }
+    _clientData = await res.json();
+    renderClients();
+  }
+
+  function renderClients() {
+    clientSel.clear();
+    const el    = document.getElementById('clientTable');
+    const query = document.getElementById('clientSearch').value.trim();
+    const s     = getSort('client');
+    let list    = _clientData.filter(c => matchesSearch(c, query, ['name','email','facilitator_name']));
+    if (s.col)  list = [...list].sort((a,b) => {
+      const av=(a[s.col]||'').toLowerCase(), bv=(b[s.col]||'').toLowerCase();
+      return av<bv?-s.dir:av>bv?s.dir:0;
+    });
+    if (!list.length) { el.innerHTML = '<div class="empty">No results.</div>'; return; }
     el.innerHTML =
       `<div class="table-hdr">
-        <div class="col-cb"><input type="checkbox" onchange="clientSel.selectAll('clientTable')"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-level">Status</div>
-        <div class="table-hdr-cell col-fac">Facilitator</div>
+        <div class="col-cb"><input type="checkbox" id="clientAllCb" onchange="clientSel.toggleAll('clientTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="clientSort('name')">Name ${sortIndicator('client','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="clientSort('email')">Email ${sortIndicator('client','email')}</div>
+        <div class="table-hdr-cell col-level" onclick="clientSort('archived')">Status ${sortIndicator('client','archived')}</div>
+        <div class="table-hdr-cell col-fac" onclick="clientSort('facilitator_name')">Facilitator ${sortIndicator('client','facilitator_name')}</div>
       </div>` +
       list.map(c => `
         <div class="table-row ${c.archived?'archived':''}">
-          <div class="col-cb"><input type="checkbox" value="${c.id}" onchange="clientSel.toggle('${c.id}',this.checked)"/></div>
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${c.id}" onchange="clientSel.toggle('${c.id}',this.checked)"/></div>
           <div class="col-name">${c.name}</div>
           <div class="col-email">${c.email||'<span style="color:rgba(255,255,255,0.2)">No login</span>'}</div>
           <div class="col-level">
@@ -544,123 +611,114 @@
           <div class="col-fac">${c.facilitator_name||'Unassigned'}</div>
         </div>`).join('');
   }
+  function clientSort(col) { setSort('client', col); renderClients(); }
 
   function editSelectedClient() {
-    const id = [...clientSel.sel][0];
+    const id=[...clientSel.sel][0]; if (!id) return;
     openClientEdit(id);
   }
   async function openClientEdit(id) {
-    const res  = await fetch(`/api/clients/${id}`);
-    const c    = await res.json();
-    document.getElementById('editClientId').value    = c.id;
-    document.getElementById('editClientName').value  = c.name;
-    document.getElementById('editClientEmail').value = c.email || '';
-    document.getElementById('editClientErr').textContent = '';
-    const facRes = await fetch('/api/admin/facilitators');
-    const facs   = await facRes.json();
-    const facEl  = document.getElementById('editClientFac');
-    facEl.innerHTML = '<option value="">Unassigned</option>';
-    facs.forEach(f => { facEl.innerHTML += `<option value="${f.id}" ${c.facilitator_id===f.id?'selected':''}>${f.name}</option>`; });
+    const res=await fetch(`/api/clients/${id}`), c=await res.json();
+    document.getElementById('editClientId').value=c.id;
+    document.getElementById('editClientName').value=c.name;
+    document.getElementById('editClientEmail').value=c.email||'';
+    document.getElementById('editClientErr').textContent='';
+    const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
+    const facEl=document.getElementById('editClientFac');
+    facEl.innerHTML='<option value="">Unassigned</option>';
+    facs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}" ${c.facilitator_id===f.id?'selected':''}>${f.name}</option>`; });
     openModal('editClientModal');
   }
   async function saveEditClient() {
-    const id    = document.getElementById('editClientId').value;
-    const name  = document.getElementById('editClientName').value.trim();
-    const email = document.getElementById('editClientEmail').value.trim();
-    const facId = document.getElementById('editClientFac').value;
-    const err   = document.getElementById('editClientErr');
-    if (!name) { err.textContent = 'Name required.'; return; }
-    await fetch(`/api/clients/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null})});
+    const id=document.getElementById('editClientId').value, name=document.getElementById('editClientName').value.trim(), email=document.getElementById('editClientEmail').value.trim(), facId=document.getElementById('editClientFac').value, err=document.getElementById('editClientErr');
+    if (!name) { err.textContent='Name required.'; return; }
+    await fetch(`/api/clients/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null})});
     closeModal('editClientModal'); loadClients();
   }
   async function archiveSelectedClient() {
-    const ids = [...clientSel.sel];
-    showConfirm('Archive client' + (ids.length>1?'s':''),
-      `Archive ${ids.length} client${ids.length>1?'s':''}?`,
-      async () => {
-        await Promise.all(ids.map(id => fetch(`/api/clients/${id}/archive`, {method:'PATCH'})));
-        clientSel.clear(); loadClients();
-      });
+    const ids=[...clientSel.sel]; if (!ids.length) return;
+    showConfirm('Archive client'+(ids.length>1?'s':''),`Archive ${ids.length} client${ids.length>1?'s':''}?`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/clients/${id}/archive`,{method:'PATCH'}))); loadClients(); });
   }
   async function deleteSelectedClient() {
-    const ids = [...clientSel.sel];
-    showConfirm('Delete client' + (ids.length>1?'s':''),
-      `Permanently delete ${ids.length} client${ids.length>1?'s':''}? All their sessions and practices will be lost. This cannot be undone.`,
-      async () => {
-        await Promise.all(ids.map(id => fetch(`/api/clients/${id}`, {method:'DELETE'})));
-        clientSel.clear(); loadClients();
-      });
+    const ids=[...clientSel.sel]; if (!ids.length) return;
+    showConfirm('Delete client'+(ids.length>1?'s':''),
+      `Permanently delete ${ids.length} client${ids.length>1?'s':''}? All sessions and practices lost. Cannot be undone.`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/clients/${id}`,{method:'DELETE'}))); loadClients(); });
   }
-
-  // Existing new client
-  let allCats = [], allFacs = [];
+  let allCats=[], allFacs=[];
   async function openNewClient() {
-    document.getElementById('ncName').value  = '';
-    document.getElementById('ncEmail').value = '';
-    document.getElementById('ncErr').textContent = '';
-    const facRes = await fetch('/api/admin/facilitators');
-    allFacs = await facRes.json();
-    const facEl = document.getElementById('ncFacilitator');
-    facEl.innerHTML = '<option value="">Select facilitator…</option>';
-    allFacs.forEach(f => { facEl.innerHTML += `<option value="${f.id}">${f.name}</option>`; });
-    const catRes = await fetch('/api/content/categories');
-    allCats = await catRes.json();
-    const catEl = document.getElementById('ncCat');
-    catEl.innerHTML = '<option value="">Select…</option>';
-    allCats.filter(c => !c.parent_id).forEach(c => { catEl.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
-    document.getElementById('ncSub').innerHTML = '<option value="">Select…</option>';
+    document.getElementById('ncName').value='';
+    document.getElementById('ncEmail').value='';
+    document.getElementById('ncErr').textContent='';
+    const facRes=await fetch('/api/admin/facilitators'); allFacs=await facRes.json();
+    const facEl=document.getElementById('ncFacilitator');
+    facEl.innerHTML='<option value="">Select facilitator…</option>';
+    allFacs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}">${f.name}</option>`; });
+    const catRes=await fetch('/api/content/categories'); allCats=await catRes.json();
+    const catEl=document.getElementById('ncCat');
+    catEl.innerHTML='<option value="">Select…</option>';
+    allCats.filter(c=>!c.parent_id).forEach(c=>{ catEl.innerHTML+=`<option value="${c.id}">${c.name}</option>`; });
+    document.getElementById('ncSub').innerHTML='<option value="">Select…</option>';
     openModal('newClientModal');
     document.getElementById('ncName').focus();
   }
   function loadNcSubs() {
-    const catId = document.getElementById('ncCat').value;
-    const subEl = document.getElementById('ncSub');
-    subEl.innerHTML = '<option value="">Select…</option>';
-    allCats.filter(c => c.parent_id === catId).forEach(s => { subEl.innerHTML += `<option value="${s.id}">${s.name}</option>`; });
+    const catId=document.getElementById('ncCat').value, subEl=document.getElementById('ncSub');
+    subEl.innerHTML='<option value="">Select…</option>';
+    allCats.filter(c=>c.parent_id===catId).forEach(s=>{ subEl.innerHTML+=`<option value="${s.id}">${s.name}</option>`; });
   }
   async function createClient() {
-    const name          = document.getElementById('ncName').value.trim();
-    const email         = document.getElementById('ncEmail').value.trim();
-    const facilitatorId = document.getElementById('ncFacilitator').value;
-    const categoryId    = document.getElementById('ncCat').value;
-    const subcategoryId = document.getElementById('ncSub').value;
-    const err           = document.getElementById('ncErr');
-    if (!name)          { err.textContent = 'Name required.'; return; }
-    if (!facilitatorId) { err.textContent = 'Please assign a facilitator.'; return; }
-    const res  = await fetch('/api/clients', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facilitatorId,categoryId:categoryId||null,subcategoryId:subcategoryId||null})});
-    const data = await res.json();
-    if (data.error) { err.textContent = data.error; return; }
+    const name=document.getElementById('ncName').value.trim(), email=document.getElementById('ncEmail').value.trim(),
+      facilitatorId=document.getElementById('ncFacilitator').value, categoryId=document.getElementById('ncCat').value,
+      subcategoryId=document.getElementById('ncSub').value, err=document.getElementById('ncErr');
+    if (!name) { err.textContent='Name required.'; return; }
+    if (!facilitatorId) { err.textContent='Please assign a facilitator.'; return; }
+    const res=await fetch('/api/clients',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facilitatorId,categoryId:categoryId||null,subcategoryId:subcategoryId||null})});
+    const data=await res.json();
+    if (data.error) { err.textContent=data.error; return; }
     closeModal('newClientModal');
-    const body = document.getElementById('clientCreatedBody');
-    if (email && data.tempPassword) {
-      body.innerHTML = `<div class="temp-pass-box"><div class="temp-pass-label">Temporary password</div><div class="temp-pass-value">${data.tempPassword}</div><div class="temp-pass-note">Welcome email sent to ${email}.</div></div>`;
+    const body=document.getElementById('clientCreatedBody');
+    if (email&&data.tempPassword) {
+      body.innerHTML=`<div class="temp-pass-box"><div class="temp-pass-label">Temporary password</div><div class="temp-pass-value">${data.tempPassword}</div><div class="temp-pass-note">Welcome email sent to ${email}.</div></div>`;
     } else {
-      body.innerHTML = `<div style="font-size:14px;color:rgba(255,255,255,0.65)">${name} created${email?'':' — no email set.'}.</div>`;
+      body.innerHTML=`<div style="font-size:14px;color:rgba(255,255,255,0.65)">${name} created${email?'':' — no email set.'}.</div>`;
     }
-    openModal('clientCreatedModal');
-    loadClients();
+    openModal('clientCreatedModal'); loadClients();
   }
 
+  // ══════════════════════════════════════════
   // ── REGISTERED USERS ──
-  const userSel = makeSelectionHelper('user');
+  // ══════════════════════════════════════════
+  let _userData = [];
+  const userSel = makeSelection(['userUpgradeBtn','userDelBtn'], null);
 
   async function loadUsers() {
-    userSel.sel.clear();
-    const res  = await fetch('/api/admin/users');
-    const list = await res.json();
-    const el   = document.getElementById('usersTable');
-    if (!list.length) { el.innerHTML = '<div class="empty">No self-registered users yet.</div>'; return; }
-    el.innerHTML =
+    userSel.clear();
+    const res=await fetch('/api/admin/users');
+    _userData=await res.json();
+    renderUsers();
+  }
+
+  function renderUsers() {
+    userSel.clear();
+    const el=document.getElementById('usersTable');
+    const query=document.getElementById('userSearch').value.trim();
+    const s=getSort('user');
+    let list=_userData.filter(u=>matchesSearch(u,query,['name','email','facilitator_name','membership_level']));
+    if (s.col) list=[...list].sort((a,b)=>{ const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
+    if (!list.length) { el.innerHTML='<div class="empty">No results.</div>'; return; }
+    el.innerHTML=
       `<div class="table-hdr">
-        <div class="col-cb"><input type="checkbox" onchange="userSel.selectAll('usersTable')"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-level">Level</div>
-        <div class="table-hdr-cell col-fac">Facilitator</div>
-      </div>` +
-      list.map(u => `
+        <div class="col-cb"><input type="checkbox" id="userAllCb" onchange="userSel.toggleAll('usersTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="userSort('name')">Name ${sortIndicator('user','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="userSort('email')">Email ${sortIndicator('user','email')}</div>
+        <div class="table-hdr-cell col-level" onclick="userSort('membership_level')">Level ${sortIndicator('user','membership_level')}</div>
+        <div class="table-hdr-cell col-fac" onclick="userSort('facilitator_name')">Facilitator ${sortIndicator('user','facilitator_name')}</div>
+      </div>`+
+      list.map(u=>`
         <div class="table-row">
-          <div class="col-cb"><input type="checkbox" value="${u.id}" onchange="userSel.toggle('${u.id}',this.checked)"/></div>
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${u.id}" onchange="userSel.toggle('${u.id}',this.checked)"/></div>
           <div class="col-name">${u.name}</div>
           <div class="col-email">${u.email||'—'}</div>
           <div class="col-level">
@@ -670,91 +728,94 @@
           <div class="col-fac">${u.facilitator_name||'—'}</div>
         </div>`).join('');
   }
+  function userSort(col) { setSort('user',col); renderUsers(); }
 
   async function upgradeSelected() {
-    // Load facilitators then show upgrade modal for selection
-    const facRes = await fetch('/api/admin/facilitators');
-    const facs   = await facRes.json();
-    const facEl  = document.getElementById('upgradeAssignFac');
-    facEl.innerHTML = '<option value="">No facilitator</option>';
-    facs.forEach(f => { facEl.innerHTML += `<option value="${f.id}">${f.name}</option>`; });
-    document.getElementById('upgradeUserName').textContent = `${userSel.sel.size} user${userSel.sel.size>1?'s':''} selected`;
-    document.getElementById('upgradeUserId').value = [...userSel.sel].join(',');
-    document.getElementById('upgradeErr').textContent = '';
+    if (!userSel.sel.size) return;
+    const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
+    const facEl=document.getElementById('upgradeAssignFac');
+    facEl.innerHTML='<option value="">No facilitator</option>';
+    facs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}">${f.name}</option>`; });
+    document.getElementById('upgradeUserName').textContent=`${userSel.sel.size} user${userSel.sel.size>1?'s':''} selected`;
+    document.getElementById('upgradeUserId').value=[...userSel.sel].join(',');
+    document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
   }
   async function saveUpgrade() {
-    const ids   = document.getElementById('upgradeUserId').value.split(',').filter(Boolean);
-    const level = document.getElementById('upgradeMemberLevel').value;
-    const facId = document.getElementById('upgradeAssignFac').value;
+    const ids=document.getElementById('upgradeUserId').value.split(',').filter(Boolean);
+    const level=document.getElementById('upgradeMemberLevel').value, facId=document.getElementById('upgradeAssignFac').value;
     try {
-      await Promise.all(ids.map(id => fetch(`/api/admin/users/${id}/upgrade`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({level})})));
-      if (facId) await Promise.all(ids.map(id => fetch(`/api/admin/users/${id}/assign-facilitator`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId:facId})})));
+      await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({level})})));
+      if (facId) await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/assign-facilitator`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId:facId})})));
       closeModal('upgradeModal'); userSel.clear(); loadUsers();
-    } catch(e) { document.getElementById('upgradeErr').textContent = 'Error: ' + e.message; }
+    } catch(e) { document.getElementById('upgradeErr').textContent='Error: '+e.message; }
   }
   async function deleteSelectedUsers() {
-    const ids = [...userSel.sel];
-    showConfirm('Delete user' + (ids.length>1?'s':''),
-      `Permanently delete ${ids.length} user${ids.length>1?'s':''}? This cannot be undone.`,
-      async () => {
-        await Promise.all(ids.map(id => fetch(`/api/clients/${id}`, {method:'DELETE'})));
-        userSel.clear(); loadUsers();
-      });
+    const ids=[...userSel.sel]; if (!ids.length) return;
+    showConfirm('Delete user'+(ids.length>1?'s':''),
+      `Permanently delete ${ids.length} user${ids.length>1?'s':''}? Cannot be undone.`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/clients/${id}`,{method:'DELETE'}))); loadUsers(); });
   }
 
+  // ══════════════════════════════════════════
   // ── GUEST LEADS ──
-  const leadSel = makeSelectionHelper('lead');
+  // ══════════════════════════════════════════
+  let _leadData = [];
+  const leadSel = makeSelection(['leadUpgradeBtn','leadSyncBtn','leadDelBtn'], null);
 
   async function loadLeads() {
-    leadSel.sel.clear();
-    const res  = await fetch('/api/admin/guest-leads');
-    const list = await res.json();
-    const el   = document.getElementById('leadsTable');
-    if (!list.length) { el.innerHTML = '<div class="empty">No guest leads captured yet.</div>'; return; }
-    el.innerHTML =
+    leadSel.clear();
+    const res=await fetch('/api/admin/guest-leads');
+    _leadData=await res.json();
+    renderLeads();
+  }
+
+  function renderLeads() {
+    leadSel.clear();
+    const el=document.getElementById('leadsTable');
+    const query=document.getElementById('leadSearch').value.trim();
+    const s=getSort('lead');
+    let list=_leadData.filter(l=>matchesSearch(l,query,['name','email','source']));
+    if (s.col) list=[...list].sort((a,b)=>{ const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
+    if (!list.length) { el.innerHTML='<div class="empty">No results.</div>'; return; }
+    el.innerHTML=
       `<div class="table-hdr">
-        <div class="col-cb"><input type="checkbox" onchange="leadSel.selectAll('leadsTable')"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-level">Captured</div>
-        <div class="table-hdr-cell col-status">Source</div>
-      </div>` +
-      list.map(l => `
+        <div class="col-cb"><input type="checkbox" id="leadAllCb" onchange="leadSel.toggleAll('leadsTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="leadSort('name')">Name ${sortIndicator('lead','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="leadSort('email')">Email ${sortIndicator('lead','email')}</div>
+        <div class="table-hdr-cell col-level" onclick="leadSort('created_at')">Captured ${sortIndicator('lead','created_at')}</div>
+        <div class="table-hdr-cell col-status" onclick="leadSort('source')">Source ${sortIndicator('lead','source')}</div>
+      </div>`+
+      list.map(l=>`
         <div class="table-row">
-          <div class="col-cb"><input type="checkbox" value="${l.id}" onchange="leadSel.toggle('${l.id}',this.checked)"/></div>
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${l.id}" onchange="leadSel.toggle('${l.id}',this.checked)"/></div>
           <div class="col-name">${l.name||'—'}</div>
           <div class="col-email">${l.email||'—'}</div>
           <div class="col-level" style="font-size:12px;color:rgba(255,255,255,0.3)">${l.created_at?.slice(0,10)||''}</div>
           <div class="col-status"><span class="status-badge" style="background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)">${l.source||'guest'}</span></div>
         </div>`).join('');
   }
+  function leadSort(col) { setSort('lead',col); renderLeads(); }
 
   async function upgradeSelectedLeads() {
-    const ids = [...leadSel.sel];
+    const ids=[...leadSel.sel]; if (!ids.length) return;
     showConfirm('Convert to registered',
-      `Convert ${ids.length} lead${ids.length>1?'s':''} to registered accounts? They will receive a welcome email with a temporary password.`,
-      async () => {
-        await Promise.all(ids.map(id => fetch(`/api/admin/guest-leads/${id}/convert`, {method:'POST'})));
-        leadSel.clear(); loadLeads(); loadUsers();
-      });
+      `Convert ${ids.length} lead${ids.length>1?'s':''} to registered accounts? They will receive a welcome email.`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/admin/guest-leads/${id}/convert`,{method:'POST'}))); loadLeads(); loadUsers(); });
   }
   async function deleteSelectedLeads() {
-    const ids = [...leadSel.sel];
-    showConfirm('Delete lead' + (ids.length>1?'s':''),
-      `Delete ${ids.length} lead${ids.length>1?'s':''}? This cannot be undone.`,
-      async () => {
-        await Promise.all(ids.map(id => fetch(`/api/admin/guest-leads/${id}`, {method:'DELETE'})));
-        leadSel.clear(); loadLeads();
-      });
+    const ids=[...leadSel.sel]; if (!ids.length) return;
+    showConfirm('Delete lead'+(ids.length>1?'s':''),
+      `Delete ${ids.length} lead${ids.length>1?'s':''}? Cannot be undone.`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/admin/guest-leads/${id}`,{method:'DELETE'}))); loadLeads(); });
   }
-  function syncLeads() { alert('Brevo sync coming soon — ' + leadSel.sel.size + ' lead(s) selected.'); }
+  function syncLeads() { alert('Brevo sync coming soon — '+leadSel.sel.size+' lead(s) selected.'); }
 
   // Keyboard shortcuts
-  document.getElementById('facName').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('facEmail').focus(); });
-  document.getElementById('facEmail').addEventListener('keydown', e => { if(e.key==='Enter') createFacilitator(); });
-  document.getElementById('editFacName').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('editFacEmail').focus(); });
-  document.getElementById('editFacEmail').addEventListener('keydown', e => { if(e.key==='Enter') saveEditFac(); });
+  document.getElementById('facName').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('facEmail').focus(); });
+  document.getElementById('facEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') createFacilitator(); });
+  document.getElementById('editFacName').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('editFacEmail').focus(); });
+  document.getElementById('editFacEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') saveEditFac(); });
 
   // Init
   loadFacilitators();
