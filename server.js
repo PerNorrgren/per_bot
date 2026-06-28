@@ -647,8 +647,15 @@ wss.on('connection', (ws, req) => {
 
 // ── Audio — Deepgram Aura TTS ──
 // Client sends text + chosen voice. Server calls Deepgram and pipes audio back directly.
-// No artefacts, no warm-up issues, no priming needed.
 const DEFAULT_VOICE = process.env.DEFAULT_VOICE || 'aura-zeus-en';
+
+function cleanForTTS(text) {
+  return text
+    .replace(/[—–]/g, ', ')   // em/en dash → short pause
+    .replace(/\.\.\./g, '. ') // ellipsis → normal pause
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 app.post('/api/speak', auth.requireAuthApi(['client', 'facilitator', 'admin']), async (req, res) => {
   try {
@@ -663,7 +670,7 @@ app.post('/api/speak', auth.requireAuthApi(['client', 'facilitator', 'admin']), 
           'Authorization': `Token ${DEEPGRAM_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: cleanForTTS(text) }),
       }
     );
     if (!response.ok) {
