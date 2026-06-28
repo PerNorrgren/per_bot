@@ -180,9 +180,9 @@ async function getDb() {
     expires_at TEXT NOT NULL,
     accepted_at TEXT,
     FOREIGN KEY (facilitator_id) REFERENCES facilitators(id)
-  )\`);
+  )`);
 
-  db.run(\`CREATE TABLE IF NOT EXISTS guest_leads (
+  db.run(`CREATE TABLE IF NOT EXISTS guest_leads (
     id TEXT PRIMARY KEY,
     name TEXT,
     email TEXT,
