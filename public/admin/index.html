@@ -35,10 +35,16 @@
     .table-row:last-child { border-bottom:none; }
     .table-row:hover { background:rgba(255,255,255,0.03); }
     .table-row.archived { opacity:0.45; }
-    .col-name { flex:1.2; font-size:14px; color:rgba(255,255,255,0.8); }
-    .col-email { flex:1.5; font-size:12px; color:rgba(255,255,255,0.4); }
+    .col-cb     { width:28px; flex-shrink:0; display:flex; align-items:center; }
+    .col-cb input { width:15px; height:15px; accent-color:rgba(180,230,200,0.8); cursor:pointer; }
+    .col-name   { flex:1.2; font-size:14px; color:rgba(255,255,255,0.8); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-email  { flex:1.5; font-size:12px; color:rgba(255,255,255,0.4); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-level  { flex:0.8; font-size:11px; color:rgba(255,255,255,0.35); }
     .col-status { flex:0.6; }
+    .col-fac    { flex:1; font-size:12px; color:rgba(255,255,255,0.3); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .col-actions { display:flex; gap:6px; flex-shrink:0; }
+    .table-hdr  { display:flex; align-items:center; padding:8px 20px; gap:14px; border-bottom:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); }
+    .table-hdr-cell { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); }
     .status-badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.06em; }
     .status-active { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
     .status-archived { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.3); }
@@ -95,12 +101,12 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">All facilitators</div>
-          <div style="display:flex;gap:12px;align-items:center">
-            <label class="show-archived-wrap">
-              <input type="checkbox" id="showArchivedFac" onchange="loadFacilitators()"/>
-              Show archived
-            </label>
-            <button class="btn primary" onclick="openNewFac()">+ Add facilitator</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label class="show-archived-wrap"><input type="checkbox" id="showArchivedFac" onchange="loadFacilitators()"/> Show archived</label>
+            <button class="btn sm" id="facEditBtn"    style="display:none" onclick="editSelectedFac()">Edit</button>
+            <button class="btn sm warn" id="facArchBtn" style="display:none" onclick="archiveSelectedFac()">Archive</button>
+            <button class="btn sm danger" id="facDelBtn" style="display:none" onclick="deleteSelectedFac()">Delete</button>
+            <button class="btn primary" onclick="openNewFac()">+ Add</button>
           </div>
         </div>
         <div class="table" id="facTable"><div class="loading">Loading…</div></div>
@@ -113,18 +119,106 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">All clients across facilitators</div>
-          <div style="display:flex;gap:12px;align-items:center">
-            <label class="show-archived-wrap">
-              <input type="checkbox" id="showArchivedClients" onchange="loadClients()"/>
-              Show archived
-            </label>
-            <button class="btn primary" onclick="openNewClient()">+ Add client</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label class="show-archived-wrap"><input type="checkbox" id="showArchivedClients" onchange="loadClients()"/> Show archived</label>
+            <button class="btn sm" id="clientEditBtn"  style="display:none" onclick="editSelectedClient()">Edit</button>
+            <button class="btn sm warn" id="clientArchBtn" style="display:none" onclick="archiveSelectedClient()">Archive</button>
+            <button class="btn sm danger" id="clientDelBtn" style="display:none" onclick="deleteSelectedClient()">Delete</button>
+            <button class="btn primary" onclick="openNewClient()">+ Add</button>
           </div>
         </div>
         <div class="table" id="clientTable"><div class="loading">Loading…</div></div>
       </div>
     </div>
 
+
+    <!-- Users — self-registered -->
+    <div>
+      <div class="section-label">Registered users</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Self-registered accounts</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm" id="userUpgradeBtn" style="display:none" onclick="upgradeSelected()">Upgrade</button>
+            <button class="btn sm danger" id="userDelBtn" style="display:none" onclick="deleteSelectedUsers()">Delete</button>
+          </div>
+        </div>
+        <div class="table" id="usersTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Guest Leads -->
+    <div>
+      <div class="section-label">Guest leads</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Captured emails</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm" id="leadUpgradeBtn" style="display:none" onclick="upgradeSelectedLeads()">Convert to registered</button>
+            <button class="btn sm primary" id="leadSyncBtn" style="display:none" onclick="syncLeads()">Sync to Brevo</button>
+            <button class="btn sm danger" id="leadDelBtn" style="display:none" onclick="deleteSelectedLeads()">Delete</button>
+          </div>
+        </div>
+        <div class="table" id="leadsTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Upgrade User Modal -->
+  <div class="modal-bg" id="upgradeModal" style="display:none" onclick="if(event.target===this)closeModal('upgradeModal')">
+    <div class="modal">
+      <h3>Upgrade user</h3>
+      <input type="hidden" id="upgradeUserId"/>
+      <div style="margin:16px 0;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.5)" id="upgradeUserName"></div>
+        <select id="upgradeMemberLevel" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+          <option value="registered">Registered (free)</option>
+          <option value="member">Member (paid)</option>
+        </select>
+        <select id="upgradeAssignFac" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+          <option value="">No facilitator</option>
+        </select>
+      </div>
+      <div class="modal-err" id="upgradeErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('upgradeModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveUpgrade()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Universal Confirm Modal -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal">
+      <h3 id="confirmTitle">Are you sure?</h3>
+      <p class="modal-note" id="confirmMsg"></p>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('confirmModal')">Cancel</button>
+        <button class="btn danger" id="confirmOkBtn" style="padding:8px 18px;border-radius:8px;font-family:Georgia,serif;font-size:13px" onclick="confirmAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Client Modal -->
+  <div class="modal-overlay" id="editClientModal">
+    <div class="modal">
+      <h3>Edit client</h3>
+      <input type="hidden" id="editClientId"/>
+      <div><label>Name</label><input type="text" id="editClientName"/></div>
+      <div><label>Email</label><input type="email" id="editClientEmail"/></div>
+      <div>
+        <label>Facilitator</label>
+        <select id="editClientFac" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none">
+          <option value="">Unassigned</option>
+        </select>
+      </div>
+      <div class="modal-err" id="editClientErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('editClientModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveEditClient()">Save</button>
+      </div>
+    </div>
   </div>
 
   <!-- New Facilitator Modal -->
@@ -256,6 +350,7 @@
 </div>
 
 <script>
+  // ── Utilities ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
   function openModal(id)  { document.getElementById(id).classList.add('open'); }
   async function logout()  { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
@@ -268,225 +363,392 @@
     if (m && !e.target.closest('.topbar')) m.style.display = 'none';
   });
 
-  // ── Facilitators ──
+  // ── Confirm modal ──
+  let _confirmFn = null;
+  function showConfirm(title, msg, fn) {
+    document.getElementById('confirmTitle').textContent = title;
+    document.getElementById('confirmMsg').textContent   = msg;
+    _confirmFn = fn;
+    openModal('confirmModal');
+  }
+  function confirmAction() { closeModal('confirmModal'); if (_confirmFn) _confirmFn(); _confirmFn = null; }
+
+  // ── Selection helpers ──
+  function makeSelectionHelper(prefix) {
+    const sel = new Set();
+    return {
+      sel,
+      toggle(id, checked) {
+        if (checked) sel.add(id); else sel.delete(id);
+        updateBtns();
+      },
+      selectAll(tableId) {
+        const boxes = document.querySelectorAll(`#${tableId} input[type=checkbox]`);
+        const all   = [...boxes].every(b => b.checked);
+        boxes.forEach(b => { b.checked = !all; if (!all) sel.add(b.value); else sel.delete(b.value); });
+        updateBtns();
+      },
+      clear() { sel.clear(); updateBtns(); },
+    };
+    function updateBtns() {
+      const has = sel.size > 0;
+      const one = sel.size === 1;
+      [prefix+'EditBtn', prefix+'ArchBtn', prefix+'UpgradeBtn', prefix+'SyncBtn'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = (id.includes('Edit') ? one : has) ? 'inline-flex' : 'none';
+      });
+      [prefix+'DelBtn', prefix+'ArchBtn'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = has ? 'inline-flex' : 'none';
+      });
+      const leadUpgrade = document.getElementById('leadUpgradeBtn');
+      if (leadUpgrade) leadUpgrade.style.display = has ? 'inline-flex' : 'none';
+    }
+  }
+
+  // ── FACILITATORS ──
+  const facSel = makeSelectionHelper('fac');
+
   async function loadFacilitators() {
+    facSel.sel.clear();
     const archived = document.getElementById('showArchivedFac').checked ? 1 : 0;
     const res  = await fetch(`/api/admin/facilitators?archived=${archived}`);
     const list = await res.json();
     const el   = document.getElementById('facTable');
-
     if (!list.length) { el.innerHTML = '<div class="empty">No facilitators yet.</div>'; return; }
-
-    el.innerHTML = list.map(f => {
-      const isArchived = f.role === 'facilitator_archived';
-      const isPending  = f.must_change_password;
-      return `
-        <div class="table-row ${isArchived ? 'archived' : ''}">
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" onchange="facSel.selectAll('facTable')"/></div>
+        <div class="table-hdr-cell col-name">Name</div>
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-level">Status</div>
+        <div class="table-hdr-cell col-status">Level</div>
+      </div>` +
+      list.map(f => {
+        const isArchived = f.role === 'facilitator_archived';
+        const isPending  = f.must_change_password;
+        return `<div class="table-row ${isArchived?'archived':''}">
+          <div class="col-cb"><input type="checkbox" value="${f.id}" onchange="facSel.toggle('${f.id}',this.checked)"/></div>
           <div class="col-name">${f.name}</div>
           <div class="col-email">${f.email}</div>
-          <div class="col-status">
-            ${isArchived
-              ? '<span class="status-badge status-archived">Archived</span>'
-              : isPending
-                ? '<span class="status-badge status-pending">Pending login</span>'
-                : '<span class="status-badge status-active">Active</span>'}
+          <div class="col-level">
+            <span class="status-badge ${isArchived?'status-archived':isPending?'status-pending':'status-active'}">
+              ${isArchived?'Archived':isPending?'Pending':'Active'}
+            </span>
           </div>
-          <div class="col-actions">
-            <button class="btn sm" onclick="openEditFac('${f.id}','${f.name.replace(/'/g,"\\'")}','${f.email}')">Edit</button>
-            ${isArchived
-              ? `<button class="btn sm warn" onclick="archiveFac('${f.id}',false)">Unarchive</button>`
-              : `<button class="btn sm warn" onclick="archiveFac('${f.id}',true)">Archive</button>`}
-            <button class="btn sm danger" onclick="openConfirmDelete('${f.id}')">Delete</button>
-          </div>
-        </div>
-      `;
-    }).join('');
+          <div class="col-status"><span class="status-badge" style="background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)">Facilitator</span></div>
+        </div>`;
+      }).join('');
   }
 
-  function openNewFac() {
-    document.getElementById('facName').value  = '';
+  function editSelectedFac() {
+    const id = [...facSel.sel][0];
+    openFacEdit(id);
+  }
+  async function openFacEdit(id) {
+    const res  = await fetch('/api/admin/facilitators');
+    const list = await res.json();
+    const f    = list.find(x => x.id === id);
+    if (!f) return;
+    document.getElementById('editFacId').value   = f.id;
+    document.getElementById('editFacName').value  = f.name;
+    document.getElementById('editFacEmail').value = f.email;
+    document.getElementById('editFacErr').textContent = '';
+    openModal('editFacModal');
+  }
+  async function archiveSelectedFac() {
+    const ids = [...facSel.sel];
+    showConfirm('Archive facilitator' + (ids.length>1?'s':''),
+      `Archive ${ids.length} facilitator${ids.length>1?'s':''}? Their clients will remain.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'archive'})})));
+        facSel.clear(); loadFacilitators();
+      });
+  }
+  async function deleteSelectedFac() {
+    const ids = [...facSel.sel];
+    showConfirm('Delete facilitator' + (ids.length>1?'s':''),
+      `Permanently delete ${ids.length} facilitator${ids.length>1?'s':''}? This cannot be undone.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/admin/facilitators/${id}`, {method:'DELETE'})));
+        facSel.clear(); loadFacilitators();
+      });
+  }
+
+  // Existing facilitator create/edit functions
+  async function openNewFac() {
+    document.getElementById('facName').value = '';
     document.getElementById('facEmail').value = '';
     document.getElementById('facErr').textContent = '';
     openModal('newFacModal');
     document.getElementById('facName').focus();
   }
-
   async function createFacilitator() {
     const name  = document.getElementById('facName').value.trim();
     const email = document.getElementById('facEmail').value.trim();
     const err   = document.getElementById('facErr');
-    if (!name || !email) { err.textContent = 'Name and email required.'; return; }
-
-    const res  = await fetch('/api/admin/facilitators', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ name, email })
-    });
+    if (!name)  { err.textContent = 'Name required.'; return; }
+    if (!email) { err.textContent = 'Email required.'; return; }
+    const res  = await fetch('/api/admin/facilitators', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
     const data = await res.json();
     if (data.error) { err.textContent = data.error; return; }
-
     closeModal('newFacModal');
-    document.getElementById('tempPassValue').textContent = data.tempPassword;
+    document.getElementById('tempPassValue').textContent = data.tempPassword || '';
     openModal('tempPassModal');
   }
-
-  function openEditFac(id, name, email) {
-    document.getElementById('editFacId').value   = id;
-    document.getElementById('editFacName').value  = name;
-    document.getElementById('editFacEmail').value = email;
-    document.getElementById('editFacErr').textContent = '';
-    openModal('editFacModal');
-    document.getElementById('editFacName').focus();
-  }
-
-  async function resetFacPassword() {
-    const id = document.getElementById('editFacId').value;
-    const res  = await fetch(`/api/admin/facilitators/${id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ action: 'reset_password' })
-    });
-    const data = await res.json();
-    if (data.error) { document.getElementById('editFacErr').textContent = data.error; return; }
-    closeModal('editFacModal');
-    document.getElementById('resetPassValue').textContent = data.tempPassword;
-    openModal('resetPassModal');
-  }
-
   async function saveEditFac() {
     const id    = document.getElementById('editFacId').value;
     const name  = document.getElementById('editFacName').value.trim();
     const email = document.getElementById('editFacEmail').value.trim();
     const err   = document.getElementById('editFacErr');
-    if (!name || !email) { err.textContent = 'Name and email required.'; return; }
-
-    const res  = await fetch(`/api/admin/facilitators/${id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ name, email })
-    });
+    if (!name||!email) { err.textContent = 'Name and email required.'; return; }
+    await fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    closeModal('editFacModal'); loadFacilitators();
+  }
+  async function resetFacPassword() {
+    const id = document.getElementById('editFacId').value;
+    const res = await fetch(`/api/admin/facilitators/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset_password'})});
     const data = await res.json();
-    if (data.error) { err.textContent = data.error; return; }
     closeModal('editFacModal');
-    loadFacilitators();
+    document.getElementById('resetPassValue').textContent = data.tempPassword || '';
+    openModal('resetPassModal');
   }
 
-  async function archiveFac(id, archive) {
-    await fetch(`/api/admin/facilitators/${id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ action: archive ? 'archive' : 'unarchive' })
-    });
-    loadFacilitators();
+  // ── CLIENTS ──
+  const clientSel = makeSelectionHelper('client');
+
+  async function loadClients() {
+    clientSel.sel.clear();
+    const archived = document.getElementById('showArchivedClients').checked ? 1 : 0;
+    const res  = await fetch(`/api/admin/clients?archived=${archived}`);
+    const list = await res.json();
+    const el   = document.getElementById('clientTable');
+    if (!list.length) { el.innerHTML = '<div class="empty">No clients yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" onchange="clientSel.selectAll('clientTable')"/></div>
+        <div class="table-hdr-cell col-name">Name</div>
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-level">Status</div>
+        <div class="table-hdr-cell col-fac">Facilitator</div>
+      </div>` +
+      list.map(c => `
+        <div class="table-row ${c.archived?'archived':''}">
+          <div class="col-cb"><input type="checkbox" value="${c.id}" onchange="clientSel.toggle('${c.id}',this.checked)"/></div>
+          <div class="col-name">${c.name}</div>
+          <div class="col-email">${c.email||'<span style="color:rgba(255,255,255,0.2)">No login</span>'}</div>
+          <div class="col-level">
+            <span class="status-badge ${c.archived?'status-archived':'status-active'}">${c.archived?'Archived':'Active'}</span>
+            ${c.is_member?'<span class="status-badge status-active" style="margin-left:4px">Member</span>':''}
+          </div>
+          <div class="col-fac">${c.facilitator_name||'Unassigned'}</div>
+        </div>`).join('');
   }
 
-  function openConfirmDelete(id) {
-    document.getElementById('deleteFacId').value = id;
-    openModal('confirmDeleteModal');
+  function editSelectedClient() {
+    const id = [...clientSel.sel][0];
+    openClientEdit(id);
+  }
+  async function openClientEdit(id) {
+    const res  = await fetch(`/api/clients/${id}`);
+    const c    = await res.json();
+    document.getElementById('editClientId').value    = c.id;
+    document.getElementById('editClientName').value  = c.name;
+    document.getElementById('editClientEmail').value = c.email || '';
+    document.getElementById('editClientErr').textContent = '';
+    const facRes = await fetch('/api/admin/facilitators');
+    const facs   = await facRes.json();
+    const facEl  = document.getElementById('editClientFac');
+    facEl.innerHTML = '<option value="">Unassigned</option>';
+    facs.forEach(f => { facEl.innerHTML += `<option value="${f.id}" ${c.facilitator_id===f.id?'selected':''}>${f.name}</option>`; });
+    openModal('editClientModal');
+  }
+  async function saveEditClient() {
+    const id    = document.getElementById('editClientId').value;
+    const name  = document.getElementById('editClientName').value.trim();
+    const email = document.getElementById('editClientEmail').value.trim();
+    const facId = document.getElementById('editClientFac').value;
+    const err   = document.getElementById('editClientErr');
+    if (!name) { err.textContent = 'Name required.'; return; }
+    await fetch(`/api/clients/${id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null})});
+    closeModal('editClientModal'); loadClients();
+  }
+  async function archiveSelectedClient() {
+    const ids = [...clientSel.sel];
+    showConfirm('Archive client' + (ids.length>1?'s':''),
+      `Archive ${ids.length} client${ids.length>1?'s':''}?`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/clients/${id}/archive`, {method:'PATCH'})));
+        clientSel.clear(); loadClients();
+      });
+  }
+  async function deleteSelectedClient() {
+    const ids = [...clientSel.sel];
+    showConfirm('Delete client' + (ids.length>1?'s':''),
+      `Permanently delete ${ids.length} client${ids.length>1?'s':''}? All their sessions and practices will be lost. This cannot be undone.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/clients/${id}`, {method:'DELETE'})));
+        clientSel.clear(); loadClients();
+      });
   }
 
-  async function confirmDelete() {
-    const id = document.getElementById('deleteFacId').value;
-    await fetch(`/api/admin/facilitators/${id}`, { method: 'DELETE' });
-    closeModal('confirmDeleteModal');
-    loadFacilitators();
-  }
-
-  // ── Clients ──
+  // Existing new client
   let allCats = [], allFacs = [];
-
   async function openNewClient() {
     document.getElementById('ncName').value  = '';
     document.getElementById('ncEmail').value = '';
     document.getElementById('ncErr').textContent = '';
-
-    // Load facilitators
     const facRes = await fetch('/api/admin/facilitators');
     allFacs = await facRes.json();
     const facEl = document.getElementById('ncFacilitator');
     facEl.innerHTML = '<option value="">Select facilitator…</option>';
     allFacs.forEach(f => { facEl.innerHTML += `<option value="${f.id}">${f.name}</option>`; });
-
-    // Load categories
     const catRes = await fetch('/api/content/categories');
     allCats = await catRes.json();
     const catEl = document.getElementById('ncCat');
     catEl.innerHTML = '<option value="">Select…</option>';
     allCats.filter(c => !c.parent_id).forEach(c => { catEl.innerHTML += `<option value="${c.id}">${c.name}</option>`; });
     document.getElementById('ncSub').innerHTML = '<option value="">Select…</option>';
-
     openModal('newClientModal');
     document.getElementById('ncName').focus();
   }
-
   function loadNcSubs() {
     const catId = document.getElementById('ncCat').value;
     const subEl = document.getElementById('ncSub');
     subEl.innerHTML = '<option value="">Select…</option>';
     allCats.filter(c => c.parent_id === catId).forEach(s => { subEl.innerHTML += `<option value="${s.id}">${s.name}</option>`; });
   }
-
   async function createClient() {
-    const name         = document.getElementById('ncName').value.trim();
-    const email        = document.getElementById('ncEmail').value.trim();
+    const name          = document.getElementById('ncName').value.trim();
+    const email         = document.getElementById('ncEmail').value.trim();
     const facilitatorId = document.getElementById('ncFacilitator').value;
-    const categoryId   = document.getElementById('ncCat').value;
+    const categoryId    = document.getElementById('ncCat').value;
     const subcategoryId = document.getElementById('ncSub').value;
-    const err          = document.getElementById('ncErr');
-
-    if (!name)         { err.textContent = 'Name required.'; return; }
-    if (!facilitatorId){ err.textContent = 'Please assign a facilitator.'; return; }
-
-    const res  = await fetch('/api/clients', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email: email||null, facilitator_id: facilitatorId,
-        categoryId: categoryId||null, subcategoryId: subcategoryId||null })
-    });
+    const err           = document.getElementById('ncErr');
+    if (!name)          { err.textContent = 'Name required.'; return; }
+    if (!facilitatorId) { err.textContent = 'Please assign a facilitator.'; return; }
+    const res  = await fetch('/api/clients', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facilitatorId,categoryId:categoryId||null,subcategoryId:subcategoryId||null})});
     const data = await res.json();
     if (data.error) { err.textContent = data.error; return; }
-
     closeModal('newClientModal');
-
     const body = document.getElementById('clientCreatedBody');
     if (email && data.tempPassword) {
-      body.innerHTML = `
-        <div style="background:rgba(180,230,200,0.07);border:1px solid rgba(180,230,200,0.2);border-radius:10px;padding:16px">
-          <div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(180,230,200,0.45);margin-bottom:6px">Temporary password</div>
-          <div style="font-size:20px;font-family:monospace;color:rgba(180,230,200,1);letter-spacing:0.06em">${data.tempPassword}</div>
-          <div style="font-size:12px;color:rgba(255,255,255,0.3);margin-top:8px">Welcome email sent to ${email}. Keep this as backup.</div>
-        </div>`;
+      body.innerHTML = `<div class="temp-pass-box"><div class="temp-pass-label">Temporary password</div><div class="temp-pass-value">${data.tempPassword}</div><div class="temp-pass-note">Welcome email sent to ${email}.</div></div>`;
     } else {
-      body.innerHTML = `<div style="font-size:14px;color:rgba(255,255,255,0.65);line-height:1.6">${name} created${email?'':' — no email set. Add one later to enable login.'}.</div>`;
+      body.innerHTML = `<div style="font-size:14px;color:rgba(255,255,255,0.65)">${name} created${email?'':' — no email set.'}.</div>`;
     }
     openModal('clientCreatedModal');
     loadClients();
   }
 
-  // ── Clients ──
-  async function loadClients() {
-    const el = document.getElementById('clientTable');
-    try {
-      const archived = document.getElementById('showArchivedClients').checked ? 1 : 0;
-      const res  = await fetch(`/api/admin/clients?archived=${archived}`);
-      if (!res.ok) { el.innerHTML = '<div class="empty">Error loading clients.</div>'; return; }
-      const list = await res.json();
-      if (!Array.isArray(list) || !list.length) {
-        el.innerHTML = '<div class="empty">No clients yet.</div>'; return;
-      }
-      el.innerHTML = list.map(c => `
-        <div class="table-row ${c.archived ? 'archived' : ''}">
-          <div class="col-name">${c.name}</div>
-          <div class="col-email">${c.email || '<span style="color:rgba(255,255,255,0.2)">No login</span>'}</div>
-          <div class="col-status">
-            <span class="status-badge ${c.archived ? 'status-archived' : 'status-active'}">
-              ${c.archived ? 'Archived' : 'Active'}
-            </span>
+  // ── REGISTERED USERS ──
+  const userSel = makeSelectionHelper('user');
+
+  async function loadUsers() {
+    userSel.sel.clear();
+    const res  = await fetch('/api/admin/users');
+    const list = await res.json();
+    const el   = document.getElementById('usersTable');
+    if (!list.length) { el.innerHTML = '<div class="empty">No self-registered users yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" onchange="userSel.selectAll('usersTable')"/></div>
+        <div class="table-hdr-cell col-name">Name</div>
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-level">Level</div>
+        <div class="table-hdr-cell col-fac">Facilitator</div>
+      </div>` +
+      list.map(u => `
+        <div class="table-row">
+          <div class="col-cb"><input type="checkbox" value="${u.id}" onchange="userSel.toggle('${u.id}',this.checked)"/></div>
+          <div class="col-name">${u.name}</div>
+          <div class="col-email">${u.email||'—'}</div>
+          <div class="col-level">
+            <span class="status-badge ${u.is_member?'status-active':'status-archived'}">${u.is_member?'Member':'Registered'}</span>
+            ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
           </div>
-          <div class="col-actions">
-            <span style="font-size:12px;color:rgba(255,255,255,0.3)">${c.facilitator_name || 'Unassigned'}</span>
-          </div>
-        </div>
-      `).join('');
-    } catch(e) {
-      el.innerHTML = '<div class="empty">Error: ' + e.message + '</div>';
-    }
+          <div class="col-fac">${u.facilitator_name||'—'}</div>
+        </div>`).join('');
   }
+
+  async function upgradeSelected() {
+    // Load facilitators then show upgrade modal for selection
+    const facRes = await fetch('/api/admin/facilitators');
+    const facs   = await facRes.json();
+    const facEl  = document.getElementById('upgradeAssignFac');
+    facEl.innerHTML = '<option value="">No facilitator</option>';
+    facs.forEach(f => { facEl.innerHTML += `<option value="${f.id}">${f.name}</option>`; });
+    document.getElementById('upgradeUserName').textContent = `${userSel.sel.size} user${userSel.sel.size>1?'s':''} selected`;
+    document.getElementById('upgradeUserId').value = [...userSel.sel].join(',');
+    document.getElementById('upgradeErr').textContent = '';
+    openModal('upgradeModal');
+  }
+  async function saveUpgrade() {
+    const ids   = document.getElementById('upgradeUserId').value.split(',').filter(Boolean);
+    const level = document.getElementById('upgradeMemberLevel').value;
+    const facId = document.getElementById('upgradeAssignFac').value;
+    try {
+      await Promise.all(ids.map(id => fetch(`/api/admin/users/${id}/upgrade`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({level})})));
+      if (facId) await Promise.all(ids.map(id => fetch(`/api/admin/users/${id}/assign-facilitator`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId:facId})})));
+      closeModal('upgradeModal'); userSel.clear(); loadUsers();
+    } catch(e) { document.getElementById('upgradeErr').textContent = 'Error: ' + e.message; }
+  }
+  async function deleteSelectedUsers() {
+    const ids = [...userSel.sel];
+    showConfirm('Delete user' + (ids.length>1?'s':''),
+      `Permanently delete ${ids.length} user${ids.length>1?'s':''}? This cannot be undone.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/clients/${id}`, {method:'DELETE'})));
+        userSel.clear(); loadUsers();
+      });
+  }
+
+  // ── GUEST LEADS ──
+  const leadSel = makeSelectionHelper('lead');
+
+  async function loadLeads() {
+    leadSel.sel.clear();
+    const res  = await fetch('/api/admin/guest-leads');
+    const list = await res.json();
+    const el   = document.getElementById('leadsTable');
+    if (!list.length) { el.innerHTML = '<div class="empty">No guest leads captured yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" onchange="leadSel.selectAll('leadsTable')"/></div>
+        <div class="table-hdr-cell col-name">Name</div>
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-level">Captured</div>
+        <div class="table-hdr-cell col-status">Source</div>
+      </div>` +
+      list.map(l => `
+        <div class="table-row">
+          <div class="col-cb"><input type="checkbox" value="${l.id}" onchange="leadSel.toggle('${l.id}',this.checked)"/></div>
+          <div class="col-name">${l.name||'—'}</div>
+          <div class="col-email">${l.email||'—'}</div>
+          <div class="col-level" style="font-size:12px;color:rgba(255,255,255,0.3)">${l.created_at?.slice(0,10)||''}</div>
+          <div class="col-status"><span class="status-badge" style="background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.3)">${l.source||'guest'}</span></div>
+        </div>`).join('');
+  }
+
+  async function upgradeSelectedLeads() {
+    const ids = [...leadSel.sel];
+    showConfirm('Convert to registered',
+      `Convert ${ids.length} lead${ids.length>1?'s':''} to registered accounts? They will receive a welcome email with a temporary password.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/admin/guest-leads/${id}/convert`, {method:'POST'})));
+        leadSel.clear(); loadLeads(); loadUsers();
+      });
+  }
+  async function deleteSelectedLeads() {
+    const ids = [...leadSel.sel];
+    showConfirm('Delete lead' + (ids.length>1?'s':''),
+      `Delete ${ids.length} lead${ids.length>1?'s':''}? This cannot be undone.`,
+      async () => {
+        await Promise.all(ids.map(id => fetch(`/api/admin/guest-leads/${id}`, {method:'DELETE'})));
+        leadSel.clear(); loadLeads();
+      });
+  }
+  function syncLeads() { alert('Brevo sync coming soon — ' + leadSel.sel.size + ' lead(s) selected.'); }
 
   // Keyboard shortcuts
   document.getElementById('facName').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('facEmail').focus(); });
@@ -497,6 +759,8 @@
   // Init
   loadFacilitators();
   loadClients();
+  loadUsers();
+  loadLeads();
 </script>
 </body>
 </html>
