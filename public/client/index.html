@@ -411,7 +411,7 @@
     const waveEl       = document.getElementById('wave');
     const dotsEl       = document.getElementById('dots');
 
-    let isListening=false, isSpeaking=false, mediaStream=null, mediaRecorder=null;
+    let isListening=false, isSpeaking=false, mediaStream=null;
     let pendingText = null;
 
     function setState(s) {
@@ -475,7 +475,7 @@
         pendingText = msg.text;
       }
       if(msg.type==='speak_text'){
-        if (isListening) stopListening();
+        // Don't tear down mic — just stop sending PCM via isSpeaking flag
         if (pendingText) {
           transcriptEl.textContent = pendingText;
           transcriptEl.className = 'transcript-text';
@@ -484,50 +484,112 @@
         setState('speaking');
         await speak(msg.text);
         setState('idle');
-        if (micPermissionGranted && !isListening) setTimeout(()=>startListening(), 400);
-        else {
-          statusEl.textContent = 'tap mic to respond';
-          statusEl.classList.add('on');
-        }
+        // Mic stays open — PCM resumes automatically when isSpeaking clears
+        if (!isListening) setTimeout(()=>startListening(), 400);
       }
-      if(msg.type==='listening_started'){ setState('listening'); }
-      if(msg.type==='listening_stopped'){ setState('processing'); }
-      if(msg.type==='interim_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text dim'; }
-      if(msg.type==='final_transcript'){ transcriptEl.textContent=msg.text; transcriptEl.className='transcript-text user'; setState('processing'); }
       if(msg.type==='response_text'){ pendingText = msg.text; }
     };
 
-    // ── Mic ──
+    // ── Mic — dedicated /listen WebSocket, raw PCM binary (Mare Bot architecture) ──
+    // Separate from app WebSocket. Sends raw Int16Array directly to server.
+    // Server proxies straight to Deepgram. No base64, no JSON wrapping.
+    let micAudioCtx = null;
+    let micProcessor = null;
+    let listenWs = null;
+
+    const listenWsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/listen';
+
     async function startListening() {
-      if(isListening) return;
-      try { mediaStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
-      catch(e){ statusEl.textContent='mic access needed'; return; }
+      if (isListening) return;
+      try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
+      catch(e) { statusEl.textContent = 'mic access needed'; return; }
       micPermissionGranted = true;
-      isListening=true;
-      ws.send(JSON.stringify({type:'start_listening'}));
-      mediaRecorder=new MediaRecorder(mediaStream,{mimeType:'audio/webm;codecs=opus'});
-      mediaRecorder.ondataavailable=(e)=>{
-        if(e.data.size>0){
-          const r=new FileReader(); r.onload=()=>ws.send(JSON.stringify({type:'audio_chunk',data:r.result.split(',')[1]}));
-          r.readAsDataURL(e.data);
-        }
+      isListening = true;
+
+      // Open dedicated Deepgram proxy WebSocket
+      listenWs = new WebSocket(listenWsUrl);
+
+      // Accumulate partials; only fire when Deepgram signals speech is truly done.
+      let accumulated = '';
+
+      listenWs.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          const transcript  = data?.channel?.alternatives?.[0]?.transcript?.trim();
+          const isFinal     = data?.is_final;
+          const speechFinal = data?.speech_final;
+
+          // Interim — show as dim
+          if (!isFinal && transcript) {
+            transcriptEl.textContent = (accumulated + ' ' + transcript).trim();
+            transcriptEl.className = 'transcript-text dim';
+          }
+
+          // Accumulate finals
+          if (isFinal && transcript) {
+            accumulated = (accumulated + ' ' + transcript).trim();
+            transcriptEl.textContent = accumulated;
+            transcriptEl.className = 'transcript-text dim';
+          }
+
+          // Only send to Claude on speech_final or UtteranceEnd
+          if (speechFinal && accumulated) {
+            const t = accumulated;
+            accumulated = '';
+            transcriptEl.textContent = t;
+            transcriptEl.className = 'transcript-text user';
+            setState('processing');
+            ws.send(JSON.stringify({ type: 'user_transcript', text: t }));
+          }
+
+          if (data.type === 'UtteranceEnd' && accumulated) {
+            const t = accumulated;
+            accumulated = '';
+            transcriptEl.textContent = t;
+            transcriptEl.className = 'transcript-text user';
+            setState('processing');
+            ws.send(JSON.stringify({ type: 'user_transcript', text: t }));
+          }
+        } catch(e) {}
       };
-      mediaRecorder.start(200);
-    }
-    function stopListening() {
-      if(!isListening) return; isListening=false;
-      mediaRecorder?.state!=='inactive' && mediaRecorder.stop();
-      mediaStream?.getTracks().forEach(t=>t.stop()); mediaStream=null;
-      ws.send(JSON.stringify({type:'stop_listening'}));
+
+      listenWs.onopen = () => {
+        micAudioCtx = new AudioContext({ sampleRate: 16000 });
+        const source = micAudioCtx.createMediaStreamSource(mediaStream);
+        micProcessor = micAudioCtx.createScriptProcessor(4096, 1, 1);
+        source.connect(micProcessor);
+        micProcessor.connect(micAudioCtx.destination);
+
+        micProcessor.onaudioprocess = (e) => {
+          if (isSpeaking || !listenWs || listenWs.readyState !== WebSocket.OPEN) return;
+          const input = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+          }
+          listenWs.send(pcm16.buffer);
+        };
+      };
     }
 
-    micBtn.addEventListener('mousedown', e=>{ e.preventDefault(); startListening(); });
-    micBtn.addEventListener('mouseup', stopListening);
-    micBtn.addEventListener('mouseleave', stopListening);
-    micBtn.addEventListener('touchstart', e=>{ e.preventDefault(); startListening(); },{passive:false});
-    micBtn.addEventListener('touchend', e=>{ e.preventDefault(); stopListening(); });
-    document.addEventListener('keydown', e=>{ if(e.code==='Space'&&!e.repeat){ e.preventDefault(); startListening(); } });
-    document.addEventListener('keyup',   e=>{ if(e.code==='Space'){ e.preventDefault(); stopListening(); } });
+    function stopListening() {
+      if (!isListening) return;
+      isListening = false;
+      micProcessor?.disconnect(); micProcessor = null;
+      micAudioCtx?.close(); micAudioCtx = null;
+      mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
+      listenWs?.close(); listenWs = null;
+    }
+
+    // Toggle mic on tap/click — not press-and-hold
+    function toggleMic() {
+      if (isListening) stopListening();
+      else startListening();
+    }
+
+    micBtn.addEventListener('click', e=>{ e.preventDefault(); toggleMic(); });
+    micBtn.addEventListener('touchend', e=>{ e.preventDefault(); toggleMic(); },{passive:false});
+    document.addEventListener('keydown', e=>{ if(e.code==='Space'&&!e.repeat){ e.preventDefault(); toggleMic(); } });
 
     // ── Practices ──
     async function loadPractices() {
