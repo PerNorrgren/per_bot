@@ -196,6 +196,7 @@ async function getDb() {
     "ALTER TABLE facilitators ADD COLUMN must_change_password INTEGER DEFAULT 1",
     "ALTER TABLE sessions ADD COLUMN facilitator_id TEXT",
     "ALTER TABLE sessions ADD COLUMN client_summary TEXT DEFAULT ''",
+    "ALTER TABLE clients ADD COLUMN is_system_client INTEGER DEFAULT 0",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }

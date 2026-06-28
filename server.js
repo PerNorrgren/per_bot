@@ -255,6 +255,36 @@ app.get('/api/my/profile', auth.requireAuthApi(['client']), (req, res) => {
   res.json({ ...db.getClient(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
 });
 
+// ── My Space — facilitator as system client ──
+// Creates a system client record for the facilitator if one doesn't exist.
+// Returns the client ID so the facilitator can use the full client interface.
+app.post('/api/my-space', auth.requireAuthApi(['facilitator', 'admin']), async (req, res) => {
+  try {
+    const fac = db.getFacilitatorById(req.user.id);
+    if (!fac) return res.status(404).json({ error: 'Facilitator not found' });
+
+    // Check if a system client record already exists for this facilitator
+    let client = db.getClientByEmail(fac.email);
+    if (!client) {
+      // Create a system client — no facilitator_id, marked as system client
+      const id = uuidv4();
+      const hash = await auth.hashPassword(Math.random().toString(36).slice(2, 18));
+      db.createClient(id, fac.name, null, fac.email, hash, null, null);
+      // Mark as system client and link to facilitator
+      db.getDbSync().run(
+        'UPDATE clients SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]
+      );
+      db.save();
+      client = db.getClient(id);
+    }
+
+    res.json({ clientId: client.id, name: client.name });
+  } catch(e) {
+    console.error('my-space error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Sessions API ──
 app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   const { client_id, type, summary, client_summary } = req.body;
