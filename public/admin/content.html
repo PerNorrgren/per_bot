@@ -196,6 +196,17 @@
     <div class="modal-row">
       <div><label>Category</label><select id="upCat" onchange="onUpCatChange()"><option value="">Select…</option></select></div>
       <div><label>Subcategory</label><select id="upSub"><option value="">Select…</option></select></div>
+      <div>
+        <label>Default visibility</label>
+        <select id="upVisDefault" onchange="applyBatchVisibility(this.value)">
+          <option value="">Per file</option>
+          <option value="registered">Registered</option>
+          <option value="member">Member</option>
+          <option value="client">Client</option>
+          <option value="facilitator">Facilitator</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
     </div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('bulkInput').click()">
       <input type="file" id="bulkInput" multiple style="display:none"/>
@@ -403,6 +414,17 @@ function ficon(t=''){
   return'📄';
 }
 function fsize(b){if(!b)return'';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
+async function updateVisibility(fileId, vis) {
+  await fetch(`/api/content/library/${fileId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visibility: vis })
+  });
+  // Update local data without re-fetching everything
+  const f = allFiles.find(x => x.id === fileId);
+  if (f) f.visibility = vis;
+}
+
 function vbadge(v){const m={registered:'Registered',member:'Member',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
 
 function populateCatSels(...ids){
@@ -459,10 +481,16 @@ function renderLib(files){
         <div class="file-card-icon">${ficon(f.file_type)}</div>
         <div class="file-card-title">${f.title}</div>
         <div class="file-card-meta">${f.original_name||''} · ${fsize(f.file_size)}</div>
-        <div class="file-card-tags">
+        <div class="file-card-tags" style="align-items:center;gap:4px">
           ${f.category_name?`<span class="tag cat">${f.category_name}</span>`:''}
           ${f.subcategory_name?`<span class="tag cat">${f.subcategory_name}</span>`:''}
-          ${vbadge(f.visibility)}
+          <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px" onchange="updateVisibility('${f.id}',this.value)">
+            <option value="registered" ${f.visibility==='registered'?'selected':''}>Registered</option>
+            <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
+            <option value="client"     ${f.visibility==='client'    ?'selected':''}>Client</option>
+            <option value="facilitator"${f.visibility==='facilitator'?'selected':''}>Facilitator</option>
+            <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
+          </select>
           ${f.use_count>0?`<span class="tag uses">Used ${f.use_count}×</span>`:''}
         </div>
       </div>
@@ -483,9 +511,16 @@ function openUpload(){
   document.getElementById('upErr').textContent='';
   document.getElementById('upCat').value='';
   document.getElementById('upSub').innerHTML='<option value="">Select…</option>';
+  document.getElementById('upVisDefault').value='';
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
+
+function applyBatchVisibility(vis) {
+  if (!vis) return;
+  upQueue.forEach(it => { it.vis = vis; it.inferred = false; });
+  renderQ();
+}
 
 const dz=document.getElementById('dropZone');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
