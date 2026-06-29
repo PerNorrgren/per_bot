@@ -103,6 +103,23 @@
 
   <div class="page">
 
+    <!-- Admins -->
+    <div>
+      <div class="section-label">Admins</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Admin accounts</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn sm disabled" id="adminEditBtn" onclick="editSelectedAdmin()">Edit</button>
+            <button class="btn sm danger disabled" id="adminDelBtn" onclick="deleteSelectedAdmin()">Delete</button>
+            <button class="btn primary" onclick="openNewAdmin()">+ Add</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="adminSearch" placeholder="Search admins…" oninput="renderAdmins()"/></div>
+        <div class="table" id="adminTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
     <!-- Facilitators -->
     <div>
       <div class="section-label">Facilitators</div>
@@ -229,6 +246,35 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('editClientModal')">Cancel</button>
         <button class="modal-ok" onclick="saveEditClient()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Admin Modal -->
+  <div class="modal-overlay" id="newAdminModal">
+    <div class="modal">
+      <h3>Add admin</h3>
+      <div><label>Name</label><input type="text" id="adminName"/></div>
+      <div><label>Email</label><input type="email" id="adminEmail"/></div>
+      <div class="modal-err" id="adminErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('newAdminModal')">Cancel</button>
+        <button class="modal-ok" onclick="createAdmin()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Admin Modal -->
+  <div class="modal-overlay" id="editAdminModal">
+    <div class="modal">
+      <h3>Edit admin</h3>
+      <input type="hidden" id="editAdminId"/>
+      <div><label>Name</label><input type="text" id="editAdminName"/></div>
+      <div><label>Email</label><input type="email" id="editAdminEmail"/></div>
+      <div class="modal-err" id="editAdminErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('editAdminModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveEditAdmin()">Save</button>
       </div>
     </div>
   </div>
@@ -461,6 +507,82 @@
   let _facData = [];
   const facSel = makeSelection(['facEditBtn','facArchBtn','facDelBtn'], 'facEditBtn');
 
+  // ── ADMINS ──
+  let _adminData = [];
+  const adminSel = makeSelection(['adminEditBtn','adminDelBtn'], 'adminEditBtn');
+
+  async function loadAdmins() {
+    adminSel.clear();
+    const res  = await fetch('/api/admin/facilitators');
+    _adminData = (await res.json()).filter(f => f.role === 'admin');
+    renderAdmins();
+  }
+
+  function renderAdmins() {
+    adminSel.clear();
+    const el    = document.getElementById('adminTable');
+    const query = document.getElementById('adminSearch').value.trim();
+    let list    = _adminData.filter(a => matchesSearch(a, query, ['name','email']));
+    if (!list.length) { el.innerHTML = '<div class="empty">No admin accounts.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" id="adminAllCb" onchange="adminSel.toggleAll('adminTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="adminSort('name')">Name ${sortIndicator('admin','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="adminSort('email')">Email ${sortIndicator('admin','email')}</div>
+        <div class="table-hdr-cell col-level">Status</div>
+      </div>` +
+      list.map(a => `
+        <div class="table-row">
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${a.id}" onchange="adminSel.toggle('${a.id}',this.checked)"/></div>
+          <div class="col-name">${a.name}</div>
+          <div class="col-email">${a.email}</div>
+          <div class="col-level"><span class="status-badge status-active">Admin</span></div>
+        </div>`).join('');
+  }
+  function adminSort(col) { setSort('admin', col); renderAdmins(); }
+
+  function editSelectedAdmin() {
+    const id = [...adminSel.sel][0]; if (!id) return;
+    const a  = _adminData.find(x => x.id === id); if (!a) return;
+    document.getElementById('editAdminId').value    = a.id;
+    document.getElementById('editAdminName').value  = a.name;
+    document.getElementById('editAdminEmail').value = a.email;
+    document.getElementById('editAdminErr').textContent = '';
+    openModal('editAdminModal');
+  }
+  async function saveEditAdmin() {
+    const id=document.getElementById('editAdminId').value, name=document.getElementById('editAdminName').value.trim(), email=document.getElementById('editAdminEmail').value.trim(), err=document.getElementById('editAdminErr');
+    if (!name||!email) { err.textContent='Name and email required.'; return; }
+    await fetch(`/api/admin/facilitators/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    closeModal('editAdminModal'); loadAdmins();
+  }
+  async function deleteSelectedAdmin() {
+    const ids=[...adminSel.sel]; if (!ids.length) return;
+    showConfirm('Delete admin'+(ids.length>1?'s':''),
+      `Delete ${ids.length} admin account${ids.length>1?'s':''}? Cannot be undone.`,
+      async()=>{ await Promise.all(ids.map(id=>fetch(`/api/admin/facilitators/${id}`,{method:'DELETE'}))); loadAdmins(); });
+  }
+  function openNewAdmin() {
+    document.getElementById('adminName').value='';
+    document.getElementById('adminEmail').value='';
+    document.getElementById('adminErr').textContent='';
+    openModal('newAdminModal');
+    setTimeout(()=>document.getElementById('adminName').focus(),100);
+  }
+  async function createAdmin() {
+    const name=document.getElementById('adminName').value.trim(), email=document.getElementById('adminEmail').value.trim(), err=document.getElementById('adminErr');
+    if (!name) { err.textContent='Name required.'; return; }
+    if (!email) { err.textContent='Email required.'; return; }
+    const res=await fetch('/api/admin/facilitators',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,role:'admin'})});
+    const data=await res.json();
+    if (data.error) { err.textContent=data.error; return; }
+    closeModal('newAdminModal');
+    document.getElementById('tempPassValue').textContent=data.tempPassword||'';
+    openModal('tempPassModal');
+    loadAdmins();
+  }
+
+  // ── FACILITATORS ──
   async function loadFacilitators() {
     facSel.clear();
     const archived = document.getElementById('showArchivedFac').checked ? 1 : 0;
@@ -818,6 +940,8 @@
   document.getElementById('editFacEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') saveEditFac(); });
 
   // Init
+  loadAdmins();
+  loadAdmins();
   loadFacilitators();
   loadClients();
   loadUsers();
