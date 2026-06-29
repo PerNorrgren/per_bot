@@ -333,6 +333,10 @@ function unarchiveFacilitator(id) {
 function updateFacilitatorDetails(id, name, email) {
   getDbSync().run('UPDATE facilitators SET name=?,email=? WHERE id=?', [name, email.toLowerCase(), id]); save();
 }
+function getAllAdmins() {
+  return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role='admin' ORDER BY name ASC");
+}
+
 function getAllFacilitators(includeArchived=false) {
   if (includeArchived) {
     return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role!='admin' ORDER BY name ASC");
@@ -750,7 +754,7 @@ module.exports = {
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
-  getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails,
+  getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,
   // Categories
   getAllCategories, getTopCategories, getSubcategories,

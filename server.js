@@ -247,6 +247,9 @@ app.post('/api/change-password', auth.requireAuthApi(), async (req, res) => {
 app.get('/api/admin/facilitators', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getAllFacilitators(req.query.archived === '1'));
 });
+app.get('/api/admin/admins', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getAllAdmins());
+});
 app.patch('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), async (req, res) => {
   const { name, email, action } = req.body;
   if (action === 'archive')   { db.archiveFacilitator(req.params.id); return res.json({ ok: true }); }
