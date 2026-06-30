@@ -677,6 +677,22 @@ app.delete('/api/client/playlists/:id/items/:fileId', auth.requireAuthApi(['clie
   res.json({ ok: true });
 });
 
+// ── History — logs what a client listened to / watched / read ──
+// contentType: 'audio' | 'video' | 'document'
+app.post('/api/client/history', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const { contentType, contentId } = req.body;
+    if (!contentType || !contentId) return res.status(400).json({ error: 'contentType and contentId required.' });
+    db.recordPlay(uuidv4(), req.user.id, 'client', contentType, contentId);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/client/history', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    res.json(db.getContentHistory(req.user.id, 100));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin user management ──
 app.patch('/api/admin/users/:id/assign-facilitator', auth.requireAuthApi(['admin']), (req, res) => {
   const { facilitatorId } = req.body;

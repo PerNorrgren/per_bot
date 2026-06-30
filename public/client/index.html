@@ -90,6 +90,15 @@
     .session-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:14px; margin-bottom:8px; }
     .session-date { font-size:11px; color:rgba(255,255,255,0.3); margin-bottom:6px; }
     .session-summary { font-size:13px; color:rgba(255,255,255,0.65); line-height:1.65; }
+    .history-view { display:none; flex-direction:column; overflow:hidden; }
+    .history-view.visible { display:flex; }
+    .history-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
+    .history-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:14px; margin-bottom:8px; display:flex; align-items:center; gap:12px; }
+    .history-icon { font-size:16px; opacity:0.6; flex-shrink:0; }
+    .history-body { flex:1; min-width:0; }
+    .history-title { font-size:13px; color:rgba(255,255,255,0.75); line-height:1.4; }
+    .history-meta { font-size:11px; color:rgba(255,255,255,0.3); margin-top:3px; }
+    .no-history { font-size:13px; color:rgba(255,255,255,0.35); padding:20px; text-align:center; }
     .no-sessions { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
 
     /* Content tab */
@@ -233,6 +242,7 @@
       <button class="tab active" id="tabTalk"      onclick="switchTab('talk')">Talk</button>
       <button class="tab"        id="tabPractices" onclick="switchTab('practices')">Practices</button>
       <button class="tab"        id="tabSessions"  onclick="switchTab('sessions')">Sessions</button>
+      <button class="tab"        id="tabHistory"   onclick="switchTab('history')">History</button>
       <button class="tab"        id="tabContent"   onclick="switchTab('content')">Content</button>
       <button class="tab"        id="tabConfig"    onclick="switchTab('config')">Voice</button>
     </div>
@@ -266,6 +276,11 @@
     <!-- Sessions -->
     <div class="sessions-view" id="sessionsView">
       <div class="sessions-scroll" id="sessionsList"><div class="no-sessions">No sessions yet.</div></div>
+    </div>
+
+    <!-- History -->
+    <div class="history-view" id="historyView">
+      <div class="history-scroll" id="historyList"><div class="no-history">No history yet.</div></div>
     </div>
 
     <!-- Voice -->
@@ -360,16 +375,18 @@
 
   // ── Tabs ──
   function switchTab(tab) {
-    ['talk','practices','sessions','content','config'].forEach(t => {
+    ['talk','practices','sessions','history','content','config'].forEach(t => {
       document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
     document.getElementById('talkView').style.display      = tab === 'talk' ? '' : 'none';
     document.getElementById('practicesView').classList.toggle('visible', tab === 'practices');
     document.getElementById('sessionsView').classList.toggle('visible',  tab === 'sessions');
+    document.getElementById('historyView').classList.toggle('visible',   tab === 'history');
     document.getElementById('contentView').classList.toggle('visible',   tab === 'content');
     document.getElementById('configView').classList.toggle('visible',    tab === 'config');
     if (tab === 'practices') loadPractices();
     if (tab === 'sessions')  loadSessions();
+    if (tab === 'history')   loadHistory();
     if (tab === 'content')   loadContent();
   }
 
@@ -643,6 +660,7 @@
     document.getElementById('mpFill').style.width = '0%';
     document.getElementById('mpTime').textContent = '0:00';
     document.getElementById('mpPlayBtn').textContent = '⏸';
+    logHistory('audio', file.id);
 
     mpAudio = new Audio(`/uploads/${file.filename}`);
     mpAudio.addEventListener('timeupdate', () => {
@@ -703,6 +721,14 @@
 
   function isAudio(f) {
     return f.file_type?.startsWith('audio') || f.filename?.match(/\.(mp3|wav|ogg|m4a|aac)$/i);
+  }
+
+  function logHistory(contentType, contentId) {
+    fetch('/api/client/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contentType, contentId })
+    }).catch(() => {}); // history logging is best-effort, never blocks playback
   }
 
   function contentItemHTML(f) {
@@ -912,6 +938,8 @@
   function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (isAudio(f)) { mpPlay(f); return; }
+    const contentType = f.file_type?.startsWith('video') ? 'video' : 'document';
+    logHistory(contentType, f.id);
     // For non-audio open in player overlay
     document.getElementById('playerTitle').textContent = f.title;
     document.getElementById('playerText').textContent  = f.description || f.title;
@@ -970,6 +998,39 @@
       <div class="session-item">
         <div class="session-date">${s.created_at?.slice(0,10)||''}</div>
         <div class="session-summary">${s.client_summary||'Session recorded.'}</div>
+      </div>
+    `).join('');
+  }
+
+  async function loadHistory() {
+    const res  = await fetch('/api/client/history');
+    const list = await res.json();
+    renderHistory(Array.isArray(list) ? list : []);
+  }
+  function historyIcon(item) {
+    if (item.content_type === 'audio') return '🎵';
+    if (item.content_type === 'video') return '🎬';
+    return '📄';
+  }
+  function fmtHistoryDate(s) {
+    if (!s) return '';
+    const d = new Date(s.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return s.slice(0,10);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const time = d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+    return sameDay ? `Today, ${time}` : d.toLocaleDateString(undefined, { day:'numeric', month:'short' }) + `, ${time}`;
+  }
+  function renderHistory(list) {
+    const el = document.getElementById('historyList');
+    if (!list.length) { el.innerHTML = '<div class="no-history">Nothing here yet — what you listen to, watch, or read will appear here.</div>'; return; }
+    el.innerHTML = list.map(item => `
+      <div class="history-item">
+        <div class="history-icon">${historyIcon(item)}</div>
+        <div class="history-body">
+          <div class="history-title">${item.title || 'Untitled'}</div>
+          <div class="history-meta">${fmtHistoryDate(item.played_at)}${item.category_name ? ' · ' + item.category_name : ''}</div>
+        </div>
       </div>
     `).join('');
   }

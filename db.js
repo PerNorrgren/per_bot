@@ -601,8 +601,33 @@ function getProgrammesForUser(userId, userType) {
 
 // ── Content history ──
 function recordPlay(id, userId, userType, contentType, contentId) {
+  // Dedupe: skip if the same user already has a history entry for this exact
+  // content within the last 5 minutes (avoids spam from re-opens, accidental
+  // double-taps, or a player firing multiple play events for one listen).
+  const recent = queryOne(
+    `SELECT id FROM content_history
+     WHERE user_id=? AND content_id=? AND content_type=?
+       AND played_at > datetime('now', '-5 minutes')
+     ORDER BY played_at DESC LIMIT 1`,
+    [userId, contentId, contentType]
+  );
+  if (recent) return;
   getDbSync().run('INSERT INTO content_history (id,user_id,user_type,content_type,content_id) VALUES (?,?,?,?,?)',
     [id, userId, userType, contentType, contentId]); save();
+}
+
+function getContentHistory(userId, limit = 100) {
+  return queryAll(
+    `SELECT ch.id, ch.content_type, ch.content_id, ch.played_at,
+            lf.title, lf.file_type, lf.category_id, c.name AS category_name
+     FROM content_history ch
+     LEFT JOIN library_files lf ON ch.content_id = lf.id
+     LEFT JOIN categories c ON lf.category_id = c.id
+     WHERE ch.user_id = ?
+     ORDER BY ch.played_at DESC
+     LIMIT ?`,
+    [userId, limit]
+  );
 }
 
 // ── Seed default content categories ──
@@ -799,7 +824,7 @@ module.exports = {
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History
-  recordPlay,
+  recordPlay, getContentHistory,
   // Content categories seed
   seedContentCategories,
   // Favourites
