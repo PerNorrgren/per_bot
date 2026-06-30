@@ -290,6 +290,38 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getAllClientsAdmin(req.query.archived === '1'));
 });
 
+// ── Admin: Add Member ──
+// Mirrors self-registration: same fields, same email-confirmation-with-password-change flow.
+// GDPR: consent is recorded as given by the admin on the member's behalf at creation time,
+// since this mirrors the same consent checkbox shown on self-registration.
+app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!name || !email) return res.status(400).json({ error: 'Name and email required.' });
+    const emailLower = email.toLowerCase().trim();
+
+    if (db.getFacilitatorByEmail(emailLower)) return res.status(400).json({ error: 'An account with this email already exists.' });
+    if (db.getClientByEmail(emailLower))      return res.status(400).json({ error: 'An account with this email already exists.' });
+
+    const id = uuidv4();
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const passwordHash = await auth.hashPassword(tempPassword);
+
+    db.createClient(id, name.trim(), null, emailLower, passwordHash, null, null, {
+      consentGiven:    true,
+      consentVersion:  'admin-added-v1',
+      lawfulBasis:     'consent'
+    });
+    db.upgradeToMember(id, 'member');
+
+    emailWelcomeClient(name.trim(), emailLower, tempPassword);
+    res.json({ id, name: name.trim(), email: emailLower, tempPassword });
+  } catch(e) {
+    console.error('add member error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
 // ── Clients API ──
 app.get('/api/clients', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   const facilitatorId = req.user.role === 'admin' ? req.query.facilitator_id : req.user.id;

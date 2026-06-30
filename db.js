@@ -239,6 +239,11 @@ async function getDb() {
     "ALTER TABLE library_files ADD COLUMN visibility_member INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN visibility_client INTEGER DEFAULT 1",
     "ALTER TABLE library_files ADD COLUMN visibility_facilitator INTEGER DEFAULT 0",
+    "ALTER TABLE clients ADD COLUMN consent_given INTEGER DEFAULT 0",
+    "ALTER TABLE clients ADD COLUMN consent_date TEXT",
+    "ALTER TABLE clients ADD COLUMN consent_version TEXT",
+    "ALTER TABLE clients ADD COLUMN lawful_basis TEXT",
+    "ALTER TABLE clients ADD COLUMN data_retention_until TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -513,9 +518,21 @@ function updateTrackOrder(refId, sortOrder) {
 }
 
 // ── Clients ──
-function createClient(id, name, facilitatorId, email, passwordHash, categoryId, subcategoryId) {
-  getDbSync().run('INSERT INTO clients (id,name,facilitator_id,email,password_hash,category_id,subcategory_id) VALUES (?,?,?,?,?,?,?)',
-    [id, name, facilitatorId, email||null, passwordHash||null, categoryId||null, subcategoryId||null]); save();
+function createClient(id, name, facilitatorId, email, passwordHash, categoryId, subcategoryId, consent) {
+  const c = consent || {};
+  getDbSync().run(
+    `INSERT INTO clients
+      (id,name,facilitator_id,email,password_hash,category_id,subcategory_id,
+       consent_given,consent_date,consent_version,lawful_basis)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      id, name, facilitatorId, email||null, passwordHash||null, categoryId||null, subcategoryId||null,
+      c.consentGiven ? 1 : 0,
+      c.consentGiven ? (c.consentDate || new Date().toISOString()) : null,
+      c.consentGiven ? (c.consentVersion || null) : null,
+      c.lawfulBasis || null
+    ]
+  ); save();
 }
 function getClient(id) { return queryOne('SELECT * FROM clients WHERE id=?', [id]); }
 function getClientByEmail(email) {

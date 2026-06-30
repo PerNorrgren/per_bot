@@ -166,6 +166,7 @@
         <div class="card-header">
           <div class="card-title">Members</div>
           <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn sm" onclick="openModal('newMemberModal')">Add Member</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
             <button class="btn sm danger disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
           </div>
@@ -324,7 +325,36 @@
     </div>
   </div>
 
-  <!-- Edit Facilitator Modal -->
+  <!-- New Member Modal -->
+  <div class="modal-overlay" id="newMemberModal">
+    <div class="modal">
+      <h3>Add member</h3>
+      <div><label>Full name</label><input type="text" id="memberName" placeholder="e.g. Anna Lindqvist"/></div>
+      <div><label>Email address</label><input type="email" id="memberEmail" placeholder="anna@example.com"/></div>
+      <div class="modal-err" id="memberErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('newMemberModal')">Cancel</button>
+        <button class="modal-ok" onclick="createMember()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Member Created Modal -->
+  <div class="modal-overlay" id="memberCreatedModal">
+    <div class="modal">
+      <h3>Member created</h3>
+      <div class="temp-pass-box">
+        <div class="temp-pass-label">Temporary password</div>
+        <div class="temp-pass-value" id="memberTempPassValue"></div>
+        <div class="temp-pass-note">A welcome email has been sent. Share this password as a backup if the email doesn't arrive. They will be asked to change it on first login.</div>
+      </div>
+      <div class="modal-btns">
+        <button class="modal-ok" onclick="closeModal('memberCreatedModal');loadMembers()">Done</button>
+      </div>
+    </div>
+  </div>
+
+
   <div class="modal-overlay" id="editFacModal">
     <div class="modal">
       <h3>Edit facilitator</h3>
@@ -688,6 +718,22 @@
     closeModal('newFacModal');
     document.getElementById('tempPassValue').textContent = data.tempPassword || '';
     openModal('tempPassModal');
+  }
+  async function createMember() {
+    const name  = document.getElementById('memberName').value.trim();
+    const email = document.getElementById('memberEmail').value.trim();
+    const err   = document.getElementById('memberErr');
+    if (!name)  { err.textContent = 'Name required.'; return; }
+    if (!email) { err.textContent = 'Email required.'; return; }
+    const res  = await fetch('/api/admin/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newMemberModal');
+    document.getElementById('memberName').value = '';
+    document.getElementById('memberEmail').value = '';
+    err.textContent = '';
+    document.getElementById('memberTempPassValue').textContent = data.tempPassword || '';
+    openModal('memberCreatedModal');
   }
   async function saveEditFac() {
     const id=document.getElementById('editFacId').value, name=document.getElementById('editFacName').value.trim(), email=document.getElementById('editFacEmail').value.trim(), err=document.getElementById('editFacErr');
