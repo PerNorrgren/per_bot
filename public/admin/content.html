@@ -491,7 +491,7 @@ function renderLib(files){
       <div class="file-card-footer">
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
-        <a class="btn sm" href="/uploads/${f.filename}" target="_blank">Open</a>
+        <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
       </div>
     </div>
@@ -668,6 +668,25 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('fileSize',      it.file.size);
   const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
   if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');
+}
+
+// Opens a library file in a new tab. Asks the server for a playback URL rather than
+// constructing /uploads/:filename directly — for R2-stored files, `filename` is now
+// an R2 object key, not a path that exists on the Railway disk, so the old direct-link
+// approach only ever worked for legacy disk files and breaks silently for anything
+// uploaded since the R2 migration.
+async function openFile(id) {
+  try {
+    const res = await fetch(`/api/content/library/${id}/playback-url`);
+    const data = await res.json();
+    if (!res.ok || !data.url) {
+      alert(data.error || 'Could not open this file.');
+      return;
+    }
+    window.open(data.url, '_blank');
+  } catch {
+    alert('Could not open this file — network error.');
+  }
 }
 
 async function doUpload(){
