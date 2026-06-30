@@ -48,6 +48,9 @@ async function getDb() {
     category_id TEXT,
     subcategory_id TEXT,
     visibility TEXT DEFAULT 'client',
+    storage_type TEXT DEFAULT 'disk',
+    archived INTEGER DEFAULT 0,
+    facilitator_resource INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (category_id) REFERENCES categories(id),
     FOREIGN KEY (subcategory_id) REFERENCES categories(id)
@@ -115,8 +118,10 @@ async function getDb() {
     FOREIGN KEY (file_id) REFERENCES library_files(id)
   )`);
 
-  // ── Clients ──
-  db.run(`CREATE TABLE IF NOT EXISTS clients (
+  // ── Users (formerly 'clients') ──
+  // Holds everyone who is not a facilitator or admin: Explorers, Members, Clients.
+  // member_tier: 0=Explorer(registered), 1=Member1, 2=Member2, 3=Member3
+  db.run(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE,
@@ -127,7 +132,32 @@ async function getDb() {
     arc TEXT DEFAULT '',
     archived INTEGER DEFAULT 0,
     must_change_password INTEGER DEFAULT 1,
+    is_system_client INTEGER DEFAULT 0,
+    is_client INTEGER DEFAULT 0,
+    registered_at TEXT DEFAULT (datetime('now')),
     created_at TEXT DEFAULT (datetime('now')),
+    -- Membership
+    member_tier INTEGER DEFAULT 0,
+    member_since TEXT,
+    member_expires_at TEXT,
+    trial_ends_at TEXT,
+    -- Stripe
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
+    -- GDPR / consent
+    consent_given INTEGER DEFAULT 0,
+    consent_date TEXT,
+    consent_version TEXT,
+    lawful_basis TEXT,
+    data_retention_until TEXT,
+    -- Communication preferences (all default ON — user can opt out)
+    pref_email_motd INTEGER DEFAULT 1,
+    pref_email_reminders INTEGER DEFAULT 1,
+    pref_email_renewal INTEGER DEFAULT 1,
+    pref_email_news INTEGER DEFAULT 1,
+    pref_sms INTEGER DEFAULT 0,
+    phone TEXT,
+    language TEXT DEFAULT 'en',
     FOREIGN KEY (facilitator_id) REFERENCES facilitators(id),
     FOREIGN KEY (category_id) REFERENCES categories(id),
     FOREIGN KEY (subcategory_id) REFERENCES categories(id)
@@ -142,7 +172,7 @@ async function getDb() {
     summary TEXT NOT NULL,
     client_summary TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (client_id) REFERENCES clients(id)
+    FOREIGN KEY (client_id) REFERENCES users(id)
   )`);
 
   // ── Client practices ──
@@ -156,7 +186,7 @@ async function getDb() {
     is_favourite INTEGER DEFAULT 0,
     use_count INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (client_id) REFERENCES clients(id)
+    FOREIGN KEY (client_id) REFERENCES users(id)
   )`);
 
   // ── Programme assignments ──
@@ -170,7 +200,7 @@ async function getDb() {
     FOREIGN KEY (category_id) REFERENCES categories(id)
   )`);
 
-  // ── Content play history ──
+  // ── Invitations ──
   db.run(`CREATE TABLE IF NOT EXISTS invitations (
     id TEXT PRIMARY KEY,
     token TEXT UNIQUE NOT NULL,
@@ -222,39 +252,99 @@ async function getDb() {
     played_at TEXT DEFAULT (datetime('now'))
   )`);
 
-  // ── Migrations — add columns if they don't exist ──
+  // ── Membership plans — configurable per tier/billing cycle ──
+  // trial_days: 0 means no trial for this plan
+  db.run(`CREATE TABLE IF NOT EXISTS membership_plans (
+    id TEXT PRIMARY KEY,
+    tier INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    billing_cycle TEXT NOT NULL,
+    price_pence INTEGER NOT NULL,
+    trial_days INTEGER DEFAULT 0,
+    stripe_price_id TEXT,
+    active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // ── Message of the day ──
+  // status: 'draft' | 'approved' | 'sent'
+  // scheduled_date: ISO date string (YYYY-MM-DD). NULL = send next available day.
+  db.run(`CREATE TABLE IF NOT EXISTS messages_of_the_day (
+    id TEXT PRIMARY KEY,
+    body TEXT NOT NULL,
+    scheduled_date TEXT,
+    status TEXT DEFAULT 'draft',
+    sent_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // ── Migrations — add columns to existing tables if they don't exist ──
+  // This is how we handle the live database which was created before the full schema
+  // above existed. The CREATE TABLE IF NOT EXISTS above handles new installs;
+  // these ALTER TABLE statements handle the upgrade path for existing databases.
   const migrations = [
-    "ALTER TABLE clients ADD COLUMN category_id TEXT",
-    "ALTER TABLE clients ADD COLUMN subcategory_id TEXT",
-    "ALTER TABLE clients ADD COLUMN must_change_password INTEGER DEFAULT 1",
-    "ALTER TABLE facilitators ADD COLUMN must_change_password INTEGER DEFAULT 1",
-    "ALTER TABLE sessions ADD COLUMN facilitator_id TEXT",
-    "ALTER TABLE sessions ADD COLUMN client_summary TEXT DEFAULT ''",
-    "ALTER TABLE clients ADD COLUMN is_system_client INTEGER DEFAULT 0",
-    "ALTER TABLE clients ADD COLUMN is_member INTEGER DEFAULT 0",
-    "ALTER TABLE clients ADD COLUMN membership_level TEXT DEFAULT 'registered'",
-    "ALTER TABLE clients ADD COLUMN is_client INTEGER DEFAULT 0",
-    "ALTER TABLE clients ADD COLUMN registered_at TEXT DEFAULT (datetime('now'))",
+    // library_files columns added after initial schema
     "ALTER TABLE library_files ADD COLUMN visibility_registered INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN visibility_member INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN visibility_client INTEGER DEFAULT 1",
     "ALTER TABLE library_files ADD COLUMN visibility_facilitator INTEGER DEFAULT 0",
-    "ALTER TABLE clients ADD COLUMN consent_given INTEGER DEFAULT 0",
-    "ALTER TABLE clients ADD COLUMN consent_date TEXT",
-    "ALTER TABLE clients ADD COLUMN consent_version TEXT",
-    "ALTER TABLE clients ADD COLUMN lawful_basis TEXT",
-    "ALTER TABLE clients ADD COLUMN data_retention_until TEXT",
     "ALTER TABLE library_files ADD COLUMN storage_type TEXT DEFAULT 'disk'",
     "ALTER TABLE library_files ADD COLUMN archived INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN facilitator_resource INTEGER DEFAULT 0",
+    // facilitators
+    "ALTER TABLE facilitators ADD COLUMN must_change_password INTEGER DEFAULT 1",
+    // sessions
+    "ALTER TABLE sessions ADD COLUMN facilitator_id TEXT",
+    "ALTER TABLE sessions ADD COLUMN client_summary TEXT DEFAULT ''",
+    // ── clients → users rename migration ──
+    // SQLite cannot rename tables in older versions, so we use a copy-and-rename
+    // approach via the migration block below. Handled separately after this list.
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
   });
 
+  // ── clients → users table migration ──
+  // If the old 'clients' table still exists and 'users' does not yet have any rows
+  // (i.e., this is the first boot after upgrading), copy all rows across and drop
+  // the old table. If 'users' already has rows, the migration already ran.
+  try {
+    const oldExists = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='clients'");
+    const hasOldTable = oldExists.length && oldExists[0].values.length;
+    if (hasOldTable) {
+      // Copy existing rows into users. Map old column names to new ones.
+      // member_tier derives from old is_member + membership_level:
+      //   membership_level='registered' or is_member=0 → tier 0
+      //   is_member=1 and membership_level='member' (or anything) → tier 1 (Member1)
+      db.run(`INSERT OR IGNORE INTO users
+        (id, name, email, password_hash, facilitator_id, category_id, subcategory_id,
+         arc, archived, must_change_password, is_system_client, is_client,
+         registered_at, created_at,
+         member_tier, consent_given, consent_date, consent_version, lawful_basis, data_retention_until)
+        SELECT
+          id, name, email, password_hash, facilitator_id, category_id, subcategory_id,
+          arc, archived, must_change_password,
+          COALESCE(is_system_client, 0),
+          COALESCE(is_client, 0),
+          COALESCE(registered_at, created_at), created_at,
+          CASE WHEN COALESCE(is_member,0)=1 THEN 1 ELSE 0 END,
+          COALESCE(consent_given, 0),
+          consent_date, consent_version, lawful_basis, data_retention_until
+        FROM clients`);
+      db.run(`DROP TABLE clients`);
+      console.log('[db] clients table migrated to users and dropped.');
+    }
+  } catch(e) {
+    // clients table doesn't exist or migration already done — fine
+  }
+
   // Seed categories if empty
   const existing = queryAll('SELECT id FROM categories LIMIT 1');
   if (!existing.length) seedCategories();
+
+  // Seed default membership plans if empty
+  const existingPlans = queryAll('SELECT id FROM membership_plans LIMIT 1');
+  if (!existingPlans.length) seedMembershipPlans();
 
   save();
   return db;
@@ -284,6 +374,26 @@ function seedCategories() {
   cats.forEach(c => {
     db.run('INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,?,?)',
       [c.id, c.name, c.slug, c.parent_id, c.sort_order]);
+  });
+}
+
+function seedMembershipPlans() {
+  // Three tiers × three billing cycles, no trial by default.
+  // Prices in pence (GBP). Stripe price IDs are empty — set via Admin once Stripe is wired.
+  const plans = [
+    { id:'plan-m1-monthly', tier:1, name:'Member 1 — Monthly',  billing_cycle:'monthly',  price_pence:999,   trial_days:0 },
+    { id:'plan-m1-annual',  tier:1, name:'Member 1 — Annual',   billing_cycle:'annual',   price_pence:9900,  trial_days:0 },
+    { id:'plan-m1-once',    tier:1, name:'Member 1 — Lifetime', billing_cycle:'lifetime', price_pence:19900, trial_days:0 },
+    { id:'plan-m2-monthly', tier:2, name:'Member 2 — Monthly',  billing_cycle:'monthly',  price_pence:1499,  trial_days:0 },
+    { id:'plan-m2-annual',  tier:2, name:'Member 2 — Annual',   billing_cycle:'annual',   price_pence:14900, trial_days:0 },
+    { id:'plan-m2-once',    tier:2, name:'Member 2 — Lifetime', billing_cycle:'lifetime', price_pence:29900, trial_days:0 },
+    { id:'plan-m3-monthly', tier:3, name:'Member 3 — Monthly',  billing_cycle:'monthly',  price_pence:1999,  trial_days:0 },
+    { id:'plan-m3-annual',  tier:3, name:'Member 3 — Annual',   billing_cycle:'annual',   price_pence:19900, trial_days:0 },
+    { id:'plan-m3-once',    tier:3, name:'Member 3 — Lifetime', billing_cycle:'lifetime', price_pence:39900, trial_days:0 },
+  ];
+  plans.forEach(p => {
+    db.run(`INSERT OR IGNORE INTO membership_plans (id,tier,name,billing_cycle,price_pence,trial_days,active)
+      VALUES (?,?,?,?,?,?,1)`, [p.id, p.tier, p.name, p.billing_cycle, p.price_pence, p.trial_days]);
   });
 }
 
@@ -326,12 +436,10 @@ function createFacilitator(id, name, email, passwordHash, role = 'facilitator') 
 }
 function getFacilitatorByEmail(email) { return queryOne('SELECT * FROM facilitators WHERE email=?', [email.toLowerCase()]); }
 function getFacilitatorById(id) { return queryOne('SELECT * FROM facilitators WHERE id=?', [id]); }
-
 function updateFacilitatorPassword(id, hash) {
   getDbSync().run('UPDATE facilitators SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
 }
 function deleteFacilitator(id) { getDbSync().run('DELETE FROM facilitators WHERE id=?', [id]); save(); }
-
 function archiveFacilitator(id) {
   getDbSync().run("UPDATE facilitators SET role='facilitator_archived' WHERE id=?", [id]); save();
 }
@@ -344,7 +452,6 @@ function updateFacilitatorDetails(id, name, email) {
 function getAllAdmins() {
   return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role='admin' ORDER BY name ASC");
 }
-
 function getAllFacilitators(includeArchived=false) {
   if (includeArchived) {
     return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role!='admin' ORDER BY name ASC");
@@ -367,16 +474,14 @@ function deleteCategory(id) { getDbSync().run('DELETE FROM categories WHERE id=?
 
 // ── Library files ──
 function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource) {
-  getDbSync().run(`INSERT INTO library_files 
+  getDbSync().run(`INSERT INTO library_files
     (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, title, description||'', filename, originalName, fileType, fileSize||0,
      categoryId, subcategoryId||null, visibility||'client', storageType||'disk', facilitatorResource ? 1 : 0]);
   save();
 }
-
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
-
 function getLibraryFiles(filters = {}) {
   let sql = `SELECT f.*,
     cat.name as category_name, sub.name as subcategory_name,
@@ -396,7 +501,6 @@ function getLibraryFiles(filters = {}) {
   sql += ' ORDER BY f.created_at DESC';
   return queryAll(sql, params);
 }
-
 function updateLibraryFile(id, fields) {
   const allowed = ['title','description','category_id','subcategory_id','visibility'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
@@ -404,25 +508,18 @@ function updateLibraryFile(id, fields) {
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
   save();
 }
-
 function renameLibraryFile(id, filename) {
-  getDbSync().run('UPDATE library_files SET filename=? WHERE id=?', [filename, id]);
-  save();
+  getDbSync().run('UPDATE library_files SET filename=? WHERE id=?', [filename, id]); save();
 }
-
 function archiveLibraryFile(id, archived) {
-  getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]);
-  save();
+  getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]); save();
 }
-
 function deleteLibraryFile(id) {
-  // Remove refs first
   getDbSync().run('DELETE FROM lesson_file_refs WHERE file_id=?', [id]);
   getDbSync().run('DELETE FROM playlist_track_refs WHERE file_id=?', [id]);
   getDbSync().run('DELETE FROM library_files WHERE id=?', [id]);
   save();
 }
-
 function getFileUsage(fileId) {
   const lessons   = queryAll(`SELECT l.title as lesson_title, c.title as course_title
     FROM lesson_file_refs r JOIN lessons l ON r.lesson_id=l.id JOIN courses c ON l.course_id=c.id
@@ -526,11 +623,11 @@ function updateTrackOrder(refId, sortOrder) {
   getDbSync().run('UPDATE playlist_track_refs SET sort_order=? WHERE id=?', [sortOrder, refId]); save();
 }
 
-// ── Clients ──
-function createClient(id, name, facilitatorId, email, passwordHash, categoryId, subcategoryId, consent) {
+// ── Users (all non-facilitator accounts) ──
+function createUser(id, name, facilitatorId, email, passwordHash, categoryId, subcategoryId, consent) {
   const c = consent || {};
   getDbSync().run(
-    `INSERT INTO clients
+    `INSERT INTO users
       (id,name,facilitator_id,email,password_hash,category_id,subcategory_id,
        consent_given,consent_date,consent_version,lawful_basis)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
@@ -543,32 +640,180 @@ function createClient(id, name, facilitatorId, email, passwordHash, categoryId, 
     ]
   ); save();
 }
-function getClient(id) { return queryOne('SELECT * FROM clients WHERE id=?', [id]); }
-function getClientByEmail(email) {
+
+// Keep old name as alias so any code that missed the rename still works
+const createClient = createUser;
+
+function getUser(id) { return queryOne('SELECT * FROM users WHERE id=?', [id]); }
+const getClient = getUser; // alias
+
+function getUserByEmail(email) {
   if (!email) return null;
-  return queryOne('SELECT * FROM clients WHERE email=?', [email.toLowerCase()]);
+  return queryOne('SELECT * FROM users WHERE email=?', [email.toLowerCase()]);
 }
-function getAllClients(facilitatorId, includeArchived = false) {
+const getClientByEmail = getUserByEmail; // alias
+
+function getAllUsers(facilitatorId, includeArchived = false) {
   const sql = includeArchived
-    ? 'SELECT * FROM clients WHERE facilitator_id=? ORDER BY name ASC'
-    : 'SELECT * FROM clients WHERE facilitator_id=? AND archived=0 ORDER BY name ASC';
+    ? 'SELECT * FROM users WHERE facilitator_id=? ORDER BY name ASC'
+    : 'SELECT * FROM users WHERE facilitator_id=? AND archived=0 ORDER BY name ASC';
   return queryAll(sql, [facilitatorId]);
 }
-function getAllClientsAdmin(includeArchived = false) {
-  const where = includeArchived ? '' : 'WHERE c.archived=0';
-  return queryAll(`SELECT c.*, f.name as facilitator_name, cat.name as category_name, sub.name as subcategory_name
-    FROM clients c LEFT JOIN facilitators f ON c.facilitator_id=f.id
-    LEFT JOIN categories cat ON c.category_id=cat.id
-    LEFT JOIN categories sub ON c.subcategory_id=sub.id ${where} ORDER BY c.name ASC`);
+const getAllClients = getAllUsers; // alias
+
+function getAllUsersAdmin(includeArchived = false) {
+  const where = includeArchived ? '' : 'WHERE u.archived=0';
+  return queryAll(`SELECT u.*, f.name as facilitator_name, cat.name as category_name, sub.name as subcategory_name
+    FROM users u LEFT JOIN facilitators f ON u.facilitator_id=f.id
+    LEFT JOIN categories cat ON u.category_id=cat.id
+    LEFT JOIN categories sub ON u.subcategory_id=sub.id ${where} ORDER BY u.name ASC`);
 }
-function updateArc(clientId, arc) { getDbSync().run('UPDATE clients SET arc=? WHERE id=?', [arc, clientId]); save(); }
-function archiveClient(id) { getDbSync().run('UPDATE clients SET archived=1-archived WHERE id=?', [id]); save(); }
+const getAllClientsAdmin = getAllUsersAdmin; // alias
+
+function updateArc(userId, arc) { getDbSync().run('UPDATE users SET arc=? WHERE id=?', [arc, userId]); save(); }
+function archiveClient(id) { getDbSync().run('UPDATE users SET archived=1-archived WHERE id=?', [id]); save(); }
 function updateClientPassword(id, hash) {
-  getDbSync().run('UPDATE clients SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
+  getDbSync().run('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
 }
-function updateClientEmail(id, email) { getDbSync().run('UPDATE clients SET email=? WHERE id=?', [email.toLowerCase(), id]); save(); }
+function updateClientEmail(id, email) { getDbSync().run('UPDATE users SET email=? WHERE id=?', [email.toLowerCase(), id]); save(); }
 function updateClientProgramme(id, categoryId, subcategoryId) {
-  getDbSync().run('UPDATE clients SET category_id=?,subcategory_id=? WHERE id=?', [categoryId, subcategoryId||null, id]); save();
+  getDbSync().run('UPDATE users SET category_id=?,subcategory_id=? WHERE id=?', [categoryId, subcategoryId||null, id]); save();
+}
+function updateClientDetails(id, name, email, facilitatorId) {
+  getDbSync().run('UPDATE users SET name=?,email=?,facilitator_id=? WHERE id=?',
+    [name, email||null, facilitatorId||null, id]);
+  save();
+}
+function deleteClient(id) {
+  getDbSync().run('DELETE FROM users WHERE id=?', [id]);
+  save();
+}
+
+// ── Self-registration ──
+function registerUser(id, name, email, passwordHash) {
+  getDbSync().run(
+    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,is_client,is_system_client)
+     VALUES (?,?,?,?,NULL,'',0,0,0,0,1)`,
+    [id, name, email.toLowerCase()]
+  );
+  getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
+  save();
+}
+
+// ── Membership ──
+// member_tier: 0=Explorer, 1=Member1, 2=Member2, 3=Member3
+function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
+  getDbSync().run(
+    `UPDATE users SET
+      member_tier=?,
+      member_since=COALESCE(member_since, datetime('now')),
+      member_expires_at=?,
+      trial_ends_at=?,
+      stripe_customer_id=COALESCE(?,stripe_customer_id),
+      stripe_subscription_id=COALESCE(?,stripe_subscription_id)
+    WHERE id=?`,
+    [tier, expiresAt||null, trialEndsAt||null, stripeCustomerId||null, stripeSubscriptionId||null, userId]
+  );
+  save();
+}
+
+// Legacy alias used by existing Admin routes — maps to Member1
+function upgradeToMember(userId, level = 'member') {
+  const tier = level === 'member' ? 1 : (parseInt(level) || 1);
+  setMemberTier(userId, tier, null, null, null, null);
+}
+
+function downgradeToExplorer(userId) {
+  getDbSync().run(`UPDATE users SET member_tier=0, member_expires_at=NULL, stripe_subscription_id=NULL WHERE id=?`, [userId]);
+  save();
+}
+
+function markAsClient(userId, facilitatorId) {
+  getDbSync().run('UPDATE users SET is_client=1, facilitator_id=? WHERE id=?', [facilitatorId, userId]);
+  save();
+}
+function markAsSystemClient(id) {
+  getDbSync().run('UPDATE users SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]);
+  save();
+}
+
+// ── User preferences (My Account) ──
+function updateUserPreferences(userId, prefs) {
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','phone','language'];
+  const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
+  if (!sets) return;
+  getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
+    [...Object.keys(prefs).filter(k => allowed.includes(k)).map(k => prefs[k]), userId]);
+  save();
+}
+
+// ── Content visibility — cascade model ──
+// Explorer(0) < Member1(1) < Member2(2) < Member3(3) < Client(4) < Facilitator(5) < Admin(6)
+// NOTE: the visibility column in library_files still uses string names for backwards
+// compatibility with the Admin UI. The mapping below converts string → numeric rank.
+const LEVEL_RANK = {
+  registered: 0,   // Explorer
+  member:     1,   // legacy alias → Member1
+  member_1:   1,
+  member_2:   2,
+  member_3:   3,
+  client:     4,
+  facilitator:5,
+  admin:      6,
+};
+
+function userMaxLevel(flags) {
+  if (flags.isAdmin)        return 6;
+  if (flags.isFacilitator)  return 5;
+  if (flags.isClient)       return 4;
+  const tier = flags.memberTier || 0;
+  if (tier >= 3) return 3;
+  if (tier >= 2) return 2;
+  if (tier >= 1) return 1;
+  return 0;
+}
+
+function canSeeFile(file, userLevel) {
+  const fileLevel = LEVEL_RANK[file.visibility] ?? 0;
+  return userLevel >= fileLevel;
+}
+
+// Build user flags from a user DB record
+function userFlagsFromRecord(userRec, role) {
+  return {
+    memberTier:    userRec?.member_tier || 0,
+    isClient:      userRec?.is_client === 1,
+    isFacilitator: role === 'facilitator' || role === 'admin',
+    isAdmin:       role === 'admin',
+    // legacy isMember flag for any code that still reads it
+    isMember:      (userRec?.member_tier || 0) >= 1,
+  };
+}
+
+function getLibraryFilesForUser(userFlags) {
+  const level = userMaxLevel(userFlags);
+  const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
+  return files.filter(f => canSeeFile(f, level)).map(f => ({ ...f, accessible: true }));
+}
+
+function getAllLibraryFilesWithAccess(userFlags) {
+  const level = userMaxLevel(userFlags);
+  const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
+  return files.map(f => ({ ...f, accessible: canSeeFile(f, level) }));
+}
+
+function getFacilitatorResources() {
+  return queryAll(`SELECT f.*, cat.name as category_name, sub.name as subcategory_name
+    FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    LEFT JOIN categories sub ON f.subcategory_id=sub.id
+    WHERE f.archived=0 AND f.facilitator_resource=1
+    ORDER BY f.created_at DESC`);
+}
+
+function canAccessFile(file, userFlags) {
+  if (file.archived) return false;
+  return canSeeFile(file, userMaxLevel(userFlags));
 }
 
 // ── Sessions ──
@@ -610,9 +855,6 @@ function getProgrammesForUser(userId, userType) {
 
 // ── Content history ──
 function recordPlay(id, userId, userType, contentType, contentId) {
-  // Dedupe: skip if the same user already has a history entry for this exact
-  // content within the last 5 minutes (avoids spam from re-opens, accidental
-  // double-taps, or a player firing multiple play events for one listen).
   const recent = queryOne(
     `SELECT id FROM content_history
      WHERE user_id=? AND content_id=? AND content_type=?
@@ -624,7 +866,6 @@ function recordPlay(id, userId, userType, contentType, contentId) {
   getDbSync().run('INSERT INTO content_history (id,user_id,user_type,content_type,content_id) VALUES (?,?,?,?,?)',
     [id, userId, userType, contentType, contentId]); save();
 }
-
 function getContentHistory(userId, limit = 100) {
   return queryAll(
     `SELECT ch.id, ch.content_type, ch.content_id, ch.played_at,
@@ -637,19 +878,6 @@ function getContentHistory(userId, limit = 100) {
      LIMIT ?`,
     [userId, limit]
   );
-}
-
-// ── Seed default content categories ──
-function seedContentCategories() {
-  const existing = queryAll('SELECT * FROM categories WHERE parent_id IS NULL');
-  const names = ['Courses', 'One-to-one session material', 'Guided practice tracks', 'Written material and information videos'];
-  names.forEach(name => {
-    if (!existing.find(c => c.name === name)) {
-      const id   = 'seed-' + name.toLowerCase().replace(/[^a-z0-9]+/g,'-');
-      const slug = id + '-' + Date.now();
-      try { getDbSync().run('INSERT INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,NULL,0)', [id, name, slug]); save(); } catch(e) {}
-    }
-  });
 }
 
 // ── User favourites ──
@@ -692,92 +920,6 @@ function renameUserPlaylist(id, name) {
   getDbSync().run('UPDATE user_playlists SET name=? WHERE id=?', [name, id]); save();
 }
 
-// ── Self-registration ──
-function registerUser(id, name, email, passwordHash) {
-  getDbSync().run(
-    `INSERT INTO clients (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,is_member,membership_level,is_client,is_system_client)
-     VALUES (?,?,?,?,NULL,'',0,0,0,'registered',0,1)`,
-    [id, name, email.toLowerCase()]
-  );
-  // Set password separately since it's optional in some flows
-  getDbSync().run('UPDATE clients SET password_hash=? WHERE id=?', [passwordHash, id]);
-  save();
-}
-
-function getUserByEmail(email) {
-  return queryOne('SELECT * FROM clients WHERE email=? AND archived=0', [email.toLowerCase()]);
-}
-
-function upgradeToMember(clientId, level = 'member') {
-  getDbSync().run('UPDATE clients SET is_member=1, membership_level=? WHERE id=?', [level, clientId]);
-  save();
-}
-
-function markAsClient(clientId, facilitatorId) {
-  getDbSync().run('UPDATE clients SET is_client=1, facilitator_id=? WHERE id=?', [facilitatorId, clientId]);
-  save();
-}
-
-// ── System client flag ──
-function markAsSystemClient(id) {
-  getDbSync().run('UPDATE clients SET is_system_client=1, facilitator_id=NULL WHERE id=?', [id]);
-  save();
-}
-
-// ── Content visibility — cascade model ──
-// Levels: registered(0) < member(1) < client(2) < facilitator(3) < admin(4)
-// Each level sees its own content plus everything below it.
-const LEVEL_RANK = { registered:0, member:1, client:2, facilitator:3, admin:4 };
-
-function userMaxLevel(flags) {
-  if (flags.isAdmin)       return 4;
-  if (flags.isFacilitator) return 3;
-  if (flags.isClient)      return 2;
-  if (flags.isMember)      return 1;
-  return 0; // registered = minimum for any logged-in user
-}
-
-function canSeeFile(file, userLevel) {
-  const fileLevel = LEVEL_RANK[file.visibility] ?? 0;
-  return userLevel >= fileLevel;
-}
-
-function getLibraryFilesForUser(userFlags) {
-  const level = userMaxLevel(userFlags);
-  // facilitator_resource files are deliberately excluded from the regular Content tab —
-  // even for a logged-in Facilitator/Admin — since they're prep/reference material meant
-  // for the separate Facilitator Workspace shelf, not self-practice content. A facilitator
-  // viewing their own Content tab should see what a Member sees, not their own prep notes
-  // mixed in.
-  const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
-  return files.filter(f => canSeeFile(f, level)).map(f => ({ ...f, accessible: true }));
-}
-
-function getAllLibraryFilesWithAccess(userFlags) {
-  const level = userMaxLevel(userFlags);
-  const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
-  return files.map(f => ({ ...f, accessible: canSeeFile(f, level) }));
-}
-
-// Returns the fixed Facilitator Workspace resource shelf — prep material, reference,
-// training, not tied to any specific client. Visible to Facilitators and Admins only.
-function getFacilitatorResources() {
-  return queryAll(`SELECT f.*, cat.name as category_name, sub.name as subcategory_name
-    FROM library_files f
-    LEFT JOIN categories cat ON f.category_id=cat.id
-    LEFT JOIN categories sub ON f.subcategory_id=sub.id
-    WHERE f.archived=0 AND f.facilitator_resource=1
-    ORDER BY f.created_at DESC`);
-}
-
-// Exported single-file access check — same cascade logic as the listing functions above,
-// used by the playback-url endpoint so a direct request for one file gets exactly the
-// same tier check as the file would get if it were showing in someone's Content tab.
-function canAccessFile(file, userFlags) {
-  if (file.archived) return false;
-  return canSeeFile(file, userMaxLevel(userFlags));
-}
-
 // ── Invitations ──
 function createInvitation(id, token, facilitatorId, email, expiresAt) {
   getDbSync().run(
@@ -805,24 +947,96 @@ function addGuestLead(id, name, email, source) {
   );
   save();
 }
-function getGuestLeads() {
-  return queryAll('SELECT * FROM guest_leads ORDER BY created_at DESC');
+function getGuestLeads() { return queryAll('SELECT * FROM guest_leads ORDER BY created_at DESC'); }
+function deleteGuestLead(id) { getDbSync().run('DELETE FROM guest_leads WHERE id=?', [id]); save(); }
+function getGuestLead(id) { return queryOne('SELECT * FROM guest_leads WHERE id=?', [id]); }
+
+// ── Seed default content categories ──
+function seedContentCategories() {
+  const existing = queryAll('SELECT * FROM categories WHERE parent_id IS NULL');
+  const names = ['Courses', 'One-to-one session material', 'Guided practice tracks', 'Written material and information videos'];
+  names.forEach(name => {
+    if (!existing.find(c => c.name === name)) {
+      const id   = 'seed-' + name.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+      const slug = id + '-' + Date.now();
+      try { getDbSync().run('INSERT INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,NULL,0)', [id, name, slug]); save(); } catch(e) {}
+    }
+  });
 }
-function deleteGuestLead(id) {
-  getDbSync().run('DELETE FROM guest_leads WHERE id=?', [id]);
+
+// ── Membership plans ──
+function getMembershipPlans(activeOnly = true) {
+  const sql = activeOnly
+    ? 'SELECT * FROM membership_plans WHERE active=1 ORDER BY tier ASC, billing_cycle ASC'
+    : 'SELECT * FROM membership_plans ORDER BY tier ASC, billing_cycle ASC';
+  return queryAll(sql);
+}
+function updateMembershipPlan(id, fields) {
+  const allowed = ['name','price_pence','trial_days','stripe_price_id','active'];
+  const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
+  if (!sets) return;
+  getDbSync().run(`UPDATE membership_plans SET ${sets} WHERE id=?`,
+    [...Object.keys(fields).filter(k => allowed.includes(k)).map(k => fields[k]), id]);
   save();
 }
-function getGuestLead(id) {
-  return queryOne('SELECT * FROM guest_leads WHERE id=?', [id]);
-}
-function updateClientDetails(id, name, email, facilitatorId) {
-  getDbSync().run('UPDATE clients SET name=?,email=?,facilitator_id=? WHERE id=?',
-    [name, email||null, facilitatorId||null, id]);
+
+// ── Messages of the day ──
+function addMotd(id, body, scheduledDate) {
+  getDbSync().run(
+    `INSERT INTO messages_of_the_day (id,body,scheduled_date,status) VALUES (?,?,?,'draft')`,
+    [id, body, scheduledDate||null]
+  );
   save();
 }
-function deleteClient(id) {
-  getDbSync().run('DELETE FROM clients WHERE id=?', [id]);
-  save();
+function getMotd(id) { return queryOne('SELECT * FROM messages_of_the_day WHERE id=?', [id]); }
+function getAllMotd(statusFilter) {
+  if (statusFilter) return queryAll('SELECT * FROM messages_of_the_day WHERE status=? ORDER BY scheduled_date ASC, created_at ASC', [statusFilter]);
+  return queryAll('SELECT * FROM messages_of_the_day ORDER BY scheduled_date ASC, created_at ASC');
+}
+function approveMotd(id) {
+  getDbSync().run("UPDATE messages_of_the_day SET status='approved' WHERE id=?", [id]); save();
+}
+function updateMotd(id, body, scheduledDate) {
+  getDbSync().run('UPDATE messages_of_the_day SET body=?,scheduled_date=? WHERE id=?', [body, scheduledDate||null, id]); save();
+}
+function deleteMotd(id) {
+  getDbSync().run('DELETE FROM messages_of_the_day WHERE id=?', [id]); save();
+}
+function markMotdSent(id) {
+  getDbSync().run("UPDATE messages_of_the_day SET status='sent', sent_at=datetime('now') WHERE id=?", [id]); save();
+}
+function countApprovedMotd() {
+  const result = queryOne("SELECT COUNT(*) as cnt FROM messages_of_the_day WHERE status='approved'");
+  return result?.cnt || 0;
+}
+// Get the next approved MOTD to send (oldest scheduled_date or oldest created_at if no date)
+function getNextMotdToSend() {
+  return queryOne(
+    `SELECT * FROM messages_of_the_day WHERE status='approved'
+     ORDER BY
+       CASE WHEN scheduled_date IS NOT NULL THEN scheduled_date ELSE '9999-99-99' END ASC,
+       created_at ASC
+     LIMIT 1`
+  );
+}
+// Get all users who want MOTD emails and have an email address
+function getMotdRecipients() {
+  return queryAll(`SELECT id,name,email FROM users WHERE pref_email_motd=1 AND email IS NOT NULL AND archived=0`);
+}
+// Get users who haven't been active in the last N days (for reminder emails)
+function getInactiveUsers(days = 4) {
+  return queryAll(
+    `SELECT u.id, u.name, u.email FROM users u
+     WHERE u.pref_email_reminders=1
+       AND u.email IS NOT NULL
+       AND u.archived=0
+       AND NOT EXISTS (
+         SELECT 1 FROM content_history ch
+         WHERE ch.user_id=u.id
+           AND ch.played_at > datetime('now', '-${days} days')
+       )`,
+    []
+  );
 }
 
 module.exports = {
@@ -847,9 +1061,17 @@ module.exports = {
   createPlaylist, getPlaylist, getAllPlaylists, deletePlaylist,
   // Playlist track refs
   addPlaylistTrackRef, getTracksForPlaylist, removePlaylistTrackRef, updateTrackOrder,
-  // Clients
+  // Users (primary names)
+  createUser, getUser, getUserByEmail, getAllUsers, getAllUsersAdmin,
+  // Users (legacy aliases — keep so nothing breaks during transition)
   createClient, getClient, getClientByEmail, getAllClients, getAllClientsAdmin,
+  // User management
   updateArc, archiveClient, updateClientPassword, updateClientEmail, updateClientProgramme,
+  updateClientDetails, deleteClient,
+  // Membership
+  setMemberTier, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
+  // Preferences
+  updateUserPreferences, userFlagsFromRecord,
   // Sessions
   addSession, getSessionsForClient, getClientSessionsForClient,
   // Practices
@@ -865,15 +1087,19 @@ module.exports = {
   // User playlists
   createUserPlaylist, getUserPlaylists, addToUserPlaylist, removeFromUserPlaylist, deleteUserPlaylist, renameUserPlaylist,
   // Registration
-  registerUser, getUserByEmail, upgradeToMember, markAsClient,
+  registerUser,
   // Content visibility
   getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, getFacilitatorResources,
-  // System client
-  markAsSystemClient,
+  userMaxLevel, LEVEL_RANK,
   // Invitations
   createInvitation, getInvitationByToken, acceptInvitation, getInvitationsForFacilitator,
   // Guest leads
   addGuestLead, getGuestLeads, deleteGuestLead, getGuestLead,
-  // Client management
-  updateClientDetails, deleteClient,
+  // Membership plans
+  getMembershipPlans, updateMembershipPlan,
+  // MOTD
+  addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd,
+  markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
+  // Reminders
+  getInactiveUsers,
 };

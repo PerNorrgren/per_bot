@@ -37,7 +37,7 @@ function verifyToken(token) {
 async function login(email, password) {
   const emailLower = email.toLowerCase().trim();
 
-  // Check admin
+  // Check admin first
   const admin = db.getFacilitatorByEmail(emailLower);
   if (admin && admin.role === 'admin') {
     const valid = await verifyPassword(password, admin.password_hash);
@@ -51,11 +51,11 @@ async function login(email, password) {
     if (valid) return { role: facilitator.role, id: facilitator.id, name: facilitator.name, email: facilitator.email, mustChangePassword: facilitator.must_change_password };
   }
 
-  // Check client
-  const client = db.getClientByEmail(emailLower);
-  if (client) {
-    const valid = await verifyPassword(password, client.password_hash);
-    if (valid) return { role: 'client', id: client.id, name: client.name, email: client.email, mustChangePassword: client.must_change_password };
+  // Check users table (Explorer / Member / Client)
+  const user = db.getUserByEmail(emailLower);
+  if (user) {
+    const valid = await verifyPassword(password, user.password_hash);
+    if (valid) return { role: 'client', id: user.id, name: user.name, email: user.email, mustChangePassword: user.must_change_password };
   }
 
   return null;

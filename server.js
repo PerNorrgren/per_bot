@@ -162,8 +162,8 @@ app.post('/api/login', async (req, res) => {
 
   // Check if facilitator/admin also has a client record — show role chooser
   if (user.role === 'facilitator' || user.role === 'admin') {
-    const clientRecord = db.getClientByEmail(user.email.toLowerCase());
-    if (clientRecord) {
+    const userRecord = db.getUserByEmail(user.email.toLowerCase());
+    if (userRecord) {
       return res.json({ chooseRole: true, name: user.name });
     }
   }
@@ -187,13 +187,11 @@ app.post('/api/register', async (req, res) => {
 
     const emailLower = email.toLowerCase().trim();
 
-    // Check not already registered as facilitator
     const existingFac = db.getFacilitatorByEmail(emailLower);
     if (existingFac) return res.status(400).json({ error: 'An account with this email already exists.' });
 
-    // Check not already a client
-    const existingClient = db.getClientByEmail(emailLower);
-    if (existingClient) return res.status(400).json({ error: 'An account with this email already exists.' });
+    const existingUser = db.getUserByEmail(emailLower);
+    if (existingUser) return res.status(400).json({ error: 'An account with this email already exists.' });
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
@@ -222,10 +220,10 @@ app.post('/api/register', async (req, res) => {
 // ── Switch to client role — swaps session cookie for dual-role users ──
 app.post('/api/switch-to-client', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
   try {
-    const fac    = db.getFacilitatorById(req.user.id);
-    const client = fac ? db.getClientByEmail(fac.email) : null;
-    if (!client) return res.status(404).json({ error: 'No client record found for this email.' });
-    const token = auth.createToken({ role: 'client', id: client.id, name: client.name, email: client.email });
+    const fac  = db.getFacilitatorById(req.user.id);
+    const user = fac ? db.getUserByEmail(fac.email) : null;
+    if (!user) return res.status(404).json({ error: 'No user record found for this email.' });
+    const token = auth.createToken({ role: 'client', id: user.id, name: user.name, email: user.email });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
     res.json({ redirect: '/client/' });
   } catch(e) {
@@ -238,7 +236,7 @@ app.post('/api/change-password', auth.requireAuthApi(), async (req, res) => {
   if (!password || password.length < 8) return res.json({ error: 'Password must be at least 8 characters.' });
   const user = req.user;
   if (currentPassword) {
-    const record = user.role === 'client' ? db.getClient(user.id) : db.getFacilitatorById(user.id);
+    const record = user.role === 'client' ? db.getUser(user.id) : db.getFacilitatorById(user.id);
     const valid = record ? await auth.verifyPassword(currentPassword, record.password_hash) : false;
     if (!valid) return res.json({ error: 'Current password is incorrect.' });
   }
@@ -296,7 +294,7 @@ app.delete('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), (req, 
   db.deleteFacilitator(req.params.id); res.json({ ok: true });
 });
 app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
-  res.json(db.getAllClientsAdmin(req.query.archived === '1'));
+  res.json(db.getAllUsersAdmin(req.query.archived === '1'));
 });
 
 // ── Admin: Add Member ──
@@ -310,13 +308,13 @@ app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) 
     const emailLower = email.toLowerCase().trim();
 
     if (db.getFacilitatorByEmail(emailLower)) return res.status(400).json({ error: 'An account with this email already exists.' });
-    if (db.getClientByEmail(emailLower))      return res.status(400).json({ error: 'An account with this email already exists.' });
+    if (db.getUserByEmail(emailLower))      return res.status(400).json({ error: 'An account with this email already exists.' });
 
     const id = uuidv4();
     const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
     const passwordHash = await auth.hashPassword(tempPassword);
 
-    db.createClient(id, name.trim(), null, emailLower, passwordHash, null, null, {
+    db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
       consentGiven:    true,
       consentVersion:  'admin-added-v1',
       lawfulBasis:     'consent'
@@ -347,15 +345,15 @@ app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (re
     tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2,4).toUpperCase();
     passwordHash = await auth.hashPassword(tempPassword);
   }
-  db.createClient(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash, categoryId || null, subcategoryId || null);
+  db.createUser(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash, categoryId || null, subcategoryId || null);
   if (email && tempPassword) emailWelcomeClient(name.trim(), email.trim(), tempPassword);
   res.json({ id, name: name.trim(), tempPassword });
 });
 app.get('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
-  const client = db.getClient(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && client.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-  res.json({ ...client, sessions: db.getSessionsForClient(req.params.id), practices: db.getPracticesForClient(req.params.id) });
+  const user = db.getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role !== 'admin' && user.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+  res.json({ ...user, sessions: db.getSessionsForClient(req.params.id), practices: db.getPracticesForClient(req.params.id) });
 });
 app.patch('/api/clients/:id/arc', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   db.updateArc(req.params.id, req.body.arc); res.json({ ok: true });
@@ -364,14 +362,14 @@ app.patch('/api/clients/:id/archive', auth.requireAuthApi(['admin','facilitator'
   db.archiveClient(req.params.id); res.json({ ok: true });
 });
 app.get('/api/my/profile', auth.requireAuthApi(['client']), (req, res) => {
-  res.json({ ...db.getClient(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
+  res.json({ ...db.getUser(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
 });
 
 // ── My Space — check if facilitator has a client record ──
 app.get('/api/my-space/status', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
   const fac    = db.getFacilitatorById(req.user.id);
-  const client = fac ? db.getClientByEmail(fac.email) : null;
-  res.json({ hasClientRecord: !!client });
+  const user   = fac ? db.getUserByEmail(fac.email) : null;
+  res.json({ hasClientRecord: !!user });
 });
 
 // ── My Space — facilitator as system client ──
@@ -383,17 +381,15 @@ app.post('/api/my-space', auth.requireAuthApi(['facilitator', 'admin']), async (
     if (!fac) return res.status(404).json({ error: 'Facilitator not found' });
 
     // Check if a system client record already exists for this facilitator
-    let client = db.getClientByEmail(fac.email);
-    if (!client) {
-      // Create a system client — no facilitator_id, marked as system client
+    let user = db.getUserByEmail(fac.email);
+    if (!user) {
       const id = uuidv4();
       const hash = await auth.hashPassword(Math.random().toString(36).slice(2, 18));
-      db.createClient(id, fac.name, null, fac.email, hash, null, null);
+      db.createUser(id, fac.name, null, fac.email, hash, null, null);
         db.markAsSystemClient(id);
-      client = db.getClient(id);
+      user = db.getUser(id);
     }
-
-    res.json({ clientId: client.id, name: client.name });
+    res.json({ clientId: user.id, name: user.name });
   } catch(e) {
     console.error('my-space error:', e);
     res.status(500).json({ error: e.message });
@@ -469,7 +465,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       let sp = prompts.CLIENT_SYSTEM_PROMPT;
       const cId = session.clientId;
       if (cId) {
-        const client   = db.getClient(cId);
+        const client   = db.getUser(cId);
         const sessions = db.getSessionsForClient(cId);
         const arc      = client?.arc || '';
         if (arc || sessions.length > 0) sp += prompts.CLIENT_ARC_PREFIX(arc, sessions.length);
@@ -551,7 +547,7 @@ app.post('/api/invitations', auth.requireAuthApi(['facilitator','admin']), async
     db.createInvitation(id, token, req.user.id, emailLower, expiresAt);
 
     const inviteUrl = `${APP_URL}/invite/${token}`;
-    const existing  = db.getClientByEmail(emailLower);
+    const existing  = db.getUserByEmail(emailLower);
     const isKnown   = !!existing;
 
     await sendEmail(emailLower,
@@ -589,7 +585,7 @@ app.get('/invite/:token', async (req, res) => {
     if (new Date(inv.expires_at) < new Date()) return res.redirect('/login?error=expired_invite');
 
     // Check if user is already registered
-    const existing = db.getClientByEmail(inv.email);
+    const existing = db.getUserByEmail(inv.email);
     if (existing) {
       // Link them to facilitator and mark as client
       db.markAsClient(existing.id, inv.facilitator_id);
@@ -615,7 +611,7 @@ app.post('/api/admin/guest-leads/:id/convert', auth.requireAuthApi(['admin']), a
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
     if (!lead.email) return res.status(400).json({ error: 'Lead has no email.' });
     // Check not already registered
-    const existing = db.getClientByEmail(lead.email);
+    const existing = db.getUserByEmail(lead.email);
     if (existing) { db.deleteGuestLead(req.params.id); return res.json({ ok: true, note: 'Already registered.' }); }
     const tempPassword = Math.random().toString(36).slice(2,10) + Math.random().toString(36).slice(2,4).toUpperCase();
     const hash = await auth.hashPassword(tempPassword);
@@ -632,14 +628,8 @@ app.post('/api/admin/guest-leads/:id/convert', auth.requireAuthApi(['admin']), a
 // ── Client content endpoints ──
 app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
   try {
-    const client = req.user.role === 'client' ? db.getClient(req.user.id) : null;
-    const userFlags = {
-      isRegistered:  true, // all logged-in users are at least registered
-      isMember:      client?.is_member === 1,
-      isClient:      client?.is_client === 1,
-      isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
-      isAdmin:       req.user.role === 'admin',
-    };
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
     // Facilitators/admins previewing content should see everything regardless of tier,
     // but a logged-in Explorer/Member/Client only ever sees what their own tier permits —
     // getAllLibraryFilesWithAccess tags every file with `accessible`; we filter on it here
@@ -745,15 +735,15 @@ app.post('/api/guest/chat', async (req, res) => {
 
 
 
-// ── /api/admin/users — all registered users ──
 app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
-  res.json(db.getAllClientsAdmin(false));
+  res.json(db.getAllUsersAdmin(false));
 });
 
-// ── /api/admin/users/:id/upgrade — upgrade to member ──
+// ── /api/admin/users/:id/upgrade — upgrade to member tier ──
 app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), (req, res) => {
-  const { level } = req.body;
-  db.upgradeToMember(req.params.id, level || 'member');
+  const { level, tier } = req.body;
+  const memberTier = tier != null ? parseInt(tier) : (level === 'member' ? 1 : parseInt(level) || 1);
+  db.setMemberTier(req.params.id, memberTier, null, null, null, null);
   res.json({ ok: true });
 });
 
@@ -831,7 +821,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   const clientId = searchParams.get('client');
-  const client = clientId ? db.getClient(clientId) : null;
+  const client = clientId ? db.getUser(clientId) : null;
   if (!client) {
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
     socket.destroy();
@@ -1074,13 +1064,8 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     const file = db.getLibraryFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'Not found.' });
 
-    const clientRec = req.user.role === 'client' ? db.getClient(req.user.id) : null;
-    const userFlags = {
-      isMember:      clientRec?.is_member === 1,
-      isClient:      clientRec?.is_client === 1,
-      isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
-      isAdmin:       req.user.role === 'admin',
-    };
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
     // Facilitators/admins can preview/play any file regardless of tier; an Explorer/
     // Member/Client only ever gets a URL for what their own tier actually permits.
     const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
@@ -1244,7 +1229,191 @@ app.get('/uploads/:filename', (req, res) => {
 app.get('/guest',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'guest', 'index.html')));
 app.get('/guest/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'guest', 'index.html')));
 
-// ── Error handler — catches multer/upload errors so they return a real message
+// ── My Account — user self-service ──
+// Returns the current user's full profile including membership and preferences.
+app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const user = db.getUser(req.user.id);
+    if (!user) return res.status(404).json({ error: 'Not found.' });
+    // Don't send password hash to the client
+    const { password_hash, ...safe } = user;
+    res.json(safe);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Update communication preferences and profile fields
+app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','phone','language'];
+    const prefs = {};
+    allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
+    if (Object.keys(prefs).length) db.updateUserPreferences(req.user.id, prefs);
+    // Name update
+    if (req.body.name && req.body.name.trim()) {
+      db.updateClientDetails(req.user.id, req.body.name.trim(), null, null);
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Membership plans — public endpoint (no auth required for pricing page) ──
+app.get('/api/membership/plans', (req, res) => {
+  try { res.json(db.getMembershipPlans(true)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Membership plans — admin management ──
+app.get('/api/admin/membership/plans', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getMembershipPlans(false)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.updateMembershipPlan(req.params.id, req.body);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: set member tier directly (manual override / gift membership) ──
+app.patch('/api/admin/users/:id/tier', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { tier, expiresAt, trialDays } = req.body;
+    if (tier == null) return res.status(400).json({ error: 'tier required (0–3).' });
+    let trialEndsAt = null;
+    if (trialDays && parseInt(trialDays) > 0) {
+      const d = new Date();
+      d.setDate(d.getDate() + parseInt(trialDays));
+      trialEndsAt = d.toISOString();
+    }
+    db.setMemberTier(req.params.id, parseInt(tier), expiresAt||null, trialEndsAt, null, null);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: downgrade user to Explorer ──
+app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.downgradeToExplorer(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Stripe webhook — placeholder ──
+// Real Stripe integration is a separate sprint. This endpoint receives webhook events
+// from Stripe and updates member_tier accordingly. Wired up once Stripe keys are set.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  // TODO: verify stripe-signature header against STRIPE_WEBHOOK_SECRET
+  // TODO: handle customer.subscription.created / updated / deleted, invoice.payment_failed
+  console.log('[stripe webhook] received (not yet processed)');
+  res.json({ received: true });
+});
+
+// ── Message of the day — admin ──
+app.get('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { status } = req.query;
+    const messages = db.getAllMotd(status || null);
+    const approvedCount = db.countApprovedMotd();
+    res.json({ messages, approvedCount, lowStock: approvedCount <= 5 });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { body, scheduledDate } = req.body;
+    if (!body || !body.trim()) return res.status(400).json({ error: 'body required.' });
+    const id = uuidv4();
+    db.addMotd(id, body.trim(), scheduledDate || null);
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/admin/motd/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { body, scheduledDate, action } = req.body;
+    if (action === 'approve') {
+      db.approveMotd(req.params.id);
+      // After approving, check if stock is low and alert Per
+      const remaining = db.countApprovedMotd();
+      if (remaining <= 5) {
+        sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+          `⚠️ Message of the day — only ${remaining} approved message${remaining === 1 ? '' : 's'} remaining`,
+          `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
+            <h2 style="font-weight:normal">Message queue running low</h2>
+            <p>There ${remaining === 1 ? 'is' : 'are'} only <strong>${remaining}</strong> approved message${remaining === 1 ? '' : 's'} of the day left in the queue.</p>
+            <p>Please add and approve more at <a href="${APP_URL}/admin/">${APP_URL}/admin/</a></p>
+            <hr/><p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Bot</p>
+          </div>`
+        );
+      }
+      return res.json({ ok: true, approvedCount: remaining, lowStock: remaining <= 5 });
+    }
+    if (body != null) db.updateMotd(req.params.id, body.trim(), scheduledDate || null);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/motd/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteMotd(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── MOTD send — triggered by daily cron (node-cron, not yet wired) ──
+// This endpoint does the actual send. Call it from a scheduled job.
+// Safe to call manually from Admin for testing.
+app.post('/api/admin/motd/send-daily', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const motd = db.getNextMotdToSend();
+    if (!motd) return res.json({ ok: true, sent: 0, note: 'No approved messages in queue.' });
+
+    const recipients = db.getMotdRecipients();
+    if (!recipients.length) {
+      db.markMotdSent(motd.id);
+      return res.json({ ok: true, sent: 0, note: 'No recipients opted in.' });
+    }
+
+    // Send to each recipient individually so we can personalise the greeting
+    let sent = 0;
+    for (const user of recipients) {
+      await sendEmail(user.email,
+        'From Deeper Mindfulness — a moment for today',
+        `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+          <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">Deeper Mindfulness</div>
+          <p style="font-size:17px;line-height:1.8;color:#1a1a1a;margin-bottom:32px">${motd.body.replace(/\n/g, '<br/>')}</p>
+          <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+          <p style="font-size:12px;color:#aaa">
+            You're receiving this because you're a member of Deeper Mindfulness.
+            <a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space</a> ·
+            <a href="${APP_URL}/account" style="color:#888">Manage preferences</a>
+          </p>
+        </div>`
+      );
+      sent++;
+    }
+
+    db.markMotdSent(motd.id);
+
+    // Check remaining and alert Per if low
+    const remaining = db.countApprovedMotd();
+    if (remaining <= 5) {
+      await sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+        `⚠️ MOTD queue — ${remaining} message${remaining === 1 ? '' : 's'} remaining`,
+        `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
+          <p>Today's message was sent to ${sent} recipient${sent === 1 ? '' : 's'}.</p>
+          <p>Only <strong>${remaining}</strong> approved message${remaining === 1 ? '' : 's'} left. Please add more.</p>
+          <p><a href="${APP_URL}/admin/">${APP_URL}/admin/</a></p>
+        </div>`
+      );
+    }
+
+    res.json({ ok: true, sent, remaining, lowStock: remaining <= 5 });
+  } catch(e) {
+    console.error('motd send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // instead of the request just dying silently (this was the original bug: a 54MB
 // upload via the legacy disk path would hit multer's old 50MB limit and the
 // connection would simply drop with no response at all). ──
