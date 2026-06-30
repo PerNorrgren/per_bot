@@ -175,6 +175,13 @@
 
     .player-overlay { display:none; position:absolute; inset:0; z-index:10; background:rgba(10,15,13,0.94); backdrop-filter:blur(12px); border-radius:22px; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:32px; }
     .player-overlay.visible { display:flex; }
+    /* Video specifically breaks out of the 500px glass shell — a phone-app-card width is
+       right for chat and lists, but wrong for video, which should use real screen space
+       on desktop. .video-mode overrides position/sizing to cover the full viewport instead
+       of being trapped inside the parent .glass panel. */
+    .player-overlay.video-mode { position:fixed; inset:0; border-radius:0; z-index:500; padding:24px; }
+    .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
+    .player-overlay.video-mode .player-media video { max-height:80vh; }
     .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
@@ -991,7 +998,9 @@
     document.getElementById('playerText').textContent  = f.description || '';
     const mediaEl = document.getElementById('playerMedia');
     mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
-    document.getElementById('playerOverlay').classList.add('visible');
+    const overlayEl = document.getElementById('playerOverlay');
+    overlayEl.classList.toggle('video-mode', type === 'video');
+    overlayEl.classList.add('visible');
 
     // Ask the server for a playback URL — checked against this person's tier first,
     // same as audio. Works for both R2-stored and legacy disk files transparently.
@@ -1024,7 +1033,9 @@
   }
 
   function closePlayerOverlay() {
-    document.getElementById('playerOverlay').classList.remove('visible');
+    const overlayEl = document.getElementById('playerOverlay');
+    overlayEl.classList.remove('visible');
+    overlayEl.classList.remove('video-mode');
     const mediaEl = document.getElementById('playerMedia');
     // Stop any playing video when the overlay closes, rather than leaving it
     // playing silently in the background.
