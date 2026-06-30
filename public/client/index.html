@@ -110,6 +110,9 @@
 
     .content-section { margin-bottom:4px; }
     .content-section-hdr { font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:12px 18px 6px; display:flex; align-items:center; justify-content:space-between; }
+    .content-filters { display:flex; gap:6px; padding:10px 18px 4px; flex-wrap:wrap; }
+    .content-filter-chip { font-size:11px; padding:5px 12px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; transition:all 0.15s; }
+    .content-filter-chip.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
     .content-item { display:flex; align-items:center; gap:10px; padding:9px 18px; cursor:pointer; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.04); }
     .content-item:hover { background:rgba(255,255,255,0.04); }
     .content-item.locked { opacity:0.35; cursor:default; }
@@ -292,6 +295,12 @@
 
     <!-- Content -->
     <div class="content-view" id="contentView">
+      <div class="content-filters" id="contentFilters">
+        <button class="content-filter-chip active" data-filter="all" onclick="setContentFilter('all')">All</button>
+        <button class="content-filter-chip" data-filter="audio" onclick="setContentFilter('audio')">🎵 Audio</button>
+        <button class="content-filter-chip" data-filter="video" onclick="setContentFilter('video')">🎬 Video</button>
+        <button class="content-filter-chip" data-filter="document" onclick="setContentFilter('document')">📄 Documents</button>
+      </div>
       <div class="content-scroll" id="contentScroll"></div>
       <!-- Mini player -->
       <div class="mini-player" id="miniPlayer">
@@ -632,16 +641,26 @@
   });
 
   // ── Content ──
-  const CONTENT_SECTIONS = [
-    { key: 'courses',    label: 'Courses',                              icon: '📚', match: (f,cats) => cats.courses.has(f.category_id) },
-    { key: 'one2one',   label: 'One-to-one session material',           icon: '🎯', match: (f,cats) => cats.one2one.has(f.category_id) },
-    { key: 'guided',    label: 'Guided practice tracks',                icon: '🎵', match: (f,cats) => cats.guided.has(f.category_id) },
-    { key: 'written',   label: 'Written material and information videos',icon: '📄', match: (f,cats) => cats.written.has(f.category_id) },
-  ];
+  // Classifies a file by what it actually is (audio/video/document), independent of
+  // which category it was filed under. Replaces the old category-name matching, which
+  // only ever showed files in the four originally-seeded categories — any custom
+  // category (e.g. FELT·FIBRE, a programme-specific one) was invisible regardless of
+  // tier or visibility, since nothing matched its section.
+  function contentType(f) {
+    if (isAudio(f)) return 'audio';
+    if (f.file_type?.startsWith('video')) return 'video';
+    return 'document';
+  }
+
+  let _contentFilter = 'all';
+  function setContentFilter(filter) {
+    _contentFilter = filter;
+    document.querySelectorAll('.content-filter-chip').forEach(c => c.classList.toggle('active', c.dataset.filter === filter));
+    renderContentScroll();
+  }
 
   let _contentData   = [];
   let _userPlaylists = [];
-  let _cats          = {};
   let _currentAudioFile = null;
 
   // Mini player state
@@ -725,16 +744,16 @@
     const isActive = btn.classList.contains('active');
     if (isActive) {
       await fetch(`/api/client/favourites/${fileId}`, { method: 'DELETE' });
-      btn.classList.remove('active');
     } else {
       await fetch(`/api/client/favourites/${fileId}`, { method: 'POST' });
-      btn.classList.add('active');
     }
     // Update in data
     const f = _contentData.find(x => x.id === fileId);
     if (f) f.is_favourite = !isActive;
-    // Re-render favourites section only
-    renderFavourites();
+    // Full re-render — favourited items are now excluded from the main list (and vice
+    // versa), so a partial update to just the favourites strip would leave the main
+    // list showing a stale duplicate or a missing item until the next full reload.
+    renderContentScroll();
   }
 
   function isAudio(f) {
@@ -766,37 +785,17 @@
     </div>`;
   }
 
-  function renderFavourites() {
-    const favs = _contentData.filter(f => f.is_favourite);
-    const el   = document.getElementById('content-favs');
-    if (!el) return;
-    el.innerHTML = favs.length
-      ? favs.map(f => contentItemHTML(f)).join('')
-      : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Tap ♥ on any item to add it here.</div>';
-  }
-
   async function loadContent() {
     const el = document.getElementById('contentScroll');
     el.innerHTML = '<div style="padding:20px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
 
     try {
-      const [filesRes, plRes, catRes] = await Promise.all([
+      const [filesRes, plRes] = await Promise.all([
         fetch('/api/client/content'),
         fetch('/api/client/playlists'),
-        fetch('/api/content/categories'),
       ]);
       _contentData   = await filesRes.json();
       _userPlaylists = await plRes.json();
-      const allCats  = await catRes.json();
-
-      // Map category names to sets of IDs
-      _cats = {
-        courses: new Set(allCats.filter(c => c.name === 'Courses').map(c => c.id)),
-        one2one: new Set(allCats.filter(c => c.name === 'One-to-one session material').map(c => c.id)),
-        guided:  new Set(allCats.filter(c => c.name === 'Guided practice tracks').map(c => c.id)),
-        written: new Set(allCats.filter(c => c.name === 'Written material and information videos').map(c => c.id)),
-      };
-
       renderContentScroll();
     } catch(e) {
       el.innerHTML = '<div style="padding:20px;color:rgba(255,120,100,0.6);font-size:13px">Could not load content.</div>';
@@ -806,6 +805,14 @@
   function renderContentScroll() {
     const el   = document.getElementById('contentScroll');
     const favs = _contentData.filter(f => f.is_favourite);
+
+    // Single list of everything else, filtered by the active type chip (or all),
+    // sorted newest first. Favourites stay pinned above this regardless of filter,
+    // so a favourited item is always reachable in one tap.
+    const rest = _contentData
+      .filter(f => !f.is_favourite)
+      .filter(f => _contentFilter === 'all' || contentType(f) === _contentFilter)
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
     let html = '';
 
@@ -819,17 +826,14 @@
       }</div>
     </div>`;
 
-    // Four sections
-    CONTENT_SECTIONS.forEach(sec => {
-      const items = _contentData.filter(f => sec.match(f, _cats));
-      html += `<div class="content-section">
-        <div class="content-section-hdr">${sec.icon} ${sec.label}</div>
-        <div>${items.length
-          ? items.map(f => contentItemHTML(f)).join('')
+    // Everything else, as one list
+    html += `<div class="content-section">
+      <div id="content-all">${
+        rest.length
+          ? rest.map(f => contentItemHTML(f)).join('')
           : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No content here yet.</div>'
-        }</div>
-      </div>`;
-    });
+      }</div>
+    </div>`;
 
     // User playlists
     html += `<div class="content-section">

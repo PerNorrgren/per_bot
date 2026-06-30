@@ -635,12 +635,18 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
     const client = req.user.role === 'client' ? db.getClient(req.user.id) : null;
     const userFlags = {
       isRegistered:  true, // all logged-in users are at least registered
-      isMember:      client?.is_member === 1 || req.user.role !== 'client',
+      isMember:      client?.is_member === 1,
       isClient:      client?.is_client === 1,
       isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
       isAdmin:       req.user.role === 'admin',
     };
-    const files  = db.getAllLibraryFilesWithAccess(userFlags);
+    // Facilitators/admins previewing content should see everything regardless of tier,
+    // but a logged-in Explorer/Member/Client only ever sees what their own tier permits —
+    // getAllLibraryFilesWithAccess tags every file with `accessible`; we filter on it here
+    // rather than relying on the frontend to respect that flag (it previously didn't).
+    const files = req.user.role === 'facilitator' || req.user.role === 'admin'
+      ? db.getAllLibraryFilesWithAccess(userFlags)
+      : db.getAllLibraryFilesWithAccess(userFlags).filter(f => f.accessible);
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -737,22 +743,7 @@ app.post('/api/guest/chat', async (req, res) => {
   }
 });
 
-// ── /api/client/content — returns content accessible to this user ──
-app.get('/api/client/content', auth.requireAuthApi(['client', 'facilitator', 'admin']), (req, res) => {
-  try {
-    const client = req.user.role === 'client' ? db.getClient(req.user.id) : null;
-    const userFlags = {
-      isRegistered:  true,
-      isMember:      client?.is_member === 1,
-      isClient:      client?.is_client === 1,
-      isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
-      isAdmin:       req.user.role === 'admin',
-    };
-    res.json(db.getAllLibraryFilesWithAccess(userFlags));
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+
 
 // ── /api/admin/users — all registered users ──
 app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
@@ -1077,12 +1068,17 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
 
     const clientRec = req.user.role === 'client' ? db.getClient(req.user.id) : null;
     const userFlags = {
-      isMember:      clientRec?.is_member === 1 || req.user.role !== 'client',
+      isMember:      clientRec?.is_member === 1,
       isClient:      clientRec?.is_client === 1,
       isFacilitator: req.user.role === 'facilitator' || req.user.role === 'admin',
       isAdmin:       req.user.role === 'admin',
     };
-    if (!db.canAccessFile(file, userFlags)) return res.status(403).json({ error: 'Access denied.' });
+    // Facilitators/admins can preview/play any file regardless of tier; an Explorer/
+    // Member/Client only ever gets a URL for what their own tier actually permits.
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : db.canAccessFile(file, userFlags);
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
       const url = await media.getPlaybackUrl(file.filename);
