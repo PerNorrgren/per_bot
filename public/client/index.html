@@ -185,6 +185,7 @@
     .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
+    .player-btns { display:flex; gap:10px; }
     .player-media { width:100%; max-width:520px; }
     .player-media video { width:100%; max-height:50vh; border-radius:10px; background:#000; }
     .player-media iframe { width:100%; height:50vh; border:none; border-radius:10px; background:#fff; }
@@ -332,7 +333,10 @@
       <div class="player-title" id="playerTitle"></div>
       <div class="player-text" id="playerText"></div>
       <div class="player-media" id="playerMedia"></div>
-      <button class="player-close" onclick="closePlayerOverlay()">Close</button>
+      <div class="player-btns" id="playerBtns">
+        <button class="player-close" id="fullscreenBtn" onclick="toggleFullscreen()" style="display:none">Full screen</button>
+        <button class="player-close" onclick="closePlayerOverlay()">Close</button>
+      </div>
     </div>
 
   </div>
@@ -1001,6 +1005,7 @@
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.toggle('video-mode', type === 'video');
     overlayEl.classList.add('visible');
+    document.getElementById('fullscreenBtn').style.display = type === 'video' ? '' : 'none';
 
     // Ask the server for a playback URL — checked against this person's tier first,
     // same as audio. Works for both R2-stored and legacy disk files transparently.
@@ -1036,6 +1041,9 @@
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.remove('visible');
     overlayEl.classList.remove('video-mode');
+    document.getElementById('fullscreenBtn').style.display = 'none';
+    document.getElementById('fullscreenBtn').textContent = 'Full screen';
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     const mediaEl = document.getElementById('playerMedia');
     // Stop any playing video when the overlay closes, rather than leaving it
     // playing silently in the background.
@@ -1043,6 +1051,28 @@
     if (video) { video.pause(); video.src = ''; }
     mediaEl.innerHTML = '';
   }
+
+  // Uses the browser's native Fullscreen API — proper OS-level fullscreen (hides browser
+  // chrome entirely, Escape key works to exit, behaves correctly across desktop/tablet/
+  // phone) rather than a CSS trick that just makes a bigger box while the address bar
+  // still shows. Requested on the overlay itself so the title/controls stay visible,
+  // not just the bare <video> element.
+  function toggleFullscreen() {
+    const overlayEl = document.getElementById('playerOverlay');
+    const btn = document.getElementById('fullscreenBtn');
+    if (!document.fullscreenElement) {
+      overlayEl.requestFullscreen?.().then(() => { btn.textContent = 'Exit full screen'; }).catch(() => {});
+    } else {
+      document.exitFullscreen?.().then(() => { btn.textContent = 'Full screen'; }).catch(() => {});
+    }
+  }
+
+  // Keep the button label correct if fullscreen is exited via Escape key or browser UI,
+  // not just via the button itself.
+  document.addEventListener('fullscreenchange', () => {
+    const btn = document.getElementById('fullscreenBtn');
+    if (btn) btn.textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen';
+  });
 
   // ── Practices ──
   async function loadPractices() {
