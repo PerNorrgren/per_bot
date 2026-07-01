@@ -32,7 +32,15 @@ const VOICE_ID           = process.env.VOICE_ID;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
-const BREVO_API_KEY      = process.env.BREVO_API_KEY;
+// Scaleway Transactional Email (TEM) — EU-sovereign, transactional-only,
+// no US subprocessors. Replaces Brevo. SCW_SECRET_KEY and SCW_PROJECT_ID
+// come from an IAM application's API key in the Scaleway console; the
+// sending domain must be verified there first (SPF/DKIM/MX records) before
+// any email will actually deliver — that's a one-time console setup step,
+// not something this code can do on its own.
+const SCW_SECRET_KEY     = process.env.SCW_SECRET_KEY;
+const SCW_PROJECT_ID     = process.env.SCW_PROJECT_ID;
+const SCW_TEM_REGION     = process.env.SCW_TEM_REGION || 'fr-par';
 const EMAIL_FROM         = process.env.EMAIL_FROM || 'per@deepermindfulness.org';
 const APP_URL            = process.env.APP_URL || 'https://mirror-production-018d.up.railway.app';
 
@@ -268,19 +276,83 @@ function brand() {
   };
 }
 
-async function sendEmail(to, subject, html) {
-  if (!BREVO_API_KEY) { console.log('BREVO_API_KEY not set — skipping email to', to); return; }
+// ── Localized email templates ──
+// Translates an English template ONCE per (template, language) pair and
+// caches it — every subsequent send just interpolates that specific user's
+// details into the cached result, English or translated. Placeholders use
+// {{token}} syntax deliberately, not JS template-literal ${...} — the whole
+// point is the template string itself gets sent to Claude for translation
+// as literal text, so it can't already be interpolated by the time that
+// happens.
+async function getLocalizedTemplate(templateKey, language, subjectTemplate, htmlTemplate) {
+  if (!language || language === 'en') return { subject: subjectTemplate, html: htmlTemplate };
+
+  const cached = db.getTranslatedTemplate(templateKey, language);
+  if (cached) return { subject: cached.subject, html: cached.html };
+
   try {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    const languageName = LANGUAGE_NAMES[language] || language;
+    const raw = await callClaude(
+      'You translate email templates. Preserve every {{placeholder}} token exactly as written, character for character, and every HTML tag and attribute exactly as written. Only translate the human-readable text content. Respond with ONLY a JSON object: {"subject":"...","html":"..."} — no preamble, no markdown fences, no commentary.',
+      [{ role: 'user', content: `Translate this email template into ${languageName}.\n\nSUBJECT: ${subjectTemplate}\n\nHTML:\n${htmlTemplate}` }],
+      2000
+    );
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
+    if (!parsed.subject || !parsed.html) throw new Error('Translation response missing subject or html.');
+    db.saveTranslatedTemplate(uuidv4(), templateKey, language, parsed.subject, parsed.html);
+    return parsed;
+  } catch(e) {
+    console.error(`[template translation] ${templateKey}/${language}:`, e.message);
+    return { subject: subjectTemplate, html: htmlTemplate }; // fall back to English rather than fail the send entirely
+  }
+}
+
+function interpolate(str, values) {
+  return str.replace(/\{\{(\w+)\}\}/g, (_, key) => (values[key] ?? ''));
+}
+
+// englishTemplate: { subject, html } using {{token}} placeholders.
+// values: the actual data for THIS send — filled in after translation, so
+// the same cached translated template serves every recipient.
+async function sendLocalizedEmail(templateKey, language, englishTemplate, values, toEmail) {
+  const { subject, html } = await getLocalizedTemplate(templateKey, language, englishTemplate.subject, englishTemplate.html);
+  return sendEmail(toEmail, interpolate(subject, values), interpolate(html, values));
+}
+
+// Rough plain-text fallback derived from the HTML body — Scaleway's API
+// accepts both text and html, and providing a text alternative is good
+// deliverability practice regardless of provider (some spam filters
+// penalise HTML-only mail). Doesn't need to be pretty, just present.
+function htmlToText(html) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .trim();
+}
+
+async function sendEmail(to, subject, html) {
+  if (!SCW_SECRET_KEY || !SCW_PROJECT_ID) { console.log('SCW_SECRET_KEY/SCW_PROJECT_ID not set — skipping email to', to); return; }
+  try {
+    const res = await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails`, {
       method: 'POST',
-      headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'X-Auth-Token': SCW_SECRET_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sender: { name: brand().name, email: EMAIL_FROM },
-        to: [{ email: to }], subject, htmlContent: html
+        from: { name: brand().name, email: EMAIL_FROM },
+        to: [{ email: to }],
+        subject,
+        text: htmlToText(html),
+        html,
+        project_id: SCW_PROJECT_ID,
       })
     });
     const data = await res.json().catch(() => {});
-    if (!res.ok) console.error('Brevo error:', res.status, data);
+    if (!res.ok) console.error('Scaleway TEM error:', res.status, data);
     else console.log('Email sent to', to);
   } catch (e) { console.error('Email error:', e.message); }
 }
@@ -307,26 +379,27 @@ function emailWelcomeFacilitator(name, email, tempPassword) {
   );
 }
 
-function emailWelcomeClient(name, email, tempPassword) {
+function emailWelcomeClient(name, email, tempPassword, language) {
   const b = brand();
-  return sendEmail(email, `Welcome to ${b.name}`,
-    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, ${name}</h1>
+  return sendLocalizedEmail('welcome_client', language, {
+    subject: `Welcome to {{brand}}`,
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, {{name}}</h1>
       <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready.</p>
       <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
-        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="${APP_URL}" style="color:#2d6a4f">${APP_URL}</a></div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Email</div>
-        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">${email}</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">{{email}}</div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
-        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">${tempPassword}</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">{{tempPassword}}</div>
       </div>
       <p style="font-size:14px;line-height:1.7;color:#666">You will be asked to choose a new password when you sign in.</p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
-      <div style="font-size:12px;color:#aaa">${b.name}</div>
+      <div style="font-size:12px;color:#aaa">{{brand}}</div>
     </div>`
-  );
+  }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL }, email);
 }
 
 // ── Trial email sequence (Per Bot 5, item 4) ──
@@ -533,7 +606,7 @@ app.post('/api/logout', (req, res) => {
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, language } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email.' });
@@ -548,7 +621,7 @@ app.post('/api/register', async (req, res) => {
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
-    db.registerUser(id, name.trim(), emailLower, hash);
+    db.registerUser(id, name.trim(), emailLower, hash, language);
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;
@@ -1105,6 +1178,16 @@ function getChatSession(sessionId, clientId) {
   return chatSessions.get(sessionId);
 }
 
+// Language names for the handful of options offered at registration/account
+// settings — used to phrase a natural instruction ("respond in Dutch") rather
+// than passing a raw code, which models follow less reliably.
+const LANGUAGE_NAMES = { en: 'English', nl: 'Dutch', de: 'German', fr: 'French', es: 'Spanish', pt: 'Portuguese' };
+function languageInstruction(code) {
+  if (!code || code === 'en') return ''; // English is the prompt's own native register — no instruction needed
+  const name = LANGUAGE_NAMES[code] || code;
+  return `\n\nRespond in ${name}. The person's preferred language is ${name} — write naturally in it, not as a translation of an English draft.`;
+}
+
 app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { message, sessionId, clientId } = req.body;
@@ -1123,6 +1206,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         if (client?.programme || sessions.length > 0) {
           sp += prompts.CLIENT_ADAPTIVE_CONTEXT(client?.programme, client?.track, sessions.length);
         }
+        sp += languageInstruction(client?.language);
       }
       session.systemPrompt = sp;
     }
