@@ -1322,6 +1322,10 @@ app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Admin comms page ──
+app.get('/admin/comms',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
+app.get('/admin/comms/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
+
 // ── Legal document public pages ──
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/legal/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));

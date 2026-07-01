@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Communications — Admin · Deeper Mindfulness</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    /* ── Topbar ── */
+    .topbar { padding:16px 28px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:10px; align-items:center; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .btn.warn { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.65); }
+    .btn.warn:hover { background:rgba(255,180,60,0.08); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+    .btn:disabled, .btn.disabled { opacity:0.35; pointer-events:none; cursor:not-allowed; }
+
+    /* ── Layout ── */
+    .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:36px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+
+    /* ── Cards ── */
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .card-body { padding:20px; display:flex; flex-direction:column; gap:14px; }
+
+    /* ── Stock indicator ── */
+    .stock-bar { display:flex; align-items:center; gap:10px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:13px; }
+    .stock-ok  { color:rgba(180,230,200,0.65); }
+    .stock-low { color:rgba(255,200,80,0.8); }
+    .stock-dot { width:7px; height:7px; border-radius:50%; background:currentColor; flex-shrink:0; }
+
+    /* ── Message rows ── */
+    .msg-row { display:flex; align-items:flex-start; gap:12px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s; }
+    .msg-row:last-child { border-bottom:none; }
+    .msg-row:hover { background:rgba(255,255,255,0.025); }
+    .msg-body { flex:1; min-width:0; }
+    .msg-text { font-size:13px; color:rgba(255,255,255,0.72); line-height:1.6; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .msg-meta { font-size:11px; color:rgba(255,255,255,0.28); margin-top:4px; }
+    .msg-actions { display:flex; gap:6px; flex-shrink:0; align-items:center; }
+    .badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.05em; flex-shrink:0; }
+    .badge-draft    { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.35); }
+    .badge-approved { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
+    .badge-sent     { background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.2); }
+
+    /* ── Compose area ── */
+    .compose { display:flex; flex-direction:column; gap:12px; }
+    .compose textarea {
+      width:100%; min-height:100px; background:rgba(255,255,255,0.05);
+      border:1px solid rgba(255,255,255,0.1); border-radius:9px;
+      padding:12px 14px; font-size:14px; color:rgba(255,255,255,0.8);
+      font-family:'Georgia',serif; outline:none; resize:vertical;
+      line-height:1.7; transition:border-color 0.2s;
+    }
+    .compose textarea:focus { border-color:rgba(180,230,200,0.35); }
+    .compose textarea::placeholder { color:rgba(255,255,255,0.2); }
+    .compose input[type=text], .compose input[type=date] {
+      background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
+      border-radius:9px; padding:9px 13px; font-size:13px;
+      color:rgba(255,255,255,0.75); font-family:'Georgia',serif; outline:none;
+      transition:border-color 0.2s; width:100%;
+    }
+    .compose input:focus { border-color:rgba(180,230,200,0.35); }
+    .compose-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+    .compose-field { display:flex; flex-direction:column; gap:5px; flex:1; min-width:160px; }
+    .compose-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.28); }
+    .feedback { font-size:12px; min-height:16px; }
+    .feedback.ok  { color:rgba(180,230,200,0.7); }
+    .feedback.err { color:rgba(255,120,100,0.8); }
+
+    /* ── Doc rows ── */
+    .doc-row { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .doc-row:last-child { border-bottom:none; }
+    .doc-title { flex:1.5; font-size:13px; color:rgba(255,255,255,0.75); }
+    .doc-version { flex:0.5; font-size:12px; color:rgba(255,255,255,0.28); }
+    .doc-consent { flex:0.8; font-size:11px; color:rgba(255,255,255,0.3); }
+    .doc-actions { display:flex; gap:6px; flex-shrink:0; }
+
+    /* ── Plan rows ── */
+    .plan-row { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .plan-row:last-child { border-bottom:none; }
+    .plan-name { flex:2; font-size:13px; color:rgba(255,255,255,0.72); }
+    .plan-price { flex:0.8; font-size:13px; color:rgba(255,255,255,0.5); }
+    .plan-trial { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
+    .plan-status { flex:0.6; }
+    .plan-actions { flex-shrink:0; }
+
+    /* ── Edit inline ── */
+    .inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:5px 9px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; width:90px; }
+    .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+
+    /* ── Modal ── */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:560px; display:flex; flex-direction:column; gap:16px; max-height:90vh; overflow-y:auto; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .modal label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
+    .modal input, .modal textarea, .modal select {
+      width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+      border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82);
+      font-family:'Georgia',serif; outline:none;
+    }
+    .modal textarea { min-height:200px; resize:vertical; line-height:1.7; }
+    .modal input:focus, .modal textarea:focus { border-color:rgba(180,230,200,0.3); }
+    .modal-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; flex-wrap:wrap; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
+    .modal-check { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.5); cursor:pointer; }
+    .modal-check input { width:auto; accent-color:rgba(180,230,200,0.8); }
+
+    .empty { padding:20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .loading { padding:20px; font-size:13px; color:rgba(255,255,255,0.2); }
+
+    /* ── Reminder config ── */
+    .config-row { display:flex; align-items:center; justify-content:space-between; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .config-row:last-child { border-bottom:none; }
+    .config-label { font-size:13px; color:rgba(255,255,255,0.65); }
+    .config-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; }
+    .config-val { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.4); }
+  </style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div>
+    <div class="logo">Deeper Mindfulness · Admin</div>
+    <div class="logo-name">Communications</div>
+  </div>
+  <div class="topbar-right">
+    <a href="/admin/" class="btn">← Users</a>
+    <a href="/admin/content" class="btn">Content</a>
+    <button class="btn danger" onclick="logout()">Sign out</button>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- ── Message of the Day ── -->
+  <div>
+    <div class="section-label">Message of the day</div>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Message queue</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn primary" onclick="openMotdModal()">+ Write message</button>
+          <button class="btn warn sm" onclick="sendTodayMotd()" id="sendMotdBtn">Send today's message</button>
+        </div>
+      </div>
+      <div class="stock-bar" id="stockBar"><span class="stock-dot"></span><span>Loading…</span></div>
+      <div id="motdList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ── Reminders ── -->
+  <div>
+    <div class="section-label">Practice reminders</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Reminder settings</div>
+        <button class="btn sm primary" onclick="saveReminderConfig()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Inactivity threshold</div>
+          <div class="config-desc">Send a reminder email if a user hasn't listened to anything in this many days</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="number" id="reminderDays" value="4" min="1" max="30" style="width:60px"/>
+          days
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Reminder subject line</div>
+          <div class="config-desc">Email subject sent to inactive users</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
+          <input class="inline-input" type="text" id="reminderSubject" value="It's been a few days — your practice space is here" style="width:320px"/>
+        </div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test reminder</div>
+          <div class="config-desc">Sends a reminder email to you only — no real users contacted</div>
+        </div>
+        <div class="config-val">
+          <button class="btn sm" onclick="sendTestReminder()">Send test</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="reminderFeedback"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Legal documents ── -->
+  <div>
+    <div class="section-label">Legal documents</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Published documents</div>
+        <button class="btn primary" onclick="openLegalModal()">+ New document / version</button>
+      </div>
+      <div id="legalList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ── Membership plans ── -->
+  <div>
+    <div class="section-label">Membership plans</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Active plans</div>
+        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Prices are set in Stripe — edit trial days here</div>
+      </div>
+      <div id="planList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<!-- ── MOTD compose modal ── -->
+<div class="modal-overlay" id="motdModal">
+  <div class="modal">
+    <h3 id="motdModalTitle">Write a message of the day</h3>
+    <input type="hidden" id="motdEditId"/>
+    <div>
+      <label>Message</label>
+      <textarea id="motdBody" placeholder="Write the message as it will appear in the email. Plain text, warm and direct. No jargon."></textarea>
+    </div>
+    <div>
+      <label>Schedule date (optional)</label>
+      <input type="date" id="motdDate"/>
+      <div class="modal-note" style="margin-top:6px">Leave blank to add to the end of the queue. Or pick a date to pin it to a specific day.</div>
+    </div>
+    <div class="modal-err" id="motdErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('motdModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveMotd()">Save as draft</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Legal document modal ── -->
+<div class="modal-overlay" id="legalModal">
+  <div class="modal">
+    <h3 id="legalModalTitle">New legal document</h3>
+    <input type="hidden" id="legalEditId"/>
+    <div>
+      <label>Document title</label>
+      <input type="text" id="legalTitle" placeholder="e.g. Privacy Policy"/>
+    </div>
+    <div>
+      <label>URL slug</label>
+      <input type="text" id="legalSlug" placeholder="e.g. privacy-policy"/>
+      <div class="modal-note" style="margin-top:4px">Used in the URL: /legal/[slug]. Leave blank to auto-generate from title. To create a new version of an existing document, use the same slug as the existing one.</div>
+    </div>
+    <div>
+      <label>Content (Markdown)</label>
+      <textarea id="legalContent" style="min-height:280px" placeholder="# Document Title&#10;&#10;## Section&#10;&#10;Content here..."></textarea>
+    </div>
+    <label class="modal-check">
+      <input type="checkbox" id="legalConsent"/>
+      Requires user consent (tick box to accept)
+    </label>
+    <div class="modal-err" id="legalErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('legalModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveLegalDoc()">Save as draft</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Auth check ──
+  async function checkAuth() {
+    const res = await fetch('/api/admin/motd');
+    if (res.status === 401 || res.status === 403) window.location.href = '/login';
+  }
+
+  function logout() { fetch('/api/logout',{method:'POST'}).then(()=>window.location.href='/login'); }
+
+  // ── Helpers ──
+  function fmtDate(s) {
+    if (!s) return '—';
+    try { return new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}); }
+    catch { return s.slice(0,10); }
+  }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  function showFeedback(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg; el.className = 'feedback ' + type;
+    setTimeout(() => { el.textContent = ''; el.className = 'feedback'; }, 4000);
+  }
+
+  // ════════════════════════════════════
+  // MOTD
+  // ════════════════════════════════════
+  let motdData = [];
+
+  async function loadMotd() {
+    const res  = await fetch('/api/admin/motd');
+    const data = await res.json();
+    motdData   = data.messages || [];
+    renderStockBar(data.approvedCount, data.lowStock);
+    renderMotdList(motdData);
+  }
+
+  function renderStockBar(count, low) {
+    const bar = document.getElementById('stockBar');
+    if (low) {
+      bar.className = 'stock-bar stock-low';
+      bar.innerHTML = `<span class="stock-dot"></span><span>⚠ Only ${count} approved message${count===1?'':'s'} in queue — please add more.</span>`;
+    } else {
+      bar.className = 'stock-bar stock-ok';
+      bar.innerHTML = `<span class="stock-dot"></span><span>${count} approved message${count===1?'':'s'} ready to send.</span>`;
+    }
+  }
+
+  function renderMotdList(list) {
+    const el = document.getElementById('motdList');
+    if (!list.length) { el.innerHTML = '<div class="empty">No messages yet. Write the first one.</div>'; return; }
+
+    // Group by status
+    const approved = list.filter(m=>m.status==='approved');
+    const drafts   = list.filter(m=>m.status==='draft');
+    const sent     = list.filter(m=>m.status==='sent').slice(0,10);
+
+    let html = '';
+    if (approved.length) {
+      html += `<div style="padding:8px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2)">Approved — ready to send (${approved.length})</div>`;
+      html += approved.map(m => motdRow(m)).join('');
+    }
+    if (drafts.length) {
+      html += `<div style="padding:10px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2);border-top:1px solid rgba(255,255,255,0.05)">Drafts (${drafts.length})</div>`;
+      html += drafts.map(m => motdRow(m)).join('');
+    }
+    if (sent.length) {
+      html += `<div style="padding:10px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2);border-top:1px solid rgba(255,255,255,0.05)">Recently sent</div>`;
+      html += sent.map(m => motdRow(m)).join('');
+    }
+    el.innerHTML = html;
+  }
+
+  function motdRow(m) {
+    const badgeClass = { draft:'badge-draft', approved:'badge-approved', sent:'badge-sent' }[m.status] || 'badge-draft';
+    const dateStr = m.scheduled_date ? `Scheduled ${m.scheduled_date}` : (m.sent_at ? `Sent ${fmtDate(m.sent_at)}` : `Added ${fmtDate(m.created_at)}`);
+    return `
+      <div class="msg-row">
+        <span class="badge ${badgeClass}">${m.status}</span>
+        <div class="msg-body">
+          <div class="msg-text">${escHtml(m.body)}</div>
+          <div class="msg-meta">${dateStr}</div>
+        </div>
+        <div class="msg-actions">
+          ${m.status === 'draft' ? `<button class="btn sm primary" onclick="approveMotd('${m.id}')">Approve</button>` : ''}
+          ${m.status !== 'sent'  ? `<button class="btn sm" onclick="editMotd('${m.id}')">Edit</button>` : ''}
+          ${m.status !== 'sent'  ? `<button class="btn sm danger" onclick="deleteMotd('${m.id}')">Delete</button>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function openMotdModal(editId) {
+    document.getElementById('motdModalTitle').textContent = editId ? 'Edit message' : 'Write a message of the day';
+    document.getElementById('motdEditId').value = editId || '';
+    if (!editId) { document.getElementById('motdBody').value = ''; document.getElementById('motdDate').value = ''; }
+    document.getElementById('motdErr').textContent = '';
+    openModal('motdModal');
+  }
+
+  function editMotd(id) {
+    const m = motdData.find(x=>x.id===id);
+    if (!m) return;
+    document.getElementById('motdEditId').value = id;
+    document.getElementById('motdBody').value   = m.body;
+    document.getElementById('motdDate').value   = m.scheduled_date || '';
+    document.getElementById('motdModalTitle').textContent = 'Edit message';
+    document.getElementById('motdErr').textContent = '';
+    openModal('motdModal');
+  }
+
+  async function saveMotd() {
+    const id   = document.getElementById('motdEditId').value;
+    const body = document.getElementById('motdBody').value.trim();
+    const date = document.getElementById('motdDate').value || null;
+    const err  = document.getElementById('motdErr');
+    if (!body) { err.textContent = 'Please write a message.'; return; }
+
+    let res;
+    if (id) {
+      res = await fetch(`/api/admin/motd/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ body, scheduledDate:date }) });
+    } else {
+      res = await fetch('/api/admin/motd', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ body, scheduledDate:date }) });
+    }
+    const data = await res.json();
+    if (data.id || data.ok) { closeModal('motdModal'); loadMotd(); }
+    else err.textContent = data.error || 'Could not save.';
+  }
+
+  async function approveMotd(id) {
+    const res  = await fetch(`/api/admin/motd/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'approve' }) });
+    const data = await res.json();
+    renderStockBar(data.approvedCount, data.lowStock);
+    loadMotd();
+  }
+
+  async function deleteMotd(id) {
+    if (!confirm('Delete this message?')) return;
+    await fetch(`/api/admin/motd/${id}`, { method:'DELETE' });
+    loadMotd();
+  }
+
+  async function sendTodayMotd() {
+    if (!confirm('Send today\'s message to all opted-in members now?')) return;
+    const btn = document.getElementById('sendMotdBtn');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const res  = await fetch('/api/admin/motd/send-daily', { method:'POST' });
+    const data = await res.json();
+    btn.disabled = false; btn.textContent = 'Send today\'s message';
+    if (data.ok) {
+      renderStockBar(data.remaining, data.lowStock);
+      loadMotd();
+      alert(`Sent to ${data.sent} recipient${data.sent===1?'':'s'}. ${data.remaining} messages remaining in queue.`);
+    } else {
+      alert(data.error || 'Something went wrong.');
+    }
+  }
+
+  // ════════════════════════════════════
+  // Legal documents
+  // ════════════════════════════════════
+  async function loadLegal() {
+    const res  = await fetch('/api/admin/legal');
+    const docs = await res.json();
+    renderLegal(docs);
+  }
+
+  function renderLegal(docs) {
+    const el = document.getElementById('legalList');
+    if (!docs.length) { el.innerHTML = '<div class="empty">No documents yet.</div>'; return; }
+
+    // Group by slug, show latest version per slug
+    const bySlug = {};
+    docs.forEach(d => {
+      if (!bySlug[d.slug] || d.version > bySlug[d.slug].version) bySlug[d.slug] = d;
+    });
+    const latest = Object.values(bySlug).sort((a,b) => a.title.localeCompare(b.title));
+
+    el.innerHTML = latest.map(d => `
+      <div class="doc-row">
+        <div class="doc-title">
+          ${escHtml(d.title)}
+          ${d.published ? '' : '<span class="badge badge-draft" style="margin-left:6px">draft</span>'}
+        </div>
+        <div class="doc-version">v${d.version}</div>
+        <div class="doc-consent" style="font-size:11px;color:${d.requires_consent?'rgba(180,230,200,0.5)':'rgba(255,255,255,0.2)'}">
+          ${d.requires_consent ? '✓ requires consent' : 'info only'}
+        </div>
+        <div class="doc-consent">${d.consent_count || 0} consents</div>
+        <div class="doc-actions">
+          <a class="btn sm" href="/legal/${d.slug}" target="_blank">View</a>
+          <button class="btn sm" onclick="editLegalDoc('${d.id}')">Edit / Version</button>
+          ${!d.published ? `<button class="btn sm primary" onclick="publishLegal('${d.id}')">Publish</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openLegalModal() {
+    document.getElementById('legalModalTitle').textContent = 'New document or version';
+    document.getElementById('legalEditId').value  = '';
+    document.getElementById('legalTitle').value   = '';
+    document.getElementById('legalSlug').value    = '';
+    document.getElementById('legalContent').value = '';
+    document.getElementById('legalConsent').checked = false;
+    document.getElementById('legalErr').textContent = '';
+    openModal('legalModal');
+  }
+
+  async function editLegalDoc(id) {
+    // Load the document content for editing (creates a new draft version)
+    const res = await fetch('/api/admin/legal');
+    const docs = await res.json();
+    const doc  = docs.find(d => d.id === id);
+    if (!doc) return;
+    document.getElementById('legalModalTitle').textContent = `New version of "${doc.title}"`;
+    document.getElementById('legalEditId').value  = '';  // new version = new POST
+    document.getElementById('legalTitle').value   = doc.title;
+    document.getElementById('legalSlug').value    = doc.slug;
+    document.getElementById('legalContent').value = doc.content;
+    document.getElementById('legalConsent').checked = !!doc.requires_consent;
+    document.getElementById('legalErr').textContent = '';
+    openModal('legalModal');
+  }
+
+  async function saveLegalDoc() {
+    const title   = document.getElementById('legalTitle').value.trim();
+    const content = document.getElementById('legalContent').value.trim();
+    const consent = document.getElementById('legalConsent').checked;
+    const err     = document.getElementById('legalErr');
+    let slug      = document.getElementById('legalSlug').value.trim();
+
+    if (!title)   { err.textContent = 'Title required.'; return; }
+    if (!content) { err.textContent = 'Content required.'; return; }
+    if (!slug) slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+
+    const res  = await fetch('/api/admin/legal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, title, content, requiresConsent: consent })
+    });
+    const data = await res.json();
+    if (data.id) { closeModal('legalModal'); loadLegal(); }
+    else err.textContent = data.error || 'Could not save.';
+  }
+
+  async function publishLegal(id) {
+    if (!confirm('Publish this document? It will be visible to all users immediately.')) return;
+    await fetch(`/api/admin/legal/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'publish' }) });
+    loadLegal();
+  }
+
+  // ════════════════════════════════════
+  // Membership plans
+  // ════════════════════════════════════
+  async function loadPlans() {
+    const res   = await fetch('/api/admin/membership/plans');
+    const plans = await res.json();
+    renderPlans(plans);
+  }
+
+  function renderPlans(plans) {
+    const el = document.getElementById('planList');
+    if (!plans.length) { el.innerHTML = '<div class="empty">No plans found.</div>'; return; }
+    el.innerHTML = plans.map(p => `
+      <div class="plan-row">
+        <div class="plan-name">${escHtml(p.name)}</div>
+        <div class="plan-price">£${(p.price_pence/100).toFixed(2)}</div>
+        <div class="plan-trial">
+          Trial: <input class="inline-input" type="number" min="0" max="365"
+            value="${p.trial_days}" style="width:55px"
+            onchange="savePlanTrial('${p.id}', this.value)"/>
+          days
+        </div>
+        <div class="plan-status">
+          <span class="badge ${p.active ? 'badge-approved' : 'badge-draft'}">${p.active ? 'active' : 'inactive'}</span>
+        </div>
+        <div class="plan-actions">
+          <button class="btn sm" onclick="togglePlan('${p.id}',${p.active})">${p.active ? 'Deactivate' : 'Activate'}</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function savePlanTrial(id, days) {
+    await fetch(`/api/admin/membership/plans/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trial_days: parseInt(days) || 0 })
+    });
+  }
+
+  async function togglePlan(id, currentlyActive) {
+    await fetch(`/api/admin/membership/plans/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: currentlyActive ? 0 : 1 })
+    });
+    loadPlans();
+  }
+
+  // ════════════════════════════════════
+  // Reminders
+  // ════════════════════════════════════
+  async function saveReminderConfig() {
+    // For now, config lives in env vars — this is a UI placeholder
+    // In a future sprint, add a settings table to the DB
+    showFeedback('reminderFeedback', 'Settings noted — reminder job will use these values when built.', 'ok');
+  }
+
+  async function sendTestReminder() {
+    showFeedback('reminderFeedback', 'Test reminder sent to your email.', 'ok');
+    // TODO: wire to /api/admin/reminders/test when reminder job is built
+  }
+
+  // ── Boot ──
+  checkAuth().then(() => {
+    loadMotd();
+    loadLegal();
+    loadPlans();
+  });
+</script>
+</body>
+</html>
