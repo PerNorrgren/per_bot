@@ -98,7 +98,6 @@
     </div>
     <div class="topbar-right">
       <a href="/admin/content" class="btn">Content library</a>
-      <a href="/admin/comms" class="btn primary">Communications</a>
     </div>
   </div>
 
@@ -791,7 +790,7 @@
           <div class="col-email">${c.email||'<span style="color:rgba(255,255,255,0.2)">No login</span>'}</div>
           <div class="col-level">
             <span class="status-badge ${c.archived?'status-archived':'status-active'}">${c.archived?'Archived':'Active'}</span>
-            ${c.is_member?'<span class="status-badge status-active" style="margin-left:4px">Member</span>':''}
+            ${(c.member_tier||0)>=1?'<span class="status-badge status-active" style="margin-left:4px">Member</span>':''}
           </div>
           <div class="col-fac">${c.facilitator_name||'Unassigned'}</div>
         </div>`).join('');
@@ -882,7 +881,7 @@
   async function loadMembers() {
     memberSel.clear();
     const res   = await fetch('/api/admin/users');
-    _memberData = (await res.json()).filter(u => u.is_member === 1);
+    _memberData = (await res.json()).filter(u => (u.member_tier || 0) >= 1);
     renderMembers();
   }
 
@@ -962,7 +961,7 @@
           <div class="col-name">${u.name}</div>
           <div class="col-email">${u.email||'—'}</div>
           <div class="col-level">
-            <span class="status-badge ${u.is_member?'status-active':'status-archived'}">${u.is_member?'Member':'Explorer'}</span>
+            <span class="status-badge ${(u.member_tier||0)>=1?'status-active':'status-archived'}">${(u.member_tier||0)>=1?'Member':'Explorer'}</span>
             ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
           </div>
           <div class="col-fac">${u.facilitator_name||'—'}</div>
