@@ -1229,6 +1229,10 @@ app.get('/uploads/:filename', (req, res) => {
 app.get('/guest',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'guest', 'index.html')));
 app.get('/guest/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'guest', 'index.html')));
 
+// ── My Account page ──
+app.get('/account',  auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'account.html')));
+app.get('/account/', auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'account.html')));
+
 // ── My Account — user self-service ──
 // Returns the current user's full profile including membership and preferences.
 app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
@@ -1252,6 +1256,15 @@ app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
     if (req.body.name && req.body.name.trim()) {
       db.updateClientDetails(req.user.id, req.body.name.trim(), null, null);
     }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete account — GDPR right to erasure
+app.delete('/api/account', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    db.deleteClient(req.user.id);
+    res.clearCookie(auth.COOKIE_NAME);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

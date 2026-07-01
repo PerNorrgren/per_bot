@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>My Account — Deeper Mindfulness</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; align-items:flex-start; justify-content:center; padding:20px 16px 40px; }
+
+    .slideshow { position:fixed; inset:0; z-index:0; }
+    .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
+    .slide.active { opacity:1; }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.5); }
+
+    .panel { position:relative; z-index:2; width:100%; max-width:480px; display:flex; flex-direction:column; gap:12px; padding-top:12px; }
+
+    /* Back link */
+    .back-link { display:inline-flex; align-items:center; gap:6px; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; text-decoration:none; margin-bottom:4px; transition:color 0.2s; }
+    .back-link:hover { color:rgba(180,230,200,0.7); }
+    .back-link svg { width:14px; height:14px; }
+
+    /* Wordmark */
+    .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:2px; }
+    .page-title { font-size:22px; color:rgba(255,255,255,0.82); font-weight:normal; margin-bottom:2px; }
+    .page-sub { font-size:13px; color:rgba(255,255,255,0.3); }
+
+    /* Cards */
+    .card {
+      background:rgba(255,255,255,0.07);
+      backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+      border:1px solid rgba(255,255,255,0.11);
+      border-radius:16px;
+      overflow:hidden;
+    }
+    .card-header { padding:16px 20px 12px; border-bottom:1px solid rgba(255,255,255,0.06); }
+    .card-title { font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .card-body { padding:16px 20px 20px; display:flex; flex-direction:column; gap:14px; }
+
+    /* Fields */
+    .field { display:flex; flex-direction:column; gap:5px; }
+    .field label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+    .field input {
+      background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1);
+      border-radius:9px; padding:10px 13px; font-size:14px;
+      color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none;
+      transition:border-color 0.2s;
+    }
+    .field input:focus { border-color:rgba(180,230,200,0.4); }
+    .field input:disabled { opacity:0.4; cursor:not-allowed; }
+
+    /* Toggles */
+    .pref-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .pref-row:last-child { border-bottom:none; }
+    .pref-label { flex:1; }
+    .pref-name { font-size:14px; color:rgba(255,255,255,0.75); }
+    .pref-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:2px; line-height:1.5; }
+    .toggle { position:relative; width:40px; height:22px; flex-shrink:0; cursor:pointer; }
+    .toggle input { opacity:0; width:0; height:0; position:absolute; }
+    .toggle-track { position:absolute; inset:0; border-radius:11px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.12); transition:all 0.2s; }
+    .toggle input:checked ~ .toggle-track { background:rgba(180,230,200,0.25); border-color:rgba(180,230,200,0.4); }
+    .toggle-thumb { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:rgba(255,255,255,0.35); transition:all 0.2s; }
+    .toggle input:checked ~ .toggle-thumb { left:21px; background:rgba(180,230,200,0.9); }
+
+    /* Membership badge */
+    .membership-badge { display:inline-flex; align-items:center; gap:7px; padding:6px 13px; border-radius:20px; font-size:12px; letter-spacing:0.08em; }
+    .badge-explorer { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.45); }
+    .badge-member1  { background:rgba(180,230,200,0.08); border:1px solid rgba(180,230,200,0.25); color:rgba(180,230,200,0.8); }
+    .badge-member2  { background:rgba(180,200,255,0.08); border:1px solid rgba(180,200,255,0.25); color:rgba(180,200,255,0.8); }
+    .badge-member3  { background:rgba(255,200,130,0.08); border:1px solid rgba(255,200,130,0.25); color:rgba(255,200,130,0.85); }
+    .badge-dot { width:6px; height:6px; border-radius:50%; background:currentColor; opacity:0.7; }
+
+    .membership-expiry { font-size:12px; color:rgba(255,255,255,0.28); margin-top:6px; }
+    .membership-trial  { font-size:12px; color:rgba(255,200,130,0.7); margin-top:4px; }
+
+    /* Upgrade CTA */
+    .upgrade-cta { background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.15); border-radius:12px; padding:16px 18px; display:flex; flex-direction:column; gap:8px; }
+    .upgrade-cta-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .upgrade-cta-desc  { font-size:12px; color:rgba(255,255,255,0.35); line-height:1.6; }
+    .upgrade-btn { align-self:flex-start; padding:9px 20px; border-radius:8px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; transition:all 0.2s; text-decoration:none; display:inline-block; }
+    .upgrade-btn:hover { background:rgba(180,230,200,0.18); }
+
+    /* Buttons */
+    .btn-primary { width:100%; padding:12px; border-radius:9px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .btn-primary:hover { background:rgba(180,230,200,0.18); }
+    .btn-primary:disabled { opacity:0.4; cursor:not-allowed; }
+    .btn-ghost { width:100%; padding:11px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:none; color:rgba(255,255,255,0.35); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .btn-ghost:hover { background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.6); }
+    .btn-danger { width:100%; padding:11px; border-radius:9px; border:1px solid rgba(255,80,80,0.2); background:none; color:rgba(255,100,100,0.5); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .btn-danger:hover { background:rgba(255,80,80,0.07); color:rgba(255,100,100,0.75); }
+
+    /* Feedback messages */
+    .msg { font-size:13px; text-align:center; min-height:18px; padding:2px 0; transition:opacity 0.3s; }
+    .msg.ok  { color:rgba(180,230,200,0.75); }
+    .msg.err { color:rgba(255,120,100,0.8); }
+    .msg.fade { opacity:0; }
+
+    /* GDPR section */
+    .gdpr-row { display:flex; align-items:center; justify-content:space-between; font-size:13px; color:rgba(255,255,255,0.4); padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .gdpr-row:last-child { border-bottom:none; }
+    .gdpr-label { color:rgba(255,255,255,0.28); font-size:11px; letter-spacing:0.05em; }
+    .gdpr-value { color:rgba(255,255,255,0.55); font-size:13px; }
+    .gdpr-link { color:rgba(180,230,200,0.5); text-decoration:none; font-size:12px; cursor:pointer; background:none; border:none; font-family:'Georgia',serif; }
+    .gdpr-link:hover { color:rgba(180,230,200,0.8); }
+
+    /* Loading skeleton */
+    .skeleton { background:rgba(255,255,255,0.05); border-radius:6px; height:14px; animation:sk 1.4s ease-in-out infinite; }
+    @keyframes sk { 0%,100%{opacity:0.4} 50%{opacity:0.8} }
+
+    /* Confirm modal */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:300; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.visible { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:340px; display:flex; flex-direction:column; gap:14px; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .modal p { font-size:13px; color:rgba(255,255,255,0.45); line-height:1.7; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
+    .modal-cancel { padding:9px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-ok { padding:9px 18px; border-radius:8px; border:1px solid rgba(255,80,80,0.3); background:rgba(255,80,80,0.1); color:rgba(255,100,100,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+
+    /* Language select */
+    .field select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:9px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.72); font-family:'Georgia',serif; outline:none; appearance:none; cursor:pointer; }
+    .field select:focus { border-color:rgba(180,230,200,0.4); }
+    .field select option { background:#1a2420; color:rgba(255,255,255,0.8); }
+
+    /* Divider */
+    .divider { height:1px; background:rgba(255,255,255,0.05); }
+  </style>
+</head>
+<body>
+
+<div class="slideshow" id="slideshow"></div>
+<div class="veil"></div>
+
+<div class="panel">
+
+  <a class="back-link" href="/client/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    Back to practice
+  </a>
+
+  <div>
+    <div class="wordmark">Deeper Mindfulness</div>
+    <div class="page-title">My account</div>
+    <div class="page-sub" id="pageSubName">Loading…</div>
+  </div>
+
+  <!-- ── Membership ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Membership</div></div>
+    <div class="card-body">
+      <div id="membershipStatus" style="display:flex;flex-direction:column;gap:6px">
+        <div class="skeleton" style="width:120px;height:26px;border-radius:13px"></div>
+        <div class="skeleton" style="width:180px"></div>
+      </div>
+      <div id="upgradeSection" style="display:none">
+        <div class="upgrade-cta">
+          <div class="upgrade-cta-title">Unlock more</div>
+          <div class="upgrade-cta-desc">Members get access to the full content library, richer practice sessions, and a daily message from Per.</div>
+          <a class="upgrade-btn" href="/membership">See membership options</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Profile ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Profile</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label>First name</label>
+        <input type="text" id="fieldName" placeholder="Your name"/>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="fieldEmail" disabled placeholder="your@email.com"/>
+      </div>
+      <div class="field">
+        <label>Language</label>
+        <select id="fieldLanguage">
+          <option value="en">English</option>
+          <option value="nl">Nederlands</option>
+        </select>
+      </div>
+      <div class="msg" id="profileMsg"></div>
+      <button class="btn-primary" id="saveProfileBtn" onclick="saveProfile()">Save changes</button>
+    </div>
+  </div>
+
+  <!-- ── Communication preferences ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">What I'd like to receive</div></div>
+    <div class="card-body" style="gap:0;padding-bottom:16px">
+
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">Daily message from Per</div>
+          <div class="pref-desc">A short thought or practice prompt each morning</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefMotd" onchange="savePrefs()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">Practice reminders</div>
+          <div class="pref-desc">A gentle nudge if you haven't practised in a few days</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefReminders" onchange="savePrefs()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">Membership renewal reminders</div>
+          <div class="pref-desc">Ahead of your renewal date</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefRenewal" onchange="savePrefs()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">News and updates</div>
+          <div class="pref-desc">New programmes, events, and things from Per</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefNews" onchange="savePrefs()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="pref-row" style="padding-top:14px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.05);border-bottom:none">
+        <div class="pref-label">
+          <div class="pref-name">SMS messages</div>
+          <div class="pref-desc">Coming soon — opt in now if you'd like to receive texts</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefSms" onchange="savePrefs()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+
+      <div class="field" id="phoneField" style="display:none;margin-top:10px">
+        <label>Mobile number</label>
+        <input type="tel" id="fieldPhone" placeholder="+44 7700 000000" onblur="savePrefs()"/>
+      </div>
+
+      <div class="msg" id="prefsMsg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- ── Password ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Password</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label>Current password</label>
+        <input type="password" id="pwCurrent" placeholder="••••••••"/>
+      </div>
+      <div class="field">
+        <label>New password</label>
+        <input type="password" id="pwNew" placeholder="At least 8 characters"/>
+      </div>
+      <div class="field">
+        <label>Confirm new password</label>
+        <input type="password" id="pwConfirm" placeholder="Same again"/>
+      </div>
+      <div class="msg" id="pwMsg"></div>
+      <button class="btn-primary" onclick="changePassword()">Update password</button>
+    </div>
+  </div>
+
+  <!-- ── Privacy & data ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Privacy &amp; data</div></div>
+    <div class="card-body" style="gap:0;padding-bottom:16px">
+
+      <div class="gdpr-row">
+        <div class="gdpr-label">Consent given</div>
+        <div class="gdpr-value" id="gdprConsentDate">—</div>
+      </div>
+      <div class="gdpr-row">
+        <div class="gdpr-label">Lawful basis</div>
+        <div class="gdpr-value" id="gdprBasis">—</div>
+      </div>
+      <div class="gdpr-row" style="border-bottom:none;padding-top:14px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.05)">
+        <button class="gdpr-link" onclick="requestData()">Download my data</button>
+        <button class="gdpr-link" onclick="showDeleteModal()" style="color:rgba(255,100,100,0.45)">Delete account</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Sign out ── -->
+  <button class="btn-ghost" onclick="logout()">Sign out</button>
+
+  <div style="height:8px"></div>
+
+</div><!-- /panel -->
+
+<!-- Delete account confirm modal -->
+<div class="modal-overlay" id="deleteModal">
+  <div class="modal">
+    <h3>Delete account</h3>
+    <p>This will permanently remove your account, your practice history, and all your data. This cannot be undone.</p>
+    <p style="margin-top:4px">If you're a member, your subscription will need to be cancelled separately via Stripe.</p>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="hideDeleteModal()">Cancel</button>
+      <button class="modal-ok" onclick="deleteAccount()">Delete my account</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Slideshow ──
+  const slides = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+    'https://images.unsplash.com/photo-1448375240586-882707db888b?w=1600&q=80',
+    'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=1600&q=80',
+  ];
+  const ss = document.getElementById('slideshow');
+  slides.forEach((url, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    d.style.backgroundImage = `url('${url}')`;
+    ss.appendChild(d);
+  });
+  let cur = 0;
+  const slideEls = ss.querySelectorAll('.slide');
+  setInterval(() => {
+    slideEls[cur].classList.remove('active');
+    cur = (cur + 1) % slideEls.length;
+    slideEls[cur].classList.add('active');
+  }, 9000);
+
+  // ── Tier helpers ──
+  const TIER_LABELS = { 0:'Explorer', 1:'Member 1', 2:'Member 2', 3:'Member 3' };
+  const TIER_BADGE  = { 0:'badge-explorer', 1:'badge-member1', 2:'badge-member2', 3:'badge-member3' };
+
+  function fmtDate(s) {
+    if (!s) return null;
+    try {
+      return new Date(s).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' });
+    } catch { return s.slice(0,10); }
+  }
+
+  // ── Load account ──
+  let account = null;
+
+  async function loadAccount() {
+    try {
+      const res  = await fetch('/api/account');
+      if (res.status === 401) { window.location.href = '/login'; return; }
+      account = await res.json();
+      populate(account);
+    } catch(e) {
+      showMsg('profileMsg', 'Could not load account. Please refresh.', 'err');
+    }
+  }
+
+  function populate(a) {
+    // Page subtitle
+    document.getElementById('pageSubName').textContent = a.email || '';
+
+    // Profile fields
+    document.getElementById('fieldName').value     = a.name || '';
+    document.getElementById('fieldEmail').value    = a.email || '';
+    document.getElementById('fieldLanguage').value = a.language || 'en';
+
+    // Membership
+    renderMembership(a);
+
+    // Preferences
+    document.getElementById('prefMotd').checked     = !!a.pref_email_motd;
+    document.getElementById('prefReminders').checked = !!a.pref_email_reminders;
+    document.getElementById('prefRenewal').checked  = !!a.pref_email_renewal;
+    document.getElementById('prefNews').checked     = !!a.pref_email_news;
+    document.getElementById('prefSms').checked      = !!a.pref_sms;
+    if (a.pref_sms) document.getElementById('phoneField').style.display = 'block';
+    if (a.phone) document.getElementById('fieldPhone').value = a.phone;
+
+    // GDPR
+    const consentDate = fmtDate(a.consent_date);
+    document.getElementById('gdprConsentDate').textContent = consentDate || 'Not recorded';
+    document.getElementById('gdprBasis').textContent       = a.lawful_basis || 'Consent';
+  }
+
+  function renderMembership(a) {
+    const tier  = a.member_tier || 0;
+    const label = TIER_LABELS[tier] || 'Explorer';
+    const badge = TIER_BADGE[tier]  || 'badge-explorer';
+
+    let html = `<span class="membership-badge ${badge}"><span class="badge-dot"></span>${label}</span>`;
+
+    if (tier > 0) {
+      if (a.trial_ends_at && new Date(a.trial_ends_at) > new Date()) {
+        html += `<div class="membership-trial">Trial ends ${fmtDate(a.trial_ends_at)}</div>`;
+      } else if (a.member_expires_at) {
+        const exp = new Date(a.member_expires_at);
+        const soon = (exp - new Date()) < 14 * 24 * 60 * 60 * 1000;
+        html += `<div class="membership-expiry" style="${soon ? 'color:rgba(255,200,130,0.7)' : ''}">
+          ${soon ? '⚠ ' : ''}Renews ${fmtDate(a.member_expires_at)}
+        </div>`;
+      } else {
+        html += `<div class="membership-expiry">Active</div>`;
+      }
+      if (a.member_since) {
+        html += `<div class="membership-expiry">Member since ${fmtDate(a.member_since)}</div>`;
+      }
+    }
+
+    document.getElementById('membershipStatus').innerHTML = html;
+    document.getElementById('upgradeSection').style.display = tier === 0 ? 'block' : 'none';
+  }
+
+  // ── SMS toggle ──
+  document.getElementById('prefSms').addEventListener('change', function() {
+    document.getElementById('phoneField').style.display = this.checked ? 'block' : 'none';
+  });
+
+  // ── Save profile ──
+  async function saveProfile() {
+    const btn  = document.getElementById('saveProfileBtn');
+    const name = document.getElementById('fieldName').value.trim();
+    const lang = document.getElementById('fieldLanguage').value;
+    if (!name) { showMsg('profileMsg', 'Please enter your name.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/account', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, language: lang })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showMsg('profileMsg', 'Saved.', 'ok');
+        document.getElementById('pageSubName').textContent = account?.email || '';
+      } else {
+        showMsg('profileMsg', data.error || 'Something went wrong.', 'err');
+      }
+    } catch(e) {
+      showMsg('profileMsg', 'Could not save. Please try again.', 'err');
+    }
+    btn.disabled = false; btn.textContent = 'Save changes';
+  }
+
+  // ── Save preferences — fires on every toggle change ──
+  let prefTimer = null;
+  async function savePrefs() {
+    clearTimeout(prefTimer);
+    prefTimer = setTimeout(async () => {
+      const body = {
+        pref_email_motd:      document.getElementById('prefMotd').checked      ? 1 : 0,
+        pref_email_reminders: document.getElementById('prefReminders').checked ? 1 : 0,
+        pref_email_renewal:   document.getElementById('prefRenewal').checked   ? 1 : 0,
+        pref_email_news:      document.getElementById('prefNews').checked       ? 1 : 0,
+        pref_sms:             document.getElementById('prefSms').checked        ? 1 : 0,
+        phone:                document.getElementById('fieldPhone').value.trim() || null,
+      };
+      try {
+        const res  = await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+        const data = await res.json();
+        if (data.ok) showMsg('prefsMsg', 'Preferences saved.', 'ok');
+        else         showMsg('prefsMsg', data.error || 'Could not save.', 'err');
+      } catch(e) {
+        showMsg('prefsMsg', 'Could not save preferences.', 'err');
+      }
+    }, 600);
+  }
+
+  // ── Change password ──
+  async function changePassword() {
+    const current = document.getElementById('pwCurrent').value;
+    const p1      = document.getElementById('pwNew').value;
+    const p2      = document.getElementById('pwConfirm').value;
+
+    if (!current)          { showMsg('pwMsg', 'Please enter your current password.', 'err'); return; }
+    if (p1.length < 8)     { showMsg('pwMsg', 'New password must be at least 8 characters.', 'err'); return; }
+    if (p1 !== p2)         { showMsg('pwMsg', 'Passwords do not match.', 'err'); return; }
+
+    try {
+      const res  = await fetch('/api/change-password', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ currentPassword:current, password:p1 }) });
+      const data = await res.json();
+      if (data.ok) {
+        showMsg('pwMsg', 'Password updated.', 'ok');
+        document.getElementById('pwCurrent').value = '';
+        document.getElementById('pwNew').value     = '';
+        document.getElementById('pwConfirm').value = '';
+      } else {
+        showMsg('pwMsg', data.error || 'Could not update password.', 'err');
+      }
+    } catch(e) {
+      showMsg('pwMsg', 'Something went wrong. Please try again.', 'err');
+    }
+  }
+
+  // ── GDPR: download data ──
+  async function requestData() {
+    try {
+      const res  = await fetch('/api/account');
+      const data = await res.json();
+      const { password_hash, ...safe } = data;
+      const blob = new Blob([JSON.stringify(safe, null, 2)], { type:'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = 'my-deeper-mindfulness-data.json';
+      a.click(); URL.revokeObjectURL(url);
+    } catch(e) {
+      alert('Could not download data. Please try again.');
+    }
+  }
+
+  // ── Delete account ──
+  function showDeleteModal()  { document.getElementById('deleteModal').classList.add('visible'); }
+  function hideDeleteModal()  { document.getElementById('deleteModal').classList.remove('visible'); }
+
+  async function deleteAccount() {
+    try {
+      const res  = await fetch('/api/account', { method:'DELETE' });
+      const data = await res.json();
+      if (data.ok) {
+        await fetch('/api/logout', { method:'POST' });
+        window.location.href = '/login';
+      } else {
+        alert(data.error || 'Could not delete account. Please contact us.');
+        hideDeleteModal();
+      }
+    } catch(e) {
+      alert('Something went wrong. Please try again or contact us.');
+      hideDeleteModal();
+    }
+  }
+
+  // ── Sign out ──
+  async function logout() {
+    await fetch('/api/logout', { method:'POST' });
+    window.location.href = '/login';
+  }
+
+  // ── Feedback messages ──
+  function showMsg(id, text, type) {
+    const el = document.getElementById(id);
+    el.textContent = text;
+    el.className   = 'msg ' + type;
+    el.classList.remove('fade');
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.classList.add('fade'); }, 3000);
+  }
+
+  // ── Boot ──
+  loadAccount();
+</script>
+</body>
+</html>
