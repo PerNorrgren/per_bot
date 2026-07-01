@@ -537,6 +537,97 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
+// ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
+// Every session generated via the facilitator co-pilot lands with a DRAFT
+// client-facing summary (client_summary_draft) that is never visible to the
+// client until explicitly released. These endpoints are that review loop.
+//
+// Ownership: matches the existing check on /api/clients/:id (admin sees
+// everything; a facilitator only their own sessions) — a single helper here
+// so all five endpoints enforce it identically rather than each rolling
+// their own version of the same check.
+function canAccessSession(session, user) {
+  return user.role === 'admin' || session.facilitator_id === user.id;
+}
+
+// List — for the facilitator's own "sessions awaiting review" workspace view.
+app.get('/api/facilitator/sessions', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  try { res.json(db.getSessionsForFacilitatorReview(req.user.id, req.user.role === 'admin')); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Review — full detail on one session, clinical + draft + released text.
+app.get('/api/sessions/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  try {
+    const session = db.getSessionById(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (!canAccessSession(session, req.user)) return res.status(403).json({ error: 'Access denied.' });
+    res.json(session);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Edit — the clinical record and/or the draft. Deliberately never touches
+// client_summary, so an edit can never accidentally release something.
+app.patch('/api/sessions/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  try {
+    const session = db.getSessionById(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (!canAccessSession(session, req.user)) return res.status(403).json({ error: 'Access denied.' });
+    const { summary, client_summary_draft } = req.body;
+    db.updateSessionDraft(req.params.id, summary, client_summary_draft);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Regenerate — asks Claude for a fresh client-facing draft from the current
+// clinical summary. Overwrites the draft (not the released text) so a
+// facilitator can iterate freely without affecting what the client sees
+// until they're happy and release it.
+app.post('/api/sessions/:id/regenerate', auth.requireAuthApi(['admin','facilitator']), async (req, res) => {
+  try {
+    const session = db.getSessionById(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (!canAccessSession(session, req.user)) return res.status(403).json({ error: 'Access denied.' });
+    const newDraft = await callClaude(
+      'You are rewriting a clinical summary into a short, warm note for the client to read themselves.',
+      [{ role: 'user', content: prompts.GENERATE_CLIENT_SUMMARY(session.summary) }],
+      300
+    );
+    db.updateSessionDraft(req.params.id, null, newDraft);
+    res.json({ ok: true, client_summary_draft: newDraft });
+  } catch(e) {
+    console.error('session regenerate error:', e.message);
+    res.status(500).json({ error: 'Could not regenerate. Please try again.' });
+  }
+});
+
+// Release — copies the (possibly hand-edited) draft into client_summary,
+// which is the field the client's own Sessions tab actually reads.
+app.post('/api/sessions/:id/release', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  try {
+    const session = db.getSessionById(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (!canAccessSession(session, req.user)) return res.status(403).json({ error: 'Access denied.' });
+    if (!session.client_summary_draft || !session.client_summary_draft.trim()) {
+      return res.status(400).json({ error: 'There\'s no draft to release yet — write or regenerate one first.' });
+    }
+    db.releaseSession(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Unrelease — pulls a released summary back out of client view (the draft is
+// untouched), for the rare case something was released by mistake.
+app.post('/api/sessions/:id/unrelease', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  try {
+    const session = db.getSessionById(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (!canAccessSession(session, req.user)) return res.status(403).json({ error: 'Access denied.' });
+    db.unreleaseSession(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Practices API ──
 app.get('/api/clients/:id/practices', auth.requireAuthApi(['admin','facilitator','client']), (req, res) => {
   res.json(db.getPracticesForClient(req.user.role === 'client' ? req.user.id : req.params.id));
@@ -1240,10 +1331,11 @@ facilitatorWss.on('connection', (ws, ctx) => {
             300
           );
 
-          // Save now as the private clinical record. client_summary stays empty until the
-          // facilitator explicitly reviews and releases it — see /api/sessions/:id/release.
+          // Save now as the private clinical record. clientSummary lands as a DRAFT —
+          // it only becomes visible to the client once the facilitator reviews and
+          // explicitly releases it (see /api/sessions/:id/release below).
           const sessionId = uuidv4();
-          db.addSession(sessionId, client.id, facilitatorId, 'facilitator', clinicalSummary, '');
+          db.addSession(sessionId, client.id, facilitatorId, 'facilitator', clinicalSummary, '', clientSummary);
 
           send({
             type: 'session_summary',

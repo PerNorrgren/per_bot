@@ -346,6 +346,12 @@ async function getDb() {
     "ALTER TABLE users ADD COLUMN trial_email_day10_sent INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN trial_email_day14_sent INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN last_reminder_sent_at TEXT",
+    // Facilitator WebSocket Stage 2 (Per Bot 5, item 9) — the AI-generated
+    // client-facing summary lands here as a draft. It only becomes visible to
+    // the client (via client_summary) once the facilitator explicitly releases
+    // it — see releaseSession(). Editing/regenerating the draft never touches
+    // client_summary, so nothing can leak to the client before release.
+    "ALTER TABLE sessions ADD COLUMN client_summary_draft TEXT DEFAULT ''",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -915,15 +921,64 @@ function canAccessFile(file, userFlags) {
 }
 
 // ── Sessions ──
-function addSession(id, clientId, facilitatorId, type, summary, clientSummary) {
-  getDbSync().run('INSERT INTO sessions (id,client_id,facilitator_id,type,summary,client_summary) VALUES (?,?,?,?,?,?)',
-    [id, clientId, facilitatorId, type, summary, clientSummary||'']); save();
+function addSession(id, clientId, facilitatorId, type, summary, clientSummary, clientSummaryDraft) {
+  getDbSync().run('INSERT INTO sessions (id,client_id,facilitator_id,type,summary,client_summary,client_summary_draft) VALUES (?,?,?,?,?,?,?)',
+    [id, clientId, facilitatorId, type, summary, clientSummary||'', clientSummaryDraft||'']); save();
 }
 function getSessionsForClient(clientId) {
   return queryAll('SELECT * FROM sessions WHERE client_id=? ORDER BY created_at DESC', [clientId]);
 }
 function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
+}
+
+// ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
+function getSessionById(id) {
+  return queryOne(
+    `SELECT s.*, u.name as client_name, u.email as client_email
+     FROM sessions s LEFT JOIN users u ON s.client_id = u.id
+     WHERE s.id=?`, [id]
+  );
+}
+function getSessionsForFacilitatorReview(facilitatorId, isAdmin) {
+  // Admin sees everything; a facilitator only sees their own sessions — this
+  // matches the existing ownership check on /api/clients/:id (user.facilitator_id
+  // !== req.user.id → 403), which the original version of this function didn't.
+  const where = isAdmin ? '' : 'WHERE s.facilitator_id=?';
+  const params = isAdmin ? [] : [facilitatorId];
+  return queryAll(
+    `SELECT s.id, s.client_id, s.facilitator_id, s.type, s.client_summary, s.client_summary_draft, s.created_at,
+            u.name as client_name
+     FROM sessions s LEFT JOIN users u ON s.client_id = u.id
+     ${where}
+     ORDER BY s.created_at DESC`,
+    params
+  );
+}
+// Edit — updates the private clinical record and/or the client-facing draft.
+// Never touches client_summary, so an edit can never accidentally release.
+function updateSessionDraft(id, summary, clientSummaryDraft) {
+  const sets = [];
+  const params = [];
+  if (summary != null)            { sets.push('summary=?');              params.push(summary); }
+  if (clientSummaryDraft != null) { sets.push('client_summary_draft=?'); params.push(clientSummaryDraft); }
+  if (!sets.length) return;
+  params.push(id);
+  getDbSync().run(`UPDATE sessions SET ${sets.join(', ')} WHERE id=?`, params);
+  save();
+}
+// Release — copies the (possibly edited) draft into client_summary, which is
+// the field getClientSessionsForClient actually reads. This is the moment a
+// summary becomes visible on the client's own Sessions tab.
+function releaseSession(id) {
+  getDbSync().run(`UPDATE sessions SET client_summary = client_summary_draft WHERE id=?`, [id]);
+  save();
+}
+// Unrelease — pulls it back out of client view without losing the draft, in
+// case something was released by mistake.
+function unreleaseSession(id) {
+  getDbSync().run(`UPDATE sessions SET client_summary='' WHERE id=?`, [id]);
+  save();
 }
 
 // ── Practices ──
@@ -1396,6 +1451,7 @@ module.exports = {
   updateUserPreferences, userFlagsFromRecord,
   // Sessions
   addSession, getSessionsForClient, getClientSessionsForClient,
+  getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
   addPractice, getPracticesForClient, toggleFavourite, incrementUseCount, deletePractice,
   // Programmes

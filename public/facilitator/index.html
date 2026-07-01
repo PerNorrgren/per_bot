@@ -179,6 +179,30 @@
     }
     .accept-arc-btn:hover { background:rgba(180,230,200,0.1); }
 
+    /* Client-facing summary review — draft/release (Per Bot 5, item 9) */
+    .client-summary-box { margin-top:14px; padding-top:14px; border-top:1px solid rgba(180,230,200,0.15); }
+    .client-summary-box textarea {
+      width:100%; min-height:90px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+      border-radius:8px; padding:10px 12px; font-size:13px; color:rgba(255,255,255,0.8);
+      font-family:'Georgia',serif; outline:none; resize:vertical; margin-top:8px;
+    }
+    .client-summary-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center; }
+    .review-btn { padding:6px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.15); background:none; color:rgba(255,255,255,0.55); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
+    .review-btn:hover { background:rgba(255,255,255,0.06); }
+    .review-btn.release { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.85); }
+    .review-btn.release:hover { background:rgba(180,230,200,0.1); }
+    .review-btn.unrelease { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.7); }
+    .review-btn.unrelease:hover { background:rgba(255,180,60,0.08); }
+    .review-btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .release-status { font-size:11px; letter-spacing:0.05em; }
+    .release-status.is-released { color:rgba(180,230,200,0.7); }
+    .release-status.is-draft { color:rgba(255,255,255,0.3); }
+    .session-item { cursor:pointer; }
+    .session-item:hover { background:rgba(255,255,255,0.03); }
+    .session-badge { display:inline-block; font-size:9px; letter-spacing:0.08em; text-transform:uppercase; padding:2px 6px; border-radius:4px; margin-left:6px; }
+    .session-badge.released { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
+    .session-badge.unreleased { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.35); }
+
     /* Input area */
     .input-area {
       padding:14px 16px; border-top:1px solid rgba(255,255,255,0.07);
@@ -517,7 +541,7 @@
         addExplanation(msg.text);
       }
       if (msg.type === 'session_summary') {
-        addSummary(msg.summary, msg.arcUpdate);
+        addSummary(msg.summary, msg.arcUpdate, msg.sessionId, msg.clientSummary);
         pendingArcUpdate = msg.arcUpdate;
         await loadClientData();
       }
@@ -550,13 +574,15 @@
     const list = document.getElementById('sessionsList');
     document.getElementById('sessionCount').textContent = sessions.length;
     if (!sessions.length) { list.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.25);font-style:italic">No sessions yet</div>'; return; }
-    list.innerHTML = sessions.slice(0, 5).map(s => `
-      <div class="session-item">
-        <div class="session-date">${s.created_at?.slice(0,10) || ''}</div>
+    list.innerHTML = sessions.slice(0, 5).map(s => {
+      const released = !!(s.client_summary && s.client_summary.trim());
+      return `
+      <div class="session-item" onclick="openSessionReview('${s.id}')">
+        <div class="session-date">${s.created_at?.slice(0,10) || ''}<span class="session-badge ${released?'released':'unreleased'}">${released?'Released':'Draft only'}</span></div>
         <span class="session-type">${s.type}</span>
         <div class="session-summary">${s.summary?.slice(0,120)}${s.summary?.length>120?'…':''}</div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   }
 
   function renderFacPractices(practices) {
@@ -592,7 +618,7 @@
     conv.scrollTop = conv.scrollHeight;
   }
 
-  function addSummary(summary, arcUpdate) {
+  function addSummary(summary, arcUpdate, sessionId, clientSummaryDraft) {
     const conv = document.getElementById('conversation');
     const div = document.createElement('div');
     div.className = 'summary-bubble';
@@ -606,6 +632,18 @@
           <button class="accept-arc-btn" onclick="acceptArcUpdate()">Accept & save arc</button>
         </div>
       ` : ''}
+      ${sessionId ? `
+        <div class="client-summary-box">
+          <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(180,230,200,0.4)">What the client will see — nothing is visible to them until you release it</div>
+          <textarea id="draft-${sessionId}">${clientSummaryDraft || ''}</textarea>
+          <div class="client-summary-actions">
+            <button class="review-btn" onclick="regenerateDraft('${sessionId}')">Regenerate</button>
+            <button class="review-btn" onclick="saveDraft('${sessionId}')">Save edit</button>
+            <button class="review-btn release" onclick="releaseDraft('${sessionId}')">Release to client</button>
+            <span class="release-status is-draft" id="status-${sessionId}">Not yet released</span>
+          </div>
+        </div>
+      ` : ''}
     `;
     conv.appendChild(div);
     conv.scrollTop = conv.scrollHeight;
@@ -617,6 +655,180 @@
     document.getElementById('arcText').value = pendingArcUpdate;
   }
   window.acceptArcUpdate = acceptArcUpdate;
+
+  // ── Session review — edit / regenerate / release (Per Bot 5, item 9) ──
+  function setReviewStatus(sessionId, text, released) {
+    const el = document.getElementById(`status-${sessionId}`);
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'release-status ' + (released ? 'is-released' : 'is-draft');
+  }
+
+  async function regenerateDraft(sessionId) {
+    const ta = document.getElementById(`draft-${sessionId}`);
+    if (!ta) return;
+    const prev = ta.value;
+    ta.disabled = true;
+    setReviewStatus(sessionId, 'Regenerating…', false);
+    try {
+      const res  = await fetch(`/api/sessions/${sessionId}/regenerate`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        ta.value = data.client_summary_draft;
+        setReviewStatus(sessionId, 'New draft — not yet released', false);
+      } else {
+        ta.value = prev;
+        setReviewStatus(sessionId, data.error || 'Could not regenerate.', false);
+      }
+    } catch(e) {
+      ta.value = prev;
+      setReviewStatus(sessionId, 'Could not regenerate. Please try again.', false);
+    }
+    ta.disabled = false;
+  }
+  window.regenerateDraft = regenerateDraft;
+
+  async function saveDraft(sessionId) {
+    const ta = document.getElementById(`draft-${sessionId}`);
+    if (!ta) return;
+    try {
+      await fetch(`/api/sessions/${sessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_summary_draft: ta.value })
+      });
+      setReviewStatus(sessionId, 'Saved — not yet released', false);
+    } catch(e) {
+      setReviewStatus(sessionId, 'Could not save. Please try again.', false);
+    }
+  }
+  window.saveDraft = saveDraft;
+
+  async function releaseDraft(sessionId) {
+    // Save whatever's currently in the box first, so Release always releases
+    // exactly what the facilitator is looking at, not a stale earlier draft.
+    await saveDraft(sessionId);
+    try {
+      const res  = await fetch(`/api/sessions/${sessionId}/release`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        setReviewStatus(sessionId, 'Released to client', true);
+      } else {
+        setReviewStatus(sessionId, data.error || 'Could not release.', false);
+      }
+    } catch(e) {
+      setReviewStatus(sessionId, 'Could not release. Please try again.', false);
+    }
+  }
+  window.releaseDraft = releaseDraft;
+
+  // ── Past session review modal (Per Bot 5, item 9) ──
+  let reviewSessionId = null;
+
+  function setReviewModalStatus(text, released) {
+    const el = document.getElementById('reviewStatus');
+    el.textContent = text;
+    el.className = 'release-status ' + (released ? 'is-released' : 'is-draft');
+    document.getElementById('reviewReleaseBtn').style.display = released ? 'none' : '';
+    document.getElementById('reviewUnreleaseBtn').style.display = released ? '' : 'none';
+  }
+
+  async function openSessionReview(id) {
+    reviewSessionId = id;
+    document.getElementById('reviewMeta').textContent = 'Loading…';
+    document.getElementById('reviewSummary').value = '';
+    document.getElementById('reviewDraft').value = '';
+    document.getElementById('sessionReviewModal').classList.add('visible');
+    try {
+      const res = await fetch(`/api/sessions/${id}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        document.getElementById('reviewMeta').textContent = data.error || 'Could not load this session.';
+        return;
+      }
+      const s = await res.json();
+      document.getElementById('reviewMeta').textContent = `${s.client_name || 'Client'} · ${s.created_at?.slice(0,10) || ''}`;
+      document.getElementById('reviewSummary').value = s.summary || '';
+      document.getElementById('reviewDraft').value = s.client_summary_draft || '';
+      const released = !!(s.client_summary && s.client_summary.trim());
+      setReviewModalStatus(released ? 'Released to client' : 'Not yet released', released);
+    } catch(e) {
+      document.getElementById('reviewMeta').textContent = 'Could not load this session.';
+    }
+  }
+  window.openSessionReview = openSessionReview;
+
+  async function saveReview() {
+    if (!reviewSessionId) return;
+    try {
+      await fetch(`/api/sessions/${reviewSessionId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          summary: document.getElementById('reviewSummary').value,
+          client_summary_draft: document.getElementById('reviewDraft').value,
+        })
+      });
+      setReviewModalStatus('Saved — not yet released', false);
+    } catch(e) {
+      setReviewModalStatus('Could not save. Please try again.', false);
+    }
+  }
+  window.saveReview = saveReview;
+
+  async function regenerateReview() {
+    if (!reviewSessionId) return;
+    const btn = document.getElementById('reviewRegenBtn');
+    btn.disabled = true;
+    setReviewModalStatus('Regenerating…', false);
+    try {
+      const res  = await fetch(`/api/sessions/${reviewSessionId}/regenerate`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('reviewDraft').value = data.client_summary_draft;
+        setReviewModalStatus('New draft — not yet released', false);
+      } else {
+        setReviewModalStatus(data.error || 'Could not regenerate.', false);
+      }
+    } catch(e) {
+      setReviewModalStatus('Could not regenerate. Please try again.', false);
+    }
+    btn.disabled = false;
+  }
+  window.regenerateReview = regenerateReview;
+
+  async function releaseReview() {
+    if (!reviewSessionId) return;
+    await saveReview(); // release whatever's currently in the box, not a stale earlier draft
+    try {
+      const res  = await fetch(`/api/sessions/${reviewSessionId}/release`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        setReviewModalStatus('Released to client', true);
+        await loadClientData(); // refresh the sidebar badge
+      } else {
+        setReviewModalStatus(data.error || 'Could not release.', false);
+      }
+    } catch(e) {
+      setReviewModalStatus('Could not release. Please try again.', false);
+    }
+  }
+  window.releaseReview = releaseReview;
+
+  async function unreleaseReview() {
+    if (!reviewSessionId) return;
+    try {
+      const res  = await fetch(`/api/sessions/${reviewSessionId}/unrelease`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        setReviewModalStatus('Not yet released', false);
+        await loadClientData();
+      } else {
+        setReviewModalStatus(data.error || 'Could not unrelease.', false);
+      }
+    } catch(e) {
+      setReviewModalStatus('Could not unrelease. Please try again.', false);
+    }
+  }
+  window.unreleaseReview = unreleaseReview;
 
   // ── Audio ──
   function playAudio(b64) {
@@ -909,6 +1121,35 @@
     <div class="resource-list" id="resourceList"><div style="padding:20px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px;font-style:italic">Loading…</div></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="document.getElementById('resourcesModal').classList.remove('visible')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Session review — review / edit / regenerate / release a past session (Per Bot 5, item 9) -->
+<div class="modal-overlay" id="sessionReviewModal">
+  <div class="modal wide">
+    <h3>Session review</h3>
+    <p style="font-size:12px;color:rgba(255,255,255,0.35);margin:-12px 0 4px" id="reviewMeta"></p>
+
+    <div>
+      <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:5px">Clinical record (private)</label>
+      <textarea id="reviewSummary" rows="4" style="min-height:100px"></textarea>
+    </div>
+
+    <div class="client-summary-box" style="border-top:none;padding-top:0;margin-top:4px">
+      <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(180,230,200,0.5);display:block;margin-bottom:5px">What the client sees</label>
+      <textarea id="reviewDraft" style="min-height:100px;margin-top:0"></textarea>
+      <div class="client-summary-actions">
+        <button class="review-btn" id="reviewRegenBtn" onclick="regenerateReview()">Regenerate</button>
+        <button class="review-btn" onclick="saveReview()">Save edit</button>
+        <button class="review-btn release" id="reviewReleaseBtn" onclick="releaseReview()">Release to client</button>
+        <button class="review-btn unrelease" id="reviewUnreleaseBtn" onclick="unreleaseReview()" style="display:none">Unrelease</button>
+        <span class="release-status is-draft" id="reviewStatus">Loading…</span>
+      </div>
+    </div>
+
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="document.getElementById('sessionReviewModal').classList.remove('visible')">Close</button>
     </div>
   </div>
 </div>
