@@ -55,7 +55,10 @@ async function login(email, password) {
   const user = db.getUserByEmail(emailLower);
   if (user) {
     const valid = await verifyPassword(password, user.password_hash);
-    if (valid) return { role: 'client', id: user.id, name: user.name, email: user.email, mustChangePassword: user.must_change_password };
+    if (valid) {
+      db.checkTrialExpiry(user.id); // drops to Explorer if trial lapsed with no active subscription
+      return { role: 'client', id: user.id, name: user.name, email: user.email, mustChangePassword: user.must_change_password };
+    }
   }
 
   return null;

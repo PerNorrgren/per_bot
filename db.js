@@ -720,14 +720,40 @@ function deleteClient(id) {
 }
 
 // ── Self-registration ──
+// Every new registration auto-starts a 14-day, no-card Member 1 trial.
+// member_since is set now (trial counts as the start of membership); trial_ends_at
+// governs the countdown; member_expires_at stays NULL until/unless they subscribe
+// via Stripe. checkTrialExpiry() (called on login) drops them to Explorer if the
+// trial lapses with no active subscription.
 function registerUser(id, name, email, passwordHash) {
+  const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
   getDbSync().run(
-    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,is_client,is_system_client)
-     VALUES (?,?,?,?,NULL,'',0,0,0,0,1)`,
-    [id, name, email.toLowerCase()]
+    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client)
+     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1)`,
+    [id, name, email.toLowerCase(), trialEndsAt]
   );
   getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
   save();
+}
+
+// ── Trial expiry ──
+// Called on every login for client-role users. If a trial has lapsed and no paid
+// subscription picked it up (no stripe_subscription_id), drop back to Explorer.
+// Leaves member_since alone — that's a historical fact, not a current-tier signal.
+function checkTrialExpiry(userId) {
+  const user = getUser(userId);
+  if (!user) return user;
+  const trialLapsed = user.trial_ends_at && new Date(user.trial_ends_at) < new Date();
+  const noActiveSubscription = !user.stripe_subscription_id;
+  if (trialLapsed && noActiveSubscription && user.member_tier > 0) {
+    getDbSync().run(
+      `UPDATE users SET member_tier=0, trial_ends_at=NULL WHERE id=?`,
+      [userId]
+    );
+    save();
+    return getUser(userId);
+  }
+  return user;
 }
 
 // ── Membership ──
@@ -1253,6 +1279,7 @@ module.exports = {
   createUserPlaylist, getUserPlaylists, addToUserPlaylist, removeFromUserPlaylist, deleteUserPlaylist, renameUserPlaylist,
   // Registration
   registerUser,
+  checkTrialExpiry,
   // Content visibility
   getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, getFacilitatorResources,
   userMaxLevel, LEVEL_RANK,
