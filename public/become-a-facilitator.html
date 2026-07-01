@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Deeper Mindfulness — Become a Facilitator</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; align-items:center; justify-content:center; padding:20px; }
+
+    .slideshow { position:fixed; inset:0; z-index:0; }
+    .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
+    .slide.active { opacity:1; }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.5); }
+    .panel { position:relative; z-index:2; width:100%; max-width:440px; }
+
+    .glass {
+      background:rgba(255,255,255,0.07);
+      backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:20px; padding:36px 32px;
+      display:flex; flex-direction:column; gap:20px;
+    }
+
+    .wordmark { text-align:center; }
+    .wordmark-main { font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); display:block; }
+    .wordmark-sub  { font-size:20px; color:rgba(255,255,255,0.8); display:block; margin-top:6px; }
+    .wordmark-desc { font-size:13px; color:rgba(255,255,255,0.35); display:block; margin-top:10px; line-height:1.7; }
+
+    .field { display:flex; flex-direction:column; gap:6px; }
+    .field label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .field input, .field textarea {
+      background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+      border-radius:10px; padding:12px 14px; font-size:15px;
+      color:rgba(255,255,255,0.85); font-family:'Georgia',serif; outline:none;
+      transition:border-color 0.2s; width:100%; resize:vertical;
+    }
+    .field input:focus, .field textarea:focus { border-color:rgba(180,230,200,0.4); }
+    .field input::placeholder, .field textarea::placeholder { color:rgba(255,255,255,0.2); }
+    .field input:disabled { opacity:0.6; cursor:not-allowed; }
+
+    .signed-in-note { font-size:12px; color:rgba(180,230,200,0.6); text-align:center; }
+
+    .error { font-size:13px; color:rgba(255,140,120,0.85); text-align:center; min-height:18px; }
+    .success { font-size:14px; color:rgba(180,230,200,0.85); text-align:center; line-height:1.7; }
+
+    .submit-btn {
+      width:100%; padding:13px; border-radius:10px;
+      border:1px solid rgba(180,230,200,0.3);
+      background:rgba(180,230,200,0.1);
+      color:rgba(180,230,200,0.85); font-size:13px;
+      letter-spacing:0.12em; text-transform:uppercase;
+      cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif;
+    }
+    .submit-btn:hover { background:rgba(180,230,200,0.18); }
+    .submit-btn:disabled { opacity:0.5; cursor:not-allowed; }
+
+    .footer-note { text-align:center; font-size:12px; color:rgba(255,255,255,0.25); }
+    .footer-note a { color:rgba(180,230,200,0.5); text-decoration:none; }
+    .footer-note a:hover { color:rgba(180,230,200,0.8); }
+  </style>
+</head>
+<body>
+  <div class="slideshow" id="slideshow"></div>
+  <div class="veil"></div>
+
+  <div class="panel">
+    <div class="glass" id="glassPanel">
+      <div class="wordmark">
+        <span class="wordmark-main">Deeper Mindfulness</span>
+        <span class="wordmark-sub">Become a Facilitator</span>
+        <span class="wordmark-desc" id="wordmarkDesc">Facilitator access is for members who've spent time with the practice themselves and want to offer it to others.</span>
+      </div>
+
+      <div id="formArea">
+        <div class="field">
+          <label>Name</label>
+          <input type="text" id="fName" placeholder="Your name" autocomplete="name"/>
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" id="fEmail" placeholder="you@example.com" autocomplete="email"/>
+        </div>
+        <div class="field">
+          <label>Anything you'd like to share (optional)</label>
+          <textarea id="fMessage" rows="4" placeholder="Tell us a little about why you'd like to facilitate"></textarea>
+        </div>
+        <div class="error" id="fErr"></div>
+        <button class="submit-btn" id="fSubmitBtn" onclick="submitRequest()">Request facilitator access</button>
+      </div>
+
+      <div class="footer-note">Not yet a member? <a href="/membership">See membership options</a> first — facilitator access follows from knowing the practice as a member.</div>
+    </div>
+  </div>
+
+<script>
+  // ── Slideshow (same images/pattern as the rest of the site) ──
+  const slides = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+  ];
+  const ss = document.getElementById('slideshow');
+  const slideEls = slides.map((url, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    d.style.backgroundImage = `url('${url}')`;
+    ss.appendChild(d); return d;
+  });
+  let cur = 0;
+  setInterval(() => {
+    slideEls[cur].classList.remove('active');
+    cur = (cur + 1) % slideEls.length;
+    slideEls[cur].classList.add('active');
+  }, 9000);
+
+  // ── If logged in as a member, auto-fill and lock name/email ──
+  let loggedInAccount = null;
+  async function checkLoggedIn() {
+    try {
+      const res = await fetch('/api/account');
+      if (!res.ok) return; // not logged in as a client — leave the form open
+      const data = await res.json();
+      loggedInAccount = data;
+      document.getElementById('fName').value = data.name || '';
+      document.getElementById('fEmail').value = data.email || '';
+      document.getElementById('fName').disabled = true;
+      document.getElementById('fEmail').disabled = true;
+      document.getElementById('signedInNote') || (() => {
+        const note = document.createElement('div');
+        note.className = 'signed-in-note';
+        note.id = 'signedInNote';
+        note.textContent = `Signed in as ${data.email}`;
+        document.getElementById('formArea').insertBefore(note, document.getElementById('formArea').firstChild);
+      })();
+    } catch(e) { /* not logged in — fine, anonymous submission still works */ }
+  }
+  checkLoggedIn();
+
+  async function submitRequest() {
+    const name    = document.getElementById('fName').value.trim();
+    const email   = document.getElementById('fEmail').value.trim();
+    const message = document.getElementById('fMessage').value.trim();
+    const err     = document.getElementById('fErr');
+    const btn     = document.getElementById('fSubmitBtn');
+
+    if (!name) { err.textContent = 'Please enter your name.'; return; }
+    if (!email || !email.includes('@')) { err.textContent = 'Please enter a valid email.'; return; }
+    err.textContent = '';
+    btn.disabled = true; btn.textContent = 'Sending…';
+
+    try {
+      const res  = await fetch('/api/facilitator-request', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, message })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('wordmarkDesc').textContent = '';
+        document.getElementById('formArea').innerHTML = `<div class="success">${data.note || 'Thank you — your request has been received. We\'ll be in touch.'}</div>`;
+      } else {
+        err.textContent = data.error || 'Something went wrong. Please try again.';
+        btn.disabled = false; btn.textContent = 'Request facilitator access';
+      }
+    } catch(e) {
+      err.textContent = 'Something went wrong. Please try again.';
+      btn.disabled = false; btn.textContent = 'Request facilitator access';
+    }
+  }
+</script>
+</body>
+</html>

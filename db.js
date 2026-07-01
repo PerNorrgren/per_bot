@@ -243,6 +243,25 @@ async function getDb() {
     source TEXT DEFAULT 'guest_page'
   )`);
 
+  // ── Facilitator requests (Per Bot 5, item 11) ──
+  // Member → Facilitator (Member 3) is apply-then-approve, never self-serve —
+  // the person has to actually be a member first. user_id is set when the
+  // requester was logged in as a member at submission time (auto-filled from
+  // their account); it's NULL for anonymous submissions via the public link,
+  // which the admin table surfaces clearly so Per can apply his own judgement
+  // (approve requires a linked member account — see setMemberTier call site).
+  // status: 'pending' | 'approved' | 'declined' | 'deferred' | 'archived'
+  db.run(`CREATE TABLE IF NOT EXISTS facilitator_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    message TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now')),
+    decided_at TEXT
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS content_history (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -1030,6 +1049,58 @@ function getGuestLeads() { return queryAll('SELECT * FROM guest_leads ORDER BY c
 function deleteGuestLead(id) { getDbSync().run('DELETE FROM guest_leads WHERE id=?', [id]); save(); }
 function getGuestLead(id) { return queryOne('SELECT * FROM guest_leads WHERE id=?', [id]); }
 
+// ── Facilitator requests (Per Bot 5, item 11) ──
+function createFacilitatorRequest(id, userId, name, email, message) {
+  getDbSync().run(
+    'INSERT INTO facilitator_requests (id,user_id,name,email,message,status) VALUES (?,?,?,?,?,?)',
+    [id, userId || null, name, email.toLowerCase(), message || null, 'pending']
+  );
+  save();
+}
+// A pending request already open for this email — used to block duplicate submissions.
+function getPendingFacilitatorRequestByEmail(email) {
+  return queryOne(`SELECT * FROM facilitator_requests WHERE email=? AND status='pending'`, [email.toLowerCase()]);
+}
+// Joins in member_tier/member_since where user_id is set, so the admin table
+// can show "Member since X" vs "Not currently a member" without a second query.
+function getFacilitatorRequests(status) {
+  const where = status ? `WHERE fr.status=?` : '';
+  const params = status ? [status] : [];
+  return queryAll(
+    `SELECT fr.*, u.member_tier, u.member_since
+     FROM facilitator_requests fr
+     LEFT JOIN users u ON fr.user_id = u.id
+     ${where}
+     ORDER BY fr.created_at DESC`,
+    params
+  );
+}
+function getFacilitatorRequestById(id) {
+  return queryOne(
+    `SELECT fr.*, u.member_tier, u.member_since
+     FROM facilitator_requests fr
+     LEFT JOIN users u ON fr.user_id = u.id
+     WHERE fr.id=?`, [id]
+  );
+}
+// A member checking their own account page — do they already have a request
+// in flight (or a past decision worth showing) so we don't show the button
+// again pointlessly.
+function getLatestFacilitatorRequestForUser(userId) {
+  return queryOne(
+    `SELECT * FROM facilitator_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 1`,
+    [userId]
+  );
+}
+function setFacilitatorRequestStatus(id, status) {
+  getDbSync().run(
+    `UPDATE facilitator_requests SET status=?, decided_at=datetime('now') WHERE id=?`,
+    [status, id]
+  );
+  save();
+}
+function deleteFacilitatorRequest(id) { getDbSync().run('DELETE FROM facilitator_requests WHERE id=?', [id]); save(); }
+
 // ── Seed default content categories ──
 function seedContentCategories() {
   const existing = queryAll('SELECT * FROM categories WHERE parent_id IS NULL');
@@ -1347,6 +1418,9 @@ module.exports = {
   createInvitation, getInvitationByToken, acceptInvitation, getInvitationsForFacilitator,
   // Guest leads
   addGuestLead, getGuestLeads, deleteGuestLead, getGuestLead,
+  createFacilitatorRequest, getPendingFacilitatorRequestByEmail, getFacilitatorRequests,
+  getFacilitatorRequestById, setFacilitatorRequestStatus, deleteFacilitatorRequest,
+  getLatestFacilitatorRequestForUser,
   // Membership plans
   getMembershipPlans, updateMembershipPlan,
   // MOTD

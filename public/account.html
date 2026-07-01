@@ -162,6 +162,14 @@
     </div>
   </div>
 
+  <!-- ── Facilitator access (Per Bot 5, item 11) — members only ── -->
+  <div class="card" id="facilitatorCard" style="display:none">
+    <div class="card-header"><div class="card-title">Facilitator access</div></div>
+    <div class="card-body" id="facilitatorCardBody">
+      <div class="skeleton" style="width:200px"></div>
+    </div>
+  </div>
+
   <!-- ── Profile ── -->
   <div class="card">
     <div class="card-header"><div class="card-title">Profile</div></div>
@@ -382,6 +390,7 @@
 
     // Membership
     renderMembership(a);
+    renderFacilitatorCard(a);
 
     // Preferences
     document.getElementById('prefMotd').checked     = !!a.pref_email_motd;
@@ -424,6 +433,74 @@
 
     document.getElementById('membershipStatus').innerHTML = html;
     document.getElementById('upgradeSection').style.display = tier === 0 ? 'block' : 'none';
+  }
+
+  // ── Facilitator access (Per Bot 5, item 11) ──
+  // Member → Facilitator only. The card stays hidden entirely for Explorers —
+  // Per's stated principle is that facilitation should follow from knowing
+  // the practice as a member first, so the door simply isn't shown earlier.
+  async function renderFacilitatorCard(a) {
+    const card = document.getElementById('facilitatorCard');
+    const body = document.getElementById('facilitatorCardBody');
+    const tier = a.member_tier || 0;
+    if (tier < 1) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+
+    if (tier >= 3) {
+      body.innerHTML = `<div class="upgrade-cta-desc">You already have facilitator access.</div>`;
+      return;
+    }
+
+    try {
+      const res  = await fetch('/api/facilitator-request/mine');
+      const data = await res.json();
+      const req  = data.request;
+
+      if (req && req.status === 'pending') {
+        body.innerHTML = `<div class="upgrade-cta-desc">Your request to become a facilitator is under review. We'll be in touch.</div>`;
+        return;
+      }
+      if (req && req.status === 'deferred') {
+        body.innerHTML = `<div class="upgrade-cta-desc">Your request is still being considered — no action needed, we'll follow up.</div>`;
+        return;
+      }
+      if (req && req.status === 'approved') {
+        body.innerHTML = `<div class="upgrade-cta-desc">Your request was approved. If you don't see facilitator access yet, try refreshing.</div>`;
+        return;
+      }
+
+      // No request yet, or a past declined one — show the request form.
+      body.innerHTML = `
+        <div class="upgrade-cta-desc" style="margin-bottom:12px">Ready to support others with this practice? Facilitator access is available to members who'd like to offer it.</div>
+        <textarea id="facilitatorMessage" placeholder="Anything you'd like to share (optional)" style="width:100%;min-height:70px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:9px;padding:10px 13px;font-size:13px;color:rgba(255,255,255,0.8);font-family:'Georgia',serif;outline:none;resize:vertical;margin-bottom:12px;box-sizing:border-box"></textarea>
+        <button class="btn-primary" id="facilitatorRequestBtn" onclick="submitFacilitatorRequest()">Request facilitator access</button>
+        <div class="msg" id="facilitatorMsg"></div>
+      `;
+    } catch(e) {
+      body.innerHTML = `<div class="upgrade-cta-desc">Could not load facilitator status. Please refresh.</div>`;
+    }
+  }
+
+  async function submitFacilitatorRequest() {
+    const btn = document.getElementById('facilitatorRequestBtn');
+    const message = document.getElementById('facilitatorMessage')?.value?.trim() || '';
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/facilitator-request', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: account?.name, email: account?.email, message })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        renderFacilitatorCard(account); // refresh into the "pending" state
+      } else {
+        showMsg('facilitatorMsg', data.error || 'Something went wrong.', 'err');
+        btn.disabled = false; btn.textContent = 'Request facilitator access';
+      }
+    } catch(e) {
+      showMsg('facilitatorMsg', 'Something went wrong. Please try again.', 'err');
+      btn.disabled = false; btn.textContent = 'Request facilitator access';
+    }
   }
 
   // ── SMS toggle ──

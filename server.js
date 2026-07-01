@@ -202,6 +202,61 @@ function emailInactivityReminder(user) {
   );
 }
 
+// ── Facilitator requests (Per Bot 5, item 11) ──
+function emailFacilitatorRequestReceivedToAdmin(request) {
+  const memberNote = request.user_id
+    ? `Existing member (tier ${request.member_tier}, since ${request.member_since || 'unknown'}).`
+    : `⚠️ Not currently a member — submitted via the public link.`;
+  return sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+    `New facilitator request — ${request.name}`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
+      <h2 style="font-weight:normal">New facilitator request</h2>
+      <p><strong>${request.name}</strong> · ${request.email}</p>
+      <p style="color:#666">${memberNote}</p>
+      ${request.message ? `<p style="background:#f5f5f0;border-radius:8px;padding:14px 16px;color:#333">${request.message}</p>` : ''}
+      <p><a href="${APP_URL}/admin/">Review in admin →</a></p>
+    </div>`
+  );
+}
+
+function emailFacilitatorRequestApproved(request) {
+  return sendEmail(request.email, 'Your facilitator request has been approved',
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">Deeper Mindfulness</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${request.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your request to become a facilitator has been approved. Your account now has facilitator access.</p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/facilitator/" style="color:#2d6a4f">Go to your facilitator dashboard →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Norrgren</p>
+    </div>`
+  );
+}
+
+function emailFacilitatorRequestDeclined(request) {
+  return sendEmail(request.email, 'About your facilitator request',
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">Deeper Mindfulness</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${request.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">Thank you for your interest in facilitating. We're not able to move forward with this right now.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">If you haven't yet spent time with the practice as a member yourself, that's usually the best next step — we'd genuinely welcome hearing from you again once you have.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Norrgren</p>
+    </div>`
+  );
+}
+
+function emailFacilitatorRequestDeferred(request) {
+  return sendEmail(request.email, 'About your facilitator request',
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">Deeper Mindfulness</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${request.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Thank you for your request to become a facilitator. We need a little more time to consider it — no action needed from you, we'll follow up before too long.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Norrgren</p>
+    </div>`
+  );
+}
+
 
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
@@ -613,6 +668,117 @@ app.get('/api/guest/content', (req, res) => {
 // ── /api/admin/guest-leads — view leads (admin only) ──
 app.get('/api/admin/guest-leads', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getGuestLeads());
+});
+
+// ── Facilitator requests (Per Bot 5, item 11) ──
+// Member → Facilitator (Member 3) is apply-then-approve. Anyone can submit —
+// the button on /account (member-only) auto-fills from their own account;
+// the public /become-a-facilitator page works for anyone, logged in or not,
+// since it's meant to be linkable from outside the app. The gate is at
+// approval time, not submission time: approve requires a linked member
+// account (see actOnFacilitatorRequest below) — that's where Per's stated
+// principle (facilitate only once you know the practice as a member) is
+// actually enforced, since a public link has to stay open to anyone.
+app.post('/api/facilitator-request', async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!email || !email.trim() || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required.' });
+    const emailLower = email.trim().toLowerCase();
+
+    const existingPending = db.getPendingFacilitatorRequestByEmail(emailLower);
+    if (existingPending) return res.json({ ok: true, note: 'You already have a request under review — we\'ll be in touch.' });
+
+    // Optional auth — if a valid client session cookie is present, link the request
+    // to their account so the admin table can see their membership status.
+    let userId = null;
+    const token = req.cookies?.[auth.COOKIE_NAME];
+    if (token) {
+      const payload = auth.verifyToken(token);
+      if (payload && payload.role === 'client') userId = payload.id;
+    }
+
+    const id = uuidv4();
+    db.createFacilitatorRequest(id, userId, name.trim(), emailLower, message?.trim() || null);
+    const request = db.getFacilitatorRequestById(id);
+    await emailFacilitatorRequestReceivedToAdmin(request);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('facilitator request error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+// Lets the account page (and the public request page, when logged in) check
+// whether the current member already has a request in flight, so the button
+// doesn't just invite duplicate submissions.
+app.get('/api/facilitator-request/mine', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const request = db.getLatestFacilitatorRequestForUser(req.user.id);
+    res.json({ request: request || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Single place all five actions live, so the single-row and bulk endpoints
+// below can never drift apart from each other.
+async function actOnFacilitatorRequest(id, action) {
+  const request = db.getFacilitatorRequestById(id);
+  if (!request) throw new Error('Request not found.');
+  if (action === 'approve') {
+    if (!request.user_id) throw new Error(`${request.name} isn't currently a member — they need to join first before this can be approved.`);
+    db.setMemberTier(request.user_id, 3, null, null, null, null);
+    db.setFacilitatorRequestStatus(id, 'approved');
+    await emailFacilitatorRequestApproved(request);
+  } else if (action === 'decline') {
+    db.setFacilitatorRequestStatus(id, 'declined');
+    await emailFacilitatorRequestDeclined(request);
+  } else if (action === 'defer') {
+    db.setFacilitatorRequestStatus(id, 'deferred');
+    await emailFacilitatorRequestDeferred(request);
+  } else if (action === 'archive') {
+    db.setFacilitatorRequestStatus(id, 'archived');
+  } else if (action === 'delete') {
+    db.deleteFacilitatorRequest(id);
+  } else {
+    throw new Error('Unknown action: ' + action);
+  }
+}
+
+app.get('/api/admin/facilitator-requests', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getFacilitatorRequests(req.query.status || null)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Bulk action — same five actions, applied to a list of ids. Partial failure
+// (e.g. one selected request isn't a member yet and can't be approved)
+// doesn't abort the rest; failures are reported back individually.
+// MUST be registered before the /:id route below — otherwise Express matches
+// the literal path segment "bulk" as if it were an :id parameter, and this
+// route never gets hit at all. (Caught this exact bug in testing.)
+app.patch('/api/admin/facilitator-requests/bulk', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { ids, action } = req.body;
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'No requests selected.' });
+    const results = { succeeded: 0, failed: [] };
+    for (const id of ids) {
+      try { await actOnFacilitatorRequest(id, action); results.succeeded++; }
+      catch(e) { results.failed.push({ id, error: e.message }); }
+    }
+    res.json({ ok: true, ...results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Single-row ("line") action.
+app.patch('/api/admin/facilitator-requests/:id', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    await actOnFacilitatorRequest(req.params.id, req.body.action);
+    res.json({ ok: true });
+  } catch(e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/facilitator-requests/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteFacilitatorRequest(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Client edit / delete ──
@@ -1545,6 +1711,10 @@ app.delete('/api/admin/legal/:id', auth.requireAuthApi(['admin']), (req, res) =>
 
 // ── Membership page ──
 app.get('/membership',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));
+// Public — works logged in (auto-fills from /api/account) or anonymous, since
+// it's meant to be linkable from outside the app (Per Bot 5, item 11).
+app.get('/become-a-facilitator', (req, res) => res.sendFile(path.join(__dirname, 'public', 'become-a-facilitator.html')));
+app.get('/become-a-facilitator/', (req, res) => res.redirect('/become-a-facilitator'));
 app.get('/membership/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));
 
 // ── Stripe: create Checkout Session ──

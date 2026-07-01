@@ -194,6 +194,25 @@
       </div>
     </div>
 
+    <!-- Facilitator requests (Per Bot 5, item 11) -->
+    <div>
+      <div class="section-label">Facilitator requests</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Facilitator requests</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm primary disabled" id="frApproveBtn" onclick="bulkFacilitatorRequests('approve')">Approve</button>
+            <button class="btn sm disabled" id="frDeferBtn" onclick="bulkFacilitatorRequests('defer')">Defer</button>
+            <button class="btn sm warn disabled" id="frDeclineBtn" onclick="bulkFacilitatorRequests('decline')">Decline</button>
+            <button class="btn sm disabled" id="frArchiveBtn" onclick="bulkFacilitatorRequests('archive')">Archive</button>
+            <button class="btn sm danger disabled" id="frDelBtn" onclick="bulkFacilitatorRequests('delete')">Delete</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="frSearch" placeholder="Search requests… (* and ? wildcards)" oninput="renderFacilitatorRequests()"/></div>
+        <div class="table" id="frTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
     <!-- Guest Leads -->
     <div>
       <div class="section-label">Enquiries</div>
@@ -1045,8 +1064,108 @@
   }
 
   // ══════════════════════════════════════════
-  // ── GUEST ENQUIRIES ──
+  // ── FACILITATOR REQUESTS ──
   // ══════════════════════════════════════════
+  let _frData = [];
+  const frSel = makeSelection(['frApproveBtn','frDeferBtn','frDeclineBtn','frArchiveBtn','frDelBtn'], null);
+
+  async function loadFacilitatorRequests() {
+    frSel.clear();
+    const res = await fetch('/api/admin/facilitator-requests');
+    _frData = await res.json();
+    renderFacilitatorRequests();
+  }
+
+  const FR_STATUS_STYLE = {
+    pending:  'background:rgba(255,180,60,0.1);color:rgba(255,180,60,0.75)',
+    approved: 'background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.75)',
+    declined: 'background:rgba(255,100,80,0.1);color:rgba(255,100,80,0.7)',
+    deferred: 'background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)',
+    archived: 'background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.25)',
+  };
+
+  function renderFacilitatorRequests() {
+    frSel.clear();
+    const el = document.getElementById('frTable');
+    const query = document.getElementById('frSearch').value.trim();
+    const s = getSort('fr');
+    let list = _frData.filter(r=>matchesSearch(r,query,['name','email','status']));
+    if (s.col) list=[...list].sort((a,b)=>{ const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
+    if (!list.length) { el.innerHTML='<div class="empty">No requests yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" id="frAllCb" onchange="frSel.toggleAll('frTable',this)"/></div>
+        <div class="table-hdr-cell col-name" onclick="frSort('name')">Name ${sortIndicator('fr','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="frSort('email')">Email ${sortIndicator('fr','email')}</div>
+        <div class="table-hdr-cell col-level" onclick="frSort('status')">Status ${sortIndicator('fr','status')}</div>
+        <div class="table-hdr-cell col-fac">Actions</div>
+      </div>` +
+      list.map(r => {
+        const memberBadge = r.user_id
+          ? `<span class="status-badge status-active" style="margin-left:4px" title="Member since ${r.member_since||'—'}">Member (tier ${r.member_tier})</span>`
+          : `<span class="status-badge status-archived" style="margin-left:4px" title="Submitted via public link, no account">Not a member</span>`;
+        const lineButtons = r.status === 'pending'
+          ? `<button class="btn sm primary" onclick="lineFacilitatorRequestAction('${r.id}','approve')">Approve</button>
+             <button class="btn sm" onclick="lineFacilitatorRequestAction('${r.id}','defer')">Defer</button>
+             <button class="btn sm warn" onclick="lineFacilitatorRequestAction('${r.id}','decline')">Decline</button>`
+          : `<button class="btn sm" onclick="lineFacilitatorRequestAction('${r.id}','archive')">Archive</button>`;
+        return `
+        <div class="table-row">
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${r.id}" onchange="frSel.toggle('${r.id}',this.checked)"/></div>
+          <div class="col-name">${r.name}${memberBadge}${r.message ? `<div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:3px">${r.message}</div>` : ''}</div>
+          <div class="col-email">${r.email}</div>
+          <div class="col-level"><span class="status-badge" style="${FR_STATUS_STYLE[r.status]||''}">${r.status}</span></div>
+          <div class="col-fac" style="display:flex;gap:6px;flex-wrap:wrap">${lineButtons} <button class="btn sm danger" onclick="lineFacilitatorRequestAction('${r.id}','delete')">Delete</button></div>
+        </div>`;
+      }).join('');
+  }
+  function frSort(col) { setSort('fr',col); renderFacilitatorRequests(); }
+
+  async function lineFacilitatorRequestAction(id, action) {
+    if (action === 'decline' || action === 'delete') {
+      const verb = action === 'decline' ? 'Decline' : 'Delete';
+      showConfirm(`${verb} request`,
+        `${verb} this facilitator request?${action==='decline' ? ' They will receive an email.' : ' Cannot be undone.'}`,
+        async()=>{ await runFacilitatorRequestAction([id], action); });
+      return;
+    }
+    await runFacilitatorRequestAction([id], action);
+  }
+
+  async function bulkFacilitatorRequests(action) {
+    const ids=[...frSel.sel]; if (!ids.length) return;
+    if (action === 'decline' || action === 'delete') {
+      const verb = action === 'decline' ? 'Decline' : 'Delete';
+      showConfirm(`${verb} ${ids.length} request${ids.length>1?'s':''}`,
+        `${verb} ${ids.length} selected request${ids.length>1?'s':''}?${action==='decline' ? ' They will each receive an email.' : ' Cannot be undone.'}`,
+        async()=>{ await runFacilitatorRequestAction(ids, action); });
+      return;
+    }
+    await runFacilitatorRequestAction(ids, action);
+  }
+
+  // Shared by both line and bulk actions — always goes through the bulk
+  // endpoint (a list of one id is just a bulk action of size 1), so there is
+  // exactly one code path and the two can never behave differently.
+  async function runFacilitatorRequestAction(ids, action) {
+    if (action === 'delete') {
+      await Promise.all(ids.map(id=>fetch(`/api/admin/facilitator-requests/${id}`,{method:'DELETE'})));
+      loadFacilitatorRequests();
+      return;
+    }
+    const res = await fetch('/api/admin/facilitator-requests/bulk', {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ids, action })
+    });
+    const data = await res.json();
+    loadFacilitatorRequests();
+    loadUsers(); // approving changes a user's tier — refresh the Explorers/Members views too
+    loadMembers();
+    if (data.failed && data.failed.length) {
+      alert(data.failed.map(f => f.error).join('\n'));
+    }
+  }
+
+
   let _leadData = [];
   const leadSel = makeSelection(['leadUpgradeBtn','leadSyncBtn','leadDelBtn'], null);
 
@@ -1113,6 +1232,7 @@
   loadMembers();
   loadUsers();
   loadLeads();
+  loadFacilitatorRequests();
 </script>
 </body>
 </html>
