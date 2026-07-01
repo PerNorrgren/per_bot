@@ -237,7 +237,16 @@
 
         <div class="plan-cta">
           <div class="err-msg" id="errMsg" style="margin-bottom:10px"></div>
-          <button class="cta-btn" id="ctaBtn" onclick="startCheckout()">
+          <label style="display:flex;align-items:flex-start;gap:10px;margin-bottom:14px;cursor:pointer">
+            <input type="checkbox" id="cancelConsent" style="margin-top:3px;accent-color:rgba(180,230,200,0.8);flex-shrink:0;width:16px;height:16px;cursor:pointer" onchange="toggleCta()"/>
+            <span style="font-size:12px;color:rgba(255,255,255,0.38);line-height:1.6">
+              I have read and agree to the
+              <a href="/legal/cancellation-policy" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Cancellation Policy</a>,
+              <a href="/legal/terms-of-service" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Terms of Service</a>, and
+              <a href="/legal/clinical-disclaimer" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Clinical Disclaimer</a>.
+            </span>
+          </label>
+          <button class="cta-btn" id="ctaBtn" onclick="startCheckout()" disabled style="opacity:0.4">
             ${a ? 'Become a member' : 'Join now'}
           </button>
           <div style="font-size:11px;color:rgba(255,255,255,0.2);text-align:center;margin-top:10px">
@@ -274,6 +283,12 @@
       if (plan.saving) { savingEl.textContent = plan.saving; savingEl.style.display = 'block'; }
       else              savingEl.style.display = 'none';
     }
+  }
+
+  function toggleCta() {
+    const btn = document.getElementById('ctaBtn');
+    const checked = document.getElementById('cancelConsent')?.checked;
+    if (btn) { btn.disabled = !checked; btn.style.opacity = checked ? '1' : '0.4'; }
   }
 
   async function startCheckout() {

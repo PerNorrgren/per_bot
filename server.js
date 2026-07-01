@@ -1322,6 +1322,86 @@ app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Legal document public pages ──
+app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
+app.get('/legal/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
+app.get('/legal/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
+
+// ── Legal document API — public ──
+app.get('/api/legal', (req, res) => {
+  try { res.json(db.getAllCurrentLegalDocuments()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/legal/:slug', (req, res) => {
+  try {
+    const doc = req.query.version
+      ? db.getLegalDocumentVersion(req.params.slug, parseInt(req.query.version))
+      : db.getLegalDocument(req.params.slug);
+    if (!doc) return res.status(404).json({ error: 'Document not found.' });
+    res.json(doc);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/legal/:slug/history', (req, res) => {
+  try { res.json(db.getLegalDocumentHistory(req.params.slug)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Legal consent — authenticated users ──
+app.get('/api/my/consents', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const pending = db.getPendingConsentsForUser(req.user.id);
+    const history = db.getUserConsentHistory(req.user.id);
+    res.json({ pending, history });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/my/consents', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const { documentId, slug, version } = req.body;
+    if (!documentId || !slug || !version) return res.status(400).json({ error: 'documentId, slug, and version required.' });
+    const id = uuidv4();
+    db.recordLegalConsent(id, req.user.id, documentId, slug, parseInt(version));
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Admin: legal documents ──
+app.get('/api/admin/legal', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllLegalDocumentsAdmin()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/legal', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { slug, title, content, requiresConsent } = req.body;
+    if (!slug || !title || !content) return res.status(400).json({ error: 'slug, title, and content required.' });
+    const id      = uuidv4();
+    const version = db.createLegalDocument(id, slug.toLowerCase().replace(/\s+/g,'-'), title, content, requiresConsent);
+    res.json({ id, version });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/admin/legal/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { title, content, requiresConsent, action } = req.body;
+    if (action === 'publish') {
+      db.publishLegalDocument(req.params.id);
+      return res.json({ ok: true });
+    }
+    db.updateLegalDocument(req.params.id, title, content, requiresConsent);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/legal/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.deleteLegalDocumentDraft(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Membership page ──
 app.get('/membership',  (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));
 app.get('/membership/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));

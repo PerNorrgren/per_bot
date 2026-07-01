@@ -278,6 +278,36 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Legal documents ──
+  db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    title TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    content TEXT NOT NULL,
+    requires_consent INTEGER DEFAULT 0,
+    published INTEGER DEFAULT 0,
+    published_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_legal_slug_version ON legal_documents(slug, version DESC)`);
+
+  // ── User consent records ──
+  db.run(`CREATE TABLE IF NOT EXISTS user_legal_consents (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    accepted_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, slug, version),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
+  // Seed legal documents if table is empty
+  const existingLegal = queryAll('SELECT id FROM legal_documents LIMIT 1');
+  if (!existingLegal.length) seedLegalDocuments();
+
   // ── Migrations — add columns to existing tables if they don't exist ──
   // This is how we handle the live database which was created before the full schema
   // above existed. The CREATE TABLE IF NOT EXISTS above handles new installs;
@@ -1111,4 +1141,10 @@ module.exports = {
   getInactiveUsers,
   // Stripe lookups
   getUserByStripeCustomer, getUserByStripeSubscription,
+  // Legal documents
+  getLegalDocument, getLegalDocumentVersion, getLegalDocumentHistory,
+  getAllCurrentLegalDocuments, getAllLegalDocumentsAdmin,
+  createLegalDocument, updateLegalDocument, publishLegalDocument, deleteLegalDocumentDraft,
+  // User legal consents
+  recordLegalConsent, hasUserAcceptedDocument, getPendingConsentsForUser, getUserConsentHistory,
 };

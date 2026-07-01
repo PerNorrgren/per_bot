@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Legal — Deeper Mindfulness</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; color:rgba(255,255,255,0.78); }
+
+    .layout { display:flex; min-height:100vh; }
+
+    /* Sidebar */
+    .sidebar { width:220px; flex-shrink:0; background:rgba(255,255,255,0.03); border-right:1px solid rgba(255,255,255,0.07); padding:28px 0; position:sticky; top:0; height:100vh; overflow-y:auto; }
+    .sidebar-logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.25); padding:0 20px 20px; border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:16px; }
+    .sidebar-title { font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.2); padding:0 20px 10px; }
+    .sidebar-link { display:block; padding:9px 20px; font-size:13px; color:rgba(255,255,255,0.4); text-decoration:none; transition:all 0.15s; border-left:2px solid transparent; }
+    .sidebar-link:hover { color:rgba(255,255,255,0.7); background:rgba(255,255,255,0.03); }
+    .sidebar-link.active { color:rgba(180,230,200,0.85); border-left-color:rgba(180,230,200,0.5); background:rgba(180,230,200,0.04); }
+    .sidebar-back { display:flex; align-items:center; gap:6px; padding:10px 20px 20px; font-size:12px; color:rgba(255,255,255,0.25); text-decoration:none; transition:color 0.15s; }
+    .sidebar-back:hover { color:rgba(180,230,200,0.6); }
+    .sidebar-back svg { width:12px; height:12px; }
+
+    /* Main */
+    .main { flex:1; padding:40px 48px; max-width:720px; }
+
+    /* Document index */
+    .doc-index { display:flex; flex-direction:column; gap:12px; }
+    .doc-card { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:18px 20px; text-decoration:none; display:flex; align-items:center; justify-content:space-between; transition:all 0.15s; }
+    .doc-card:hover { background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.14); }
+    .doc-card-title { font-size:15px; color:rgba(255,255,255,0.78); }
+    .doc-card-meta { font-size:11px; color:rgba(255,255,255,0.28); margin-top:4px; }
+    .doc-card-arrow { color:rgba(255,255,255,0.2); font-size:14px; }
+
+    /* Document content */
+    .doc-header { margin-bottom:32px; padding-bottom:20px; border-bottom:1px solid rgba(255,255,255,0.08); }
+    .doc-breadcrumb { font-size:12px; color:rgba(255,255,255,0.25); margin-bottom:12px; }
+    .doc-breadcrumb a { color:rgba(180,230,200,0.5); text-decoration:none; }
+    .doc-breadcrumb a:hover { color:rgba(180,230,200,0.8); }
+    .doc-title { font-size:26px; color:rgba(255,255,255,0.88); font-weight:normal; margin-bottom:6px; }
+    .doc-meta { font-size:12px; color:rgba(255,255,255,0.28); }
+    .doc-version-history { margin-top:10px; }
+    .doc-version-link { font-size:12px; color:rgba(180,230,200,0.4); text-decoration:none; }
+    .doc-version-link:hover { color:rgba(180,230,200,0.7); }
+
+    /* Markdown rendering */
+    .doc-body { line-height:1.8; font-size:15px; color:rgba(255,255,255,0.68); }
+    .doc-body h1 { font-size:22px; color:rgba(255,255,255,0.85); font-weight:normal; margin:32px 0 14px; }
+    .doc-body h2 { font-size:16px; color:rgba(255,255,255,0.75); font-weight:normal; margin:28px 0 10px; letter-spacing:0.02em; }
+    .doc-body h3 { font-size:14px; color:rgba(255,255,255,0.65); font-weight:normal; margin:20px 0 8px; }
+    .doc-body p { margin-bottom:14px; }
+    .doc-body ul, .doc-body ol { padding-left:20px; margin-bottom:14px; }
+    .doc-body li { margin-bottom:5px; }
+    .doc-body strong { color:rgba(255,255,255,0.85); font-weight:normal; }
+    .doc-body em { font-style:italic; }
+    .doc-body hr { border:none; border-top:1px solid rgba(255,255,255,0.08); margin:24px 0; }
+    .doc-body a { color:rgba(180,230,200,0.6); }
+    .doc-body a:hover { color:rgba(180,230,200,0.9); }
+
+    /* Consent box */
+    .consent-box { margin-top:32px; background:rgba(180,230,200,0.05); border:1px solid rgba(180,230,200,0.15); border-radius:12px; padding:20px; display:flex; flex-direction:column; gap:14px; }
+    .consent-label { display:flex; align-items:flex-start; gap:12px; cursor:pointer; }
+    .consent-label input[type=checkbox] { margin-top:3px; accent-color:rgba(180,230,200,0.8); flex-shrink:0; width:16px; height:16px; cursor:pointer; }
+    .consent-text { font-size:13px; color:rgba(255,255,255,0.55); line-height:1.6; }
+    .consent-btn { align-self:flex-start; padding:10px 24px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; transition:all 0.2s; }
+    .consent-btn:hover { background:rgba(180,230,200,0.18); }
+    .consent-btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .consent-done { font-size:13px; color:rgba(180,230,200,0.6); display:flex; align-items:center; gap:8px; }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      .layout { flex-direction:column; }
+      .sidebar { width:100%; height:auto; position:static; padding:16px 0 8px; }
+      .main { padding:24px 20px; }
+    }
+
+    .loading { color:rgba(255,255,255,0.25); font-size:14px; padding:40px 0; }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <div class="sidebar">
+    <div class="sidebar-logo">Deeper Mindfulness</div>
+    <div class="sidebar-title">Legal</div>
+    <div id="sidebarLinks">
+      <div class="sidebar-link" style="color:rgba(255,255,255,0.2);font-size:12px;padding:6px 20px">Loading…</div>
+    </div>
+    <div style="margin-top:20px;border-top:1px solid rgba(255,255,255,0.06);padding-top:16px">
+      <a class="sidebar-back" href="/client/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        Practice space
+      </a>
+      <a class="sidebar-back" href="/account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        My account
+      </a>
+    </div>
+  </div>
+
+  <div class="main" id="main">
+    <div class="loading">Loading…</div>
+  </div>
+
+</div>
+
+<script>
+  // ── Simple markdown renderer (no external deps) ──
+  function renderMarkdown(md) {
+    return md
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      // headings
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm,  '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm,   '<h1>$1</h1>')
+      // hr
+      .replace(/^---$/gm, '<hr/>')
+      // bold
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      // italic
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      // links
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      // bullet lists — wrap consecutive lines
+      .replace(/((?:^- .+\n?)+)/gm, (m) => '<ul>' + m.replace(/^- (.+)$/gm,'<li>$1</li>') + '</ul>')
+      // paragraphs — blank line separated
+      .split(/\n{2,}/).map(block => {
+        block = block.trim();
+        if (!block) return '';
+        if (/^<(h[1-6]|ul|ol|hr|li)/.test(block)) return block;
+        return '<p>' + block.replace(/\n/g, ' ') + '</p>';
+      }).join('\n');
+  }
+
+  function fmtDate(s) {
+    if (!s) return '';
+    try { return new Date(s).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' }); }
+    catch { return s.slice(0,10); }
+  }
+
+  // ── State ──
+  let allDocs  = [];
+  let userLoggedIn = false;
+  let userConsents = {};
+
+  // ── Init ──
+  async function init() {
+    // Determine slug from URL
+    const slug = location.pathname.replace(/^\/legal\/?/, '') || '';
+
+    // Load all docs for sidebar
+    const docsRes = await fetch('/api/legal');
+    allDocs = docsRes.ok ? await docsRes.json() : [];
+    renderSidebar(slug);
+
+    // Try to load user consents (if logged in)
+    try {
+      const cRes = await fetch('/api/my/consents');
+      if (cRes.ok) {
+        const data = await cRes.json();
+        userLoggedIn = true;
+        data.history.forEach(c => { userConsents[c.slug + '@' + c.version] = true; });
+      }
+    } catch(e) {}
+
+    if (!slug) {
+      renderIndex();
+    } else {
+      renderDocument(slug);
+    }
+  }
+
+  function renderSidebar(activeSlug) {
+    const links = allDocs.map(d => `
+      <a class="sidebar-link ${d.slug === activeSlug ? 'active' : ''}"
+         href="/legal/${d.slug}">${d.title}</a>
+    `).join('');
+    document.getElementById('sidebarLinks').innerHTML = links ||
+      '<div style="padding:6px 20px;font-size:12px;color:rgba(255,255,255,0.2)">No documents yet.</div>';
+  }
+
+  function renderIndex() {
+    document.title = 'Legal — Deeper Mindfulness';
+    const main = document.getElementById('main');
+    if (!allDocs.length) {
+      main.innerHTML = '<p style="color:rgba(255,255,255,0.3);padding:40px 0">No documents published yet.</p>';
+      return;
+    }
+    main.innerHTML = `
+      <div style="margin-bottom:28px">
+        <div style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:8px">Deeper Mindfulness</div>
+        <div style="font-size:26px;color:rgba(255,255,255,0.85);font-weight:normal;margin-bottom:6px">Legal documents</div>
+        <div style="font-size:13px;color:rgba(255,255,255,0.3)">Per Norrgren trading as Deeper Mindfulness · United Kingdom</div>
+      </div>
+      <div class="doc-index">
+        ${allDocs.map(d => `
+          <a class="doc-card" href="/legal/${d.slug}">
+            <div>
+              <div class="doc-card-title">${d.title}</div>
+              <div class="doc-card-meta">Version ${d.version} · ${d.published_at ? fmtDate(d.published_at) : ''}</div>
+            </div>
+            <span class="doc-card-arrow">›</span>
+          </a>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  async function renderDocument(slug) {
+    const main = document.getElementById('main');
+    main.innerHTML = '<div class="loading">Loading…</div>';
+
+    try {
+      const res = await fetch(`/api/legal/${slug}`);
+      if (!res.ok) {
+        main.innerHTML = '<p style="color:rgba(255,140,120,0.7);padding:40px 0">Document not found.</p>';
+        return;
+      }
+      const doc = await res.json();
+      document.title = `${doc.title} — Deeper Mindfulness`;
+
+      const alreadyAccepted = userLoggedIn && userConsents[doc.slug + '@' + doc.version];
+
+      main.innerHTML = `
+        <div class="doc-header">
+          <div class="doc-breadcrumb">
+            <a href="/legal">Legal</a> › ${doc.title}
+          </div>
+          <div class="doc-title">${doc.title}</div>
+          <div class="doc-meta">Version ${doc.version} · ${doc.published_at ? fmtDate(doc.published_at) : ''} · Per Norrgren trading as Deeper Mindfulness</div>
+          <div class="doc-version-history" style="margin-top:8px">
+            <a class="doc-version-link" href="/legal/${doc.slug}/history" onclick="loadHistory('${doc.slug}');return false;">View version history</a>
+          </div>
+        </div>
+
+        <div class="doc-body" id="docBody"></div>
+
+        ${doc.requires_consent && userLoggedIn ? `
+          <div class="consent-box" id="consentBox">
+            ${alreadyAccepted ? `
+              <div class="consent-done">✓ You accepted this document on ${fmtDate(userConsents['_date_' + doc.slug] || doc.published_at)}</div>
+            ` : `
+              <label class="consent-label">
+                <input type="checkbox" id="consentCheck" onchange="toggleConsentBtn()"/>
+                <span class="consent-text">I have read and understood this document and I agree to its terms.</span>
+              </label>
+              <button class="consent-btn" id="consentBtn" disabled onclick="recordConsent('${doc.id}','${doc.slug}',${doc.version})">
+                I agree
+              </button>
+            `}
+          </div>
+        ` : ''}
+      `;
+
+      document.getElementById('docBody').innerHTML = renderMarkdown(doc.content);
+
+    } catch(e) {
+      main.innerHTML = '<p style="color:rgba(255,140,120,0.7);padding:40px 0">Could not load document. Please refresh.</p>';
+    }
+  }
+
+  function toggleConsentBtn() {
+    const btn = document.getElementById('consentBtn');
+    if (btn) btn.disabled = !document.getElementById('consentCheck').checked;
+  }
+
+  async function recordConsent(documentId, slug, version) {
+    const btn = document.getElementById('consentBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const res  = await fetch('/api/my/consents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId, slug, version })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        userConsents[slug + '@' + version] = true;
+        document.getElementById('consentBox').innerHTML =
+          '<div class="consent-done">✓ Recorded — thank you.</div>';
+      } else {
+        btn.disabled = false; btn.textContent = 'I agree';
+      }
+    } catch(e) {
+      btn.disabled = false; btn.textContent = 'I agree';
+    }
+  }
+
+  async function loadHistory(slug) {
+    const main = document.getElementById('main');
+    main.innerHTML = '<div class="loading">Loading history…</div>';
+    const res  = await fetch(`/api/legal/${slug}/history`);
+    const docs = await res.json();
+    main.innerHTML = `
+      <div class="doc-header">
+        <div class="doc-breadcrumb"><a href="/legal">Legal</a> › <a href="/legal/${slug}">${docs[0]?.title || slug}</a> › Version history</div>
+        <div class="doc-title">Version history</div>
+      </div>
+      <div class="doc-index">
+        ${docs.map(d => `
+          <a class="doc-card" href="/legal/${d.slug}?version=${d.version}">
+            <div>
+              <div class="doc-card-title">Version ${d.version} ${d.published ? '' : '<span style="font-size:11px;color:rgba(255,180,60,0.6);margin-left:6px">Draft</span>'}</div>
+              <div class="doc-card-meta">${d.published_at ? fmtDate(d.published_at) : 'Not yet published'}</div>
+            </div>
+            <span class="doc-card-arrow">›</span>
+          </a>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  // Handle pushState navigation within the legal section
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a[href^="/legal"]');
+    if (!a) return;
+    e.preventDefault();
+    history.pushState({}, '', a.href);
+    const slug = new URL(a.href).pathname.replace(/^\/legal\/?/, '');
+    renderSidebar(slug);
+    if (!slug) renderIndex();
+    else renderDocument(slug);
+  });
+
+  window.addEventListener('popstate', () => {
+    const slug = location.pathname.replace(/^\/legal\/?/, '');
+    renderSidebar(slug);
+    if (!slug) renderIndex();
+    else renderDocument(slug);
+  });
+
+  init();
+</script>
+</body>
+</html>
