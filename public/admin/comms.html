@@ -53,6 +53,16 @@
     .badge-approved { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
     .badge-sent     { background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.2); }
 
+    /* ── MOTD scrollable list + bulk selection ── */
+    #motdList { max-height:520px; overflow-y:auto; }
+    .msg-cb { flex-shrink:0; margin-top:2px; width:15px; height:15px; accent-color:rgba(180,230,200,0.6); cursor:pointer; }
+    .motd-section-header { padding:10px 20px 4px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,0.05); }
+    .motd-section-header:first-child { border-top:none; }
+    .motd-section-title { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.2); }
+    .select-all-wrap { display:flex; align-items:center; gap:8px; font-size:11px; color:rgba(255,255,255,0.4); cursor:pointer; user-select:none; }
+    .select-all-wrap input { width:14px; height:14px; accent-color:rgba(180,230,200,0.6); cursor:pointer; }
+
+
     /* ── Compose area ── */
     .compose { display:flex; flex-direction:column; gap:12px; }
     .compose textarea {
@@ -332,8 +342,65 @@
     }
   }
 
+  // ── Bulk selection state for drafts ──
+  const motdSel = new Set();
+
+  function motdToggle(id, checked) {
+    if (checked) motdSel.add(id); else motdSel.delete(id);
+    updateMotdBulkBar();
+  }
+
+  function motdToggleAll(masterCb) {
+    const boxes = document.querySelectorAll('#motdList .msg-cb');
+    boxes.forEach(b => {
+      b.checked = masterCb.checked;
+      if (masterCb.checked) motdSel.add(b.value); else motdSel.delete(b.value);
+    });
+    updateMotdBulkBar();
+  }
+
+  function updateMotdBulkBar() {
+    const btn = document.getElementById('approveSelectedBtn');
+    const all = document.getElementById('motdSelectAll');
+    if (!btn) return;
+    const draftBoxes = document.querySelectorAll('#motdList .msg-cb');
+    btn.textContent = motdSel.size ? `Approve selected (${motdSel.size})` : 'Approve selected';
+    btn.classList.toggle('disabled', motdSel.size === 0);
+    if (all) {
+      all.checked = draftBoxes.length > 0 && motdSel.size === draftBoxes.length;
+      all.indeterminate = motdSel.size > 0 && motdSel.size < draftBoxes.length;
+    }
+  }
+
+  async function approveSelectedMotd() {
+    if (!motdSel.size) return;
+    const ids = Array.from(motdSel);
+    const btn = document.getElementById('approveSelectedBtn');
+    btn.disabled = true; btn.textContent = 'Approving…';
+    try {
+      const res  = await fetch('/api/admin/motd/bulk-approve', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      const data = await res.json();
+      btn.disabled = false;
+      if (data.ok) {
+        motdSel.clear();
+        renderStockBar(data.approvedCount, data.lowStock);
+        loadMotd();
+      } else {
+        alert(data.error || 'Could not approve the selected messages.');
+        btn.textContent = `Approve selected (${motdSel.size})`;
+      }
+    } catch(e) {
+      btn.disabled = false;
+      alert('Could not approve the selected messages. Please try again.');
+    }
+  }
+
   function renderMotdList(list) {
     const el = document.getElementById('motdList');
+    motdSel.clear();
     if (!list.length) { el.innerHTML = '<div class="empty">No messages yet. Write the first one.</div>'; return; }
 
     // Group by status
@@ -343,18 +410,25 @@
 
     let html = '';
     if (approved.length) {
-      html += `<div style="padding:8px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2)">Approved — ready to send (${approved.length})</div>`;
+      html += `<div class="motd-section-header"><div class="motd-section-title">Approved — ready to send (${approved.length})</div></div>`;
       html += approved.map(m => motdRow(m)).join('');
     }
     if (drafts.length) {
-      html += `<div style="padding:10px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2);border-top:1px solid rgba(255,255,255,0.05)">Drafts (${drafts.length})</div>`;
+      html += `<div class="motd-section-header">
+        <div class="motd-section-title">Drafts (${drafts.length})</div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <label class="select-all-wrap"><input type="checkbox" id="motdSelectAll" onchange="motdToggleAll(this)"/> Select all</label>
+          <button class="btn sm primary disabled" id="approveSelectedBtn" onclick="approveSelectedMotd()">Approve selected</button>
+        </div>
+      </div>`;
       html += drafts.map(m => motdRow(m)).join('');
     }
     if (sent.length) {
-      html += `<div style="padding:10px 20px 4px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(255,255,255,0.2);border-top:1px solid rgba(255,255,255,0.05)">Recently sent</div>`;
+      html += `<div class="motd-section-header"><div class="motd-section-title">Recently sent</div></div>`;
       html += sent.map(m => motdRow(m)).join('');
     }
     el.innerHTML = html;
+    updateMotdBulkBar();
   }
 
   function motdRow(m) {
@@ -362,6 +436,7 @@
     const dateStr = m.scheduled_date ? `Scheduled ${m.scheduled_date}` : (m.sent_at ? `Sent ${fmtDate(m.sent_at)}` : `Added ${fmtDate(m.created_at)}`);
     return `
       <div class="msg-row">
+        ${m.status === 'draft' ? `<input type="checkbox" class="msg-cb" value="${m.id}" onchange="motdToggle('${m.id}',this.checked)"/>` : ''}
         <span class="badge ${badgeClass}">${m.status}</span>
         <div class="msg-body">
           <div class="msg-text">${escHtml(m.body)}</div>

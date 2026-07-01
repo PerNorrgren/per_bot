@@ -1683,6 +1683,19 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
   }
 });
 
+function maybeSendMotdLowStockAlert(remaining) {
+  if (remaining > 5) return;
+  sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+    `⚠️ Message of the day — only ${remaining} approved message${remaining === 1 ? '' : 's'} remaining`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
+      <h2 style="font-weight:normal">Message queue running low</h2>
+      <p>There ${remaining === 1 ? 'is' : 'are'} only <strong>${remaining}</strong> approved message${remaining === 1 ? '' : 's'} of the day left in the queue.</p>
+      <p>Please add and approve more at <a href="${APP_URL}/admin/">${APP_URL}/admin/</a></p>
+      <hr/><p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Bot</p>
+    </div>`
+  );
+}
+
 app.patch('/api/admin/motd/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { body, scheduledDate, action } = req.body;
@@ -1690,21 +1703,26 @@ app.patch('/api/admin/motd/:id', auth.requireAuthApi(['admin']), (req, res) => {
       db.approveMotd(req.params.id);
       // After approving, check if stock is low and alert Per
       const remaining = db.countApprovedMotd();
-      if (remaining <= 5) {
-        sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
-          `⚠️ Message of the day — only ${remaining} approved message${remaining === 1 ? '' : 's'} remaining`,
-          `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
-            <h2 style="font-weight:normal">Message queue running low</h2>
-            <p>There ${remaining === 1 ? 'is' : 'are'} only <strong>${remaining}</strong> approved message${remaining === 1 ? '' : 's'} of the day left in the queue.</p>
-            <p>Please add and approve more at <a href="${APP_URL}/admin/">${APP_URL}/admin/</a></p>
-            <hr/><p style="font-size:12px;color:#aaa">Deeper Mindfulness · Per Bot</p>
-          </div>`
-        );
-      }
+      maybeSendMotdLowStockAlert(remaining);
       return res.json({ ok: true, approvedCount: remaining, lowStock: remaining <= 5 });
     }
     if (body != null) db.updateMotd(req.params.id, body.trim(), scheduledDate || null);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── MOTD — bulk approve ──
+// Approves every id in the list, then checks stock ONCE at the end — not once
+// per item, which would otherwise fire the low-stock alert email repeatedly
+// while working through a big batch of drafts.
+app.patch('/api/admin/motd/bulk-approve', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'No messages selected.' });
+    ids.forEach(id => db.approveMotd(id));
+    const remaining = db.countApprovedMotd();
+    maybeSendMotdLowStockAlert(remaining);
+    res.json({ ok: true, approvedCount: remaining, lowStock: remaining <= 5, approved: ids.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
