@@ -760,6 +760,15 @@
 
   function randomPause(minMs, maxMs) { return minMs + Math.random() * (maxMs - minMs); }
 
+  // Splits on sentence-ending punctuation followed by whitespace — good
+  // enough for real conversational replies without needing to be perfect;
+  // an occasional wrong split on something like "Mr. Smith" just means one
+  // pair reads slightly early, which isn't noticeable in practice.
+  function splitIntoSentences(text) {
+    const matches = text.match(/[^.!?]+[.!?]+[)'"”’]*\s*/g);
+    return matches ? matches.map(s => s.trim()).filter(Boolean) : [text];
+  }
+
   async function speak(text) {
     isSpeaking = true;
     setState('speaking');
@@ -785,6 +794,19 @@
     } else if (text.includes('[[BREATH]]')) {
       segments = text.split('[[BREATH]]').map(s => s.trim()).filter(Boolean);
       pauseRange = [1500, 2500];
+    } else {
+      // Plain conversation — no marker from Claude, since this isn't about
+      // intent, it's mechanical: real speech naturally clusters into small
+      // groups with a short beat between them once there's enough being
+      // said. One or two sentences reads fine as a single continuous
+      // clip; three or more gets split into pairs with about a second
+      // between each pair, rather than staying completely flat.
+      const sentences = splitIntoSentences(text);
+      if (sentences.length >= 3) {
+        segments = [];
+        for (let i = 0; i < sentences.length; i += 2) segments.push(sentences.slice(i, i + 2).join(' '));
+        pauseRange = [800, 1200];
+      }
     }
 
     try {

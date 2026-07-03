@@ -312,6 +312,11 @@
 
   function randomPause(minMs, maxMs) { return minMs + Math.random() * (maxMs - minMs); }
 
+  function splitIntoSentences(text) {
+    const matches = text.match(/[^.!?]+[.!?]+[)'"”’]*\s*/g);
+    return matches ? matches.map(s => s.trim()).filter(Boolean) : [text];
+  }
+
   async function speak(text) {
     isSpeaking = true;
     setState('speaking');
@@ -333,6 +338,17 @@
     } else if (text.includes('[[BREATH]]')) {
       segments = text.split('[[BREATH]]').map(s => s.trim()).filter(Boolean);
       pauseRange = [1500, 2500];
+    } else {
+      // Plain conversation — mechanical, not marker-based: three or more
+      // sentences get split into pairs with about a second between each
+      // pair, rather than staying completely flat. One or two sentences
+      // reads fine as a single continuous clip.
+      const sentences = splitIntoSentences(text);
+      if (sentences.length >= 3) {
+        segments = [];
+        for (let i = 0; i < sentences.length; i += 2) segments.push(sentences.slice(i, i + 2).join(' '));
+        pauseRange = [800, 1200];
+      }
     }
 
     try {
