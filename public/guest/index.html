@@ -283,58 +283,70 @@
   }
 
   // ── Speak ──
-  async function speak(text) {
-    return new Promise(async (resolve) => {
+  // Fetches and plays ONE piece of text through the shared, unlocked audio
+  // element — the building block both normal (one clip) and paced
+  // (multi-line, guided-practice) playback use.
+  function playOneClip(text) {
+    return new Promise(async (resolve, reject) => {
       try {
-        isSpeaking = true;
-        setState('speaking');
-        accumulated = '';
-        transcriptEl.className = 'transcript-text';
-
         const r = await fetch('/api/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text })
         });
-
         if (!r.ok) throw new Error('speak failed');
 
         const buffer = await r.arrayBuffer();
         const blob   = new Blob([buffer], { type: 'audio/mpeg' });
         const url    = URL.createObjectURL(blob);
 
-        // Reusing the SAME element unlockAudioPlayback() unlocked earlier,
-        // rather than creating a fresh Audio(url) here — iOS Safari's
-        // playback unlock doesn't reliably carry over to a brand-new
-        // element created later, which causes audio to only work
-        // intermittently instead of every time.
         currentAudio = document.getElementById('ttsPlayer');
         currentAudio.pause();
         currentAudio.src = url;
-
-        currentAudio.onended = () => {
-          URL.revokeObjectURL(url);
-          isSpeaking = false;
-          setState('');
-          setTimeout(() => {
-            statusEl.textContent = 'listening';
-            statusEl.classList.add('on');
-            if (!micActive) startListening();
-          }, 600);
-          resolve();
-        };
-        currentAudio.onerror = () => {
-          URL.revokeObjectURL(url);
-          isSpeaking = false;
-          resolve();
-        };
+        currentAudio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        currentAudio.onerror = () => { URL.revokeObjectURL(url); reject(new Error('audio playback error')); };
         await currentAudio.play();
-      } catch(e) {
-        console.error('speak error', e);
-        isSpeaking = false;
-        resolve();
-      }
+      } catch(e) { reject(e); }
     });
+  }
+
+  function randomPause(minMs, maxMs) { return minMs + Math.random() * (maxMs - minMs); }
+
+  async function speak(text) {
+    isSpeaking = true;
+    setState('speaking');
+    accumulated = '';
+    transcriptEl.className = 'transcript-text';
+
+    // Guided-practice pacing — see GUIDED PACING in the system prompt.
+    // Claude marks lines that need real silence between them with
+    // [[PAUSE]]; everything else is spoken as one continuous clip exactly
+    // as before. There's no way to control silence duration WITHIN a
+    // single ElevenLabs request — the reliable way to get a real,
+    // deliberate pace between lines is one request per line, with the gap
+    // between them controlled here, on playback, ourselves.
+    const segments = text.includes('[[PAUSE]]')
+      ? text.split('[[PAUSE]]').map(s => s.trim()).filter(Boolean)
+      : [text];
+
+    try {
+      for (let i = 0; i < segments.length; i++) {
+        await playOneClip(segments[i]);
+        if (i < segments.length - 1) {
+          await new Promise(r => setTimeout(r, randomPause(3000, 5000)));
+        }
+      }
+    } catch(e) {
+      console.error('speak error', e);
+    }
+
+    isSpeaking = false;
+    setState('');
+    setTimeout(() => {
+      statusEl.textContent = 'listening';
+      statusEl.classList.add('on');
+      if (!micActive) startListening();
+    }, 600);
   }
 
   // ── Send to bot ──
@@ -361,7 +373,9 @@
       const data  = await r.json();
       const reply = data.reply || '';
       if (reply) {
-        transcriptEl.textContent = reply;
+        // [[PAUSE]] is a pacing marker for speak() — never meant to be
+        // seen, only used to control silence between spoken lines.
+        transcriptEl.textContent = reply.split('[[PAUSE]]').join(' ').replace(/\s+/g, ' ').trim();
         transcriptEl.className = 'transcript-text';
         busy = false;
         await speak(reply);
