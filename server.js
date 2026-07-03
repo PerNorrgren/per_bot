@@ -3046,7 +3046,16 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
 
     const userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count. Respond with only the JSON array, nothing else.`;
 
-    const raw = await callClaude(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 4000);
+    // callClaudeRaw, not callClaude — callClaude runs stripMarkdown() on the
+    // response, which is meant for prose replies but is destructive here:
+    // stanzas are five lines joined by literal \n inside a JSON string, and
+    // stripMarkdown's regexes (bullet-dash stripping, #-stripping) can
+    // corrupt that structure before JSON.parse ever sees it. This was the
+    // actual cause of "Could not generate messages" failing in practice —
+    // same class of bug already fixed for legal-doc translation earlier;
+    // this endpoint just never got the same fix when the prompt changed to
+    // produce stanzas instead of single-line prose.
+    const raw = await callClaudeRaw(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 4000);
 
     let generated;
     try {
@@ -3069,7 +3078,12 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
     res.json({ ok: true, count: ids.length });
   } catch(e) {
     console.error('motd generate error:', e);
-    res.status(500).json({ error: 'Could not generate messages. Please try again.' });
+    // Admin-only endpoint, so it's safe (and much more useful than a dead
+    // end) to surface the actual error rather than a generic message —
+    // "Could not generate messages. Please try again." with no detail
+    // gives no way to tell a parse failure from an API/auth failure from a
+    // network issue without going and reading server logs separately.
+    res.status(500).json({ error: 'Could not generate messages: ' + (e.message || 'unknown error') });
   }
 });
 
