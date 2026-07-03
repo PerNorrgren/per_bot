@@ -829,6 +829,7 @@
   // only ever write plain text.
   let quillInstance = null;
   let newsletterFormat = 'plain';
+  let lastClickedImage = null;
 
   // ── Custom Quill extensions (Per Bot 6) — columns, buttons ──
   // Registered once, before any editor instance exists.
@@ -935,6 +936,14 @@
     label('.ql-columns-1',  '1 col', 'Insert a single wide column');
     label('.ql-columns-2',  '2 col', 'Insert two side-by-side columns');
     label('.ql-columns-3',  '3 col', 'Insert three side-by-side columns');
+
+    // Tracks the last image clicked anywhere in the editor, including
+    // inside a columns-block cell — see linkSelectedImage above for why
+    // this has to work independently of Quill's own selection tracking.
+    quillInstance.root.addEventListener('click', (e) => {
+      if (e.target && e.target.tagName === 'IMG') lastClickedImage = e.target;
+    });
+
     return quillInstance;
   }
 
@@ -952,7 +961,55 @@
   // existing 'link' format to that selection, rather than manipulating the
   // DOM directly — the officially-supported way to do this, so it plays
   // correctly with Quill's own Delta model instead of fighting it.
+  // ── Shared insertion targeting ── A columns block is a single atomic
+  // unit as far as Quill's own selection/Delta model is concerned —
+  // clicking inside one of its cells moves the browser's real cursor
+  // there, but quill.getSelection() has no visibility into it at all (it
+  // just reports the position of the whole columns block). Every custom
+  // insertion (image, video link, button, image link) needs to check the
+  // REAL browser selection first and look for a column-cell ancestor,
+  // which is what makes "click into a cell, then use a toolbar button"
+  // land in the right place instead of always falling through to Quill's
+  // outer flow, after the image-in-a-column bug report.
+  function getInsertionTarget() {
+    const browserSel = window.getSelection();
+    if (browserSel && browserSel.rangeCount > 0) {
+      const node = browserSel.getRangeAt(0).startContainer;
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      const cellEl = el ? el.closest('[data-column-cell]') : null;
+      if (cellEl) return { inCell: true, range: browserSel.getRangeAt(0).cloneRange(), browserSel };
+    }
+    const quill = getQuill();
+    return { inCell: false, quillRange: quill.getSelection(true) || { index: quill.getLength() } };
+  }
+
+  function insertNodeAtCellRange(target, node) {
+    target.range.deleteContents();
+    target.range.insertNode(node);
+    target.range.setStartAfter(node);
+    target.range.collapse(true);
+    target.browserSel.removeAllRanges();
+    target.browserSel.addRange(target.range);
+  }
+
+  // Tracks the last image actually clicked in the editor, cell or not —
+  // needed because linking an image inside a column cell can't go through
+  // Quill's getLeaf()/formatText (that only understands Quill-tracked
+  // content), so this is the one thing that has to work the same way
+  // regardless of where the image lives. (Declared above, alongside
+  // quillInstance, so it exists before getQuill's click listener closes
+  // over it.)
+
   function linkSelectedImage() {
+    if (lastClickedImage && document.contains(lastClickedImage)) {
+      const url = prompt('Link this image to:');
+      if (!url || !url.trim()) return;
+      const a = document.createElement('a');
+      a.href = url.trim();
+      lastClickedImage.parentNode.insertBefore(a, lastClickedImage);
+      a.appendChild(lastClickedImage);
+      return;
+    }
     const quill = getQuill();
     const range = quill.getSelection();
     if (!range || range.length === 0) { alert('Click directly on an image to select it first, then click this button.'); return; }
@@ -968,12 +1025,21 @@
     if (!text || !text.trim()) return;
     const url = prompt('Button link (https://...):');
     if (!url || !url.trim()) return;
-    const quill = getQuill();
-    const range = quill.getSelection(true);
     const label = text.trim();
-    quill.insertText(range.index, label, 'buttonLink', url.trim());
-    quill.insertText(range.index + label.length, '\n');
-    quill.setSelection(range.index + label.length + 1);
+    const target = getInsertionTarget();
+
+    if (target.inCell) {
+      const a = document.createElement('a');
+      a.href = url.trim();
+      a.className = 'nl-button';
+      a.textContent = label;
+      insertNodeAtCellRange(target, a);
+      return;
+    }
+    const quill = getQuill();
+    quill.insertText(target.quillRange.index, label, 'buttonLink', url.trim());
+    quill.insertText(target.quillRange.index + label.length, '\n');
+    quill.setSelection(target.quillRange.index + label.length + 1);
   }
 
   function setNewsletterFormat(format) {
@@ -992,37 +1058,57 @@
   function insertVideoLink() {
     const url = prompt('Paste the video link (YouTube, Vimeo, or any URL):');
     if (!url || !url.trim()) return;
+    const target = getInsertionTarget();
+    const label = '▶ Watch the video';
+
+    if (target.inCell) {
+      const a = document.createElement('a');
+      a.href = url.trim();
+      a.textContent = label;
+      insertNodeAtCellRange(target, a);
+      return;
+    }
     const quill = getQuill();
-    const range = quill.getSelection(true);
-    quill.insertText(range.index, '▶ Watch the video', 'link', url.trim());
-    quill.insertText(range.index + 18, '\n');
-    quill.setSelection(range.index + 19);
+    quill.insertText(target.quillRange.index, label, 'link', url.trim());
+    quill.insertText(target.quillRange.index + label.length, '\n');
+    quill.setSelection(target.quillRange.index + label.length + 1);
   }
 
   async function uploadImageIntoEditor() {
     const input = document.getElementById('newsletterImageInput');
     input.value = '';
+    const target = getInsertionTarget();
+    if (!target.inCell) getQuill().insertText(target.quillRange.index, 'Uploading image…');
+
     input.onchange = async () => {
       const file = input.files[0];
-      if (!file) return;
-      const quill = getQuill();
-      const range = quill.getSelection(true) || { index: quill.getLength() };
+      if (!file) { if (!target.inCell) getQuill().deleteText(target.quillRange.index, 'Uploading image…'.length); return; }
 
-      quill.insertText(range.index, 'Uploading image…');
       const formData = new FormData();
       formData.append('file', file);
       try {
         const res  = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
         const data = await res.json();
-        quill.deleteText(range.index, 'Uploading image…'.length);
-        if (data.url) {
-          quill.insertEmbed(range.index, 'image', data.url);
-          quill.setSelection(range.index + 1);
-        } else {
+        const quill = getQuill();
+
+        if (!data.url) {
+          if (!target.inCell) quill.deleteText(target.quillRange.index, 'Uploading image…'.length);
           alert(data.error || 'Could not upload image.');
+          return;
+        }
+
+        if (target.inCell) {
+          const img = document.createElement('img');
+          img.src = data.url;
+          img.style.maxWidth = '100%';
+          insertNodeAtCellRange(target, img);
+        } else {
+          quill.deleteText(target.quillRange.index, 'Uploading image…'.length);
+          quill.insertEmbed(target.quillRange.index, 'image', data.url);
+          quill.setSelection(target.quillRange.index + 1);
         }
       } catch(e) {
-        quill.deleteText(range.index, 'Uploading image…'.length);
+        if (!target.inCell) getQuill().deleteText(target.quillRange.index, 'Uploading image…'.length);
         alert('Network error — could not upload image.');
       }
     };
