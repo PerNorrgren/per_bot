@@ -526,8 +526,8 @@
 
   // ── Poems — the daily message archive, read aloud on demand ──
   let poemsData = [];
-  let poemAudio = null;
   let poemPlayingId = null;
+  let poemCancelled = false;
 
   function escHtmlPoem(s) {
     return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -572,10 +572,10 @@
     if (!poem) return;
     const btn = document.getElementById(`poemBtn-${id}`);
 
-    // Tapping the currently-playing poem again pauses it
-    if (poemPlayingId === id && poemAudio) {
-      poemAudio.pause();
-      poemAudio = null;
+    // Tapping the currently-playing poem again stops it
+    if (poemPlayingId === id) {
+      poemCancelled = true;
+      document.getElementById('ttsPlayer').pause();
       poemPlayingId = null;
       btn.textContent = '▶';
       btn.classList.remove('playing');
@@ -583,53 +583,79 @@
     }
 
     // Stop whatever else was playing first — one poem at a time
-    if (poemAudio) {
-      poemAudio.pause();
-      poemAudio = null;
+    if (poemPlayingId) {
+      poemCancelled = true;
+      document.getElementById('ttsPlayer').pause();
       const prevBtn = document.getElementById(`poemBtn-${poemPlayingId}`);
       if (prevBtn) { prevBtn.textContent = '▶'; prevBtn.classList.remove('playing'); }
       poemPlayingId = null;
     }
 
+    // This tap is a real, direct gesture — worth unlocking here too, since
+    // someone could open Poems first without ever having visited Talk.
+    unlockAudioPlayback();
+    poemCancelled = false;
+    poemPlayingId = id;
     btn.textContent = '…';
     btn.classList.add('loading');
 
+    // Poems are pre-written, already-structured five-line stanzas — their
+    // own line breaks ARE the pacing, unlike live chat replies which need
+    // Claude to mark pacing intent with [[PAUSE]]/[[BREATH]]. The gap here
+    // is shorter than a guided practice's 3-5s — a poem needs room for
+    // words to land, not time to physically do something, so ~1.5-2.5s
+    // reads as an unhurried reading pace rather than dead air.
+    const lines = poem.body.split('\n').map(l => l.trim()).filter(Boolean);
+
     try {
-      const r = await fetch('/api/speak', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ text: poem.body })
-      });
-      if (!r.ok) throw new Error('speak failed');
-
-      const buffer = await r.arrayBuffer();
-      const blob   = new Blob([buffer], { type: 'audio/mpeg' });
-      const url    = URL.createObjectURL(blob);
-
-      poemAudio = new Audio(url);
-      poemPlayingId = id;
-      btn.classList.remove('loading');
-      btn.classList.add('playing');
-      btn.textContent = '⏸';
-
-      poemAudio.onended = () => {
-        URL.revokeObjectURL(url);
-        poemAudio = null;
-        poemPlayingId = null;
-        btn.textContent = '▶';
-        btn.classList.remove('playing');
-      };
-      poemAudio.onerror = () => {
-        URL.revokeObjectURL(url);
-        poemAudio = null;
-        poemPlayingId = null;
-        btn.textContent = '▶';
-        btn.classList.remove('playing', 'loading');
-      };
-      poemAudio.play();
+      for (let i = 0; i < lines.length; i++) {
+        if (poemCancelled) return;
+        await playOnePoemLine(lines[i], btn);
+        if (poemCancelled) return;
+        if (i < lines.length - 1) {
+          await new Promise(r => setTimeout(r, randomPause(1500, 2500)));
+        }
+      }
     } catch(e) {
-      btn.textContent = '▶';
-      btn.classList.remove('loading', 'playing');
+      console.error('poem playback error', e);
     }
+
+    if (!poemCancelled) {
+      poemPlayingId = null;
+      btn.textContent = '▶';
+      btn.classList.remove('playing');
+    }
+  }
+
+  // One line of a poem, through the same shared/unlocked element the Talk
+  // interface uses — reusing it here too rather than a fresh Audio(url)
+  // each time, for the same iOS-reliability reason described up in
+  // unlockAudioPlayback().
+  function playOnePoemLine(text, btn) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const r = await fetch('/api/speak', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        if (!r.ok) throw new Error('speak failed');
+
+        const buffer = await r.arrayBuffer();
+        const blob   = new Blob([buffer], { type: 'audio/mpeg' });
+        const url    = URL.createObjectURL(blob);
+
+        const player = document.getElementById('ttsPlayer');
+        player.pause();
+        player.src = url;
+        btn.classList.remove('loading');
+        btn.classList.add('playing');
+        btn.textContent = '⏸';
+
+        player.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        player.onerror = () => { URL.revokeObjectURL(url); reject(new Error('audio playback error')); };
+        await player.play();
+      } catch(e) { reject(e); }
+    });
   }
 
   // ── Auth ──
@@ -740,22 +766,36 @@
     accumulated = '';
     transcriptEl.className = 'transcript-text';
 
-    // Guided-practice pacing — see GUIDED PACING in the system prompt.
-    // Claude marks lines that need real silence between them with
-    // [[PAUSE]]; everything else is spoken as one continuous clip exactly
-    // as before. There's no way to control silence duration WITHIN a
-    // single ElevenLabs request — the reliable way to get a real,
-    // deliberate pace between lines is one request per line, with the gap
-    // between them controlled here, on playback, ourselves.
-    const segments = text.includes('[[PAUSE]]')
-      ? text.split('[[PAUSE]]').map(s => s.trim()).filter(Boolean)
-      : [text];
+    // Guided-practice / reflective-passage pacing — see GUIDED PACING in
+    // the system prompt. Claude marks lines with one of two markers
+    // depending on intent: [[PAUSE]] for an actual practice, where the
+    // person needs real time to physically do something (long gap);
+    // [[BREATH]] for something poetic or reflective, where the words just
+    // need room to land (shorter gap). Plain conversation has neither and
+    // plays as one continuous clip, same as always. There's no way to
+    // control silence duration WITHIN a single ElevenLabs request — the
+    // reliable way to get a real, deliberate pace between lines is one
+    // request per line, with the gap between them controlled here, on
+    // playback, ourselves.
+    let segments = [text];
+    let pauseRange = null;
+    if (text.includes('[[PAUSE]]')) {
+      segments = text.split('[[PAUSE]]').map(s => s.trim()).filter(Boolean);
+      pauseRange = [3000, 5000];
+    } else if (text.includes('[[BREATH]]')) {
+      segments = text.split('[[BREATH]]').map(s => s.trim()).filter(Boolean);
+      pauseRange = [1500, 2500];
+    }
 
     try {
       for (let i = 0; i < segments.length; i++) {
-        await playOneClip(segments[i]);
-        if (i < segments.length - 1) {
-          await new Promise(r => setTimeout(r, randomPause(3000, 5000)));
+        // Defensive — Claude is instructed never to mix marker types, but
+        // if it ever did, this stops a stray literal marker from being
+        // spoken aloud as part of whichever segment it landed in.
+        const clean = segments[i].split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').trim();
+        await playOneClip(clean);
+        if (pauseRange && i < segments.length - 1) {
+          await new Promise(r => setTimeout(r, randomPause(pauseRange[0], pauseRange[1])));
         }
       }
     } catch(e) {
@@ -791,10 +831,9 @@
       const reply = data.reply || '';
 
       if (reply) {
-        // [[PAUSE]] is a pacing marker for speak() — see GUIDED PACING in
-        // the system prompt — never meant to be seen, only used to control
-        // silence between spoken lines during a guided practice.
-        transcriptEl.textContent = reply.split('[[PAUSE]]').join(' ').replace(/\s+/g, ' ').trim();
+        // [[PAUSE]] and [[BREATH]] are pacing markers for speak() — see
+        // GUIDED PACING in the system prompt — never meant to be seen.
+        transcriptEl.textContent = reply.split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').replace(/\s+/g, ' ').trim();
         transcriptEl.className = 'transcript-text';
         busy = false;
         await speak(reply);
