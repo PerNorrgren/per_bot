@@ -833,27 +833,36 @@
   }
 
   // ── Begin — user gesture required (identical to Mare Bot) ──
-  async function begin() {
-    document.getElementById('start').style.display = 'none';
-
-    // Mobile browsers — iOS Safari especially — block programmatic audio
-    // playback unless it happens directly inside a user gesture (a tap).
-    // Every real reply here comes back after a network round-trip
-    // (speech-to-text → chat → text-to-speech), which is well outside that
-    // gesture window by the time speak() actually calls .play() — so the
-    // conversation itself works fine (mic, transcript, replies) while
-    // audio stays silent, with no visible error, since that failure is
-    // caught and swallowed further down. Playing a near-instant silent
-    // clip HERE, synchronously, inside this actual tap "unlocks" audio for
-    // the rest of the page session, so the later programmatic play() calls
-    // in speak() are allowed through instead of silently blocked.
+  // Mobile browsers — iOS Safari especially — block programmatic audio
+  // playback unless it happens directly inside a user gesture (a tap).
+  // Every real reply here comes back after a network round-trip
+  // (speech-to-text → chat → text-to-speech), well outside that gesture
+  // window by the time speak() actually calls .play() — so the
+  // conversation itself works fine (mic, transcript, replies) while audio
+  // stays silent, with no visible error, since that failure is caught and
+  // swallowed further down in speak(). Playing a near-instant silent clip
+  // HERE, synchronously invoked inside an actual tap, "unlocks" audio for
+  // the rest of the page session, so speak()'s later programmatic play()
+  // calls are allowed through instead of silently blocked.
+  //
+  // Deliberately NOT awaited by its callers — the only thing that matters
+  // for the unlock to take effect is that .play() gets INVOKED
+  // synchronously inside the tap's call stack, not that we wait for it to
+  // resolve. Awaiting it here risked stalling the rest of the tap's own
+  // work (starting the mic, sending the opening message) if play() was
+  // ever slow to settle on a given device — which is what caused the
+  // welcome message to not appear at all after the first version of this.
+  function unlockAudioPlayback() {
     try {
       const unlock = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
       unlock.volume = 0;
-      await unlock.play().catch(() => {});
-      unlock.pause();
+      unlock.play().then(() => unlock.pause()).catch(() => {});
     } catch(e) { /* best effort — if this fails, speak() still tries normally */ }
+  }
 
+  async function begin() {
+    document.getElementById('start').style.display = 'none';
+    unlockAudioPlayback();
     setState('processing');
     await startListening();
     await sendToBot('[START]');
@@ -870,6 +879,10 @@
       micActive = false;
       setState('');
     } else {
+      // Tapping the mic directly (rather than the initial Begin screen) is
+      // just as real a user gesture — unlock here too, in case this is the
+      // very first tap of the session on this device.
+      unlockAudioPlayback();
       startListening();
     }
   });
