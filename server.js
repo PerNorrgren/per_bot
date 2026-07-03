@@ -1058,7 +1058,7 @@ app.get('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, 
   const user = db.getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
   if (req.user.role !== 'admin' && user.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-  res.json({ ...user, sessions: db.getSessionsForClient(req.params.id), practices: db.getPracticesForClient(req.params.id) });
+  res.json({ ...user, sessions: db.getSessionsForClient(req.params.id), practices: db.getPracticesForClient(req.params.id), journalEntries: db.getSharedJournalEntriesForFacilitator(req.params.id) });
 });
 app.patch('/api/clients/:id/arc', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   db.updateArc(req.params.id, req.body.arc); res.json({ ok: true });
@@ -1529,6 +1529,8 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
           if (client?.programme || sessions.length > 0) {
             sp += prompts.CLIENT_ADAPTIVE_CONTEXT(client?.programme, client?.track, sessions.length);
           }
+          const journalEntries = db.getJournalEntriesForBot(cId, 5);
+          sp += prompts.CLIENT_JOURNAL_CONTEXT(journalEntries);
         }
         sp += languageInstruction(client?.language);
       }
@@ -2870,6 +2872,58 @@ app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
     if (req.body.name && req.body.name.trim()) {
       db.updateUserName(req.user.id, req.body.name.trim());
     }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Client journal (Per Bot 6) ── Written entries and simple .txt uploads
+// — PDF/DOCX text extraction deliberately left out of this first version;
+// it needs extra parsing dependencies for a use case (writing about how
+// you feel) that's naturally text-based anyway. Worth adding later only
+// if there's real demand specifically for uploading existing documents in
+// those formats.
+app.get('/api/journal', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    res.json({ entries: db.getJournalEntriesForClient(req.user.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/journal', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const { title, content, shareWithBot, shareWithFacilitator } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ error: 'Write something first.' });
+    const entryTitle = (title && title.trim()) || `Entry from ${new Date().toLocaleDateString()}`;
+    const id = uuidv4();
+    db.addJournalEntry(id, req.user.id, entryTitle, content.trim(), 'written', null, !!shareWithBot, !!shareWithFacilitator);
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/journal/upload', auth.requireAuthApi(['client']), upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!req.file.originalname.toLowerCase().endsWith('.txt')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only plain text (.txt) files are supported right now.' });
+    }
+    const content = fs.readFileSync(req.file.path, 'utf8');
+    fs.unlink(req.file.path, () => {});
+    if (!content.trim()) return res.status(400).json({ error: 'That file appears to be empty.' });
+
+    const { title, shareWithBot, shareWithFacilitator } = req.body;
+    const entryTitle = (title && title.trim()) || req.file.originalname.replace(/\.txt$/i, '');
+    const id = uuidv4();
+    db.addJournalEntry(id, req.user.id, entryTitle, content.trim(), 'upload', req.file.originalname, shareWithBot === 'true', shareWithFacilitator === 'true');
+    res.json({ id });
+  } catch(e) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/journal/:id', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    db.deleteJournalEntry(req.params.id, req.user.id); // scoped to req.user.id — can't delete someone else's entry
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

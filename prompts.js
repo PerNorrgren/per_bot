@@ -76,6 +76,25 @@ Use this the way a clinician uses handover notes — not to recite back, but to 
 
 At the very start of this session, briefly orient them to where they are in their arc — one sentence, warmly, before you receive them. Then receive.`;
 
+// Journal entries the client has explicitly chosen to share with the
+// companion — separate from the arc above, which is generated FROM past
+// conversations. This is the client's own words, written outside a
+// session, on their own terms. Capped by the caller (see
+// getJournalEntriesForBot in db.js) so this can't grow the prompt
+// unboundedly as entries accumulate over time.
+const CLIENT_JOURNAL_CONTEXT = (entries) => {
+  if (!entries || !entries.length) return '';
+  const formatted = entries.map(e => `— "${e.title}" (${e.created_at.slice(0, 10)}):\n${e.content}`).join('\n\n');
+  return `
+
+The client has also shared some of their own written journal entries with you directly — not session notes, their own words, on their own terms:
+
+${formatted}
+
+Hold this the same way as the arc — know it, let it inform you, but never quote it back at them or announce that you've read it. If something in here is quietly relevant to what they bring today, let it show in how you receive them, not in what you cite.`;
+};
+
+
 const FACILITATOR_SYSTEM_PROMPT = (fogLevel) => {
   const fogDescriptions = {
     6:  'Plain language. Short words. Short sentences. Write as you would speak to a friend. No jargon.',
@@ -269,6 +288,7 @@ module.exports = {
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_ARC_PREFIX,
+  CLIENT_JOURNAL_CONTEXT,
   FACILITATOR_SYSTEM_PROMPT,
   GENERATE_SESSION_SUMMARY,
   GENERATE_CLIENT_SUMMARY,

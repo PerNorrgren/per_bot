@@ -171,6 +171,7 @@
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="show-archived-wrap"><input type="checkbox" id="showArchivedClients" onchange="loadClients()"/> Show archived</label>
             <button class="btn sm disabled" id="clientEditBtn" onclick="editSelectedClient()">Edit</button>
+            <button class="btn sm disabled" id="clientJournalBtn" onclick="viewSelectedClientJournal()">Journal</button>
             <button class="btn sm warn disabled" id="clientArchBtn" onclick="archiveSelectedClient()">Archive</button>
             <button class="btn sm danger disabled" id="clientDelBtn" onclick="deleteSelectedClient()">Delete</button>
             <button class="btn primary" onclick="openNewClient()">+ Add</button>
@@ -349,6 +350,19 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('editClientModal')">Cancel</button>
         <button class="modal-ok" onclick="saveEditClient()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Journal Viewer Modal — read-only, shows only what the client has
+       explicitly chosen to share with their facilitator -->
+  <div class="modal-overlay" id="journalViewerModal">
+    <div class="modal" style="max-width:600px">
+      <h3 id="journalViewerName">Shared journal</h3>
+      <div class="modal-note" style="margin-bottom:10px">Only entries the client has chosen to share with you appear here — their private entries and anything shared only with the companion bot are never visible to you.</div>
+      <div id="journalViewerBody" style="max-height:50vh;overflow-y:auto"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('journalViewerModal')">Close</button>
       </div>
     </div>
   </div>
@@ -988,7 +1002,7 @@
   // ── CLIENTS ──
   // ══════════════════════════════════════════
   let _clientData = [];
-  const clientSel = makeSelection(['clientEditBtn','clientArchBtn','clientDelBtn'], 'clientEditBtn');
+  const clientSel = makeSelection(['clientEditBtn','clientJournalBtn','clientArchBtn','clientDelBtn'], 'clientEditBtn');
 
   async function loadClients() {
     clientSel.clear();
@@ -1034,6 +1048,26 @@
   function editSelectedClient() {
     const id=[...clientSel.sel][0]; if (!id) return;
     openClientEdit(id);
+  }
+  async function viewSelectedClientJournal() {
+    const id=[...clientSel.sel][0]; if (!id) return;
+    const res = await fetch(`/api/clients/${id}`);
+    const c = await res.json();
+    const entries = c.journalEntries || [];
+    const body = document.getElementById('journalViewerBody');
+    document.getElementById('journalViewerName').textContent = `${c.name}'s shared journal`;
+    if (!entries.length) {
+      body.innerHTML = '<div class="modal-note">Nothing shared yet — this only shows entries the client has explicitly chosen to share with you.</div>';
+    } else {
+      body.innerHTML = entries.map(e => `
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:14px 16px;margin-bottom:12px">
+          <div style="font-weight:600">${escHtml(e.title)}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:2px">${(e.created_at||'').slice(0,10)}</div>
+          <div style="margin-top:8px;font-size:14px;white-space:pre-wrap;line-height:1.6">${escHtml(e.content)}</div>
+        </div>
+      `).join('');
+    }
+    openModal('journalViewerModal');
   }
   async function openClientEdit(id) {
     const res=await fetch(`/api/clients/${id}`), c=await res.json();

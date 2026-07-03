@@ -330,6 +330,24 @@ async function getDb() {
     FOREIGN KEY (client_id) REFERENCES users(id)
   )`);
 
+  // ── Client journal entries (Per Bot 6) ── Client-authored, distinct
+  // from the sessions table above which holds facilitator/bot-generated
+  // summaries. Each entry has TWO independent sharing flags — a client
+  // might want the companion bot to know something without a facilitator
+  // seeing it, or vice versa, so these are never coupled together.
+  db.run(`CREATE TABLE IF NOT EXISTS client_journal_entries (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_type TEXT DEFAULT 'written',
+    original_filename TEXT,
+    share_with_bot INTEGER DEFAULT 0,
+    share_with_facilitator INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (client_id) REFERENCES users(id)
+  )`);
+
   // ── Client practices ──
   db.run(`CREATE TABLE IF NOT EXISTS practices (
     id TEXT PRIMARY KEY,
@@ -1650,6 +1668,36 @@ function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
 }
 
+// ── Client journal entries ──
+function addJournalEntry(id, clientId, title, content, sourceType, originalFilename, shareWithBot, shareWithFacilitator) {
+  getDbSync().run(
+    `INSERT INTO client_journal_entries (id,client_id,title,content,source_type,original_filename,share_with_bot,share_with_facilitator)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [id, clientId, title, content, sourceType || 'written', originalFilename || null, shareWithBot ? 1 : 0, shareWithFacilitator ? 1 : 0]
+  );
+  save();
+}
+// All of a client's own entries — shown only to the client themselves, so
+// no filtering by sharing flags here; those flags control what OTHERS see.
+function getJournalEntriesForClient(clientId) {
+  return queryAll('SELECT * FROM client_journal_entries WHERE client_id=? ORDER BY created_at DESC', [clientId]);
+}
+// What a facilitator is allowed to see — only entries explicitly shared
+// with them, never the client's private-only entries.
+function getSharedJournalEntriesForFacilitator(clientId) {
+  return queryAll('SELECT * FROM client_journal_entries WHERE client_id=? AND share_with_facilitator=1 ORDER BY created_at DESC', [clientId]);
+}
+// What the automated bot is allowed to draw on — most recent first, capped
+// by the caller (see CLIENT_JOURNAL_CONTEXT in prompts.js) so a long
+// journal history doesn't unboundedly grow the system prompt.
+function getJournalEntriesForBot(clientId, limit) {
+  return queryAll('SELECT * FROM client_journal_entries WHERE client_id=? AND share_with_bot=1 ORDER BY created_at DESC LIMIT ?', [clientId, limit || 5]);
+}
+function deleteJournalEntry(id, clientId) {
+  getDbSync().run('DELETE FROM client_journal_entries WHERE id=? AND client_id=?', [id, clientId]);
+  save();
+}
+
 // ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
 function getSessionById(id) {
   return queryOne(
@@ -2443,6 +2491,7 @@ module.exports = {
   updateUserPreferences, userFlagsFromRecord,
   // Sessions
   addSession, getSessionsForClient, getClientSessionsForClient,
+  addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
   addPractice, getPracticesForClient, toggleFavourite, incrementUseCount, deletePractice,

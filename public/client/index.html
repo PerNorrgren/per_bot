@@ -331,6 +331,7 @@
       <button class="tab"        id="tabHistory"   onclick="switchTab('history')">History</button>
       <button class="tab"        id="tabContent"   onclick="switchTab('content')">Content</button>
       <button class="tab"        id="tabPoems"     onclick="switchTab('poems')">Poems</button>
+      <button class="tab"        id="tabJournal"   onclick="switchTab('journal')">Journal</button>
     </div>
 
     <!-- Talk -->
@@ -379,6 +380,29 @@
     <div class="poems-view" id="poemsView">
       <div class="poems-scroll" id="poemsScroll">
         <div class="no-poems">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Journal — client's own written entries, each with independent
+         sharing controls (see openJournalForm below) -->
+    <div class="poems-view" id="journalView">
+      <div class="poems-scroll" id="journalScroll" style="display:flex; flex-direction:column; gap:16px;">
+        <button class="btn-primary" style="align-self:flex-start" onclick="openJournalForm()">+ Write an entry</button>
+        <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
+          <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
+          <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
+          <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label></div>
+          <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let the companion use this</label>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button class="btn sm" onclick="closeJournalForm()">Cancel</button>
+            <button class="btn-primary" id="journalSaveBtn" onclick="saveJournalEntry()">Save entry</button>
+          </div>
+          <div class="msg" id="journalFormMsg"></div>
+        </div>
+        <div id="journalList"><div class="no-poems">Loading…</div></div>
       </div>
     </div>
 
@@ -523,7 +547,7 @@
 
   function switchTab(tab) {
     if (tab !== 'talk') sendFinalizeBeacon();
-    ['talk','practices','courses','sessions','history','content','poems'].forEach(t => {
+    ['talk','practices','courses','sessions','history','content','poems','journal'].forEach(t => {
       document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
     document.getElementById('talkView').style.display      = tab === 'talk' ? '' : 'none';
@@ -533,12 +557,14 @@
     document.getElementById('historyView').classList.toggle('visible',   tab === 'history');
     document.getElementById('contentView').classList.toggle('visible',   tab === 'content');
     document.getElementById('poemsView').classList.toggle('visible',     tab === 'poems');
+    document.getElementById('journalView').classList.toggle('visible',   tab === 'journal');
     if (tab === 'practices') loadPractices();
     if (tab === 'courses')   { closeCourseDetail(); loadCourses(); }
     if (tab === 'sessions')  loadSessions();
     if (tab === 'history')   loadHistory();
     if (tab === 'content')   loadContent();
     if (tab === 'poems')     loadPoems();
+    if (tab === 'journal')   loadJournal();
   }
 
   // ── Poems — the daily message archive, read aloud on demand ──
@@ -673,6 +699,107 @@
         await player.play();
       } catch(e) { reject(e); }
     });
+  }
+
+  // ── Journal — client's own written entries ──
+  let journalUploadedFile = null; // holds a selected .txt file until Save is clicked
+
+  function escHtmlJournal(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function loadJournal() {
+    try {
+      const res  = await fetch('/api/journal');
+      const data = await res.json();
+      renderJournalList(data.entries || []);
+    } catch(e) {
+      document.getElementById('journalList').innerHTML = '<div class="no-poems">Could not load your journal right now.</div>';
+    }
+  }
+
+  function renderJournalList(entries) {
+    const el = document.getElementById('journalList');
+    if (!entries.length) { el.innerHTML = '<div class="no-poems">No entries yet — write your first whenever you\'re ready.</div>'; return; }
+    el.innerHTML = entries.map(e => {
+      const badges = [];
+      if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with companion</span>');
+      if (e.share_with_facilitator) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with facilitator</span>');
+      return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <div>
+            <div style="font-weight:600;color:rgba(255,255,255,0.85)">${escHtmlJournal(e.title)}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:2px">${(e.created_at||'').slice(0,10)}</div>
+          </div>
+          <button class="btn sm" onclick="deleteJournalEntryUI('${e.id}')">Delete</button>
+        </div>
+        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);white-space:pre-wrap;line-height:1.6">${escHtmlJournal(e.content)}</div>
+        ${badges.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function openJournalForm() {
+    document.getElementById('journalForm').style.display = 'flex';
+    document.getElementById('journalTitle').value = '';
+    document.getElementById('journalContent').value = '';
+    document.getElementById('journalShareBot').checked = false;
+    document.getElementById('journalShareFacilitator').checked = false;
+    document.getElementById('journalFormMsg').textContent = '';
+    journalUploadedFile = null;
+  }
+  function closeJournalForm() {
+    document.getElementById('journalForm').style.display = 'none';
+    journalUploadedFile = null;
+  }
+
+  function handleJournalFileSelect() {
+    const input = document.getElementById('journalFileInput');
+    const file = input.files[0];
+    if (!file) return;
+    journalUploadedFile = file;
+    document.getElementById('journalFormMsg').textContent = `File selected: ${file.name} — click Save entry to upload it.`;
+  }
+
+  async function saveJournalEntry() {
+    const btn = document.getElementById('journalSaveBtn');
+    const msg = document.getElementById('journalFormMsg');
+    const title = document.getElementById('journalTitle').value.trim();
+    const shareWithBot = document.getElementById('journalShareBot').checked;
+    const shareWithFacilitator = document.getElementById('journalShareFacilitator').checked;
+
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      let res;
+      if (journalUploadedFile) {
+        const formData = new FormData();
+        formData.append('file', journalUploadedFile);
+        formData.append('title', title);
+        formData.append('shareWithBot', shareWithBot);
+        formData.append('shareWithFacilitator', shareWithFacilitator);
+        res = await fetch('/api/journal/upload', { method: 'POST', body: formData });
+      } else {
+        const content = document.getElementById('journalContent').value.trim();
+        if (!content) { msg.textContent = 'Write something, or choose a file to upload.'; btn.disabled = false; btn.textContent = 'Save entry'; return; }
+        res = await fetch('/api/journal', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content, shareWithBot, shareWithFacilitator })
+        });
+      }
+      const data = await res.json();
+      if (data.id) { closeJournalForm(); loadJournal(); }
+      else { msg.textContent = data.error || 'Could not save.'; }
+    } catch(e) {
+      msg.textContent = 'Network error — could not save.';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save entry';
+    }
+  }
+
+  async function deleteJournalEntryUI(id) {
+    if (!confirm('Delete this journal entry? This can\'t be undone.')) return;
+    await fetch(`/api/journal/${id}`, { method: 'DELETE' });
+    loadJournal();
   }
 
   // ── Auth ──
