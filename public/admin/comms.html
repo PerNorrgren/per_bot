@@ -730,7 +730,7 @@
       const data = await res.json();
       if (data.ok) {
         loadMotd();
-        alert(`Added ${data.count} new draft${data.count===1?'':'s'} to the queue. Review them under Drafts.`);
+        alert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'} to the queue. Review them under Drafts.`);
       } else {
         alert(data.error || 'Could not generate messages. Please try again.');
       }

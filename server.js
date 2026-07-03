@@ -3138,44 +3138,77 @@ app.post('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
 // every one as a fresh draft — same as writing them by hand. Nothing is
 // approved or scheduled automatically; they show up in the Drafts list for
 // the normal edit/approve workflow.
+// Generates one chunk and parses it — pulled out of the main handler so it
+// can be both chunked (several smaller calls instead of one large one) and
+// retried (transient network failures — including the "Premature close"
+// error seen in practice, which reads like a proxy/connection timeout on a
+// single large generation — are exactly the kind of thing a short retry
+// fixes, since regenerating a few stanzas is harmless and idempotent).
+async function generateMotdChunk(count, attempt = 1) {
+  const userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count. Respond with only the JSON array, nothing else.`;
+  try {
+    // callClaudeRaw, not callClaude — callClaude runs stripMarkdown() on the
+    // response, which is meant for prose replies but is destructive here:
+    // stanzas are five lines joined by literal \n inside a JSON string, and
+    // stripMarkdown's regexes (bullet-dash stripping, #-stripping) can
+    // corrupt that structure before JSON.parse ever sees it.
+    const raw = await callClaudeRaw(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 2000);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      return JSON.parse(cleaned);
+    }
+  } catch (e) {
+    if (attempt >= 3) throw e;
+    console.error(`motd generate chunk failed (attempt ${attempt}/3): ${e.message} — retrying`);
+    await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, then 2s
+    return generateMotdChunk(count, attempt + 1);
+  }
+}
+
 app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     let count = parseInt(req.body?.count, 10);
     if (!Number.isFinite(count) || count < 1) count = 12;
     count = Math.min(count, 30); // guardrail — one click shouldn't be able to flood the queue
 
-    const userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count. Respond with only the JSON array, nothing else.`;
+    // Chunked into groups of at most 6 — a single request asking for a
+    // large batch of five-line stanzas can take long enough to generate
+    // that it risks a network/proxy timeout partway through (this was the
+    // actual cause of "Premature close" failures in practice). Several
+    // smaller, faster requests are far less likely to hit that ceiling,
+    // and inserting after each chunk means a late failure still keeps
+    // everything generated so far rather than losing the whole batch.
+    const CHUNK_SIZE = 6;
+    const chunks = [];
+    let remaining = count;
+    while (remaining > 0) { const n = Math.min(CHUNK_SIZE, remaining); chunks.push(n); remaining -= n; }
 
-    // callClaudeRaw, not callClaude — callClaude runs stripMarkdown() on the
-    // response, which is meant for prose replies but is destructive here:
-    // stanzas are five lines joined by literal \n inside a JSON string, and
-    // stripMarkdown's regexes (bullet-dash stripping, #-stripping) can
-    // corrupt that structure before JSON.parse ever sees it. This was the
-    // actual cause of "Could not generate messages" failing in practice —
-    // same class of bug already fixed for legal-doc translation earlier;
-    // this endpoint just never got the same fix when the prompt changed to
-    // produce stanzas instead of single-line prose.
-    const raw = await callClaudeRaw(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 4000);
+    let insertedCount = 0;
+    const chunkErrors = [];
 
-    let generated;
-    try {
-      generated = JSON.parse(raw);
-    } catch {
-      // Claude occasionally wraps the array in a fence despite instructions — strip and retry once.
-      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      generated = JSON.parse(cleaned);
+    for (const chunkCount of chunks) {
+      try {
+        const generated = await generateMotdChunk(chunkCount);
+        if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
+        generated
+          .filter(msg => typeof msg === 'string' && msg.trim())
+          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); insertedCount++; });
+      } catch (e) {
+        console.error('motd generate chunk permanently failed:', e.message);
+        chunkErrors.push(e.message);
+      }
     }
-    if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
 
-    const ids = generated
-      .filter(msg => typeof msg === 'string' && msg.trim())
-      .map(msg => {
-        const id = uuidv4();
-        db.addMotd(id, msg.trim(), null);
-        return id;
-      });
+    if (insertedCount === 0) throw new Error(chunkErrors[0] || 'Model did not return any usable messages.');
 
-    res.json({ ok: true, count: ids.length });
+    res.json({
+      ok: true,
+      count: insertedCount,
+      partial: chunkErrors.length > 0,
+      note: chunkErrors.length ? `${insertedCount} added, but ${chunkErrors.length} chunk(s) failed after retries — you can generate another batch to top up.` : undefined,
+    });
   } catch(e) {
     console.error('motd generate error:', e);
     // Admin-only endpoint, so it's safe (and much more useful than a dead
