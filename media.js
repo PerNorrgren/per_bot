@@ -79,4 +79,25 @@ async function deleteObject(key) {
   await client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
 }
 
-module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, R2_BUCKET };
+// ── Public objects (newsletter images) ──
+// Everything above (getUploadUrl/getPlaybackUrl) is deliberately private —
+// presigned, short-lived, gated behind the tier-check in server.js. Newsletter
+// images are the opposite case: they need to render in an email opened by
+// anyone, including newsletter-only contacts who have no account to log into
+// at all, so there's no "check access, then sign a URL" step that could ever
+// run. Rather than reconfigure the R2 bucket itself for public access (a
+// Cloudflare-dashboard change, not something this code can do), the server
+// just uploads and re-serves these objects directly — see
+// GET /newsletter-images/:key in server.js, which streams straight from R2
+// with no auth check, by design, for exactly this content type only.
+async function uploadPublicObject(key, buffer, contentType) {
+  if (!client) throw new Error('R2 is not configured — missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY.');
+  await client.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: buffer, ContentType: contentType }));
+}
+async function getPublicObject(key) {
+  if (!client) throw new Error('R2 is not configured.');
+  const result = await client.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  return result; // .Body is a readable stream; .ContentType is the stored MIME type
+}
+
+module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, uploadPublicObject, getPublicObject, R2_BUCKET };

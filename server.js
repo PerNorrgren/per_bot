@@ -279,6 +279,7 @@ function brand() {
     name: cfg.brand_name || 'Deeper Mindfulness',
     tagline: cfg.tagline || 'Making the practices land and last for life.',
     contactEmail: cfg.contact_email || EMAIL_FROM,
+    logoUrl: cfg.logo_url || null,
   };
 }
 
@@ -573,6 +574,34 @@ function emailFacilitatorRequestDeferred(request) {
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 app.get('/join/:token', (req, res) => res.sendFile(path.join(__dirname, 'public', 'join.html')));
+
+// ── One-click unsubscribe ── Public, no auth — has to work for newsletter-
+// only contacts too, who have no password and no way to log into My Account
+// at all. Idempotent and immediate: a GET request unsubscribes on the spot,
+// matching how virtually every real newsletter unsubscribe link behaves.
+// Doesn't touch pref_email_motd/reminders/renewal — only the newsletter
+// preference this link was actually about.
+app.get('/unsubscribe/:token', (req, res) => {
+  const b = brand();
+  const user = db.getUserByUnsubscribeToken(req.params.token);
+  const page = (heading, message) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Unsubscribe — ${b.name}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;} html,body{height:100%;font-family:Georgia,serif;background:#0a0f0d;color:rgba(255,255,255,0.82);display:flex;align-items:center;justify-content:center;}
+  .card{max-width:420px;padding:40px 32px;text-align:center;}
+  .wordmark{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:20px;}
+  h1{font-size:20px;font-weight:normal;color:rgba(255,255,255,0.85);margin-bottom:14px;}
+  p{font-size:14px;line-height:1.7;color:rgba(255,255,255,0.5);}
+  a{color:rgba(180,230,200,0.7);text-decoration:none;}
+</style></head>
+<body><div class="card"><div class="wordmark">${b.name}</div><h1>${heading}</h1><p>${message}</p></div></body></html>`;
+
+  if (!user) return res.status(404).send(page('Link not found', "This unsubscribe link isn't valid — it may have been copied incorrectly."));
+
+  db.updateUserPreferences(user.id, { pref_email_news: 0 });
+  res.send(page('You\'re unsubscribed', `You won't receive any more newsletters from ${b.name}. If that was a mistake, you can turn it back on any time from <a href="${APP_URL}/account">My Account</a>.`));
+});
 app.get('/register/',(req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'change-password.html')));
 // Shared client-side brand injection — see public/brand-inject.js. This is the
@@ -2345,6 +2374,54 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
   }
 });
 
+// ── Newsletter images ── Admin uploads a file → goes to R2 → server hands
+// back a URL that resolves through OUR OWN server (GET /newsletter-images/:key
+// below), not a presigned R2 URL. Content-library files use presigned URLs
+// because they're meant to be private and tier-gated; newsletter images are
+// the opposite — they need to render in an email opened by anyone, including
+// people with no account at all, so there's no access check that could ever
+// run and no useful place to put an expiry. This reuses the same R2 bucket
+// and credentials as the content library, just a different, deliberately
+// public, key prefix and serving path.
+app.post('/api/admin/newsletter-images', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('image/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only image files are supported here.' });
+    }
+
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    const key = `newsletter-images/${uuidv4()}${ext}`;
+
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+
+    res.json({ url: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
+  } catch (e) {
+    console.error('newsletter image upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload image: ' + e.message });
+  }
+});
+
+// Public, no auth, by design — see the comment above. Long cache lifetime
+// since each key is a fresh UUID (uploading a "new" version of an image
+// just gets a new key, it never overwrites one that might already be cached
+// by an email client or CDN).
+app.get('/newsletter-images/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`newsletter-images/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
+
 // ── Playback URL — checked against the SAME tier-gating logic as the Content tab listing. ──
 // Only generates a (short-lived, signed) R2 URL after access is confirmed. Legacy disk files
 // fall back to the existing /uploads/:filename route, unaffected by this migration.
@@ -2879,6 +2956,28 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Partial settings update ── /api/setup below is the FULL setup-wizard
+// endpoint — it requires brandName, legalEntityName, and contactEmail on
+// every call, and defaults several other fields if they're missing from the
+// request. That's correct for the wizard, which always submits everything
+// together, but it's the wrong endpoint for a single admin panel saving
+// just one setting (reminder threshold, newsletter footer, etc.) — calling
+// it with a partial payload either gets rejected by the required-field
+// checks, or worse, would silently reset unrelated fields (tagline,
+// colour, currency...) back to their defaults. This endpoint is the safe
+// alternative: only touches whatever fields are actually present in the
+// request body, nothing else.
+app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer' };
+    const fields = {};
+    Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
+    if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
+    db.updateAppConfig(fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled } = req.body;
@@ -2918,6 +3017,7 @@ app.patch('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       legalEntityName: 'legal_entity_name', legalJurisdiction: 'legal_jurisdiction',
       paymentsEnabled: 'payments_enabled',
       reminderDays: 'reminder_days', reminderSubject: 'reminder_subject',
+      newsletterFooter: 'newsletter_footer',
     };
     const fields = {};
     Object.keys(fieldMap).forEach(k => {
@@ -3160,17 +3260,40 @@ function buildMotdHtml(body, b) {
 // test-send endpoint, same principle as buildMotdHtml above. Subject gets
 // its own heading treatment (unlike MOTD, which has no subject at all) since
 // a newsletter is a proper piece of correspondence, not a short stanza.
-function buildNewsletterHtml(subject, body, b) {
+const DEFAULT_NEWSLETTER_FOOTER = `You're receiving this because you're part of {{brand_name}}.\n{{unsubscribe_link}}`;
+
+// format: 'plain' (body is plain text, \n becomes <br/>, same as before) or
+// 'rich' (body is already HTML from the compose editor, used as-is —
+// running it through the \n replace would double up on the editor's own
+// <p>/<br> tags). footerHtml is the fully-resolved footer for this specific
+// recipient (unsubscribe link already substituted in) — see the send loop
+// below, which is why this isn't just read from config directly in here.
+function buildNewsletterHtml(subject, body, b, format, footerHtml) {
+  const bodyHtml = format === 'rich' ? body : body.replace(/\n/g, '<br/>');
+  const logoBlock = b.logoUrl
+    ? `<img src="${b.logoUrl}" alt="${b.name}" style="max-height:48px;margin-bottom:12px"/>`
+    : `<div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>`;
+
   return `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;padding:32px;color:#2a2a2a">
-        <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+        ${logoBlock}
         <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">${subject}</h1>
-        <div style="font-size:15px;line-height:1.75;color:#333">${body.replace(/\n/g, '<br/>')}</div>
+        <div style="font-size:15px;line-height:1.75;color:#333">${bodyHtml}</div>
         <hr style="border:none;border-top:1px solid #e0e0e0;margin:32px 0 20px"/>
-        <p style="font-size:12px;color:#aaa">
-          You're receiving this because you're part of ${b.name}.
-          <a href="${APP_URL}/account" style="color:#888">Manage what you receive</a>
-        </p>
+        <div style="font-size:12px;color:#aaa;line-height:1.7">${footerHtml}</div>
       </div>`;
+}
+
+// Fills {{brand_name}} and {{unsubscribe_link}} in the footer template —
+// separate from the {{name}}/{{invite_link}} substitution used on
+// subject/body, since the footer is admin-configured (Settings), not
+// something typed fresh into the compose box each time.
+function buildNewsletterFooterHtml(footerTemplate, b, unsubscribeUrl) {
+  const template = (footerTemplate && footerTemplate.trim()) || DEFAULT_NEWSLETTER_FOOTER;
+  const unsubscribeLinkHtml = `<a href="${unsubscribeUrl}" style="color:#888">Unsubscribe</a> · <a href="${APP_URL}/account" style="color:#888">Manage what you receive</a>`;
+  return template
+    .split('{{brand_name}}').join(b.name)
+    .split('{{unsubscribe_link}}').join(unsubscribeLinkHtml)
+    .replace(/\n/g, '<br/>');
 }
 
 // ── MOTD send — manual/admin override ── Used by the "Send today's message"
@@ -3430,26 +3553,35 @@ app.get('/api/admin/newsletters/recipient-count', auth.requireAuthApi(['admin'])
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Rich (HTML from the editor) bodies can look non-empty by string length
+// alone — Quill leaves behind markup like <p><br></p> for an empty editor —
+// so the "did they actually write anything" check has to strip tags first
+// when format is 'rich', or an empty draft would slip through as valid.
+function newsletterBodyIsEmpty(body, format) {
+  if (!body) return true;
+  return format === 'rich' ? !body.replace(/<[^>]*>/g, '').trim() : !body.trim();
+}
+
 app.post('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience } = req.body;
+    const { subject, body, audience, format } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
-    if (!body || !body.trim()) return res.status(400).json({ error: 'Body is required.' });
+    if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const id = uuidv4();
-    db.addNewsletter(id, subject.trim(), body.trim(), audience);
+    db.addNewsletter(id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/admin/newsletters/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience } = req.body;
+    const { subject, body, audience, format } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
-    if (!body || !body.trim()) return res.status(400).json({ error: 'Body is required.' });
+    if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const existing = db.getNewsletter(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Newsletter not found.' });
     if (existing.status !== 'draft') return res.status(400).json({ error: 'Already sent — sent newsletters cannot be edited.' });
-    db.updateNewsletter(req.params.id, subject.trim(), body.trim(), audience);
+    db.updateNewsletter(req.params.id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3467,7 +3599,7 @@ app.delete('/api/admin/newsletters/:id', auth.requireAuthApi(['admin']), (req, r
 // send — it always goes to one address regardless of segment.
 app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { subject, body, to } = req.body;
+    const { subject, body, to, format } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Write a subject first.' });
     if (!body || !body.trim())       return res.status(400).json({ error: 'Write the body first.' });
 
@@ -3483,7 +3615,10 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
     const bodyFilled    = body.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink);
 
     const b = brand();
-    await sendEmail(toEmail, `[TEST] ${subjectFilled}`, buildNewsletterHtml(subjectFilled, bodyFilled, b));
+    const cfg = db.getAppConfig() || {};
+    const previewUnsubscribe = `${APP_URL}/unsubscribe/EXAMPLE-TOKEN-not-a-real-link`;
+    const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, previewUnsubscribe);
+    await sendEmail(toEmail, `[TEST] ${subjectFilled}`, buildNewsletterHtml(subjectFilled, bodyFilled, b, format, footerHtml));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('newsletter test-send error:', e.message);
@@ -3511,6 +3646,7 @@ app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), asyn
 
     const recipients = db.getNewsletterRecipients(newsletter.audience);
     const b = brand();
+    const cfg = db.getAppConfig() || {};
 
     let sent = 0;
     for (const user of recipients) {
@@ -3520,7 +3656,10 @@ app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), asyn
 
       const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
       const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
-      const html    = buildNewsletterHtml(subject, body, b);
+
+      const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
+      const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);
+      const html = buildNewsletterHtml(subject, body, b, newsletter.format, footerHtml);
 
       await sendEmail(user.email, subject, html);
       sent++;

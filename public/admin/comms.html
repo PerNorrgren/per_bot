@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Communications — Admin · Deeper Mindfulness</title>
   <script src="/brand-inject.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
@@ -129,6 +131,25 @@
     .modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
     .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
     .test-send-row { display:flex; gap:8px; align-items:center; }
+
+    /* Rich/plain format toggle */
+    .format-toggle { display:flex; gap:6px; margin-bottom:10px; }
+    .format-toggle button { padding:6px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.5); font-size:12px; font-family:'Georgia',serif; cursor:pointer; }
+    .format-toggle button.active { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
+
+    /* Quill dark-theme overrides — the "snow" theme ships white/light by default */
+    #newsletterRichEditor { background:rgba(255,255,255,0.03); border-radius:0 0 8px 8px; }
+    .ql-toolbar.ql-snow { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; }
+    .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; min-height:220px; font-family:'Georgia',serif; font-size:14px; }
+    .ql-editor { color:rgba(255,255,255,0.85); min-height:220px; }
+    .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
+    .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5); }
+    .ql-snow .ql-fill { fill:rgba(255,255,255,0.5); }
+    .ql-snow .ql-picker { color:rgba(255,255,255,0.5); }
+    .ql-snow .ql-picker-options { background:#1a221e; border-color:rgba(255,255,255,0.12) !important; }
+    .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
+    .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
+    .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
     .test-send-row input { flex:1; }
     .modal-check { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.5); cursor:pointer; }
     .modal-check input { width:auto; accent-color:rgba(180,230,200,0.8); }
@@ -332,8 +353,17 @@
     </div>
     <div>
       <label>Body</label>
+      <div class="format-toggle">
+        <button type="button" id="formatPlainBtn" class="active" onclick="setNewsletterFormat('plain')">Plain text</button>
+        <button type="button" id="formatRichBtn" onclick="setNewsletterFormat('rich')">Rich message</button>
+      </div>
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
+      <div id="newsletterRichEditor" style="display:none"></div>
+      <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
       <div class="modal-note" style="margin-top:6px">You can use <code>{{name}}</code> and <code>{{invite_link}}</code> — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a 2-week trial the moment they click it; for an existing member it just points to the login page.</div>
+    </div>
+    <div style="margin-top:6px">
+      <a style="font-size:12px;color:rgba(180,230,200,0.6);cursor:pointer;text-decoration:none" onclick="openFooterModal()">Edit footer &amp; unsubscribe text</a>
     </div>
     <div style="margin-top:14px">
       <label>Who receives this</label>
@@ -355,6 +385,20 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newsletterModal')">Cancel</button>
       <button class="modal-ok" onclick="saveNewsletter()">Save as draft</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Newsletter footer modal ── -->
+<div class="modal-overlay" id="footerModal">
+  <div class="modal">
+    <h3>Footer &amp; unsubscribe text</h3>
+    <div class="modal-note" style="margin-bottom:10px">Appears at the bottom of every newsletter — the same footer every time, not part of what you write above. Use <code>{{brand_name}}</code> and <code>{{unsubscribe_link}}</code>; the unsubscribe link is a real, working one-click link generated fresh for each recipient — required so newsletter-only contacts (who have no login) still have a way to opt out.</div>
+    <textarea id="footerTemplate" style="min-height:100px" placeholder="You're receiving this because you're part of {{brand_name}}.&#10;{{unsubscribe_link}}"></textarea>
+    <div class="modal-err" id="footerErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('footerModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveFooterTemplate()">Save</button>
     </div>
   </div>
 </div>
@@ -771,11 +815,102 @@
     refreshAudienceCount();
   }
 
+  // ── Rich editor (Quill) ── Initialised once, lazily, the first time rich
+  // mode is actually used — no point loading/building it for admins who
+  // only ever write plain text.
+  let quillInstance = null;
+  let newsletterFormat = 'plain';
+
+  function getQuill() {
+    if (quillInstance) return quillInstance;
+    quillInstance = new Quill('#newsletterRichEditor', {
+      theme: 'snow',
+      placeholder: 'Write it as it will appear in the email.',
+      modules: {
+        toolbar: {
+          container: [
+            [{ header: [2, 3, false] }],
+            ['bold', 'italic', 'underline'],
+            [{ list: 'ordered' }, { list: 'bullet' }],
+            ['link', 'image', 'video-link'],
+            ['clean'],
+          ],
+          handlers: {
+            image: uploadImageIntoEditor,
+            'video-link': insertVideoLink,
+          },
+        },
+      },
+    });
+    // Quill has no built-in "video link" button — the toolbar array above
+    // references a 'video-link' format that doesn't exist, which just
+    // renders a blank button; label it and give it an icon via CSS after
+    // Quill builds the toolbar DOM.
+    const videoBtn = document.querySelector('.ql-video-link');
+    if (videoBtn) { videoBtn.innerHTML = '▶'; videoBtn.title = 'Insert a video link'; }
+    return quillInstance;
+  }
+
+  function setNewsletterFormat(format) {
+    newsletterFormat = format;
+    document.getElementById('formatPlainBtn').classList.toggle('active', format === 'plain');
+    document.getElementById('formatRichBtn').classList.toggle('active', format === 'rich');
+    document.getElementById('newsletterBody').style.display = format === 'plain' ? '' : 'none';
+    document.getElementById('newsletterRichEditor').style.display = format === 'rich' ? '' : 'none';
+    if (format === 'rich') getQuill(); // build it the first time it's actually shown
+  }
+
+  // Real email newsletters don't reliably play embedded <video> across
+  // clients (Gmail/Outlook strip it) — the actual working pattern everyone
+  // uses is a clickable "watch" link/button pointing at YouTube/Vimeo/etc.,
+  // so that's what this inserts rather than attempting a true embed.
+  function insertVideoLink() {
+    const url = prompt('Paste the video link (YouTube, Vimeo, or any URL):');
+    if (!url || !url.trim()) return;
+    const quill = getQuill();
+    const range = quill.getSelection(true);
+    quill.insertText(range.index, '▶ Watch the video', 'link', url.trim());
+    quill.insertText(range.index + 18, '\n');
+    quill.setSelection(range.index + 19);
+  }
+
+  async function uploadImageIntoEditor() {
+    const input = document.getElementById('newsletterImageInput');
+    input.value = '';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      const quill = getQuill();
+      const range = quill.getSelection(true) || { index: quill.getLength() };
+
+      quill.insertText(range.index, 'Uploading image…');
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res  = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+        const data = await res.json();
+        quill.deleteText(range.index, 'Uploading image…'.length);
+        if (data.url) {
+          quill.insertEmbed(range.index, 'image', data.url);
+          quill.setSelection(range.index + 1);
+        } else {
+          alert(data.error || 'Could not upload image.');
+        }
+      } catch(e) {
+        quill.deleteText(range.index, 'Uploading image…'.length);
+        alert('Network error — could not upload image.');
+      }
+    };
+    input.click();
+  }
+
   function openNewsletterModal() {
     document.getElementById('newsletterModalTitle').textContent = 'Write a newsletter';
     document.getElementById('newsletterEditId').value = '';
     document.getElementById('newsletterSubject').value = '';
     document.getElementById('newsletterBody').value = '';
+    if (quillInstance) quillInstance.setContents([]);
+    setNewsletterFormat('plain');
     document.getElementById('newsletterErr').textContent = '';
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
@@ -790,7 +925,9 @@
     document.getElementById('newsletterModalTitle').textContent = 'Edit newsletter';
     document.getElementById('newsletterEditId').value = id;
     document.getElementById('newsletterSubject').value = n.subject;
-    document.getElementById('newsletterBody').value = n.body;
+    setNewsletterFormat(n.format === 'rich' ? 'rich' : 'plain');
+    if (n.format === 'rich') { getQuill().root.innerHTML = n.body; document.getElementById('newsletterBody').value = ''; }
+    else { document.getElementById('newsletterBody').value = n.body; }
     document.getElementById('newsletterErr').textContent = '';
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
@@ -802,23 +939,33 @@
   function viewSentNewsletter(id) {
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
-    alert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
+    if (n.format === 'rich') {
+      const w = window.open('', '_blank');
+      w.document.write(`<title>${n.subject}</title><body style="font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 20px">${n.body}</body>`);
+    } else {
+      alert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
+    }
+  }
+
+  function currentNewsletterBody() {
+    return newsletterFormat === 'rich' ? getQuill().root.innerHTML : document.getElementById('newsletterBody').value.trim();
   }
 
   async function saveNewsletter() {
     const id       = document.getElementById('newsletterEditId').value;
     const subject  = document.getElementById('newsletterSubject').value.trim();
-    const body     = document.getElementById('newsletterBody').value.trim();
+    const body     = currentNewsletterBody();
     const audience = getSelectedAudience();
     const err      = document.getElementById('newsletterErr');
     if (!subject) { err.textContent = 'Please write a subject.'; return; }
     if (!body)    { err.textContent = 'Please write the body.'; return; }
 
+    const payload = { subject, body, audience, format: newsletterFormat };
     let res;
     if (id) {
-      res = await fetch(`/api/admin/newsletters/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ subject, body, audience }) });
+      res = await fetch(`/api/admin/newsletters/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     } else {
-      res = await fetch('/api/admin/newsletters', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ subject, body, audience }) });
+      res = await fetch('/api/admin/newsletters', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     }
     const data = await res.json();
     if (data.id || data.ok) { closeModal('newsletterModal'); loadNewsletters(); }
@@ -827,7 +974,7 @@
 
   async function testSendNewsletter() {
     const subject = document.getElementById('newsletterSubject').value.trim();
-    const body    = document.getElementById('newsletterBody').value.trim();
+    const body    = currentNewsletterBody();
     const to      = document.getElementById('newsletterTestTo').value.trim();
     const fb      = document.getElementById('newsletterTestFeedback');
     const btn     = document.getElementById('newsletterTestBtn');
@@ -841,7 +988,7 @@
     try {
       const res  = await fetch('/api/admin/newsletters/test-send', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ subject, body, to: to || undefined })
+        body: JSON.stringify({ subject, body, to: to || undefined, format: newsletterFormat })
       });
       const data = await res.json();
       if (data.ok) { fb.textContent = `Sent to ${data.to}`; fb.className = 'feedback ok'; }
@@ -850,6 +997,30 @@
       fb.textContent = 'Network error — could not send test.'; fb.className = 'feedback err';
     } finally {
       btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
+  // ── Footer template ──
+  async function openFooterModal() {
+    document.getElementById('footerErr').textContent = '';
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      document.getElementById('footerTemplate').value = cfg.newsletter_footer || '';
+    } catch(e) { /* leave blank — placeholder shows the default */ }
+    openModal('footerModal');
+  }
+
+  async function saveFooterTemplate() {
+    const footer = document.getElementById('footerTemplate').value;
+    const err = document.getElementById('footerErr');
+    try {
+      const res  = await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ newsletterFooter: footer }) });
+      const data = await res.json();
+      if (data.ok) closeModal('footerModal');
+      else err.textContent = data.error || 'Could not save.';
+    } catch(e) {
+      err.textContent = 'Network error — could not save.';
     }
   }
 
@@ -1161,8 +1332,8 @@
       return;
     }
     try {
-      const res  = await fetch('/api/setup', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ reminderDays: days, reminderSubject: subject })
       });
       const data = await res.json();

@@ -559,6 +559,17 @@ async function getDb() {
     // both; those fields never actually persisted anywhere. Real now.
     "ALTER TABLE app_config ADD COLUMN reminder_days INTEGER DEFAULT 4",
     "ALTER TABLE app_config ADD COLUMN reminder_subject TEXT DEFAULT 'Whenever you''re ready'",
+    // Rich newsletters (Per Bot 6) — format tells the send/render pipeline
+    // whether `body` is plain text (apply \n->br the same as always) or
+    // already-HTML from the rich editor (render as-is). newsletter_footer is
+    // an admin-editable template appended to every send, holding the
+    // {{unsubscribe_link}} placeholder — see ensureUnsubscribeToken below.
+    // Without a REAL one-click unsubscribe, newsletter-only contacts (no
+    // password, no login) would have no way to ever opt out, since the only
+    // other path — My Account — requires logging in.
+    "ALTER TABLE newsletters ADD COLUMN format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN newsletter_footer TEXT",
+    "ALTER TABLE users ADD COLUMN unsubscribe_token TEXT",
     // Newsletter audience targeting — comma-separated segment keys (see
     // getNewsletterRecipients below), defaults to 'all' for any pre-existing
     // rows so nothing already sent silently reinterprets who it went to.
@@ -590,6 +601,7 @@ async function getDb() {
   // Must run after migrations, not with the other CREATE INDEX statements
   // above — invite_token doesn't exist until the migration above adds it.
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_invite_token ON users(invite_token)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_users_unsubscribe_token ON users(unsubscribe_token)`);
 
   // ── Backfill: existing notification-opted-in users get a default timezone ──
   // Timezone is now required for anyone receiving MOTD email/SMS (see
@@ -1405,6 +1417,23 @@ function markInviteTokenUsed(userId) {
   save();
 }
 
+// ── Unsubscribe tokens ── One per user, generated lazily the first time
+// it's needed (a newsletter send). Deliberately never expires and never
+// gets marked "used" the way invite tokens do — unsubscribing is meant to
+// work every time someone clicks it in an old email, not just once.
+function ensureUnsubscribeToken(userId) {
+  const user = getUser(userId);
+  if (!user) return null;
+  if (user.unsubscribe_token) return user.unsubscribe_token;
+  const token = crypto.randomBytes(24).toString('base64url');
+  getDbSync().run('UPDATE users SET unsubscribe_token=? WHERE id=?', [token, userId]);
+  save();
+  return token;
+}
+function getUserByUnsubscribeToken(token) {
+  return queryOne('SELECT * FROM users WHERE unsubscribe_token=?', [token]);
+}
+
 // ── Trial expiry ──
 // Called on every login for client-role users. If a trial has lapsed and no paid
 // subscription picked it up (no stripe_subscription_id), drop back to Explorer.
@@ -1907,17 +1936,17 @@ function markMotdSentForUser(userId, todayStr) {
 
 // ── Newsletters ── One-off broadcasts, distinct from the MOTD queue — see
 // table comment above for why.
-function addNewsletter(id, subject, body, audience) {
+function addNewsletter(id, subject, body, audience, format) {
   getDbSync().run(
-    `INSERT INTO newsletters (id,subject,body,status,audience) VALUES (?,?,?,'draft',?)`,
-    [id, subject, body, audience || 'all']
+    `INSERT INTO newsletters (id,subject,body,status,audience,format) VALUES (?,?,?,'draft',?,?)`,
+    [id, subject, body, audience || 'all', format || 'plain']
   );
   save();
 }
 function getNewsletter(id) { return queryOne('SELECT * FROM newsletters WHERE id=?', [id]); }
 function getAllNewsletters() { return queryAll('SELECT * FROM newsletters ORDER BY created_at DESC'); }
-function updateNewsletter(id, subject, body, audience) {
-  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=? WHERE id=? AND status='draft'", [subject, body, audience || 'all', id]);
+function updateNewsletter(id, subject, body, audience, format) {
+  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=?, format=? WHERE id=? AND status='draft'", [subject, body, audience || 'all', format || 'plain', id]);
   save();
 }
 function deleteNewsletterDraft(id) {
@@ -2030,7 +2059,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -2351,6 +2380,7 @@ module.exports = {
   // Registration
   registerUser, createMailingListContact,
   ensureInviteToken, getUserByInviteToken, markInviteTokenUsed,
+  ensureUnsubscribeToken, getUserByUnsubscribeToken,
   checkTrialExpiry,
   // Content visibility
   getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, getFacilitatorResources,
