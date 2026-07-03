@@ -1373,15 +1373,42 @@ app.delete('/api/practices/:id', auth.requireAuthApi(['admin','facilitator']), (
 });
 
 // ── Claude ──
-async function callClaude(systemPrompt, messages, maxTokens = 400) {
+// Shared low-level call — both callClaude and callClaudeRaw below delegate
+// here, so this one fix applies everywhere (chat, legal translation, MOTD
+// generation), not just wherever happened to get tested first.
+//
+// Connection: close — Node's built-in fetch (undici) pools and reuses
+// keep-alive connections per host. If Railway's network (or any
+// intermediary) silently closes a connection undici still considers alive,
+// the next request that tries to reuse it fails with exactly the
+// "Premature close" error seen in practice — a well-documented category of
+// undici bug, not something specific to request size. This was the real
+// fix; the earlier chunking change (still worth keeping, for other
+// reasons) never addressed the actual cause, which is why it didn't help
+// on its own.
+//
+// AbortSignal.timeout(25000) — fails fast rather than hanging indefinitely
+// if a request genuinely stalls, so a bad connection burns a few seconds
+// of a retry budget instead of the whole thing.
+async function anthropicFetch(systemPrompt, messages, maxTokens) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+      'Connection': 'close',
+    },
     body: JSON.stringify({ model: 'claude-opus-4-6', max_tokens: maxTokens, system: systemPrompt, messages }),
+    signal: AbortSignal.timeout(25000),
   });
   const data = await response.json();
   if (!data.content) throw new Error(JSON.stringify(data));
-  return stripMarkdown(data.content[0].text);
+  return data.content[0].text;
+}
+
+async function callClaude(systemPrompt, messages, maxTokens = 400) {
+  return stripMarkdown(await anthropicFetch(systemPrompt, messages, maxTokens));
 }
 
 // Same as callClaude but WITHOUT stripMarkdown — needed anywhere the response
@@ -1389,14 +1416,7 @@ async function callClaude(systemPrompt, messages, maxTokens = 400) {
 // legal document that uses # headers, **bold**, - lists). Running that
 // through stripMarkdown would silently mangle the formatting.
 async function callClaudeRaw(systemPrompt, messages, maxTokens = 400) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-opus-4-6', max_tokens: maxTokens, system: systemPrompt, messages }),
-  });
-  const data = await response.json();
-  if (!data.content) throw new Error(JSON.stringify(data));
-  return data.content[0].text;
+  return anthropicFetch(systemPrompt, messages, maxTokens);
 }
 
 // ── /api/chat — Mare Bot architecture ──
@@ -3161,7 +3181,7 @@ async function generateMotdChunk(count, attempt = 1) {
     }
   } catch (e) {
     if (attempt >= 3) throw e;
-    console.error(`motd generate chunk failed (attempt ${attempt}/3): ${e.message} — retrying`);
+    console.error(`motd generate chunk failed (attempt ${attempt}/3): ${e.name || 'Error'}: ${e.message} — retrying`);
     await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, then 2s
     return generateMotdChunk(count, attempt + 1);
   }
@@ -3173,13 +3193,12 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
     if (!Number.isFinite(count) || count < 1) count = 12;
     count = Math.min(count, 30); // guardrail — one click shouldn't be able to flood the queue
 
-    // Chunked into groups of at most 6 — a single request asking for a
-    // large batch of five-line stanzas can take long enough to generate
-    // that it risks a network/proxy timeout partway through (this was the
-    // actual cause of "Premature close" failures in practice). Several
-    // smaller, faster requests are far less likely to hit that ceiling,
-    // and inserting after each chunk means a late failure still keeps
-    // everything generated so far rather than losing the whole batch.
+    // Chunked into groups of at most 6, each with its own retry (see
+    // generateMotdChunk above). The likely actual cause of "Premature
+    // close" turned out to be stale connection reuse in Node's fetch, fixed
+    // at the source in anthropicFetch — this chunking is kept anyway since
+    // smaller requests are still faster and a late failure only loses the
+    // one chunk still in flight, not the whole batch.
     const CHUNK_SIZE = 6;
     const chunks = [];
     let remaining = count;
@@ -3196,8 +3215,12 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
           .filter(msg => typeof msg === 'string' && msg.trim())
           .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); insertedCount++; });
       } catch (e) {
-        console.error('motd generate chunk permanently failed:', e.message);
-        chunkErrors.push(e.message);
+        // Per's suggestion: keep enough detail here that a repeat failure
+        // is actually diagnosable from the error message alone, not just
+        // "it failed again" — the error's name (e.g. AbortError, TypeError)
+        // distinguishes a timeout from a parse failure from a network drop.
+        console.error('motd generate chunk permanently failed:', e.name + ':', e.message);
+        chunkErrors.push(`${e.name || 'Error'}: ${e.message}`);
       }
     }
 
