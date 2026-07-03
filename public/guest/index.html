@@ -62,6 +62,9 @@
     .thinking { display:none; align-items:center; gap:8px; padding:10px 14px; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.12); border-radius:10px; }
     .thinking.visible { display:flex; }
     .thinking-text { font-size:12px; color:rgba(180,230,200,0.5); letter-spacing:0.08em; }
+    .tap-hint { font-size:13px; letter-spacing:0.08em; color:rgba(180,230,200,0.75); opacity:0; height:0; overflow:hidden; transition:opacity 0.3s ease; text-transform:uppercase; }
+    .tap-hint.visible { opacity:1; height:auto; animation:tapPulse 2.2s ease-in-out infinite; }
+    @keyframes tapPulse { 0%,100% { opacity:0.55; } 50% { opacity:1; } }
     .thinking-dots { display:flex; gap:4px; }
     .thinking-dots span { width:5px; height:5px; border-radius:50%; background:rgba(180,230,200,0.4); animation:db 1.2s ease-in-out infinite; }
 
@@ -179,9 +182,10 @@
       </div>
       <div class="thinking" id="thinking">
         <div class="thinking-dots"><span></span><span></span><span></span></div>
-        <div class="thinking-text">thinking</div>
+        <div class="thinking-text">Getting ready…</div>
       </div>
       <div class="mic-wrap">
+        <div class="tap-hint" id="tapHint">Tap to speak</div>
         <button class="mic-btn" id="micBtn">
           <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
         </button>
@@ -258,6 +262,9 @@
   const waveEl       = document.getElementById('wave');
   const dotsEl       = document.getElementById('dots');
   const thinkingEl   = document.getElementById('thinking');
+  const thinkingTextEl = document.querySelector('#thinking .thinking-text');
+  const tapHintEl = document.getElementById('tapHint');
+  function setThinkingText(t) { thinkingTextEl.textContent = t; }
 
   let isSpeaking = false, busy = false, micActive = false;
   let currentAudio = null, mediaStream = null;
@@ -268,7 +275,8 @@
     waveEl.classList.remove('on'); dotsEl.classList.remove('on');
     micBtn.classList.remove('active'); statusEl.classList.remove('on');
     thinkingEl.classList.remove('visible');
-    if (s === 'idle')       { statusEl.textContent = ''; }
+    tapHintEl.classList.remove('visible');
+    if (s === 'idle')       { statusEl.textContent = ''; tapHintEl.classList.add('visible'); }
     if (s === 'listening')  { micBtn.classList.add('active'); statusEl.classList.add('on'); statusEl.textContent = 'listening'; }
     if (s === 'processing') { thinkingEl.classList.add('visible'); }
     if (s === 'speaking')   { waveEl.classList.add('on'); }
@@ -333,6 +341,7 @@
   async function sendToBot(userMsg) {
     if (busy) return;
     busy = true;
+    setThinkingText(userMsg === '[START]' ? 'Getting ready…' : 'Thinking…');
     setState('processing');
 
     const message = (userMsg && userMsg !== '[START]') ? userMsg : 'begin';
@@ -439,6 +448,8 @@
       micActive = false;
       setState('');
     } else {
+      // Hide immediately, synchronously, on the tap itself.
+      tapHintEl.classList.remove('visible');
       // Tapping the mic directly (rather than the welcome form) is just as
       // real a user gesture — unlock here too, in case this is the very
       // first tap of the session on this device.
