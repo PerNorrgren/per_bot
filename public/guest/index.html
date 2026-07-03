@@ -136,6 +136,14 @@
 </head>
 <body>
 
+<!-- Single persistent audio element, reused for every spoken reply — see
+     unlockAudioPlayback() and speak() below. iOS Safari's playback unlock
+     (triggered by a silent play() inside a real tap) can be unreliable
+     when each reply creates a brand-new Audio() object; it holds far more
+     consistently when the exact same element that was unlocked is reused
+     for every later play() call instead. -->
+<audio id="ttsPlayer" style="display:none"></audio>
+
 <div id="start">
   <div id="start-inner">
     <h1 data-brand="name">Deeper Mindfulness</h1>
@@ -287,12 +295,17 @@
         const blob   = new Blob([buffer], { type: 'audio/mpeg' });
         const url    = URL.createObjectURL(blob);
 
-        if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-        currentAudio = new Audio(url);
+        // Reusing the SAME element unlockAudioPlayback() unlocked earlier,
+        // rather than creating a fresh Audio(url) here — iOS Safari's
+        // playback unlock doesn't reliably carry over to a brand-new
+        // element created later, which causes audio to only work
+        // intermittently instead of every time.
+        currentAudio = document.getElementById('ttsPlayer');
+        currentAudio.pause();
+        currentAudio.src = url;
 
         currentAudio.onended = () => {
           URL.revokeObjectURL(url);
-          currentAudio = null;
           isSpeaking = false;
           setState('');
           setTimeout(() => {
@@ -304,7 +317,6 @@
         };
         currentAudio.onerror = () => {
           URL.revokeObjectURL(url);
-          currentAudio = null;
           isSpeaking = false;
           resolve();
         };
@@ -427,6 +439,10 @@
       micActive = false;
       setState('');
     } else {
+      // Tapping the mic directly (rather than the welcome form) is just as
+      // real a user gesture — unlock here too, in case this is the very
+      // first tap of the session on this device.
+      unlockAudioPlayback();
       startListening();
     }
   });
@@ -485,7 +501,26 @@
     setTimeout(() => document.getElementById('leadName').focus(), 300);
   }
 
+  // Mobile browsers — iOS Safari especially — block programmatic audio
+  // playback unless it happens directly inside a user gesture (a tap).
+  // Every real reply here comes back after a network round-trip
+  // (speech-to-text → chat → text-to-speech), well outside that gesture
+  // window by the time speak() actually calls .play() — so the
+  // conversation works fine while audio stays silent, with no visible
+  // error. Playing a near-instant silent clip HERE, synchronously invoked
+  // inside an actual tap, unlocks audio for the rest of the page session.
+  // Deliberately not awaited by its callers — only invoking .play()
+  // synchronously inside the tap matters, not waiting for it to resolve.
+  function unlockAudioPlayback() {
+    try {
+      const player = document.getElementById('ttsPlayer');
+      player.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+      player.play().then(() => player.pause()).catch(() => {});
+    } catch(e) { /* best effort — if this fails, speak() still tries normally */ }
+  }
+
   async function submitLead() {
+    unlockAudioPlayback();
     const raw     = document.getElementById('leadName').value.trim();
     const name    = raw.split(' ')[0].charAt(0).toUpperCase() + raw.split(' ')[0].slice(1).toLowerCase();
     const email   = document.getElementById('leadEmail').value.trim();
