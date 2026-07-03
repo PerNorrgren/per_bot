@@ -476,15 +476,17 @@
     renderMotdList(motdData);
   }
 
-  function renderStockBar(count, low) {
+  function renderStockBar(approvedCount, low) {
     const bar = document.getElementById('stockBar');
-    if (low) {
-      bar.className = 'stock-bar stock-low';
-      bar.innerHTML = `<span class="stock-dot"></span><span>⚠ Only ${count} approved message${count===1?'':'s'} in queue — please add more.</span>`;
-    } else {
-      bar.className = 'stock-bar stock-ok';
-      bar.innerHTML = `<span class="stock-dot"></span><span>${count} approved message${count===1?'':'s'} ready to send.</span>`;
-    }
+    const draftCount = motdData.filter(m => m.status === 'draft').length;
+    const sentCount  = motdData.filter(m => m.status === 'sent').length;
+    const parts = [
+      `${draftCount} draft${draftCount===1?'':'s'}`,
+      `${approvedCount} approved (ready to send)`,
+      `${sentCount} sent — visible to users in their Poems tab`,
+    ];
+    bar.className = low ? 'stock-bar stock-low' : 'stock-bar stock-ok';
+    bar.innerHTML = `<span class="stock-dot"></span><span>${low ? '⚠ ' : ''}${parts.join(' · ')}${low ? ' — please add more' : ''}</span>`;
   }
 
   // ── Bulk selection state for drafts ──
@@ -531,7 +533,6 @@
       btn.disabled = false;
       if (data.ok) {
         motdSel.clear();
-        renderStockBar(data.approvedCount, data.lowStock);
         loadMotd();
       } else {
         alert(data.error || 'Could not approve the selected messages.');
@@ -699,9 +700,7 @@
   }
 
   async function approveMotd(id) {
-    const res  = await fetch(`/api/admin/motd/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'approve' }) });
-    const data = await res.json();
-    renderStockBar(data.approvedCount, data.lowStock);
+    await fetch(`/api/admin/motd/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'approve' }) });
     loadMotd();
   }
 
@@ -719,7 +718,6 @@
     const data = await res.json();
     btn.disabled = false; btn.textContent = 'Send today\'s message';
     if (data.ok) {
-      renderStockBar(data.remaining, data.lowStock);
       loadMotd();
       alert(`Sent to ${data.sent} recipient${data.sent===1?'':'s'}. ${data.remaining} messages remaining in queue.`);
     } else {
@@ -954,13 +952,6 @@
     quill.setSelection(range.index + 1);
   }
 
-  // Operates on whatever image is currently selected in the editor — click
-  // directly on an image to select it (Quill treats an image as a single
-  // unit, so clicking it produces a one-length selection), then click this
-  // button. Uses Quill's own documented formatText API to apply the
-  // existing 'link' format to that selection, rather than manipulating the
-  // DOM directly — the officially-supported way to do this, so it plays
-  // correctly with Quill's own Delta model instead of fighting it.
   // ── Shared insertion targeting ── A columns block is a single atomic
   // unit as far as Quill's own selection/Delta model is concerned —
   // clicking inside one of its cells moves the browser's real cursor
@@ -971,13 +962,29 @@
   // which is what makes "click into a cell, then use a toolbar button"
   // land in the right place instead of always falling through to Quill's
   // outer flow, after the image-in-a-column bug report.
+  // A live window.getSelection() read at the moment a toolbar button's
+  // click handler runs is not reliable for this — Quill's toolbar has its
+  // own mousedown handling that preserves ITS OWN selection state when a
+  // button is clicked, but that protection is scoped to quill.root, not to
+  // these custom nested cells, so the browser's real selection can already
+  // have moved (often back to the start of Quill's own flow) by the time
+  // the handler fires — which is exactly why images were landing above the
+  // columns block instead of inside the clicked cell. Tracking the last
+  // known cell selection continuously, rather than trying to catch it
+  // fresh after the fact, sidesteps that entirely.
+  let lastCellSelection = null;
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) { return; }
+    const node = sel.getRangeAt(0).startContainer;
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const cellEl = el ? el.closest('[data-column-cell]') : null;
+    lastCellSelection = cellEl ? { cellEl, range: sel.getRangeAt(0).cloneRange(), browserSel: sel } : null;
+  });
+
   function getInsertionTarget() {
-    const browserSel = window.getSelection();
-    if (browserSel && browserSel.rangeCount > 0) {
-      const node = browserSel.getRangeAt(0).startContainer;
-      const el = node.nodeType === 1 ? node : node.parentElement;
-      const cellEl = el ? el.closest('[data-column-cell]') : null;
-      if (cellEl) return { inCell: true, range: browserSel.getRangeAt(0).cloneRange(), browserSel };
+    if (lastCellSelection && document.contains(lastCellSelection.cellEl)) {
+      return { inCell: true, range: lastCellSelection.range, browserSel: lastCellSelection.browserSel };
     }
     const quill = getQuill();
     return { inCell: false, quillRange: quill.getSelection(true) || { index: quill.getLength() } };
