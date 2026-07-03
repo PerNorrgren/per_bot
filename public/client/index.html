@@ -505,7 +505,24 @@
   }, 9000);
 
   // ── Tabs ──
+  // Best-effort signal that a Talk conversation may be over — sendBeacon
+  // is used specifically because it's designed to survive the page
+  // actually going away (a regular fetch is often killed mid-flight when
+  // a tab closes or the browser navigates elsewhere). This only matters
+  // for anyone who's turned on Keep History in My Account; the server
+  // checks that preference itself before doing anything; there's no harm
+  // in firing this beacon regardless of what someone's chosen, since
+  // finalizing an already-finalized or opted-out session is a no-op.
+  function sendFinalizeBeacon() {
+    try {
+      navigator.sendBeacon('/api/chat/finalize', new Blob([JSON.stringify({ sessionId })], { type: 'application/json' }));
+    } catch(e) { /* best effort only */ }
+  }
+  document.addEventListener('pagehide', sendFinalizeBeacon);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendFinalizeBeacon(); });
+
   function switchTab(tab) {
+    if (tab !== 'talk') sendFinalizeBeacon();
     ['talk','practices','courses','sessions','history','content','poems'].forEach(t => {
       document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });

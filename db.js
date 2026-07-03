@@ -569,6 +569,14 @@ async function getDb() {
     "ALTER TABLE users ADD COLUMN pref_sms_motd INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN pref_sms_reminders INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN pref_sms_renewal INTEGER DEFAULT 0",
+    // Keep History (Per Bot 6) — opt-in continuity for the AUTOMATED
+    // self-serve Talk conversations specifically. Deliberately separate
+    // from any facilitator-led clinical relationship, which has its own
+    // consent already; this toggle governs whether the automated bot may
+    // read AND write an ongoing arc/summary from someone's own self-guided
+    // conversations. Off by default — summarizing personal conversation
+    // content across sessions is a real privacy decision, not a default.
+    "ALTER TABLE users ADD COLUMN pref_keep_history INTEGER DEFAULT 0",
     // Renewal reminders (Per Bot 6) — genuinely new, not previously built.
     // pref_email_renewal/pref_email_news existed as columns before this,
     // but nothing ever sent anything for renewal — this migration and the
@@ -592,6 +600,11 @@ async function getDb() {
     "ALTER TABLE newsletters ADD COLUMN format TEXT DEFAULT 'plain'",
     "ALTER TABLE app_config ADD COLUMN newsletter_footer TEXT",
     "ALTER TABLE users ADD COLUMN unsubscribe_token TEXT",
+    // Lets an admin/facilitator's own phone number default the SMS
+    // test-send fields the same way their email already defaults the
+    // email test-send fields — there was previously nowhere on the
+    // facilitators table to even store this.
+    "ALTER TABLE facilitators ADD COLUMN phone TEXT",
     // Newsletter audience targeting — comma-separated segment keys (see
     // getNewsletterRecipients below), defaults to 'all' for any pre-existing
     // rows so nothing already sent silently reinterprets who it went to.
@@ -799,6 +812,14 @@ function unarchiveFacilitator(id) {
 }
 function updateFacilitatorDetails(id, name, email) {
   getDbSync().run('UPDATE facilitators SET name=?,email=? WHERE id=?', [name, email.toLowerCase(), id]); save();
+}
+// Separate from updateFacilitatorDetails above deliberately — that function
+// is shared by both "admin edits another facilitator" and "I'm editing my
+// own name/email", and adding phone there would mean touching both call
+// sites for something that's really just a personal detail on your own
+// account (used to default the SMS test-send fields).
+function updateFacilitatorPhone(id, phone) {
+  getDbSync().run('UPDATE facilitators SET phone=? WHERE id=?', [phone || null, id]); save();
 }
 function getAllAdmins() {
   return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role='admin' ORDER BY name ASC");
@@ -1540,7 +1561,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','phone','language','motd_days','motd_hour','timezone'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
@@ -2374,7 +2395,7 @@ module.exports = {
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
-  getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails,
+  getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,
   // Categories
   getAllCategories, getTopCategories, getSubcategories,

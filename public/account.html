@@ -312,6 +312,26 @@
     </div>
   </div>
 
+  <!-- ── Keep History ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">My conversations with the companion</div></div>
+    <div class="card-body">
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">Keep history between conversations</div>
+          <div class="pref-desc">When this is on, the companion remembers a gentle thread from one self-guided conversation to the next — a short summary and sense of where you're at, so it doesn't start from zero each time. When it's off, every conversation starts completely fresh, and nothing about what you say is kept afterward.</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="prefKeepHistory" onchange="saveKeepHistory()"/>
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+      <div class="modal-note" style="margin-top:6px">This is separate from any work you do directly with a facilitator, which has its own confidentiality and isn't affected by this setting either way.</div>
+      <div class="msg" id="keepHistoryMsg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
   <!-- ── Password ── -->
   <div class="card">
     <div class="card-header"><div class="card-title">Password</div></div>
@@ -494,6 +514,7 @@
     document.getElementById('prefRenewalEmail').checked   = !!a.pref_email_renewal;
     document.getElementById('prefRenewalSms').checked     = !!a.pref_sms_renewal;
     document.getElementById('prefNews').checked           = !!a.pref_email_news;
+    document.getElementById('prefKeepHistory').checked    = !!a.pref_keep_history;
     if (a.pref_sms_motd || a.pref_sms_reminders || a.pref_sms_renewal) document.getElementById('phoneField').style.display = 'block';
     if (a.phone) document.getElementById('fieldPhone').value = a.phone;
 
@@ -674,6 +695,22 @@
 
   // ── Save preferences — fires on every toggle change ──
   let prefTimer = null;
+  // Saved on its own, immediately, rather than folded into the debounced
+  // savePrefs() batch below — this one's a genuine consent decision, not
+  // just a notification channel, so it gets its own clear confirmation
+  // rather than sharing the general "Preferences saved" message.
+  async function saveKeepHistory() {
+    const on = document.getElementById('prefKeepHistory').checked;
+    try {
+      const res  = await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ pref_keep_history: on ? 1 : 0 }) });
+      const data = await res.json();
+      if (data.ok) showMsg('keepHistoryMsg', on ? 'Turned on — future conversations will build on a gentle thread.' : 'Turned off — every conversation now starts fresh.', 'ok');
+      else         showMsg('keepHistoryMsg', data.error || 'Could not save.', 'err');
+    } catch(e) {
+      showMsg('keepHistoryMsg', 'Could not save.', 'err');
+    }
+  }
+
   async function savePrefs() {
     clearTimeout(prefTimer);
     prefTimer = setTimeout(async () => {

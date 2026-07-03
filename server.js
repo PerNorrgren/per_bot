@@ -1487,6 +1487,8 @@ function getChatSession(sessionId, clientId) {
       transcript: [],
       clientId: clientId || null,
       systemPrompt: null,
+      lastActivityAt: Date.now(),
+      finalized: false,
     });
   }
   return chatSessions.get(sessionId);
@@ -1506,19 +1508,27 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { message, sessionId, clientId } = req.body;
     const session = getChatSession(sessionId, clientId || req.user.id);
+    session.lastActivityAt = Date.now();
 
     // Build system prompt once per session
     if (!session.systemPrompt) {
       let sp = prompts.CLIENT_SYSTEM_PROMPT;
       const cId = session.clientId;
       if (cId) {
-        const client   = db.getUser(cId);
-        const sessions = db.getSessionsForClient(cId);
-        const arc      = client?.arc || '';
-        if (arc || sessions.length > 0) sp += prompts.CLIENT_ARC_PREFIX(arc, sessions.length);
-        // Adaptive context — programme/track awareness
-        if (client?.programme || sessions.length > 0) {
-          sp += prompts.CLIENT_ADAPTIVE_CONTEXT(client?.programme, client?.track, sessions.length);
+        const client = db.getUser(cId);
+        // Arc/history continuity for the AUTOMATED bot is gated on
+        // pref_keep_history specifically — deliberately separate from any
+        // facilitator-led clinical relationship, which has its own
+        // consent already. Someone who hasn't opted in here gets a clean
+        // slate every conversation, even if an arc exists from
+        // facilitator sessions elsewhere.
+        if (client?.pref_keep_history) {
+          const sessions = db.getSessionsForClient(cId);
+          const arc = client?.arc || '';
+          if (arc || sessions.length > 0) sp += prompts.CLIENT_ARC_PREFIX(arc, sessions.length);
+          if (client?.programme || sessions.length > 0) {
+            sp += prompts.CLIENT_ADAPTIVE_CONTEXT(client?.programme, client?.track, sessions.length);
+          }
         }
         sp += languageInstruction(client?.language);
       }
@@ -1546,6 +1556,90 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── Keep History — finalizing an automated self-serve conversation ──
+// The facilitator-led flow (see case 'end_session' above) has an explicit
+// end point where a summary and arc update get generated. The automated
+// /api/chat flow has no equivalent moment — it's just a REST endpoint the
+// client polls, with no "conversation over" signal — so this fills that
+// gap for anyone who's opted into pref_keep_history.
+//
+// Only ever runs once per session (finalized flag) even though it can be
+// triggered two ways: a best-effort beacon from the client when they
+// leave the Talk view (see /api/chat/finalize below), and a periodic
+// server-side sweep (see cron.js) that catches sessions where the beacon
+// never fired — a crashed tab, a killed app, a phone that died mid-
+// conversation. Reuses the exact same summary/arc prompts already proven
+// by the facilitator flow, just with sessionType 'self' instead of
+// 'facilitator', and auto-publishes the client-facing note immediately —
+// there's no facilitator in the loop here to review and release it, so
+// gating it behind a review step that will never happen would just mean
+// the person never sees their own note.
+async function finalizeChatSession(sessionId) {
+  const session = chatSessions.get(sessionId);
+  if (!session || session.finalized) return;
+  session.finalized = true; // mark first — avoids a double-fire race between the beacon and the cron sweep
+
+  try {
+    if (!session.clientId || !session.transcript.length) return;
+    const client = db.getUser(session.clientId);
+    if (!client || !client.pref_keep_history) return; // respect opt-out even if it changed mid-session
+
+    const transcript = session.transcript.join('\n');
+    const clinicalSummary = await callClaude(
+      'You are generating a session summary for a self-guided practice conversation.',
+      [{ role: 'user', content: prompts.GENERATE_SESSION_SUMMARY(transcript, client.arc, 'self') }],
+      500
+    );
+    const clientSummary = await callClaude(
+      'You are rewriting a session summary into a short, warm note for the person to read themselves.',
+      [{ role: 'user', content: prompts.GENERATE_CLIENT_SUMMARY(clinicalSummary) }],
+      300
+    );
+    const arcUpdate = await callClaude(
+      'You are updating a person\'s ongoing developmental arc based on a recent self-guided session summary.',
+      [{ role: 'user', content: prompts.GENERATE_ARC_UPDATE(client.arc, clinicalSummary) }],
+      300
+    );
+
+    db.updateArc(client.id, arcUpdate.trim());
+    db.addSession(uuidv4(), client.id, null, 'self', clinicalSummary, clientSummary.trim(), '');
+  } catch(e) {
+    console.error('finalizeChatSession error:', e.message);
+  } finally {
+    chatSessions.delete(sessionId);
+  }
+}
+
+// Public-facing but still requires the client auth cookie — sendBeacon
+// includes same-origin cookies automatically, so this stays behind the
+// normal client auth check like everything else here. Best-effort by
+// design: if this never arrives (tab killed, app crashed), the cron sweep
+// in cron.js catches it later instead.
+app.post('/api/chat/finalize', auth.requireAuthApi(['client']), (req, res) => {
+  const { sessionId } = req.body;
+  if (sessionId) finalizeChatSession(sessionId); // deliberately not awaited — response shouldn't wait on 3 Claude calls
+  res.json({ ok: true });
+});
+
+// ── Keep History — safety-net sweep for the automated chat flow ──
+// The client sends a best-effort beacon when leaving Talk (see
+// /api/chat/finalize above), but beacons can be missed — a crashed tab, a
+// killed app, a phone that died mid-conversation. This finds any
+// in-memory session that's gone quiet for a while and finalizes it the
+// same way, so an opted-in person's arc still gets built even if the
+// clean-exit signal never arrived. Called by cron.js.
+function sweepStaleChatSessions(staleMinutes = 20) {
+  const cutoff = Date.now() - staleMinutes * 60 * 1000;
+  let swept = 0;
+  for (const [sessionId, session] of chatSessions.entries()) {
+    if (!session.finalized && session.lastActivityAt < cutoff) {
+      finalizeChatSession(sessionId);
+      swept++;
+    }
+  }
+  return { ok: true, swept };
+}
 
 // ── /api/guest/lead — capture name + email, issues the guest identity ──
 // cookie on success. Per doesn't want anonymous browsing-only access — this
@@ -2723,7 +2817,7 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
   try {
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','phone','language','motd_days','motd_hour','timezone'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     // Light validation — bad values here would silently break someone's schedule
@@ -2743,18 +2837,26 @@ app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
       try { new Intl.DateTimeFormat(undefined, { timeZone: prefs.timezone }); }
       catch (e) { return res.status(400).json({ error: 'That timezone isn\'t recognised.' }); }
     }
-    // Timezone is optional in general, but mandatory the moment notifications
-    // are on — the scheduled sender can't work out a user's local hour
-    // without one. Check the EFFECTIVE state after this patch is applied
-    // (existing value unless this request is changing it), not just what
-    // was submitted, so e.g. flipping pref_sms on without resubmitting an
-    // already-saved timezone doesn't wrongly reject.
-    const current = db.getUser(req.user.id);
-    const effEmailMotd = prefs.pref_email_motd !== undefined ? !!Number(prefs.pref_email_motd) : !!current.pref_email_motd;
-    const effSms       = prefs.pref_sms         !== undefined ? !!Number(prefs.pref_sms)         : !!current.pref_sms;
-    const effTimezone  = prefs.timezone !== undefined ? prefs.timezone : current.timezone;
-    if ((effEmailMotd || effSms) && !effTimezone) {
-      return res.status(400).json({ error: 'Please set a timezone before turning on notifications.' });
+    // Timezone is optional in general, but mandatory the moment MOTD
+    // notifications are on — the scheduled sender can't work out a user's
+    // local hour without one. This must only fire when THIS request is
+    // actually changing a MOTD-related field — checking against the
+    // user's already-saved state unconditionally (as this used to) meant
+    // any unrelated update (name, phone, an entirely different preference
+    // like Keep History) got wrongly rejected for anyone who simply
+    // hadn't set a timezone yet, since pref_email_motd defaults to on for
+    // every new account. Only MOTD is per-user scheduled — Reminders and
+    // Renewal run on fixed cron times, not a personal hour, so they don't
+    // belong in this check at all.
+    const touchesMotdScheduling = ['pref_email_motd', 'pref_sms_motd'].some(k => prefs[k] !== undefined);
+    if (touchesMotdScheduling) {
+      const current = db.getUser(req.user.id);
+      const effEmailMotd = prefs.pref_email_motd !== undefined ? !!Number(prefs.pref_email_motd) : !!current.pref_email_motd;
+      const effSmsMotd    = prefs.pref_sms_motd   !== undefined ? !!Number(prefs.pref_sms_motd)   : !!current.pref_sms_motd;
+      const effTimezone   = prefs.timezone !== undefined ? prefs.timezone : current.timezone;
+      if ((effEmailMotd || effSmsMotd) && !effTimezone) {
+        return res.status(400).json({ error: 'Please set a timezone before turning on the daily message.' });
+      }
     }
 
     if (Object.keys(prefs).length) db.updateUserPreferences(req.user.id, prefs);
@@ -2805,6 +2907,7 @@ app.patch('/api/staff-account', auth.requireAuthApi(['admin', 'facilitator']), (
     if (existingUser) return res.status(400).json({ error: 'That email is already in use.' });
 
     db.updateFacilitatorDetails(req.user.id, name, email);
+    if (req.body.phone !== undefined) db.updateFacilitatorPhone(req.user.id, req.body.phone.trim() || null);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3643,8 +3746,9 @@ app.post('/api/admin/motd/test-send-sms', auth.requireAuthApi(['admin']), async 
     const { body, to } = req.body;
     if (!body || !body.trim()) return res.status(400).json({ error: 'Message body is empty.' });
 
-    const toPhone = (to || '').trim();
-    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...).' });
+    const admin = db.getFacilitatorById(req.user.id);
+    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const result = await sms.sendSms(toPhone, body.trim());
     if (!result.ok) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
@@ -3682,8 +3786,9 @@ app.post('/api/admin/reminders/test-sms', auth.requireAuthApi(['admin']), async 
   try {
     if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
     const { to } = req.body;
-    const toPhone = (to || '').trim();
-    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...).' });
+    const admin = db.getFacilitatorById(req.user.id);
+    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const b = brand();
     const result = await sms.sendSms(toPhone, buildReminderSms(req.user.name || 'there', b));
@@ -3722,8 +3827,9 @@ app.post('/api/admin/renewal/test-sms', auth.requireAuthApi(['admin']), async (r
   try {
     if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
     const { to } = req.body;
-    const toPhone = (to || '').trim();
-    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...).' });
+    const admin = db.getFacilitatorById(req.user.id);
+    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const b = brand();
     const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -3900,6 +4006,6 @@ app.use((err, req, res, next) => {
     db.createFacilitator(uuidv4(), adminName, adminEmail, hash, 'admin');
     console.log(`Admin created: ${adminEmail}`);
   }
-  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders });
+  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sweepStaleChatSessions });
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sweepStaleChatSessions }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -83,7 +83,22 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10,
     }
   });
 
-  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC)');
+  // ── Stale chat session sweep — every 10 minutes ──
+  // Safety net for Keep History (Per Bot 6) — catches any automated Talk
+  // conversation that went quiet without the client's own beacon firing
+  // (crashed tab, killed app), so an opted-in person's arc still gets
+  // built from it. Runs often since it's cheap when there's nothing stale
+  // — most sweeps will find zero sessions to finalize.
+  cron.schedule('*/10 * * * *', () => {
+    try {
+      const result = sweepStaleChatSessions();
+      if (result.swept > 0) console.log(`[cron] chat session sweep: finalized ${result.swept} stale session(s)`);
+    } catch (e) {
+      console.error('[cron] chat session sweep failed:', e.message);
+    }
+  });
+
+  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), stale chat sweep (every 10 min)');
 }
 
 module.exports = { startCronJobs };
