@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -68,7 +68,22 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10,
     }
   });
 
-  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC)');
+  // ── Renewal reminders — 07:30 UTC ──
+  // Genuinely new (Per Bot 6) — checks member_expires_at against
+  // app_config.renewal_reminder_days and notifies anyone whose subscription
+  // renews in exactly that many days. See sendRenewalReminders() and
+  // getUpcomingRenewals() for why this only matches active subscriptions
+  // (lifetime members have no expiry to remind about).
+  cron.schedule('30 7 * * *', async () => {
+    try {
+      const result = await sendRenewalReminders();
+      console.log(`[cron] renewal reminders: matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms} threshold=${result.thresholdDays}d`);
+    } catch (e) {
+      console.error('[cron] renewal reminders failed:', e.message);
+    }
+  });
+
+  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC)');
 }
 
 module.exports = { startCronJobs };

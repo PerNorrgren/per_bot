@@ -559,6 +559,28 @@ async function getDb() {
     // both; those fields never actually persisted anywhere. Real now.
     "ALTER TABLE app_config ADD COLUMN reminder_days INTEGER DEFAULT 4",
     "ALTER TABLE app_config ADD COLUMN reminder_subject TEXT DEFAULT 'Whenever you''re ready'",
+    // Per-type SMS preferences (Per Bot 6) — previously a single pref_sms
+    // column existed, but was only ever wired up for MOTD, which made it
+    // impossible to want SMS for reminders without also getting it for the
+    // daily message. Newsletter deliberately has no SMS variant — SMS has
+    // a hard length limit and no formatting, so a newsletter's actual
+    // content wouldn't survive the trip; email-only is a real constraint
+    // there, not an oversight.
+    "ALTER TABLE users ADD COLUMN pref_sms_motd INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN pref_sms_reminders INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN pref_sms_renewal INTEGER DEFAULT 0",
+    // Renewal reminders (Per Bot 6) — genuinely new, not previously built.
+    // pref_email_renewal/pref_email_news existed as columns before this,
+    // but nothing ever sent anything for renewal — this migration and the
+    // tracking column below are what make it a real feature rather than a
+    // dormant toggle. renewal_reminder_sent_for stores the expiry date the
+    // reminder was already sent for, not just a timestamp — since
+    // member_expires_at itself changes every renewal cycle, comparing
+    // against it directly means the reminder naturally re-arms itself each
+    // cycle without needing separate reset logic.
+    "ALTER TABLE users ADD COLUMN renewal_reminder_sent_for TEXT",
+    "ALTER TABLE app_config ADD COLUMN renewal_reminder_days INTEGER DEFAULT 5",
+    "ALTER TABLE app_config ADD COLUMN renewal_reminder_subject TEXT DEFAULT 'Your membership renews soon'",
     // Rich newsletters (Per Bot 6) — format tells the send/render pipeline
     // whether `body` is plain text (apply \n->br the same as always) or
     // already-HTML from the rich editor (render as-is). newsletter_footer is
@@ -614,6 +636,13 @@ async function getDb() {
   // required to actively choose a timezone before turning notifications on.
   try {
     db.run(`UPDATE users SET timezone='Europe/London' WHERE timezone IS NULL AND (pref_email_motd=1 OR pref_sms=1)`);
+  } catch(e) { /* ignore */ }
+
+  // pref_sms used to be the only SMS preference, wired up exclusively for
+  // MOTD — carry forward anyone who'd already opted in so this restructure
+  // doesn't silently opt them out of something they'd turned on.
+  try {
+    db.run(`UPDATE users SET pref_sms_motd=1 WHERE pref_sms=1 AND (pref_sms_motd IS NULL OR pref_sms_motd=0)`);
   } catch(e) { /* ignore */ }
 
   // ── clients → users table migration ──
@@ -1511,7 +1540,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','phone','language','motd_days','motd_hour','timezone'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','phone','language','motd_days','motd_hour','timezone'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
@@ -1924,9 +1953,9 @@ function activateMotd(id, dateStr) {
 // Intl.DateTimeFormat, not filtered in SQL.
 function getMotdNotificationCandidates() {
   return queryAll(
-    `SELECT id, name, email, phone, pref_email_motd, pref_sms, timezone, motd_days, motd_hour, motd_last_sent_date
+    `SELECT id, name, email, phone, pref_email_motd, pref_sms_motd AS pref_sms, timezone, motd_days, motd_hour, motd_last_sent_date
      FROM users
-     WHERE archived=0 AND (pref_email_motd=1 OR pref_sms=1) AND timezone IS NOT NULL AND timezone != ''`
+     WHERE archived=0 AND (pref_email_motd=1 OR pref_sms_motd=1) AND timezone IS NOT NULL AND timezone != ''`
   );
 }
 function markMotdSentForUser(userId, todayStr) {
@@ -1998,9 +2027,8 @@ function getNewsletterRecipients(segments) {
 // user gets nudged weekly, not every single day the cron job runs.
 function getInactiveUsers(days = 4) {
   return queryAll(
-    `SELECT u.id, u.name, u.email FROM users u
-     WHERE u.pref_email_reminders=1
-       AND u.email IS NOT NULL
+    `SELECT u.id, u.name, u.email, u.phone, u.pref_email_reminders, u.pref_sms_reminders FROM users u
+     WHERE (u.pref_email_reminders=1 OR u.pref_sms_reminders=1)
        AND u.archived=0
        AND (u.last_reminder_sent_at IS NULL OR u.last_reminder_sent_at <= datetime('now', '-7 days'))
        AND NOT EXISTS (
@@ -2013,6 +2041,36 @@ function getInactiveUsers(days = 4) {
 }
 function markReminderSent(userId) {
   getDbSync().run(`UPDATE users SET last_reminder_sent_at=datetime('now') WHERE id=?`, [userId]);
+  save();
+}
+
+// ── Renewal reminders ── Genuinely new — pref_email_renewal existed as a
+// column before this, but nothing ever checked subscription expiry or sent
+// anything for it. member_expires_at is kept in sync by the Stripe webhook
+// handler (extended on invoice.payment_succeeded, cleared to Explorer on
+// cancellation), so it's a reliable field to build this on rather than
+// needing a fresh Stripe API call per check. Only matches users with an
+// active subscription (stripe_subscription_id set) — lifetime members have
+// no expiry to remind about, and someone already dropped to Explorer
+// wouldn't have a subscription id left to match on anyway.
+function getUpcomingRenewals(daysBefore) {
+  return queryAll(
+    `SELECT id, name, email, phone, pref_email_renewal, pref_sms_renewal, member_expires_at, member_tier
+     FROM users
+     WHERE archived=0
+       AND (pref_email_renewal=1 OR pref_sms_renewal=1)
+       AND stripe_subscription_id IS NOT NULL
+       AND member_expires_at IS NOT NULL
+       AND date(member_expires_at) = date('now', '+' || ? || ' days')
+       AND (renewal_reminder_sent_for IS NULL OR renewal_reminder_sent_for != member_expires_at)`,
+    [daysBefore]
+  );
+}
+// Stores the expiry date itself, not just a timestamp — since
+// member_expires_at changes every renewal cycle, this naturally re-arms
+// for the next cycle without any separate reset step.
+function markRenewalReminderSent(userId, expiresAt) {
+  getDbSync().run(`UPDATE users SET renewal_reminder_sent_for=? WHERE id=?`, [expiresAt, userId]);
   save();
 }
 
@@ -2059,7 +2117,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer','renewal_reminder_days','renewal_reminder_subject'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -2402,6 +2460,8 @@ module.exports = {
   // Reminders
   getInactiveUsers,
   markReminderSent,
+  getUpcomingRenewals,
+  markRenewalReminderSent,
   getTrialEmailCandidates,
   markTrialEmailSent,
   // Stripe lookups

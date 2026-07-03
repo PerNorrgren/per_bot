@@ -71,6 +71,9 @@
 
     /* Toggles */
     .pref-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .channel-pair { display:flex; gap:16px; flex-shrink:0; }
+    .channel-check { display:flex; align-items:center; gap:6px; font-size:12px; color:rgba(255,255,255,0.55); cursor:pointer; white-space:nowrap; }
+    .channel-check input { width:auto; accent-color:rgba(180,230,200,0.8); cursor:pointer; }
     .pref-row:last-child { border-bottom:none; }
     .pref-label { flex:1; }
     .pref-name { font-size:14px; color:rgba(255,255,255,0.75); }
@@ -232,11 +235,10 @@
           <div class="pref-name">Daily message from Per</div>
           <div class="pref-desc">A short thought or practice prompt each morning</div>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="prefMotd" onchange="savePrefs()"/>
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
+        <div class="channel-pair">
+          <label class="channel-check"><input type="checkbox" id="prefMotdEmail" onchange="savePrefs()"/> Email</label>
+          <label class="channel-check"><input type="checkbox" id="prefMotdSms" onchange="onSmsPrefChange()"/> SMS</label>
+        </div>
       </div>
 
       <div class="pref-row">
@@ -244,11 +246,10 @@
           <div class="pref-name">Practice reminders</div>
           <div class="pref-desc">A gentle nudge if you haven't practised in a few days</div>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="prefReminders" onchange="savePrefs()"/>
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
+        <div class="channel-pair">
+          <label class="channel-check"><input type="checkbox" id="prefRemindersEmail" onchange="savePrefs()"/> Email</label>
+          <label class="channel-check"><input type="checkbox" id="prefRemindersSms" onchange="onSmsPrefChange()"/> SMS</label>
+        </div>
       </div>
 
       <div class="pref-row">
@@ -256,17 +257,16 @@
           <div class="pref-name">Membership renewal reminders</div>
           <div class="pref-desc">Ahead of your renewal date</div>
         </div>
-        <label class="toggle">
-          <input type="checkbox" id="prefRenewal" onchange="savePrefs()"/>
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
+        <div class="channel-pair">
+          <label class="channel-check"><input type="checkbox" id="prefRenewalEmail" onchange="savePrefs()"/> Email</label>
+          <label class="channel-check"><input type="checkbox" id="prefRenewalSms" onchange="onSmsPrefChange()"/> SMS</label>
+        </div>
       </div>
 
       <div class="pref-row">
         <div class="pref-label">
           <div class="pref-name">News and updates</div>
-          <div class="pref-desc">New programmes, events, and things from Per</div>
+          <div class="pref-desc">New programmes, events, and things from Per — email only, these can run long</div>
         </div>
         <label class="toggle">
           <input type="checkbox" id="prefNews" onchange="savePrefs()"/>
@@ -275,21 +275,10 @@
         </label>
       </div>
 
-      <div class="pref-row" style="padding-top:14px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.05);border-bottom:none">
-        <div class="pref-label">
-          <div class="pref-name">SMS messages</div>
-          <div class="pref-desc">Coming soon — opt in now if you'd like to receive texts</div>
-        </div>
-        <label class="toggle">
-          <input type="checkbox" id="prefSms" onchange="savePrefs()"/>
-          <div class="toggle-track"></div>
-          <div class="toggle-thumb"></div>
-        </label>
-      </div>
-
-      <div class="field" id="phoneField" style="display:none;margin-top:10px">
+      <div class="field" id="phoneField" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.05)">
         <label>Mobile number</label>
         <input type="tel" id="fieldPhone" placeholder="+44 7700 000000" onblur="savePrefs()"/>
+        <div class="modal-note" style="margin-top:6px">Needed for any of the SMS options above.</div>
       </div>
 
       <div class="schedule-block">
@@ -498,12 +487,14 @@
     renderFacilitatorCard(a);
 
     // Preferences
-    document.getElementById('prefMotd').checked     = !!a.pref_email_motd;
-    document.getElementById('prefReminders').checked = !!a.pref_email_reminders;
-    document.getElementById('prefRenewal').checked  = !!a.pref_email_renewal;
-    document.getElementById('prefNews').checked     = !!a.pref_email_news;
-    document.getElementById('prefSms').checked      = !!a.pref_sms;
-    if (a.pref_sms) document.getElementById('phoneField').style.display = 'block';
+    document.getElementById('prefMotdEmail').checked      = !!a.pref_email_motd;
+    document.getElementById('prefMotdSms').checked        = !!a.pref_sms_motd;
+    document.getElementById('prefRemindersEmail').checked = !!a.pref_email_reminders;
+    document.getElementById('prefRemindersSms').checked   = !!a.pref_sms_reminders;
+    document.getElementById('prefRenewalEmail').checked   = !!a.pref_email_renewal;
+    document.getElementById('prefRenewalSms').checked     = !!a.pref_sms_renewal;
+    document.getElementById('prefNews').checked           = !!a.pref_email_news;
+    if (a.pref_sms_motd || a.pref_sms_reminders || a.pref_sms_renewal) document.getElementById('phoneField').style.display = 'block';
     if (a.phone) document.getElementById('fieldPhone').value = a.phone;
 
     // MOTD schedule — days defaults to every day, hour defaults to 9 (09:00)
@@ -630,9 +621,16 @@
   }
 
   // ── SMS toggle ──
-  document.getElementById('prefSms').addEventListener('change', function() {
-    document.getElementById('phoneField').style.display = this.checked ? 'block' : 'none';
-  });
+  // Shows the phone field the moment ANY per-type SMS box is checked, not
+  // just one specific toggle — there are three of them now (MOTD,
+  // reminders, renewal), any one of which needs a phone number on file.
+  function onSmsPrefChange() {
+    const anySms = document.getElementById('prefMotdSms').checked
+      || document.getElementById('prefRemindersSms').checked
+      || document.getElementById('prefRenewalSms').checked;
+    document.getElementById('phoneField').style.display = anySms ? 'block' : 'none';
+    savePrefs();
+  }
 
   // ── Save profile ──
   async function saveProfile() {
@@ -681,7 +679,7 @@
     prefTimer = setTimeout(async () => {
       const activeDays = Array.from(document.querySelectorAll('#motdDayPicker .day-chip.active'))
         .map(chip => chip.dataset.day).join(',');
-      const wantsNotifications = document.getElementById('prefMotd').checked || document.getElementById('prefSms').checked;
+      const wantsNotifications = document.getElementById('prefMotdEmail').checked || document.getElementById('prefMotdSms').checked;
       const timezone = document.getElementById('motdTimezone').value;
 
       if (wantsNotifications && !timezone) {
@@ -690,11 +688,13 @@
       }
 
       const body = {
-        pref_email_motd:      document.getElementById('prefMotd').checked      ? 1 : 0,
-        pref_email_reminders: document.getElementById('prefReminders').checked ? 1 : 0,
-        pref_email_renewal:   document.getElementById('prefRenewal').checked   ? 1 : 0,
-        pref_email_news:      document.getElementById('prefNews').checked       ? 1 : 0,
-        pref_sms:             document.getElementById('prefSms').checked        ? 1 : 0,
+        pref_email_motd:      document.getElementById('prefMotdEmail').checked      ? 1 : 0,
+        pref_sms_motd:        document.getElementById('prefMotdSms').checked        ? 1 : 0,
+        pref_email_reminders: document.getElementById('prefRemindersEmail').checked ? 1 : 0,
+        pref_sms_reminders:   document.getElementById('prefRemindersSms').checked   ? 1 : 0,
+        pref_email_renewal:   document.getElementById('prefRenewalEmail').checked   ? 1 : 0,
+        pref_sms_renewal:     document.getElementById('prefRenewalSms').checked     ? 1 : 0,
+        pref_email_news:      document.getElementById('prefNews').checked           ? 1 : 0,
         phone:                document.getElementById('fieldPhone').value.trim() || null,
         motd_days:            activeDays,
         motd_hour:            parseInt(document.getElementById('motdHour').value, 10),

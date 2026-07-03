@@ -496,20 +496,76 @@ function emailInactivityReminder(user) {
   return sendEmail(user.email, subject, buildReminderHtml(user.name, b));
 }
 
+function buildReminderSms(userName, b) {
+  return `${b.name}: It's been a little while, ${userName}. No pressure — a few minutes today might help. ${APP_URL}/client/`;
+}
+
 // ── Inactivity reminders — scheduled, config-driven ── Run daily by cron
 // (see cron.js). Threshold and subject line come from app_config
 // (reminder_days / reminder_subject, editable in the admin comms panel) —
 // previously these were hardcoded (4 days, a different fixed subject) even
-// though the admin panel showed editable fields for both.
+// though the admin panel showed editable fields for both. Now sends SMS
+// too, for anyone who's opted into pref_sms_reminders and has a phone
+// number on file — independent of whether they also want the email.
 async function sendInactivityReminders() {
   const cfg = db.getAppConfig() || {};
   const days = Number.isInteger(cfg.reminder_days) ? cfg.reminder_days : parseInt(cfg.reminder_days, 10) || 4;
   const inactive = db.getInactiveUsers(days);
+  const b = brand();
+  let sentEmail = 0, sentSms = 0;
   for (const user of inactive) {
-    await emailInactivityReminder(user);
+    if (user.pref_email_reminders && user.email) { await emailInactivityReminder(user); sentEmail++; }
+    if (user.pref_sms_reminders && user.phone) {
+      const result = await sms.sendSms(user.phone, buildReminderSms(user.name, b));
+      if (result.ok) sentSms++;
+    }
     db.markReminderSent(user.id);
   }
-  return { ok: true, sent: inactive.length, thresholdDays: days };
+  return { ok: true, sent: inactive.length, sentEmail, sentSms, thresholdDays: days };
+}
+
+// ── Renewal reminders ── Genuinely new (Per Bot 6) — pref_email_renewal
+// existed as a column before this, but nothing ever checked subscription
+// expiry or sent anything for it. Built on member_expires_at, which the
+// Stripe webhook handler already keeps in sync (extended on
+// invoice.payment_succeeded, cleared on cancellation) — see
+// getUpcomingRenewals in db.js for why only active subscriptions match
+// (lifetime members have no expiry to remind about).
+function buildRenewalReminderHtml(userName, expiresAt, b) {
+  const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${userName},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Just a heads up — your membership renews on <strong>${dateStr}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.</p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">Manage my membership →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`;
+}
+function buildRenewalReminderSms(userName, expiresAt, b) {
+  const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return `${b.name}: Hi ${userName}, your membership renews on ${dateStr}. Manage it any time at ${APP_URL}/account`;
+}
+
+async function sendRenewalReminders() {
+  const cfg = db.getAppConfig() || {};
+  const days = Number.isInteger(cfg.renewal_reminder_days) ? cfg.renewal_reminder_days : parseInt(cfg.renewal_reminder_days, 10) || 5;
+  const upcoming = db.getUpcomingRenewals(days);
+  const b = brand();
+  const subject = cfg.renewal_reminder_subject || 'Your membership renews soon';
+  let sentEmail = 0, sentSms = 0;
+  for (const user of upcoming) {
+    if (user.pref_email_renewal && user.email) {
+      await sendEmail(user.email, subject, buildRenewalReminderHtml(user.name, user.member_expires_at, b));
+      sentEmail++;
+    }
+    if (user.pref_sms_renewal && user.phone) {
+      const result = await sms.sendSms(user.phone, buildRenewalReminderSms(user.name, user.member_expires_at, b));
+      if (result.ok) sentSms++;
+    }
+    db.markRenewalReminderSent(user.id, user.member_expires_at);
+  }
+  return { ok: true, matched: upcoming.length, sentEmail, sentSms, thresholdDays: days };
 }
 
 // ── Facilitator requests (Per Bot 5, item 11) ──
@@ -2667,7 +2723,7 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
   try {
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','phone','language','motd_days','motd_hour','timezone'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','phone','language','motd_days','motd_hour','timezone'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     // Light validation — bad values here would silently break someone's schedule
@@ -2989,7 +3045,7 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
 // request body, nothing else.
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -3622,6 +3678,64 @@ app.post('/api/admin/reminders/test', auth.requireAuthApi(['admin']), async (req
   }
 });
 
+app.post('/api/admin/reminders/test-sms', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
+    const { to } = req.body;
+    const toPhone = (to || '').trim();
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...).' });
+
+    const b = brand();
+    const result = await sms.sendSms(toPhone, buildReminderSms(req.user.name || 'there', b));
+    if (!result.ok) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
+    res.json({ ok: true, to: toPhone });
+  } catch (e) {
+    console.error('reminder test-send-sms error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Renewal reminders — admin test-send (email + SMS) ── Uses a sample date
+// (30 days out) since a test send has no real user with a real expiry date
+// to draw from — clearly a placeholder, same principle as the newsletter
+// test-send's fake invite-link token.
+app.post('/api/admin/renewal/test', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { subject, to } = req.body;
+    const toEmail = (to && to.trim()) || req.user.email;
+    if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
+
+    const cfg = db.getAppConfig() || {};
+    const testSubject = (subject && subject.trim()) || cfg.renewal_reminder_subject || 'Your membership renews soon';
+    const b = brand();
+    const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildRenewalReminderHtml(req.user.name || 'there', sampleExpiry, b));
+    res.json({ ok: true, to: toEmail });
+  } catch (e) {
+    console.error('renewal test-send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/renewal/test-sms', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
+    const { to } = req.body;
+    const toPhone = (to || '').trim();
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...).' });
+
+    const b = brand();
+    const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const result = await sms.sendSms(toPhone, buildRenewalReminderSms(req.user.name || 'there', sampleExpiry, b));
+    if (!result.ok) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
+    res.json({ ok: true, to: toPhone });
+  } catch (e) {
+    console.error('renewal test-send-sms error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Newsletters — admin ── One-off broadcasts to everyone opted into "News
 // and updates", independent of membership tier. Compose → (optionally edit,
 // test) → Send. No queue, no auto-schedule — content differs every time, so
@@ -3786,6 +3900,6 @@ app.use((err, req, res, next) => {
     db.createFacilitator(uuidv4(), adminName, adminEmail, hash, 'admin');
     console.log(`Admin created: ${adminEmail}`);
   }
-  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders });
+  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders });
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

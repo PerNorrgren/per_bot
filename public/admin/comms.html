@@ -246,7 +246,68 @@
           <button class="btn sm" id="reminderTestBtn" onclick="sendTestReminder()">Send test</button>
         </div>
       </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test SMS</div>
+          <div class="config-desc">Same reminder, as a text message</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="tel" id="reminderTestSmsTo" placeholder="+447..." style="width:200px"/>
+          <button class="btn sm" id="reminderTestSmsBtn" onclick="sendTestReminderSms()">Send test</button>
+        </div>
+      </div>
       <div style="padding:0 20px 14px"><div class="feedback" id="reminderFeedback"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Renewal reminders ── -->
+  <div>
+    <div class="section-label">Renewal reminders</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Renewal reminder settings</div>
+        <button class="btn sm primary" onclick="saveRenewalConfig()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Days before renewal</div>
+          <div class="config-desc">Notify a member this many days before their subscription renews. Lifetime members never get one — there's nothing to renew.</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="number" id="renewalDays" value="5" min="1" max="30" style="width:60px"/>
+          days
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Reminder subject line</div>
+          <div class="config-desc">Email subject sent ahead of renewal</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
+          <input class="inline-input" type="text" id="renewalSubject" value="Your membership renews soon" style="width:320px"/>
+        </div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test reminder</div>
+          <div class="config-desc">Uses a sample date 30 days out, since a test has no real renewal date to draw from</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="email" id="renewalTestTo" placeholder="Defaults to your email" style="width:200px"/>
+          <button class="btn sm" id="renewalTestBtn" onclick="sendTestRenewal()">Send test</button>
+        </div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test SMS</div>
+          <div class="config-desc">Same reminder, as a text message</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="tel" id="renewalTestSmsTo" placeholder="+447..." style="width:200px"/>
+          <button class="btn sm" id="renewalTestSmsBtn" onclick="sendTestRenewalSms()">Send test</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="renewalFeedback"></div></div>
     </div>
   </div>
 
@@ -1585,12 +1646,111 @@
     }
   }
 
+  async function sendTestReminderSms() {
+    const to  = document.getElementById('reminderTestSmsTo').value.trim();
+    const btn = document.getElementById('reminderTestSmsBtn');
+    if (!to) { showFeedback('reminderFeedback', 'Enter a phone number first.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/reminders/test-sms', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ to })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('reminderFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('reminderFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('reminderFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
+  // ── Renewal reminders ──
+  async function loadRenewalConfig() {
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      if (cfg.renewal_reminder_days)    document.getElementById('renewalDays').value = cfg.renewal_reminder_days;
+      if (cfg.renewal_reminder_subject) document.getElementById('renewalSubject').value = cfg.renewal_reminder_subject;
+    } catch(e) { /* fields keep their HTML defaults */ }
+  }
+
+  async function saveRenewalConfig() {
+    const days    = parseInt(document.getElementById('renewalDays').value, 10);
+    const subject = document.getElementById('renewalSubject').value.trim();
+    if (!Number.isInteger(days) || days < 1 || days > 30) {
+      showFeedback('renewalFeedback', 'Days must be a number between 1 and 30.', 'err');
+      return;
+    }
+    if (!subject) {
+      showFeedback('renewalFeedback', 'Subject line cannot be empty.', 'err');
+      return;
+    }
+    try {
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ renewalReminderDays: days, renewalReminderSubject: subject })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('renewalFeedback', 'Settings saved — the daily renewal check will use these values from now on.', 'ok');
+      else         showFeedback('renewalFeedback', data.error || 'Could not save.', 'err');
+    } catch(e) {
+      showFeedback('renewalFeedback', 'Network error — could not save.', 'err');
+    }
+  }
+
+  async function sendTestRenewal() {
+    const subject = document.getElementById('renewalSubject').value.trim();
+    const to      = document.getElementById('renewalTestTo').value.trim();
+    const btn     = document.getElementById('renewalTestBtn');
+    if (!subject) { showFeedback('renewalFeedback', 'Write a subject line first.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/renewal/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ subject, to: to || undefined })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('renewalFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('renewalFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('renewalFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
+  async function sendTestRenewalSms() {
+    const to  = document.getElementById('renewalTestSmsTo').value.trim();
+    const btn = document.getElementById('renewalTestSmsBtn');
+    if (!to) { showFeedback('renewalFeedback', 'Enter a phone number first.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/renewal/test-sms', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ to })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('renewalFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('renewalFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('renewalFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
   // ── Boot ──
   checkAuth().then(() => {
     loadMotd();
     loadLegal();
     loadPlans();
     loadReminderConfig();
+    loadRenewalConfig();
     loadNewsletters();
   });
 </script>
