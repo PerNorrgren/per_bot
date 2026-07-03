@@ -150,6 +150,14 @@
     .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
     .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
     .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
+    .ql-columns-block table { border-collapse:collapse; }
+    .ql-columns-block td[data-column-cell] { border:1px dashed rgba(180,230,200,0.25); }
+    .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
+    .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-button { width:auto; padding:0 6px; font-size:14px; }
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-3 { width:auto; padding:0 8px; font-size:11px; }
     .test-send-row input { flex:1; }
     .modal-check { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.5); cursor:pointer; }
     .modal-check input { width:auto; accent-color:rgba(180,230,200,0.8); }
@@ -361,6 +369,7 @@
       <div id="newsletterRichEditor" style="display:none"></div>
       <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
       <div class="modal-note" style="margin-top:6px">You can use <code>{{name}}</code> and <code>{{invite_link}}</code> — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a 2-week trial the moment they click it; for an existing member it just points to the login page.</div>
+      <div class="modal-note" style="margin-top:6px">In Rich mode: click an image then use the 🔗 button to make it clickable · ▭ inserts a button (type text and a link) · 1/2/3 col inserts side-by-side columns for text next to an image.</div>
     </div>
     <div style="margin-top:6px">
       <a style="font-size:12px;color:rgba(180,230,200,0.6);cursor:pointer;text-decoration:none" onclick="openFooterModal()">Edit footer &amp; unsubscribe text</a>
@@ -821,6 +830,69 @@
   let quillInstance = null;
   let newsletterFormat = 'plain';
 
+  // ── Custom Quill extensions (Per Bot 6) — columns, buttons ──
+  // Registered once, before any editor instance exists.
+  (function() {
+    const BlockEmbed = Quill.import('blots/block/embed');
+
+    // Columns block. Table-based markup (not flexbox/grid) because real
+    // email clients — Outlook especially — don't reliably support CSS
+    // layout; a table is the one thing that actually renders consistently
+    // side-by-side across clients. Quill treats the whole block as a single
+    // atomic embed (like an image) and won't try to track edits inside it
+    // via its own Delta model — but each cell is explicitly marked
+    // contenteditable="true", so the browser still lets you click in and
+    // type or drop an image directly, independent of Quill's model. This is
+    // the most experimental of the new features — everything else in this
+    // build got tested with real requests; this one only got as far as
+    // "the logic is sound and Quill's extension API is well-documented,"
+    // since Quill only runs in a browser. Worth testing directly and
+    // reporting back what you see.
+    class ColumnsBlot extends BlockEmbed {
+      static create(value) {
+        const node = super.create();
+        const count = (value && value.count) || 2;
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:14px 0;';
+        const cellWidth = Math.floor(100 / count);
+        let cells = '';
+        for (let i = 0; i < count; i++) {
+          const pad = i < count - 1 ? '0 16px 0 0' : '0';
+          cells += `<td valign="top" contenteditable="true" style="width:${cellWidth}%;padding:${pad};vertical-align:top;outline:none" data-column-cell="true"><p>Column text or image…</p></td>`;
+        }
+        node.innerHTML = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cells}</tr></table>`;
+        return node;
+      }
+      // Reads back whatever's actually in the DOM now, not a stored value
+      // from insertion time — the cells are live editable regions, so
+      // their content changes after the block is first inserted.
+      static value(node) { return node.innerHTML; }
+    }
+    ColumnsBlot.blotName = 'columnsBlock';
+    ColumnsBlot.tagName = 'DIV';
+    ColumnsBlot.className = 'ql-columns-block';
+    Quill.register(ColumnsBlot);
+
+    // Button — a real Quill link (Quill's own well-tested built-in
+    // mechanism, not custom insertion logic), just tagged with a class so
+    // it survives Quill's serialization and can be found and converted
+    // into a properly inline-styled button server-side before sending.
+    // Email clients need actual inline styles, not CSS classes — most
+    // strip <style> blocks and class-based styling entirely, which is why
+    // the visible styling only gets applied at send time, not in the
+    // editor's own markup.
+    const Link = Quill.import('formats/link');
+    class ButtonLink extends Link {
+      static create(value) {
+        const node = super.create(value);
+        node.setAttribute('class', 'nl-button');
+        return node;
+      }
+    }
+    ButtonLink.blotName = 'buttonLink';
+    Quill.register(ButtonLink, true);
+  })();
+
   function getQuill() {
     if (quillInstance) return quillInstance;
     quillInstance = new Quill('#newsletterRichEditor', {
@@ -832,23 +904,76 @@
             [{ header: [2, 3, false] }],
             ['bold', 'italic', 'underline'],
             [{ list: 'ordered' }, { list: 'bullet' }],
-            ['link', 'image', 'video-link'],
+            ['link', 'image', 'image-link', 'video-link'],
+            ['nl-button'],
+            ['columns-1', 'columns-2', 'columns-3'],
             ['clean'],
           ],
           handlers: {
             image: uploadImageIntoEditor,
             'video-link': insertVideoLink,
+            'image-link': linkSelectedImage,
+            'nl-button': insertNewsletterButton,
+            'columns-1': () => insertColumnsBlock(1),
+            'columns-2': () => insertColumnsBlock(2),
+            'columns-3': () => insertColumnsBlock(3),
           },
         },
       },
     });
-    // Quill has no built-in "video link" button — the toolbar array above
-    // references a 'video-link' format that doesn't exist, which just
-    // renders a blank button; label it and give it an icon via CSS after
-    // Quill builds the toolbar DOM.
-    const videoBtn = document.querySelector('.ql-video-link');
-    if (videoBtn) { videoBtn.innerHTML = '▶'; videoBtn.title = 'Insert a video link'; }
+    // Quill has no built-in icons/labels for any of these custom buttons —
+    // the toolbar array above just references format names that don't
+    // exist, which renders blank buttons; label them after Quill builds
+    // the toolbar DOM.
+    const label = (cls, text, title) => {
+      const el = document.querySelector(cls);
+      if (el) { el.textContent = text; el.title = title; }
+    };
+    label('.ql-video-link', '▶', 'Insert a video link');
+    label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
+    label('.ql-nl-button',  '▭',  'Insert a button');
+    label('.ql-columns-1',  '1 col', 'Insert a single wide column');
+    label('.ql-columns-2',  '2 col', 'Insert two side-by-side columns');
+    label('.ql-columns-3',  '3 col', 'Insert three side-by-side columns');
     return quillInstance;
+  }
+
+  function insertColumnsBlock(count) {
+    const quill = getQuill();
+    const range = quill.getSelection(true) || { index: quill.getLength() };
+    quill.insertEmbed(range.index, 'columnsBlock', { count });
+    quill.setSelection(range.index + 1);
+  }
+
+  // Operates on whatever image is currently selected in the editor — click
+  // directly on an image to select it (Quill treats an image as a single
+  // unit, so clicking it produces a one-length selection), then click this
+  // button. Uses Quill's own documented formatText API to apply the
+  // existing 'link' format to that selection, rather than manipulating the
+  // DOM directly — the officially-supported way to do this, so it plays
+  // correctly with Quill's own Delta model instead of fighting it.
+  function linkSelectedImage() {
+    const quill = getQuill();
+    const range = quill.getSelection();
+    if (!range || range.length === 0) { alert('Click directly on an image to select it first, then click this button.'); return; }
+    const [leaf] = quill.getLeaf(range.index);
+    if (!leaf || !leaf.domNode || leaf.domNode.tagName !== 'IMG') { alert('That selection isn\'t an image — click directly on an image first.'); return; }
+    const url = prompt('Link this image to:');
+    if (!url || !url.trim()) return;
+    quill.formatText(range.index, 1, 'link', url.trim());
+  }
+
+  function insertNewsletterButton() {
+    const text = prompt('Button text:');
+    if (!text || !text.trim()) return;
+    const url = prompt('Button link (https://...):');
+    if (!url || !url.trim()) return;
+    const quill = getQuill();
+    const range = quill.getSelection(true);
+    const label = text.trim();
+    quill.insertText(range.index, label, 'buttonLink', url.trim());
+    quill.insertText(range.index + label.length, '\n');
+    quill.setSelection(range.index + label.length + 1);
   }
 
   function setNewsletterFormat(format) {

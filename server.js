@@ -3295,6 +3295,37 @@ function buildMotdHtml(body, b) {
 // a newsletter is a proper piece of correspondence, not a short stanza.
 const DEFAULT_NEWSLETTER_FOOTER = `You're receiving this because you're part of {{brand_name}}.\n{{unsubscribe_link}}`;
 
+// ── Rich body post-processing ── Converts what the editor produces into
+// what actually needs to go out in an email. Two things need fixing up:
+//
+// 1. Buttons — the editor renders them via a CSS class (.nl-button) for a
+//    live WYSIWYG look, but email clients strip <style> blocks and
+//    class-based styling almost universally, so the class means nothing by
+//    the time it reaches an inbox. This finds every button-tagged link and
+//    replaces it with the same tag carrying real inline styles instead.
+//
+// 2. Columns — the editor marks each cell contenteditable="true" and tags
+//    them data-column-cell so the browser allows typing/pasting into them
+//    independently of Quill's own Delta model. Neither attribute means
+//    anything once the message is sent — contenteditable specifically has
+//    no business in an email a recipient can't edit — so both are stripped.
+//
+// This is plain string/regex work, not DOM manipulation, since Node has no
+// DOM — safe here because Quill's own serialization of these two specific
+// patterns is predictable and narrow (an <a class="nl-button"...> tag, and
+// td elements carrying these two specific attributes), not general-purpose
+// HTML sanitization.
+function postProcessRichBody(html) {
+  return html
+    .replace(/<a\s+([^>]*\bclass=["']nl-button["'][^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, innerText) => {
+      const hrefMatch = attrs.match(/href=["']([^"']*)["']/i);
+      const href = hrefMatch ? hrefMatch[1] : '#';
+      return `<a href="${href}" style="display:inline-block;background:#2d6a4f;color:#ffffff;padding:11px 26px;border-radius:6px;text-decoration:none;font-family:Georgia,serif;font-size:14px;margin:10px 0;">${innerText}</a>`;
+    })
+    .replace(/\s*contenteditable=["'][^"']*["']/gi, '')
+    .replace(/\s*data-column-cell=["'][^"']*["']/gi, '');
+}
+
 // format: 'plain' (body is plain text, \n becomes <br/>, same as before) or
 // 'rich' (body is already HTML from the compose editor, used as-is —
 // running it through the \n replace would double up on the editor's own
@@ -3302,7 +3333,7 @@ const DEFAULT_NEWSLETTER_FOOTER = `You're receiving this because you're part of 
 // recipient (unsubscribe link already substituted in) — see the send loop
 // below, which is why this isn't just read from config directly in here.
 function buildNewsletterHtml(subject, body, b, format, footerHtml) {
-  const bodyHtml = format === 'rich' ? body : body.replace(/\n/g, '<br/>');
+  const bodyHtml = format === 'rich' ? postProcessRichBody(body) : body.replace(/\n/g, '<br/>');
   const logoBlock = b.logoUrl
     ? `<img src="${b.logoUrl}" alt="${b.name}" style="max-height:48px;margin-bottom:12px"/>`
     : `<div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>`;
