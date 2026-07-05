@@ -321,7 +321,7 @@
       </select>
     </div>
     <div class="modal-row">
-      <div><label>Content type</label><select id="efKind"></select></div>
+      <div><label>Content type</label><select id="efKind" onchange="autofillAppFilesIfTimerKind(this.value,'efCat','efSub')"></select></div>
       <div>
         <label>External link <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(optional — e.g. Amazon page for the full book)</span></label>
         <input type="text" id="efExternalLink" placeholder="https://amazon.co.uk/..."/>
@@ -823,6 +823,7 @@ function applyBatchVisibility(vis) {
 function applyBatchContentKind(kind) {
   if (!kind) return;
   upQueue.forEach(it => { it.contentKind = kind; });
+  autofillAppFilesIfTimerKind(kind, 'upCat', 'upSub');
   renderQ();
 }
 
@@ -890,6 +891,19 @@ const CONTENT_KINDS = [
 ];
 function contentKindOptions(selected) {
   return CONTENT_KINDS.map(k => `<option value="${k.value}"${selected===k.value?' selected':''}>${k.label}</option>`).join('');
+}
+
+// App Files auto-fill (Per Bot 7) — bell/background-sound uploads don't
+// belong in any real content category, so picking either timer content
+// type auto-selects the dedicated "App Files" category/subcategory
+// (seeded server-side with these fixed ids) instead of leaving the
+// otherwise-mandatory category field blank and blocking the upload.
+const APP_FILES_CAT_ID = 'cat-appfiles';
+const APP_FILES_SUB_ID = 'sub-appfiles';
+function autofillAppFilesIfTimerKind(kind, catSelId, subSelId) {
+  if (kind !== 'timer_bell' && kind !== 'timer_music') return;
+  document.getElementById(catSelId).value = APP_FILES_CAT_ID;
+  populateSub(catSelId, subSelId, APP_FILES_SUB_ID);
 }
 
 // One-to-one client picker (Per Bot 7) — cached after first fetch since the
@@ -992,7 +1006,7 @@ function renderQ(){
         <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
         <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
       </select>
-      <select class="vis-sel" onchange="upQueue[${i}].contentKind=this.value">${contentKindOptions(it.contentKind||'')}</select>
+      <select class="vis-sel" onchange="upQueue[${i}].contentKind=this.value;autofillAppFilesIfTimerKind(this.value,'upCat','upSub')">${contentKindOptions(it.contentKind||'')}</select>
       <button onclick="upQueue.splice(${i},1);renderQ()" style="background:none;border:none;color:rgba(255,100,80,0.5);cursor:pointer;font-size:18px">×</button>
     </div>`;
   }).join('');

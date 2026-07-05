@@ -805,6 +805,17 @@ async function getDb() {
   const existing = queryAll('SELECT id FROM categories LIMIT 1');
   if (!existing.length) seedCategories();
 
+  // App Files category (Per Bot 7) — a home for bell/background-sound
+  // uploads that don't belong in any real content category, so the
+  // (otherwise mandatory) category field on upload doesn't block them.
+  // INSERT OR IGNORE, unconditional — unlike seedCategories() above, this
+  // must exist even on deployments that already have their own categories
+  // and would never hit the "seed if empty" branch. Deliberately placed
+  // AFTER that check: inserting first would make the categories table
+  // non-empty and silently skip seedCategories() on a genuinely fresh install.
+  db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-appfiles','App Files','app-files',NULL,999)`);
+  db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('sub-appfiles','App Files','app-files-sub','cat-appfiles',1)`);
+
   // Seed default membership plans if empty
   const existingPlans = queryAll('SELECT id FROM membership_plans LIMIT 1');
   if (!existingPlans.length) seedMembershipPlans();
