@@ -682,6 +682,7 @@
         <div class="msg-actions">
           ${m.status === 'draft' ? `<button class="btn sm primary" onclick="approveMotd('${m.id}')">Approve</button>` : ''}
           ${m.status !== 'sent'  ? `<button class="btn sm" onclick="editMotd('${m.id}')">Edit</button>` : ''}
+          <button class="btn sm" onclick="duplicateMotd('${m.id}')">Duplicate</button>
           ${m.status !== 'sent'  ? `<button class="btn sm danger" onclick="deleteMotd('${m.id}')">Delete</button>` : ''}
         </div>
       </div>
@@ -717,6 +718,20 @@
     document.getElementById('motdTestPhone').value = '';
     document.getElementById('motdTestSmsFeedback').textContent = '';
     openModal('motdModal');
+  }
+
+  // Opens a brand-new draft pre-filled from a past message — including
+  // sent ones, since reusing something that already went out is exactly
+  // the point. Deliberately does NOT set motdEditId, so Save creates a new
+  // row rather than overwriting the original; and deliberately leaves the
+  // scheduled date blank, since a duplicate is a new instance, not tied to
+  // whenever the original was scheduled for.
+  function duplicateMotd(id) {
+    const m = motdData.find(x=>x.id===id);
+    if (!m) return;
+    openMotdModal(null);
+    document.getElementById('motdModalTitle').textContent = 'New message (from duplicate)';
+    document.getElementById('motdBody').value = m.body;
   }
 
   async function saveMotd() {
@@ -873,9 +888,11 @@
           ${n.status === 'draft' ? `
             <button class="btn sm" onclick="editNewsletter('${n.id}')">Edit</button>
             <button class="btn sm primary" onclick="sendNewsletterNow('${n.id}')">Send now</button>
+            <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
             <button class="btn sm danger" onclick="deleteNewsletterRow('${n.id}')">Delete</button>
           ` : `
             <button class="btn sm" onclick="viewSentNewsletter('${n.id}')">View</button>
+            <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
           `}
         </div>
       </div>
@@ -1254,6 +1271,23 @@
     } else {
       alert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
     }
+  }
+
+  // Opens a brand-new draft pre-filled from a past newsletter — draft or
+  // already-sent, since picking an old one to reuse as a starting point is
+  // the whole point. Deliberately does NOT set newsletterEditId, so Save
+  // creates a new row rather than overwriting the original.
+  function duplicateNewsletter(id) {
+    const n = newslettersData.find(x => x.id === id);
+    if (!n) return;
+    openNewsletterModal();
+    document.getElementById('newsletterModalTitle').textContent = 'New newsletter (from duplicate)';
+    document.getElementById('newsletterSubject').value = n.subject;
+    setNewsletterFormat(n.format === 'rich' ? 'rich' : 'plain');
+    if (n.format === 'rich') { getQuill().root.innerHTML = n.body; }
+    else { document.getElementById('newsletterBody').value = n.body; }
+    setSelectedAudience(n.audience);
+    refreshAudienceCount();
   }
 
   function currentNewsletterBody() {
