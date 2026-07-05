@@ -369,6 +369,67 @@
     </div>
   </div>
 
+  <!-- ── Birthday messages ── -->
+  <div>
+    <div class="section-label">Birthday messages</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Birthday message settings</div>
+        <button class="btn sm primary" onclick="saveBirthdayConfig()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">No threshold to set here</div>
+          <div class="config-desc">Sent automatically on the day itself, to anyone who's added their birthday (month/day only — no year is ever stored) in My Account. Providing it is the consent; there's no separate toggle.</div>
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Subject line</div>
+          <div class="config-desc">Email subject sent on the day</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
+          <input class="inline-input" type="text" id="birthdaySubject" placeholder="Happy birthday from all of us" style="width:320px"/>
+        </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Birthday message (email)</div>
+          <div class="config-desc">The paragraph inside the email — greeting stays fixed. Use {{name}} for the person's name.</div>
+        </div>
+        <textarea class="inline-input" id="birthdayBody" rows="3" style="width:100%;resize:vertical" placeholder="Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it."></textarea>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Birthday message (SMS)</div>
+          <div class="config-desc">Full text message, kept short. {{name}} and {{brand}} are available.</div>
+        </div>
+        <textarea class="inline-input" id="birthdaySmsBody" rows="2" style="width:100%;resize:vertical" placeholder="Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}."></textarea>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test</div>
+          <div class="config-desc">Sends using the settings above (even if not saved yet)</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="email" id="birthdayTestTo" placeholder="Defaults to your email" style="width:200px"/>
+          <button class="btn sm" id="birthdayTestBtn" onclick="sendTestBirthday()">Send test</button>
+        </div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test SMS</div>
+          <div class="config-desc">Same message, as a text message</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="tel" id="birthdayTestSmsTo" placeholder="+447..." style="width:200px"/>
+          <button class="btn sm" id="birthdayTestSmsBtn" onclick="sendTestBirthdaySms()">Send test</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="birthdayFeedback"></div></div>
+    </div>
+  </div>
+
   <!-- ── Newsletters ── -->
   <div>
     <div class="section-label">Newsletters</div>
@@ -1844,6 +1905,76 @@
     }
   }
 
+  // ── Birthday messages ──
+  async function loadBirthdayConfig() {
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      document.getElementById('birthdaySubject').value  = cfg.birthday_email_subject || '';
+      document.getElementById('birthdayBody').value     = cfg.birthday_email_body || '';
+      document.getElementById('birthdaySmsBody').value  = cfg.birthday_sms_body || '';
+    } catch(e) { /* fields keep their HTML defaults */ }
+  }
+
+  async function saveBirthdayConfig() {
+    const subject = document.getElementById('birthdaySubject').value.trim();
+    const body     = document.getElementById('birthdayBody').value.trim();
+    const smsBody  = document.getElementById('birthdaySmsBody').value.trim();
+    try {
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ birthdayEmailSubject: subject || null, birthdayEmailBody: body || null, birthdaySmsBody: smsBody || null })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('birthdayFeedback', 'Saved.', 'ok');
+      else         showFeedback('birthdayFeedback', data.error || 'Could not save.', 'err');
+    } catch(e) {
+      showFeedback('birthdayFeedback', 'Network error — could not save.', 'err');
+    }
+  }
+
+  async function sendTestBirthday() {
+    const subject = document.getElementById('birthdaySubject').value.trim();
+    const to       = document.getElementById('birthdayTestTo').value.trim();
+    const btn      = document.getElementById('birthdayTestBtn');
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/birthday/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ subject, to: to || undefined })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('birthdayFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('birthdayFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('birthdayFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
+  async function sendTestBirthdaySms() {
+    const to  = document.getElementById('birthdayTestSmsTo').value.trim();
+    const btn = document.getElementById('birthdayTestSmsBtn');
+    if (!to) { showFeedback('birthdayFeedback', 'Enter a phone number first.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/birthday/test-sms', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ to })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('birthdayFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('birthdayFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('birthdayFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
   // ════════════════════════════════════
   // Test destination (Per Bot 7) — one saved email + phone used as the
   // default for every test-send button on this page. Prefills every
@@ -1859,11 +1990,11 @@
       const phone = cfg.test_phone || '';
       document.getElementById('testDestEmail').value = email;
       document.getElementById('testDestPhone').value = phone;
-      ['motdTestTo','reminderTestTo','renewalTestTo','newsletterTestTo'].forEach(id => {
+      ['motdTestTo','reminderTestTo','renewalTestTo','newsletterTestTo','birthdayTestTo'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = email;
       });
-      ['motdTestPhone','reminderTestSmsTo','renewalTestSmsTo'].forEach(id => {
+      ['motdTestPhone','reminderTestSmsTo','renewalTestSmsTo','birthdayTestSmsTo'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = phone;
       });
@@ -1895,6 +2026,7 @@
     loadTestDestination();
     loadReminderConfig();
     loadRenewalConfig();
+    loadBirthdayConfig();
     loadNewsletters();
   });
 </script>

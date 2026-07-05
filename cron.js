@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sweepStaleChatSessions }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -80,6 +80,20 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10,
       console.log(`[cron] renewal reminders: matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms} threshold=${result.thresholdDays}d`);
     } catch (e) {
       console.error('[cron] renewal reminders failed:', e.message);
+    }
+  });
+
+  // ── Birthday messages — 07:40 UTC ──
+  // Month/day match only (no year stored anywhere) — providing a DOB at
+  // all is the consent to send this, so there's no preference flag to
+  // check here unlike every other job above. See sendBirthdayMessages()
+  // and getUsersWithBirthdayToday() in server.js/db.js.
+  cron.schedule('40 7 * * *', async () => {
+    try {
+      const result = await sendBirthdayMessages();
+      console.log(`[cron] birthday messages: matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms}`);
+    } catch (e) {
+      console.error('[cron] birthday messages failed:', e.message);
     }
   });
 

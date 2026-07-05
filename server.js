@@ -646,6 +646,53 @@ async function sendRenewalReminders() {
   return { ok: true, matched: upcoming.length, sentEmail, sentSms, thresholdDays: days };
 }
 
+// ── Birthday messages (Per Bot 7) ── Providing a DOB at all is the consent
+// to send this — there's no separate preference toggle to check, unlike
+// every other message type in this file. Month/day only, everywhere —
+// nothing here ever sees or uses a birth year.
+function buildBirthdayHtml(userName, b) {
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.birthday_email_body || "Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.",
+    { name: userName }
+  );
+  return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Happy birthday, ${userName}!</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`;
+}
+function buildBirthdaySms(userName, b) {
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.birthday_sms_body || "Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}.",
+    { name: userName, brand: b.name }
+  );
+  return bodyText;
+}
+
+// Run once daily by cron. Deliberately does not check pref_email_* /
+// pref_sms_* — see note above. Still requires a phone/email to actually be
+// on file, same as every other send path.
+async function sendBirthdayMessages() {
+  const today = new Date();
+  const month = today.getMonth() + 1;
+  const day   = today.getDate();
+  const matches = db.getUsersWithBirthdayToday(month, day);
+  const b = brand();
+  const cfg = db.getAppConfig() || {};
+  const subject = cfg.birthday_email_subject || 'Happy birthday from all of us';
+  let sentEmail = 0, sentSms = 0;
+  for (const user of matches) {
+    if (user.email) { await sendEmail(user.email, subject, buildBirthdayHtml(user.name, b)); sentEmail++; }
+    if (user.phone) { const result = await sms.sendSms(user.phone, buildBirthdaySms(user.name, b)); if (result.ok) sentSms++; }
+    db.markBirthdaySent(user.id);
+  }
+  return { ok: true, matched: matches.length, sentEmail, sentSms };
+}
+
 // ── Facilitator requests (Per Bot 5, item 11) ──
 function emailFacilitatorRequestReceivedToAdmin(request) {
   const memberNote = request.user_id
@@ -2003,8 +2050,8 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
     // getAllLibraryFilesWithAccess tags every file with `accessible`; we filter on it here
     // rather than relying on the frontend to respect that flag (it previously didn't).
     const files = req.user.role === 'facilitator' || req.user.role === 'admin'
-      ? db.getAllLibraryFilesWithAccess(userFlags)
-      : db.getAllLibraryFilesWithAccess(userFlags).filter(f => f.accessible);
+      ? db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
+      : db.getAllLibraryFilesWithAccess(userFlags, req.user.id).filter(f => f.accessible);
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -2659,6 +2706,14 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // and already means something else in this same endpoint.
     const contentKind  = req.body.contentKind  || null;
     const externalLink = req.body.externalLink || null;
+    // As with the PATCH endpoint, an assigned client must be a real client
+    // — never trust an arbitrary id straight from the request body onto a
+    // field that grants exclusive access.
+    let assignedClientId = req.body.assignedClientId || null;
+    if (assignedClientId) {
+      const target = db.getUser(assignedClientId);
+      if (!target || target.is_client !== 1) return res.status(400).json({ error: 'That is not a valid client.' });
+    }
 
     // Path A — R2 upload already completed client-side; just save the reference.
     if (req.body.r2Key) {
@@ -2667,7 +2722,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
         id, title.trim(), req.body.description || '', req.body.r2Key, req.body.originalName || req.body.r2Key,
         req.body.contentType || 'application/octet-stream', parseInt(req.body.fileSize) || 0,
         categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource,
-        contentKind, externalLink
+        contentKind, externalLink, assignedClientId
       );
       return res.json({ id });
     }
@@ -2675,7 +2730,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // Path B — legacy direct-to-disk upload, kept for now so nothing breaks mid-migration.
     if (!req.file) return res.status(400).json({ error: 'No file provided.' });
     const id = uuidv4();
-    db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource, contentKind, externalLink);
+    db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource, contentKind, externalLink, assignedClientId);
     res.json({ id });
   } catch (e) {
     console.error('library upload error:', e.message);
@@ -2745,7 +2800,7 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     // Member/Client only ever gets a URL for what their own tier actually permits.
     const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
       ? !file.archived
-      : db.canAccessFile(file, userFlags);
+      : db.canAccessFile(file, userFlags, req.user.id);
     if (!allowed) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
@@ -2760,7 +2815,20 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
   }
 });
 
-app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res) => { db.updateLibraryFile(req.params.id, req.body); res.json({ ok: true }); });
+app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    // If set, must be a real client — never trust an arbitrary user id
+    // straight from the request body onto a field that grants access.
+    if (req.body.assigned_client_id) {
+      const target = db.getUser(req.body.assigned_client_id);
+      if (!target || target.is_client !== 1) return res.status(400).json({ error: 'That is not a valid client.' });
+    }
+    db.updateLibraryFile(req.params.id, req.body);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, res) => res.json(db.getFileUsage(req.params.id)));
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
@@ -2993,6 +3061,25 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
         } catch (e) {
           return res.status(500).json({ error: 'Could not verify that voice right now — please try again.' });
         }
+      }
+    }
+    // Month/day only, deliberately no year — see the migration comment in
+    // db.js. Empty string means "clear it" (also the opt-out, since
+    // providing a DOB at all is what enables the birthday message).
+    if (prefs.dob_month !== undefined) {
+      if (prefs.dob_month === '' || prefs.dob_month === null) prefs.dob_month = null;
+      else {
+        const m = parseInt(prefs.dob_month, 10);
+        if (!Number.isInteger(m) || m < 1 || m > 12) return res.status(400).json({ error: 'Month must be between 1 and 12.' });
+        prefs.dob_month = m;
+      }
+    }
+    if (prefs.dob_day !== undefined) {
+      if (prefs.dob_day === '' || prefs.dob_day === null) prefs.dob_day = null;
+      else {
+        const d = parseInt(prefs.dob_day, 10);
+        if (!Number.isInteger(d) || d < 1 || d > 31) return res.status(400).json({ error: 'Day must be between 1 and 31.' });
+        prefs.dob_day = d;
       }
     }
     // Timezone is optional in general, but mandatory the moment MOTD
@@ -3358,7 +3445,7 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
 // request body, nothing else.
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -4052,6 +4139,43 @@ app.post('/api/admin/renewal/test-sms', auth.requireAuthApi(['admin']), async (r
   }
 });
 
+// ── Birthday messages — admin test-send (email + SMS) ──
+app.post('/api/admin/birthday/test', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { subject, to } = req.body;
+    const toEmail = resolveTestEmail(to, req.user.email);
+    if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
+
+    const cfg = db.getAppConfig() || {};
+    const testSubject = (subject && subject.trim()) || cfg.birthday_email_subject || 'Happy birthday from all of us';
+    const b = brand();
+
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildBirthdayHtml(req.user.name || 'there', b));
+    res.json({ ok: true, to: toEmail });
+  } catch (e) {
+    console.error('birthday test-send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/birthday/test-sms', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
+    const { to } = req.body;
+    const admin = db.getFacilitatorById(req.user.id);
+    const toPhone = resolveTestPhone(to, admin && admin.phone);
+    if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
+
+    const b = brand();
+    const result = await sms.sendSms(toPhone, buildBirthdaySms(req.user.name || 'there', b));
+    if (!result.ok) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
+    res.json({ ok: true, to: toPhone });
+  } catch (e) {
+    console.error('birthday test-send-sms error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Newsletters — admin ── One-off broadcasts to everyone opted into "News
 // and updates", independent of membership tier. Compose → (optionally edit,
 // test) → Send. No queue, no auto-schedule — content differs every time, so
@@ -4216,6 +4340,6 @@ app.use((err, req, res, next) => {
     db.createFacilitator(uuidv4(), adminName, adminEmail, hash, 'admin');
     console.log(`Admin created: ${adminEmail}`);
   }
-  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sweepStaleChatSessions });
+  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

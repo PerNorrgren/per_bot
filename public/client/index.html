@@ -122,6 +122,12 @@
     .resume-card-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.55); margin-bottom:4px; }
     .resume-card-title { font-size:14px; color:rgba(255,255,255,0.85); }
     .resume-card-sub { font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px; }
+    .talk-hint-banner { background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.2); border-radius:12px; padding:12px 16px; margin-bottom:14px; font-size:13px; color:rgba(255,255,255,0.75); }
+    .talk-hint-banner .thb-actions { display:flex; gap:10px; margin-top:10px; }
+    .talk-hint-banner button { padding:6px 14px; border-radius:8px; font-size:12px; cursor:pointer; font-family:'Georgia',serif; }
+    .talk-hint-banner .thb-yes { border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); }
+    .talk-hint-banner .thb-no { border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); }
+    .talk-hint-banner a { color:rgba(180,230,200,0.85); text-decoration:underline; }
 
     /* ── Courses ── */
     .courses-view { display:none; flex-direction:column; overflow:hidden; }
@@ -232,6 +238,9 @@
     .pl-modal-btns { display:flex; gap:10px; justify-content:flex-end; }
     .pl-modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
     .pl-modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .onb-option { display:block; width:100%; text-align:left; padding:12px 14px; margin-bottom:8px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.75); font-family:'Georgia',serif; font-size:13px; cursor:pointer; transition:background 0.15s; }
+    .onb-option:hover { background:rgba(180,230,200,0.08); border-color:rgba(180,230,200,0.25); }
+    #onbDobMonth, #onbDobDay { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 8px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; }
     .pl-pick-list { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow-y:auto; }
     .pl-pick-item { padding:10px 13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:9px; font-size:13px; color:rgba(255,255,255,0.75); cursor:pointer; transition:background 0.15s; }
     .pl-pick-item:hover, .pl-pick-item:active { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.25); }
@@ -340,6 +349,7 @@
 
     <!-- Talk -->
     <div class="talk-view" id="talkView">
+      <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
       <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
         <div class="resume-card-label">Continue</div>
         <div class="resume-card-title" id="resumeCardTitle"></div>
@@ -1064,6 +1074,15 @@
         transcriptEl.className = 'transcript-text';
         busy = false;
         await speak(reply);
+        // The opening greeting ('[[START]]') is the first thing anyone
+        // actually hears spoken aloud — the earliest moment choosing a
+        // voice means anything. A real exchange, on the other hand, is
+        // the moment Keep History actually means something — asking
+        // blind before any conversation has happened would just be a
+        // guess. Same reasoning as the onboarding stepper design above:
+        // ask each thing at the point it's actually relevant.
+        if (userMsg === '[START]') maybeShowVoiceHint();
+        else maybeShowKeepHistoryPrompt();
       } else {
         busy = false;
         setState('');
@@ -1447,6 +1466,106 @@
             <button onclick="event.stopPropagation();removeFromPlaylist('${pl.id}','${item.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:13px;padding:2px 4px">×</button>
           </div>`).join('')}
       </div>`).join('');
+  }
+
+  // ── In-Talk hints (Per Bot 7) — voice hint and Keep History prompt share
+  // one banner slot rather than each having their own; in practice they
+  // never actually collide since one fires after the opening greeting and
+  // the other only after a real exchange, strictly later.
+  function showTalkHint(html) {
+    const el = document.getElementById('talkHintBanner');
+    el.innerHTML = html;
+    el.style.display = 'block';
+  }
+  function hideTalkHint() {
+    document.getElementById('talkHintBanner').style.display = 'none';
+  }
+
+  let voiceHintShownThisPage = false;
+  async function maybeShowVoiceHint() {
+    if (voiceHintShownThisPage) return;
+    const a = await getFullAccount();
+    if (a.voice_hint_shown) return;
+    voiceHintShownThisPage = true;
+    showTalkHint(`<div>That was the default voice — <a href="/account">tap here to try others</a>.</div>
+      <div class="thb-actions"><button class="thb-no" onclick="dismissVoiceHint()">Got it</button></div>`);
+  }
+  async function dismissVoiceHint() {
+    hideTalkHint();
+    try {
+      await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice_hint_shown: 1 }) });
+    } catch(e) { /* best effort */ }
+    if (fullAccount) fullAccount.voice_hint_shown = 1;
+  }
+
+  let keepHistoryPromptShownThisPage = false;
+  async function maybeShowKeepHistoryPrompt() {
+    if (keepHistoryPromptShownThisPage) return;
+    const a = await getFullAccount();
+    if (a.pref_keep_history || a.keep_history_prompted) return;
+    keepHistoryPromptShownThisPage = true;
+    showTalkHint(`<div>Would you like me to remember our conversation for next time?</div>
+      <div class="thb-actions">
+        <button class="thb-yes" onclick="answerKeepHistory(true)">Yes, remember</button>
+        <button class="thb-no" onclick="answerKeepHistory(false)">Not now</button>
+      </div>`);
+  }
+  async function answerKeepHistory(yes) {
+    hideTalkHint();
+    const payload = { keep_history_prompted: 1 };
+    if (yes) payload.pref_keep_history = 1;
+    try {
+      await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } catch(e) { /* best effort */ }
+    if (fullAccount) Object.assign(fullAccount, payload);
+  }
+
+  // ── Full account cache — separate from getUserTier() above, which only
+  // ever kept member_tier. Onboarding/Keep-History-prompt/voice-hint all
+  // need more fields than that, so this fetches once and caches the whole
+  // record rather than adding yet another single-field cache each time.
+  let fullAccount = null;
+  async function getFullAccount() {
+    if (fullAccount) return fullAccount;
+    try {
+      const res = await fetch('/api/account');
+      fullAccount = await res.json();
+    } catch(e) { fullAccount = {}; }
+    return fullAccount;
+  }
+
+  // ── Onboarding stepper (Per Bot 7) ──
+  let onbReminderStyle = null;
+  function onbSetReminderStyle(style) {
+    onbReminderStyle = style;
+    document.getElementById('onbStep1').style.display = 'none';
+    document.getElementById('onbStep2').style.display = '';
+  }
+
+  async function checkOnboarding() {
+    const a = await getFullAccount();
+    if (a.onboarding_completed) return;
+    const daySel = document.getElementById('onbDobDay');
+    if (daySel.options.length <= 1) {
+      for (let d = 1; d <= 31; d++) daySel.innerHTML += `<option value="${d}">${d}</option>`;
+    }
+    document.getElementById('onboardingModal').classList.add('visible');
+  }
+
+  async function onbFinish() {
+    const payload = { onboarding_completed: 1 };
+    if (onbReminderStyle === 'none')           { payload.pref_email_reminders = 0; payload.pref_sms_reminders = 0; }
+    else if (onbReminderStyle === 'email')     { payload.pref_email_reminders = 1; payload.pref_sms_reminders = 0; }
+    else if (onbReminderStyle === 'email_sms') { payload.pref_email_reminders = 1; payload.pref_sms_reminders = 1; }
+    const m = document.getElementById('onbDobMonth').value;
+    const d = document.getElementById('onbDobDay').value;
+    if (m) payload.dob_month = m;
+    if (d) payload.dob_day = d;
+    try {
+      await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } catch(e) { /* best effort — don't block them getting into Talk over this */ }
+    if (fullAccount) Object.assign(fullAccount, payload);
+    closePlModal('onboardingModal');
   }
 
   // ── Playlist modals ──
@@ -1950,7 +2069,48 @@
   // Kick off the resume card check as soon as the page loads, independent of
   // whichever tab happens to be active first.
   loadResumeCard();
+  checkOnboarding();
 </script>
+<!-- Onboarding stepper (Per Bot 7) — one short question at a time, always
+     skippable, shown once for a new account. Notification style has no
+     good in-context moment to ask later (by the time it'd matter, they're
+     not in the app to see the question), so it's asked here; DOB is here
+     too since there's no natural in-Talk moment for it either. Voice and
+     Keep History are deliberately NOT here — those get asked in context,
+     the first time they're actually relevant, inside Talk itself. -->
+<div class="pl-modal-overlay" id="onboardingModal" style="z-index:400">
+  <div class="pl-modal" style="max-width:340px">
+    <div id="onbStep1">
+      <h3>How should we reach you?</h3>
+      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">If you've been away a few days — nothing more than that.</div>
+      <button type="button" class="onb-option" onclick="onbSetReminderStyle('none')">Don't remind me</button>
+      <button type="button" class="onb-option" onclick="onbSetReminderStyle('email')">Email only</button>
+      <button type="button" class="onb-option" onclick="onbSetReminderStyle('email_sms')">Email and text message</button>
+      <div class="pl-modal-btns">
+        <button class="pl-modal-cancel" onclick="onbFinish()">Skip for now</button>
+      </div>
+    </div>
+    <div id="onbStep2" style="display:none">
+      <h3>When's your birthday?</h3>
+      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">Optional — just the day, so we can say happy birthday. No year, ever.</div>
+      <div style="display:flex;gap:8px">
+        <select id="onbDobMonth" style="flex:1">
+          <option value="">Month</option>
+          <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+          <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+        </select>
+        <select id="onbDobDay" style="flex:1"><option value="">Day</option></select>
+      </div>
+      <div class="pl-modal-btns">
+        <button class="pl-modal-cancel" onclick="onbFinish()">Skip</button>
+        <button class="pl-modal-ok" onclick="onbFinish()">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Playlist name modal -->
 <div class="pl-modal-overlay" id="plNameModal">
   <div class="pl-modal">

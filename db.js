@@ -684,6 +684,50 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN reminder_sms_body TEXT",
     "ALTER TABLE app_config ADD COLUMN renewal_reminder_body TEXT",
     "ALTER TABLE app_config ADD COLUMN renewal_reminder_sms_body TEXT",
+    // Onboarding (Per Bot 7) — introduces new options gradually via a short
+    // first-login stepper (notification style + optional DOB) instead of
+    // dumping everything on someone at once. dob_month/dob_day only —
+    // deliberately no year: a birthday message doesn't need age, and
+    // skipping the year avoids storing anything that lets age be inferred.
+    // Supplying a DOB at all IS the consent to send a birthday message —
+    // there's no separate opt-in flag; clearing the fields is the opt-out.
+    "ALTER TABLE users ADD COLUMN dob_month INTEGER",
+    "ALTER TABLE users ADD COLUMN dob_day INTEGER",
+    "ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0",
+    // Backfill: existing users (as of this feature shipping) skip the
+    // stepper entirely rather than being interrupted by it retroactively —
+    // it's meant to greet someone new, not ambush someone who's already
+    // been using the app for months. Uses a fixed cutoff date rather than
+    // 'now' deliberately: this migration re-runs on every server restart
+    // (see the try/catch pattern below), and 'now' would re-match and
+    // silently flag any brand-new user who registered but hadn't yet seen
+    // the stepper by the time of a later restart — a fixed date only ever
+    // matches people who existed before this feature shipped, once.
+    "UPDATE users SET onboarding_completed=1 WHERE onboarding_completed=0 AND created_at < '2026-07-06'",
+    // Keep History gets asked in-context, in Talk, after a person's first
+    // real exchange — not blind in the onboarding stepper, since the whole
+    // point is they've now felt what the conversation is like. This flag
+    // just stops it being asked more than once regardless of answer;
+    // pref_keep_history itself (already existed) is the actual setting.
+    "ALTER TABLE users ADD COLUMN keep_history_prompted INTEGER DEFAULT 0",
+    // One-time hint pointing at the voice picker, shown after someone's
+    // very first reply is spoken aloud — the first moment they've actually
+    // heard a voice, which is the earliest point choosing one means anything.
+    "ALTER TABLE users ADD COLUMN voice_hint_shown INTEGER DEFAULT 0",
+    // Birthday messages — editable the same way reminder/renewal bodies
+    // are: {{name}} token, empty means "use the built-in default wording".
+    "ALTER TABLE app_config ADD COLUMN birthday_email_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN birthday_email_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN birthday_sms_body TEXT",
+    "ALTER TABLE users ADD COLUMN last_birthday_sent_year INTEGER",
+    // One-to-one content (Per Bot 7) — a file assigned to a specific
+    // client bypasses the tier visibility ladder entirely: visible only to
+    // that one user (matched by id, not by tier/is_client status — the
+    // same login might be an Explorer today and a Client tomorrow; the
+    // assignment doesn't care which) plus facilitators/admins for
+    // management. NULL means "not one-to-one" — falls back to the normal
+    // visibility tier as before. See canSeeFile() below.
+    "ALTER TABLE library_files ADD COLUMN assigned_client_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -904,24 +948,26 @@ function renameCategory(id, name) {
 function deleteCategory(id) { getDbSync().run('DELETE FROM categories WHERE id=?', [id]); save(); }
 
 // ── Library files ──
-function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource, contentType, externalLink) {
+function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource, contentType, externalLink, assignedClientId) {
   getDbSync().run(`INSERT INTO library_files
-    (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource,content_type,external_link)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource,content_type,external_link,assigned_client_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, title, description||'', filename, originalName, fileType, fileSize||0,
      categoryId, subcategoryId||null, visibility||'client', storageType||'disk', facilitatorResource ? 1 : 0,
-     contentType||null, externalLink||null]);
+     contentType||null, externalLink||null, assignedClientId||null]);
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
 function getLibraryFiles(filters = {}) {
   let sql = `SELECT f.*,
     cat.name as category_name, sub.name as subcategory_name,
+    ac.name as assigned_client_name,
     (SELECT COUNT(*) FROM lesson_file_refs WHERE file_id=f.id) +
     (SELECT COUNT(*) FROM playlist_track_refs WHERE file_id=f.id) as use_count
     FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     LEFT JOIN categories sub ON f.subcategory_id=sub.id
+    LEFT JOIN users ac ON f.assigned_client_id=ac.id
     WHERE 1=1`;
   const params = [];
   if (!filters.includeArchived) sql += ' AND f.archived=0';
@@ -935,7 +981,7 @@ function getLibraryFiles(filters = {}) {
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
@@ -1622,7 +1668,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
@@ -1656,7 +1702,13 @@ function userMaxLevel(flags) {
   return 0;
 }
 
-function canSeeFile(file, userLevel) {
+function canSeeFile(file, userLevel, userId) {
+  // One-to-one assignment overrides the tier ladder completely — a file
+  // assigned to a specific client is invisible to everyone else regardless
+  // of their tier, and visible to that one person regardless of theirs.
+  if (file.assigned_client_id) {
+    return userId != null && file.assigned_client_id === userId;
+  }
   const fileLevel = LEVEL_RANK[file.visibility] ?? 0;
   return userLevel >= fileLevel;
 }
@@ -1679,10 +1731,10 @@ function getLibraryFilesForUser(userFlags) {
   return files.filter(f => canSeeFile(f, level)).map(f => ({ ...f, accessible: true }));
 }
 
-function getAllLibraryFilesWithAccess(userFlags) {
+function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
-  return files.map(f => ({ ...f, accessible: canSeeFile(f, level) }));
+  return files.map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
 }
 
 function getFacilitatorResources() {
@@ -1694,9 +1746,9 @@ function getFacilitatorResources() {
     ORDER BY f.created_at DESC`);
 }
 
-function canAccessFile(file, userFlags) {
+function canAccessFile(file, userFlags, userId) {
   if (file.archived) return false;
-  return canSeeFile(file, userMaxLevel(userFlags));
+  return canSeeFile(file, userMaxLevel(userFlags), userId);
 }
 
 // ── Sessions ──
@@ -2178,6 +2230,25 @@ function getUpcomingRenewals(daysBefore) {
     [daysBefore]
   );
 }
+
+// Providing a DOB at all is the consent to send a birthday message — there's
+// no separate pref flag to check here, unlike reminders/renewal/motd. Year
+// is deliberately not part of the match (or stored anywhere) — month/day
+// only. Dedupes on last_birthday_sent_year so a cron re-run on the same day
+// can't send twice, without needing to track a specific date like renewals do.
+function getUsersWithBirthdayToday(month, day) {
+  return queryAll(
+    `SELECT id, name, email, phone FROM users
+     WHERE archived=0
+       AND dob_month=? AND dob_day=?
+       AND (last_birthday_sent_year IS NULL OR last_birthday_sent_year != CAST(strftime('%Y','now') AS INTEGER))`,
+    [month, day]
+  );
+}
+function markBirthdaySent(userId) {
+  getDbSync().run(`UPDATE users SET last_birthday_sent_year=CAST(strftime('%Y','now') AS INTEGER) WHERE id=?`, [userId]);
+  save();
+}
 // Stores the expiry date itself, not just a timestamp — since
 // member_expires_at changes every renewal cycle, this naturally re-arms
 // for the next cycle without any separate reset step.
@@ -2229,7 +2300,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -2574,6 +2645,8 @@ module.exports = {
   getInactiveUsers,
   markReminderSent,
   getUpcomingRenewals,
+  getUsersWithBirthdayToday,
+  markBirthdaySent,
   markRenewalReminderSent,
   getTrialEmailCandidates,
   markTrialEmailSent,
