@@ -312,6 +312,17 @@
 
   function randomPause(minMs, maxMs) { return minMs + Math.random() * (maxMs - minMs); }
 
+  // Content-aware pause — see client/index.html for the full rationale.
+  // Scales the gap by word count of the segment just spoken instead of
+  // rolling randomly across the whole range.
+  function contentAwarePause(segmentText, minMs, maxMs) {
+    const words = segmentText.trim().split(/\s+/).filter(Boolean).length;
+    const t = Math.min(1, Math.max(0, (words - 1) / 7));
+    const base = minMs + t * (maxMs - minMs);
+    const jitter = base * 0.15;
+    return base + (Math.random() * 2 - 1) * jitter;
+  }
+
   function splitIntoSentences(text) {
     const matches = text.match(/[^.!?]+[.!?]+[)'"”’]*\s*/g);
     return matches ? matches.map(s => s.trim()).filter(Boolean) : [text];
@@ -334,10 +345,10 @@
     let pauseRange = null;
     if (text.includes('[[PAUSE]]')) {
       segments = text.split('[[PAUSE]]').map(s => s.trim()).filter(Boolean);
-      pauseRange = [3000, 5000];
+      pauseRange = [1000, 5000];
     } else if (text.includes('[[BREATH]]')) {
       segments = text.split('[[BREATH]]').map(s => s.trim()).filter(Boolean);
-      pauseRange = [1500, 2500];
+      pauseRange = [800, 2500];
     } else {
       // Plain conversation — mechanical, not marker-based: three or more
       // sentences get split into pairs with about a second between each
@@ -347,7 +358,7 @@
       if (sentences.length >= 3) {
         segments = [];
         for (let i = 0; i < sentences.length; i += 2) segments.push(sentences.slice(i, i + 2).join(' '));
-        pauseRange = [800, 1200];
+        pauseRange = [500, 1200];
       }
     }
 
@@ -356,7 +367,7 @@
         const clean = segments[i].split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').trim();
         await playOneClip(clean);
         if (pauseRange && i < segments.length - 1) {
-          await new Promise(r => setTimeout(r, randomPause(pauseRange[0], pauseRange[1])));
+          await new Promise(r => setTimeout(r, contentAwarePause(clean, pauseRange[0], pauseRange[1])));
         }
       }
     } catch(e) {
