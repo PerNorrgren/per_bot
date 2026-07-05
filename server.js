@@ -2622,6 +2622,12 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     const { title, categoryId, subcategoryId, visibility } = req.body;
     if (!title || !categoryId) return res.status(400).json({ error: 'Missing required fields.' });
     const facilitatorResource = req.body.facilitatorResource === 'true' || req.body.facilitatorResource === true;
+    // contentKind is the new library taxonomy (meditation/blog/whitepaper/
+    // poem/book/video_blog/etc, Per Bot 7) — named distinctly from the
+    // existing contentType field just above, which is the file's MIME type
+    // and already means something else in this same endpoint.
+    const contentKind  = req.body.contentKind  || null;
+    const externalLink = req.body.externalLink || null;
 
     // Path A — R2 upload already completed client-side; just save the reference.
     if (req.body.r2Key) {
@@ -2629,7 +2635,8 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
       db.addLibraryFile(
         id, title.trim(), req.body.description || '', req.body.r2Key, req.body.originalName || req.body.r2Key,
         req.body.contentType || 'application/octet-stream', parseInt(req.body.fileSize) || 0,
-        categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource
+        categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource,
+        contentKind, externalLink
       );
       return res.json({ id });
     }
@@ -2637,7 +2644,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // Path B — legacy direct-to-disk upload, kept for now so nothing breaks mid-migration.
     if (!req.file) return res.status(400).json({ error: 'No file provided.' });
     const id = uuidv4();
-    db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource);
+    db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource, contentKind, externalLink);
     res.json({ id });
   } catch (e) {
     console.error('library upload error:', e.message);

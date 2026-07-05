@@ -171,6 +171,7 @@
             <option value="facilitator">Facilitator</option>
             <option value="admin">Admin</option>
           </select>
+          <select class="filter" id="libKind" onchange="filterLib()"></select>
           <div class="view-toggle">
             <button id="viewBtnCards" class="active" onclick="setLibView('cards')">Cards</button>
             <button id="viewBtnList" onclick="setLibView('list')">List</button>
@@ -260,6 +261,10 @@
           <option value="admin">Admin</option>
         </select>
       </div>
+      <div>
+        <label>Content type</label>
+        <select id="upKindDefault" oninput="applyBatchContentKind(this.value)"></select>
+      </div>
     </div>
     <div style="margin:4px 0 14px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
@@ -305,6 +310,13 @@
         <option value="facilitator">Facilitator — facilitators only</option>
         <option value="admin">Admin — admin only</option>
       </select>
+    </div>
+    <div class="modal-row">
+      <div><label>Content type</label><select id="efKind"></select></div>
+      <div>
+        <label>External link <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(optional — e.g. Amazon page for the full book)</span></label>
+        <input type="text" id="efExternalLink" placeholder="https://amazon.co.uk/..."/>
+      </div>
     </div>
     <div class="modal-err" id="efErr"></div>
     <div class="modal-btns">
@@ -546,6 +558,7 @@ async function updateVisibility(fileId, vis) {
 }
 
 function vbadge(v){const m={registered:'Explorer',member:'Member',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
+function kbadge(k){if(!k)return'';const m=Object.fromEntries(CONTENT_KINDS.map(c=>[c.value,c.label]));return`<span class="vis-badge" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.75)">${m[k]||k}</span>`;}
 
 function populateCatSels(...ids){
   const tops=allCats.filter(c=>!c.parent_id);
@@ -578,6 +591,9 @@ async function loadAll(){
   allCats=cats;allFiles=files;allCourses=courses;allPlaylists=pls;allInstances=instances;
   populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF');
   populateInstanceCourseSels();
+  if (!document.getElementById('libKind').options.length) {
+    document.getElementById('libKind').innerHTML = '<option value="">All types</option>' + contentKindOptions('').replace('<option value="">Not set</option>','');
+  }
   renderLib(files);renderCourses(courses);renderPlaylists(pls);renderCats(cats);renderInstances();
 }
 
@@ -605,10 +621,11 @@ function filterLib(){
   const cat=document.getElementById('libCat').value;
   const sub=document.getElementById('libSub').value;
   const vis=document.getElementById('libVis').value;
+  const kind=document.getElementById('libKind').value;
   const q=document.getElementById('libSearch').value.toLowerCase();
   renderLib(allFiles.filter(f=>
     (!cat||f.category_id===cat)&&(!sub||f.subcategory_id===sub)&&
-    (!vis||f.visibility===vis)&&(!q||f.title.toLowerCase().includes(q)||(f.original_name||'').toLowerCase().includes(q))
+    (!vis||f.visibility===vis)&&(!kind||f.content_type===kind)&&(!q||f.title.toLowerCase().includes(q)||(f.original_name||'').toLowerCase().includes(q))
   ));
 }
 
@@ -634,6 +651,7 @@ function renderLibCards(files){
         <div class="file-card-tags" style="align-items:center;gap:4px">
           ${f.category_name?`<span class="tag cat">${f.category_name}</span>`:''}
           ${f.subcategory_name?`<span class="tag cat">${f.subcategory_name}</span>`:''}
+          ${kbadge(f.content_type)}
           <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px" onchange="updateVisibility('${f.id}',this.value)">
             <option value="registered" ${f.visibility==='registered'?'selected':''}>Explorer</option>
             <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
@@ -665,6 +683,7 @@ function renderLibList(files){
       <span class="flr-meta">Size</span>
       <span class="flr-cat">Category</span>
       <span class="flr-vis">Visibility</span>
+      <span class="flr-vis">Type</span>
       <span class="flr-actions"></span>
     </div>`;
   el.innerHTML = header + files.map(f=>`
@@ -683,6 +702,7 @@ function renderLibList(files){
           <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
         </select>
       </span>
+      <span class="flr-vis">${kbadge(f.content_type)}</span>
       <span class="flr-actions">
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
@@ -765,6 +785,8 @@ function openUpload(){
   document.getElementById('upVisDefault').value='';
   document.getElementById('upVisDefault').disabled=false;
   document.getElementById('upFacResource').checked=false;
+  document.getElementById('upKindDefault').innerHTML = contentKindOptions('');
+  document.getElementById('upKindDefault').value='';
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
@@ -772,6 +794,12 @@ function onUpCatChange(){populateSub('upCat','upSub');}
 function applyBatchVisibility(vis) {
   if (!vis) return;
   upQueue.forEach(it => { it.vis = vis; it.inferred = false; });
+  renderQ();
+}
+
+function applyBatchContentKind(kind) {
+  if (!kind) return;
+  upQueue.forEach(it => { it.contentKind = kind; });
   renderQ();
 }
 
@@ -819,6 +847,26 @@ const SUB_KEYWORDS = {
   'sub-felt-therapy': ['felttherapy','felt-therapy','felt_therapy'],
   'sub-therapy-gen':  ['general','gen'],
 };
+// Content type (Per Bot 7) — the new library taxonomy, separate from
+// file_type (audio/video/document, inferred from the actual file) and from
+// visibility (who can see it). Deliberately just a plain list here, not a
+// DB-enforced enum — add a line here to introduce a new type, no migration
+// needed since content_type is a free-text column.
+const CONTENT_KINDS = [
+  { value: '',            label: 'Not set' },
+  { value: 'meditation',  label: 'Meditation practice' },
+  { value: 'course_intro',label: 'Course intro video' },
+  { value: 'blog',        label: 'Blog post' },
+  { value: 'video_blog',  label: 'Video blog' },
+  { value: 'poem',        label: 'Poem' },
+  { value: 'whitepaper',  label: 'Whitepaper' },
+  { value: 'book',        label: 'Book (excerpt or full)' },
+  { value: 'other',       label: 'Other' },
+];
+function contentKindOptions(selected) {
+  return CONTENT_KINDS.map(k => `<option value="${k.value}"${selected===k.value?' selected':''}>${k.label}</option>`).join('');
+}
+
 const VIS_KEYWORDS = {
   facilitator: ['facilitator','facilitatornotes','admin','adminnotes','slides','pptx','trainers','trainer','facilitatorsguide'],
   registered:  ['intro','introduction','welcome','overview','public','promo','about'],
@@ -851,7 +899,8 @@ function inferFromFilename(name) {
 
 function addToQ(files){
   const facResourceMode = document.getElementById('upFacResource').checked;
-  const headerVis = document.getElementById('upVisDefault').value;
+  const headerVis  = document.getElementById('upVisDefault').value;
+  const headerKind = document.getElementById('upKindDefault').value;
   Array.from(files).forEach(f=>{
     const inferred = inferFromFilename(f.name);
     // If Facilitator-resource mode is on, every file — including ones added after the
@@ -860,7 +909,7 @@ function addToQ(files){
     // (if set to something specific) is the explicit starting point; per-file should only
     // diverge from it on purpose, not by accident of when the file was added.
     const vis = facResourceMode ? 'facilitator' : (headerVis || inferred.vis);
-    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis});
+    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || ''});
   });
   renderQ();
 }
@@ -890,6 +939,7 @@ function renderQ(){
         <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
         <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
       </select>
+      <select class="vis-sel" onchange="upQueue[${i}].contentKind=this.value">${contentKindOptions(it.contentKind||'')}</select>
       <button onclick="upQueue.splice(${i},1);renderQ()" style="background:none;border:none;color:rgba(255,100,80,0.5);cursor:pointer;font-size:18px">×</button>
     </div>`;
   }).join('');
@@ -915,6 +965,7 @@ async function uploadOneFile(it, cat, sub) {
     fd.append('categoryId',    cat || it.catId || '');
     fd.append('subcategoryId', sub || it.subId || '');
     fd.append('visibility',    it.vis);
+    fd.append('contentKind',   it.contentKind || '');
     fd.append('facilitatorResource', facResource);
     const res = await fetch('/api/content/library', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
@@ -946,6 +997,7 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('categoryId',    cat || it.catId || '');
   fd.append('subcategoryId', sub || it.subId || '');
   fd.append('visibility',    it.vis);
+  fd.append('contentKind',   it.contentKind || '');
   fd.append('r2Key',         key);
   fd.append('originalName',  it.file.name);
   fd.append('contentType',   it.file.type || 'application/octet-stream');
@@ -1007,6 +1059,8 @@ function openEditFile(id){
   document.getElementById('efTitle').value=f.title;
   document.getElementById('efDesc').value=f.description||'';
   document.getElementById('efVis').value=f.visibility||'client';
+  document.getElementById('efKind').innerHTML = contentKindOptions(f.content_type||'');
+  document.getElementById('efExternalLink').value = f.external_link || '';
   document.getElementById('efErr').textContent='';
   // Show filename without extension and uuid prefix
   const rawName = f.filename || '';
@@ -1030,7 +1084,9 @@ async function saveFileEdit(){
     body:JSON.stringify({title,description:document.getElementById('efDesc').value,
       category_id:document.getElementById('efCat').value,
       subcategory_id:document.getElementById('efSub').value||null,
-      visibility:document.getElementById('efVis').value})
+      visibility:document.getElementById('efVis').value,
+      content_type:document.getElementById('efKind').value||null,
+      external_link:document.getElementById('efExternalLink').value.trim()||null})
   });
   // Rename file if changed
   if(newFilename){

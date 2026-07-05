@@ -658,6 +658,20 @@ async function getDb() {
     // test-send has no explicit override typed into that particular field.
     "ALTER TABLE app_config ADD COLUMN test_email TEXT",
     "ALTER TABLE app_config ADD COLUMN test_phone TEXT",
+    // Content type + external link (Per Bot 7) — the library previously only
+    // distinguished files by file_type (audio/video/document) + category.
+    // That's fine for meditations, but doesn't tell "whitepaper" apart from
+    // "book excerpt" apart from "blog post" — all three might be a PDF in
+    // the same category. content_type is a plain string set from the admin
+    // upload/edit form (e.g. 'meditation','blog','whitepaper','poem','book',
+    // 'video_blog') — deliberately not an enforced SQL enum, so Per can
+    // introduce a new type without a migration. external_link is for the
+    // "excerpt PDF in-app, full book on Amazon" pattern — a book row can
+    // carry a PDF (excerpt) AND a purchase URL at the same time; tier-gating
+    // a full PDF instead is just a normal visibility value, no new column
+    // needed for that (see LEVEL_RANK below).
+    "ALTER TABLE library_files ADD COLUMN content_type TEXT",
+    "ALTER TABLE library_files ADD COLUMN external_link TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -878,12 +892,13 @@ function renameCategory(id, name) {
 function deleteCategory(id) { getDbSync().run('DELETE FROM categories WHERE id=?', [id]); save(); }
 
 // ── Library files ──
-function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource) {
+function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource, contentType, externalLink) {
   getDbSync().run(`INSERT INTO library_files
-    (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource,content_type,external_link)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, title, description||'', filename, originalName, fileType, fileSize||0,
-     categoryId, subcategoryId||null, visibility||'client', storageType||'disk', facilitatorResource ? 1 : 0]);
+     categoryId, subcategoryId||null, visibility||'client', storageType||'disk', facilitatorResource ? 1 : 0,
+     contentType||null, externalLink||null]);
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
@@ -901,13 +916,14 @@ function getLibraryFiles(filters = {}) {
   if (filters.categoryId)    { sql += ' AND f.category_id=?';    params.push(filters.categoryId); }
   if (filters.subcategoryId) { sql += ' AND f.subcategory_id=?'; params.push(filters.subcategoryId); }
   if (filters.visibility)    { sql += ' AND f.visibility=?';     params.push(filters.visibility); }
+  if (filters.contentType)   { sql += ' AND f.content_type=?';   params.push(filters.contentType); }
   if (filters.search)        { sql += ' AND (f.title LIKE ? OR f.original_name LIKE ?)';
     params.push('%'+filters.search+'%', '%'+filters.search+'%'); }
   sql += ' ORDER BY f.created_at DESC';
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);

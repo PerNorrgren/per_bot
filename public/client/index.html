@@ -202,6 +202,10 @@
     .poem-card { display:flex; align-items:flex-start; gap:12px; padding:16px 15px; margin-bottom:9px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:13px; }
     .poem-lines { flex:1; min-width:0; font-size:14px; line-height:1.65; color:rgba(255,255,255,0.8); white-space:pre-line; }
     .poem-date { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); margin-top:10px; }
+    .poem-month-hdr { display:flex; align-items:center; justify-content:space-between; width:100%; padding:12px 15px; margin:14px 0 9px; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); font-family:'Georgia',serif; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.45); cursor:pointer; }
+    .poem-month-hdr:first-child { margin-top:0; }
+    .poem-month-hdr:hover { color:rgba(255,255,255,0.7); }
+    .poem-month-count { font-size:11px; letter-spacing:0; text-transform:none; color:rgba(255,255,255,0.3); }
     .poem-play-btn { flex-shrink:0; width:36px; height:36px; border-radius:50%; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.08); color:rgba(180,230,200,0.85); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; transition:all 0.2s; }
     .poem-play-btn:hover { background:rgba(180,230,200,0.16); }
     .poem-play-btn.playing { background:rgba(180,230,200,0.22); border-color:rgba(180,230,200,0.5); }
@@ -593,21 +597,64 @@
     }
   }
 
+  function fmtMonthYear(s) {
+    if (!s) return 'Undated';
+    try { return new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{month:'long',year:'numeric'}); }
+    catch { return 'Undated'; }
+  }
+
+  // Which month folders are open. The most recent month starts open;
+  // everything older starts folded — reopened per-folder, not all at once,
+  // since the archive is only going to keep growing.
+  let openPoemMonths = new Set();
+
+  function togglePoemMonth(key) {
+    if (openPoemMonths.has(key)) openPoemMonths.delete(key);
+    else openPoemMonths.add(key);
+    renderPoems();
+  }
+
   function renderPoems() {
     const scroll = document.getElementById('poemsScroll');
     if (!poemsData.length) {
       scroll.innerHTML = '<div class="no-poems">Nothing here yet — the first daily message will appear once it\'s sent.</div>';
       return;
     }
-    scroll.innerHTML = poemsData.map(p => `
-      <div class="poem-card">
-        <div>
-          <div class="poem-lines">${escHtmlPoem(p.body)}</div>
-          <div class="poem-date">${fmtPoemDate(p.sent_at)}</div>
-        </div>
-        <button class="poem-play-btn" id="poemBtn-${p.id}" onclick="playPoem('${p.id}')">▶</button>
-      </div>
-    `).join('');
+
+    // Group into month folders, newest first. poemsData already arrives
+    // newest-first from the API, so within each group the order is
+    // preserved as-is — no re-sorting needed.
+    const groups = [];
+    const groupByKey = {};
+    poemsData.forEach(p => {
+      const key = fmtMonthYear(p.sent_at);
+      if (!groupByKey[key]) { groupByKey[key] = { key, items: [] }; groups.push(groupByKey[key]); }
+      groupByKey[key].items.push(p);
+    });
+
+    // Default state: only the very first render opens the newest folder —
+    // once the person has opened/closed folders themselves, respect that
+    // instead of resetting it back open every re-render.
+    if (openPoemMonths.size === 0 && groups.length) openPoemMonths.add(groups[0].key);
+
+    scroll.innerHTML = groups.map(g => {
+      const isOpen = openPoemMonths.has(g.key);
+      return `
+        <button type="button" class="poem-month-hdr" onclick="togglePoemMonth('${escHtmlPoem(g.key)}')">
+          <span>${escHtmlPoem(g.key)}</span>
+          <span class="poem-month-count">${g.items.length}${isOpen ? ' \u2212' : ' +'}</span>
+        </button>
+        ${isOpen ? g.items.map(p => `
+          <div class="poem-card">
+            <div>
+              <div class="poem-lines">${escHtmlPoem(p.body)}</div>
+              <div class="poem-date">${fmtPoemDate(p.sent_at)}</div>
+            </div>
+            <button class="poem-play-btn" id="poemBtn-${p.id}" onclick="playPoem('${p.id}')">▶</button>
+          </div>
+        `).join('') : ''}
+      `;
+    }).join('');
   }
 
   async function playPoem(id) {
