@@ -272,6 +272,15 @@
         Facilitator resource — prep/reference material for the Facilitator Workspace, not self-practice content. Won't appear in anyone's Content tab.
       </label>
     </div>
+    <div style="margin:4px 0 14px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
+        <input type="checkbox" id="upOneToOne" onchange="toggleUpOneToOne(this.checked)"/>
+        One-to-one — this batch is for a single client only, not by visibility tier
+      </label>
+      <div id="upOneToOneRow" style="display:none;margin-top:8px">
+        <select id="upAssignedClient" oninput="applyBatchAssignedClient(this.value)"><option value="">Select a client…</option></select>
+      </div>
+    </div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('bulkInput').click()">
       <input type="file" id="bulkInput" multiple style="display:none"/>
       <div style="font-size:28px;margin-bottom:10px">📂</div>
@@ -316,6 +325,16 @@
       <div>
         <label>External link <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(optional — e.g. Amazon page for the full book)</span></label>
         <input type="text" id="efExternalLink" placeholder="https://amazon.co.uk/..."/>
+      </div>
+    </div>
+    <div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="efOneToOne" onchange="toggleOneToOne(this.checked)"/>
+        One-to-one — share with a single client only, instead of by visibility tier
+      </label>
+      <div id="efOneToOneRow" style="display:none;margin-top:8px">
+        <select id="efAssignedClient"><option value="">Select a client…</option></select>
+        <div style="color:rgba(255,255,255,0.25);font-size:11px;margin-top:4px">Overrides Visibility above entirely — only this client (and facilitators/admins) will ever see it.</div>
       </div>
     </div>
     <div class="modal-err" id="efErr"></div>
@@ -559,6 +578,7 @@ async function updateVisibility(fileId, vis) {
 
 function vbadge(v){const m={registered:'Explorer',member:'Member',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
 function kbadge(k){if(!k)return'';const m=Object.fromEntries(CONTENT_KINDS.map(c=>[c.value,c.label]));return`<span class="vis-badge" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.75)">${m[k]||k}</span>`;}
+function onebadge(f){if(!f.assigned_client_id)return'';return`<span class="vis-badge" style="background:rgba(255,180,120,0.15);color:rgba(255,180,120,0.85)" title="Only ${f.assigned_client_name||'this client'} can see this">1:1 — ${f.assigned_client_name||'client'}</span>`;}
 
 function populateCatSels(...ids){
   const tops=allCats.filter(c=>!c.parent_id);
@@ -651,7 +671,7 @@ function renderLibCards(files){
         <div class="file-card-tags" style="align-items:center;gap:4px">
           ${f.category_name?`<span class="tag cat">${f.category_name}</span>`:''}
           ${f.subcategory_name?`<span class="tag cat">${f.subcategory_name}</span>`:''}
-          ${kbadge(f.content_type)}
+          ${kbadge(f.content_type)}${onebadge(f)}
           <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px" onchange="updateVisibility('${f.id}',this.value)">
             <option value="registered" ${f.visibility==='registered'?'selected':''}>Explorer</option>
             <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
@@ -702,7 +722,7 @@ function renderLibList(files){
           <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
         </select>
       </span>
-      <span class="flr-vis">${kbadge(f.content_type)}</span>
+      <span class="flr-vis">${kbadge(f.content_type)}${onebadge(f)}</span>
       <span class="flr-actions">
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
@@ -787,6 +807,9 @@ function openUpload(){
   document.getElementById('upFacResource').checked=false;
   document.getElementById('upKindDefault').innerHTML = contentKindOptions('');
   document.getElementById('upKindDefault').value='';
+  document.getElementById('upOneToOne').checked=false;
+  document.getElementById('upOneToOneRow').style.display='none';
+  document.getElementById('upAssignedClient').innerHTML='<option value="">Select a client…</option>';
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
@@ -867,6 +890,33 @@ function contentKindOptions(selected) {
   return CONTENT_KINDS.map(k => `<option value="${k.value}"${selected===k.value?' selected':''}>${k.label}</option>`).join('');
 }
 
+// One-to-one client picker (Per Bot 7) — cached after first fetch since the
+// client list doesn't change fast enough to warrant refetching every time
+// the Edit File modal opens. Reuses the same admin/clients endpoint the
+// Clients tab already uses, filtered to is_client the same way that tab is.
+let _clientPickerCache = null;
+async function loadClientPickerOptions(selected, selectId) {
+  if (!_clientPickerCache) {
+    try {
+      const res = await fetch('/api/admin/clients');
+      _clientPickerCache = (await res.json()).filter(u => !!u.is_client);
+    } catch(e) { _clientPickerCache = []; }
+  }
+  const sel = document.getElementById(selectId || 'efAssignedClient');
+  sel.innerHTML = '<option value="">Select a client…</option>' +
+    _clientPickerCache.map(c => `<option value="${c.id}"${selected===c.id?' selected':''}>${c.name}</option>`).join('');
+}
+function toggleOneToOne(checked) {
+  document.getElementById('efOneToOneRow').style.display = checked ? 'block' : 'none';
+}
+function toggleUpOneToOne(checked) {
+  document.getElementById('upOneToOneRow').style.display = checked ? 'block' : 'none';
+  if (checked) loadClientPickerOptions('', 'upAssignedClient');
+}
+function applyBatchAssignedClient(clientId) {
+  upQueue.forEach(it => { it.assignedClientId = clientId; });
+}
+
 const VIS_KEYWORDS = {
   facilitator: ['facilitator','facilitatornotes','admin','adminnotes','slides','pptx','trainers','trainer','facilitatorsguide'],
   registered:  ['intro','introduction','welcome','overview','public','promo','about'],
@@ -901,6 +951,7 @@ function addToQ(files){
   const facResourceMode = document.getElementById('upFacResource').checked;
   const headerVis  = document.getElementById('upVisDefault').value;
   const headerKind = document.getElementById('upKindDefault').value;
+  const headerAssignedClient = document.getElementById('upOneToOne').checked ? document.getElementById('upAssignedClient').value : '';
   Array.from(files).forEach(f=>{
     const inferred = inferFromFilename(f.name);
     // If Facilitator-resource mode is on, every file — including ones added after the
@@ -909,7 +960,7 @@ function addToQ(files){
     // (if set to something specific) is the explicit starting point; per-file should only
     // diverge from it on purpose, not by accident of when the file was added.
     const vis = facResourceMode ? 'facilitator' : (headerVis || inferred.vis);
-    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || ''});
+    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient});
   });
   renderQ();
 }
@@ -966,6 +1017,7 @@ async function uploadOneFile(it, cat, sub) {
     fd.append('subcategoryId', sub || it.subId || '');
     fd.append('visibility',    it.vis);
     fd.append('contentKind',   it.contentKind || '');
+    fd.append('assignedClientId', it.assignedClientId || '');
     fd.append('facilitatorResource', facResource);
     const res = await fetch('/api/content/library', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
@@ -998,7 +1050,7 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('subcategoryId', sub || it.subId || '');
   fd.append('visibility',    it.vis);
   fd.append('contentKind',   it.contentKind || '');
-  fd.append('r2Key',         key);
+  fd.append('assignedClientId', it.assignedClientId || '');
   fd.append('originalName',  it.file.name);
   fd.append('contentType',   it.file.type || 'application/octet-stream');
   fd.append('fileSize',      it.file.size);
@@ -1061,6 +1113,9 @@ function openEditFile(id){
   document.getElementById('efVis').value=f.visibility||'client';
   document.getElementById('efKind').innerHTML = contentKindOptions(f.content_type||'');
   document.getElementById('efExternalLink').value = f.external_link || '';
+  document.getElementById('efOneToOne').checked = !!f.assigned_client_id;
+  toggleOneToOne(!!f.assigned_client_id);
+  loadClientPickerOptions(f.assigned_client_id || '');
   document.getElementById('efErr').textContent='';
   // Show filename without extension and uuid prefix
   const rawName = f.filename || '';
@@ -1078,6 +1133,9 @@ async function saveFileEdit(){
   const title=document.getElementById('efTitle').value.trim();
   const newFilename=document.getElementById('efFilename').value.trim();
   if(!title){document.getElementById('efErr').textContent='Title required.';return;}
+  const oneToOne = document.getElementById('efOneToOne').checked;
+  const assignedClientId = document.getElementById('efAssignedClient').value;
+  if (oneToOne && !assignedClientId) { document.getElementById('efErr').textContent = 'Select which client this is for, or untick one-to-one.'; return; }
   // Update metadata
   await fetch(`/api/content/library/${id}`,{
     method:'PATCH',headers:{'Content-Type':'application/json'},
@@ -1086,7 +1144,8 @@ async function saveFileEdit(){
       subcategory_id:document.getElementById('efSub').value||null,
       visibility:document.getElementById('efVis').value,
       content_type:document.getElementById('efKind').value||null,
-      external_link:document.getElementById('efExternalLink').value.trim()||null})
+      external_link:document.getElementById('efExternalLink').value.trim()||null,
+      assigned_client_id: oneToOne ? assignedClientId : null})
   });
   // Rename file if changed
   if(newFilename){
