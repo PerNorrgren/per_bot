@@ -192,9 +192,9 @@
       </div>
       <div id="upgradeSection" style="display:none">
         <div class="upgrade-cta">
-          <div class="upgrade-cta-title">Unlock more</div>
-          <div class="upgrade-cta-desc">Members get access to the full content library, richer practice sessions, and a daily message from Per.</div>
-          <a class="upgrade-btn" href="/membership">See membership options</a>
+          <div class="upgrade-cta-title" id="upgradeCtaTitle">Unlock more</div>
+          <div class="upgrade-cta-desc" id="upgradeCtaDesc">Members get access to the full content library, richer practice sessions, and a daily message from Per.</div>
+          <a class="upgrade-btn" id="upgradeBtn" href="/membership">See membership options</a>
         </div>
       </div>
     </div>
@@ -225,6 +225,10 @@
         <select id="fieldLanguage">
           <option value="en">English</option>
           <option value="nl">Nederlands</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="pt">Português</option>
         </select>
       </div>
       <div class="msg" id="profileMsg"></div>
@@ -675,7 +679,8 @@
     const label = TIER_LABELS[tier] || 'Explorer';
     const badge = TIER_BADGE[tier]  || 'badge-explorer';
 
-    let html = `<span class="membership-badge ${badge}"><span class="badge-dot"></span>${label}</span>`;
+    let html = `<div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.3);margin-bottom:-2px">Membership level</div>`;
+    html += `<span class="membership-badge ${badge}"><span class="badge-dot"></span>${label}</span>`;
 
     if (tier > 0) {
       if (a.trial_ends_at && new Date(a.trial_ends_at) > new Date()) {
@@ -695,7 +700,20 @@
     }
 
     document.getElementById('membershipStatus').innerHTML = html;
-    document.getElementById('upgradeSection').style.display = (tier === 0 && paymentsEnabled) ? 'block' : 'none';
+
+    // Show the upgrade card for anyone below the top tier — previously
+    // this only ever appeared for Explorers (tier 0), so an existing
+    // Member 1/2 had no visible way to move to a higher tier at all.
+    const upgradeSection = document.getElementById('upgradeSection');
+    const canUpgrade = tier < 3 && paymentsEnabled;
+    upgradeSection.style.display = canUpgrade ? 'block' : 'none';
+    if (canUpgrade) {
+      document.getElementById('upgradeCtaTitle').textContent = tier === 0 ? 'Unlock more' : 'Upgrade your membership';
+      document.getElementById('upgradeCtaDesc').textContent  = tier === 0
+        ? 'Members get access to the full content library, richer practice sessions, and a daily message from Per.'
+        : "You're currently on " + label + '. See what unlocks at the next level.';
+      document.getElementById('upgradeBtn').textContent = tier === 0 ? 'See membership options' : 'See upgrade options';
+    }
   }
 
   // ── Facilitator access (Per Bot 5, item 11) ──

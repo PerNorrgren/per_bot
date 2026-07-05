@@ -324,6 +324,13 @@ function resolveTestPhone(explicit, adminPhone) {
   return adminPhone || '';
 }
 
+// Fills {{token}} placeholders in an admin-editable message body. Unknown
+// tokens are dropped rather than left literal — a stray {{typo}} disappears
+// instead of showing up in a real client's inbox.
+function fillTemplate(str, tokens) {
+  return String(str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (tokens[k] !== undefined ? tokens[k] : ''));
+}
+
 function brand() {
   const cfg = db.getAppConfig() || {};
   return {
@@ -530,10 +537,15 @@ function emailTrialDay14(user) {
 // ── Inactivity reminder — shared HTML, used by both the real send and the ──
 // admin test-send endpoint, so a test email matches a real one exactly.
 function buildReminderHtml(userName, b) {
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.reminder_body || "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
+    { name: userName }
+  );
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${userName},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -548,7 +560,12 @@ function emailInactivityReminder(user) {
 }
 
 function buildReminderSms(userName, b) {
-  return `${b.name}: It's been a little while, ${userName}. No pressure — a few minutes today might help. ${APP_URL}/client/`;
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.reminder_sms_body || "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}",
+    { name: userName, link: `${APP_URL}/client/` }
+  );
+  return `${b.name}: ${bodyText}`;
 }
 
 // ── Inactivity reminders — scheduled, config-driven ── Run daily by cron
@@ -584,10 +601,15 @@ async function sendInactivityReminders() {
 // (lifetime members have no expiry to remind about).
 function buildRenewalReminderHtml(userName, expiresAt, b) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.renewal_reminder_body || "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
+    { name: userName, date: dateStr }
+  );
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${userName},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Just a heads up — your membership renews on <strong>${dateStr}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">Manage my membership →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -595,7 +617,12 @@ function buildRenewalReminderHtml(userName, expiresAt, b) {
 }
 function buildRenewalReminderSms(userName, expiresAt, b) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  return `${b.name}: Hi ${userName}, your membership renews on ${dateStr}. Manage it any time at ${APP_URL}/account`;
+  const cfg = db.getAppConfig() || {};
+  const bodyText = fillTemplate(
+    cfg.renewal_reminder_sms_body || "Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}",
+    { name: userName, date: dateStr, link: `${APP_URL}/account` }
+  );
+  return `${b.name}: ${bodyText}`;
 }
 
 async function sendRenewalReminders() {
@@ -781,6 +808,10 @@ app.post('/api/register', async (req, res) => {
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email.' });
+    // Anything outside the supported set falls back to English rather than
+    // storing a value nothing downstream (Talk's language instruction,
+    // localized email templates) knows how to handle.
+    const safeLanguage = (language && LANGUAGE_NAMES[language]) ? language : 'en';
 
     const emailLower = email.toLowerCase().trim();
 
@@ -792,7 +823,7 @@ app.post('/api/register', async (req, res) => {
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
-    db.registerUser(id, name.trim(), emailLower, hash, language);
+    db.registerUser(id, name.trim(), emailLower, hash, safeLanguage);
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;
@@ -3327,7 +3358,7 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
 // request body, nothing else.
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', testEmail: 'test_email', testPhone: 'test_phone' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });

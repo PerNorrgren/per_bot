@@ -672,6 +672,18 @@ async function getDb() {
     // needed for that (see LEVEL_RANK below).
     "ALTER TABLE library_files ADD COLUMN content_type TEXT",
     "ALTER TABLE library_files ADD COLUMN external_link TEXT",
+    // Reminder/renewal message bodies (Per Bot 7) — the admin panel already
+    // let Per edit the subject line and inactivity/renewal threshold, but
+    // the actual message text was hardcoded in server.js with no way to
+    // change it at all. These four columns make the body editable too, the
+    // same way subject already was. NULL/empty means "use the built-in
+    // default wording" — see buildReminderHtml/buildReminderSms/
+    // buildRenewalReminderHtml/buildRenewalReminderSms in server.js, which
+    // support {{name}} (all four) and {{date}} (renewal only) tokens.
+    "ALTER TABLE app_config ADD COLUMN reminder_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN reminder_sms_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN renewal_reminder_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN renewal_reminder_sms_body TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1460,12 +1472,12 @@ function deleteClient(id) {
 // governs the countdown; member_expires_at stays NULL until/unless they subscribe
 // via Stripe. checkTrialExpiry() (called on login) drops them to Explorer if the
 // trial lapses with no active subscription.
-function registerUser(id, name, email, passwordHash) {
+function registerUser(id, name, email, passwordHash, language) {
   const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
   getDbSync().run(
-    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client)
-     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1)`,
-    [id, name, email.toLowerCase(), trialEndsAt]
+    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client,language)
+     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?)`,
+    [id, name, email.toLowerCase(), trialEndsAt, language || 'en']
   );
   getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
   save();
@@ -2217,7 +2229,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','test_email','test_phone'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

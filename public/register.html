@@ -91,6 +91,17 @@
           </button>
         </div>
       </div>
+      <div class="field">
+        <label>Preferred language</label>
+        <select id="language">
+          <option value="en">English</option>
+          <option value="nl">Nederlands</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Fran&#231;ais</option>
+          <option value="es">Espa&#241;ol</option>
+          <option value="pt">Portugu&#234;s</option>
+        </select>
+      </div>
 
       <label class="consent">
         <input type="checkbox" id="consent"/>
@@ -161,6 +172,7 @@
       const rawName  = document.getElementById('name').value.trim();
       const email    = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value;
+      const language = document.getElementById('language').value;
       const consent  = document.getElementById('consent').checked;
       const err      = document.getElementById('error');
       const btn      = document.getElementById('submitBtn');
@@ -177,7 +189,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, inviteToken: inviteToken || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, inviteToken: inviteToken || undefined })
       });
       const data = await res.json();
 

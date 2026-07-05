@@ -266,6 +266,20 @@
           <input class="inline-input" type="text" id="reminderSubject" value="It's been a few days — your practice space is here" style="width:320px"/>
         </div>
       </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Reminder message (email)</div>
+          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. Use {{name}} for the person's name.</div>
+        </div>
+        <textarea class="inline-input" id="reminderBody" rows="3" style="width:100%;resize:vertical" placeholder="It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help."></textarea>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Reminder message (SMS)</div>
+          <div class="config-desc">Full text message, kept short. {{name}} and {{link}} are available.</div>
+        </div>
+        <textarea class="inline-input" id="reminderSmsBody" rows="2" style="width:100%;resize:vertical" placeholder="It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}"></textarea>
+      </div>
       <div class="config-row" style="border-bottom:none">
         <div>
           <div class="config-label">Send test reminder</div>
@@ -316,6 +330,20 @@
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
           <input class="inline-input" type="text" id="renewalSubject" value="Your membership renews soon" style="width:320px"/>
         </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Renewal message (email)</div>
+          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. {{name}} and {{date}} are available; wrap {{date}} in &lt;strong&gt;&lt;/strong&gt; if you want it bold.</div>
+        </div>
+        <textarea class="inline-input" id="renewalBody" rows="3" style="width:100%;resize:vertical" placeholder="Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time."></textarea>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Renewal message (SMS)</div>
+          <div class="config-desc">Full text message, kept short. {{name}}, {{date}} and {{link}} are available.</div>
+        </div>
+        <textarea class="inline-input" id="renewalSmsBody" rows="2" style="width:100%;resize:vertical" placeholder="Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}"></textarea>
       </div>
       <div class="config-row" style="border-bottom:none">
         <div>
@@ -1658,14 +1686,18 @@
     try {
       const res = await fetch('/api/setup/config');
       const cfg = await res.json();
-      if (cfg.reminder_days)    document.getElementById('reminderDays').value = cfg.reminder_days;
-      if (cfg.reminder_subject) document.getElementById('reminderSubject').value = cfg.reminder_subject;
+      if (cfg.reminder_days)     document.getElementById('reminderDays').value = cfg.reminder_days;
+      if (cfg.reminder_subject)  document.getElementById('reminderSubject').value = cfg.reminder_subject;
+      document.getElementById('reminderBody').value    = cfg.reminder_body || '';
+      document.getElementById('reminderSmsBody').value = cfg.reminder_sms_body || '';
     } catch(e) { /* fields keep their HTML defaults */ }
   }
 
   async function saveReminderConfig() {
     const days    = parseInt(document.getElementById('reminderDays').value, 10);
     const subject = document.getElementById('reminderSubject').value.trim();
+    const body    = document.getElementById('reminderBody').value.trim();
+    const smsBody = document.getElementById('reminderSmsBody').value.trim();
     if (!Number.isInteger(days) || days < 1 || days > 30) {
       showFeedback('reminderFeedback', 'Threshold must be a number of days between 1 and 30.', 'err');
       return;
@@ -1677,7 +1709,7 @@
     try {
       const res  = await fetch('/api/admin/settings', {
         method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ reminderDays: days, reminderSubject: subject })
+        body: JSON.stringify({ reminderDays: days, reminderSubject: subject, reminderBody: body || null, reminderSmsBody: smsBody || null })
       });
       const data = await res.json();
       if (data.ok) showFeedback('reminderFeedback', 'Settings saved — the daily reminder job will use these values from now on.', 'ok');
@@ -1738,12 +1770,16 @@
       const cfg = await res.json();
       if (cfg.renewal_reminder_days)    document.getElementById('renewalDays').value = cfg.renewal_reminder_days;
       if (cfg.renewal_reminder_subject) document.getElementById('renewalSubject').value = cfg.renewal_reminder_subject;
+      document.getElementById('renewalBody').value    = cfg.renewal_reminder_body || '';
+      document.getElementById('renewalSmsBody').value = cfg.renewal_reminder_sms_body || '';
     } catch(e) { /* fields keep their HTML defaults */ }
   }
 
   async function saveRenewalConfig() {
     const days    = parseInt(document.getElementById('renewalDays').value, 10);
     const subject = document.getElementById('renewalSubject').value.trim();
+    const body    = document.getElementById('renewalBody').value.trim();
+    const smsBody = document.getElementById('renewalSmsBody').value.trim();
     if (!Number.isInteger(days) || days < 1 || days > 30) {
       showFeedback('renewalFeedback', 'Days must be a number between 1 and 30.', 'err');
       return;
@@ -1755,7 +1791,7 @@
     try {
       const res  = await fetch('/api/admin/settings', {
         method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ renewalReminderDays: days, renewalReminderSubject: subject })
+        body: JSON.stringify({ renewalReminderDays: days, renewalReminderSubject: subject, renewalReminderBody: body || null, renewalReminderSmsBody: smsBody || null })
       });
       const data = await res.json();
       if (data.ok) showFeedback('renewalFeedback', 'Settings saved — the daily renewal check will use these values from now on.', 'ok');
