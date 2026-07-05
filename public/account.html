@@ -90,6 +90,9 @@
     .voice-btn-select { border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); }
     .voice-btn-select:hover { background:rgba(180,230,200,0.18); }
     .voice-btn-select:disabled { opacity:0.5; cursor:default; }
+    .voice-current-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:6px; }
+    .voice-toggle { align-self:flex-start; border:none; background:none; color:rgba(180,230,200,0.8); padding:6px 2px; text-decoration:underline; }
+    .voice-toggle:hover { color:rgba(180,230,200,1); }
     .toggle { position:relative; width:40px; height:22px; flex-shrink:0; cursor:pointer; }
     .toggle input { opacity:0; width:0; height:0; position:absolute; }
     .toggle-track { position:absolute; inset:0; border-radius:11px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.12); transition:all 0.2s; }
@@ -202,14 +205,6 @@
     <div class="card-header"><div class="card-title">Facilitator access</div></div>
     <div class="card-body" id="facilitatorCardBody">
       <div class="skeleton" style="width:200px"></div>
-    </div>
-  </div>
-
-  <!-- ── Voice — moved here from the old placeholder client tab ── -->
-  <div class="card">
-    <div class="card-header"><div class="card-title">Voice</div></div>
-    <div class="card-body">
-      <div class="pref-desc" style="font-size:13px;line-height:1.6">Conversations, practices, and the daily message can all be read aloud in Per's own recorded voice. There's nothing to configure here yet — it's simply active throughout the platform.</div>
     </div>
   </div>
 
@@ -591,6 +586,21 @@
     return d.innerHTML;
   }
 
+  let voiceListExpanded = false;
+  const VOICE_LIST_COLLAPSED_COUNT = 5;
+
+  function voiceRowHtml(v, isSelected) {
+    const storeValue = v.is_default ? '' : v.voice_id;
+    return `
+      <div class="voice-row${isSelected ? ' selected' : ''}">
+        <div class="voice-name">${escVoiceText(v.name)}${v.is_default ? '<span class="voice-tag">current default</span>' : ''}</div>
+        <div class="voice-actions">
+          ${v.preview_url ? `<button type="button" class="voice-btn voice-btn-play" data-preview="${escVoiceText(v.preview_url)}" onclick="previewVoice(this)">▶ Preview</button>` : ''}
+          <button type="button" class="voice-btn voice-btn-select" ${isSelected ? 'disabled' : ''} onclick="selectVoice('${storeValue}')">${isSelected ? 'Selected' : 'Use this voice'}</button>
+        </div>
+      </div>`;
+  }
+
   function renderVoiceList() {
     const container = document.getElementById('voiceList');
     if (!container) return;
@@ -598,24 +608,36 @@
       container.innerHTML = '<div class="modal-note">No voices available right now.</div>';
       return;
     }
-    container.innerHTML = voicesList.map(v => {
-      // Selected means: this exact voice was explicitly chosen, OR (myVoiceId
-      // is null, meaning "use the default") and this is the voice VOICE_ID
-      // currently points to.
-      const isSelected = myVoiceId ? (myVoiceId === v.voice_id) : !!v.is_default;
-      // Clicking the default voice's button stores null, not its literal
-      // voice_id — so this account keeps following the default if Per ever
-      // changes VOICE_ID later, rather than freezing to today's default voice.
-      const storeValue = v.is_default ? '' : v.voice_id;
-      return `
-        <div class="voice-row${isSelected ? ' selected' : ''}">
-          <div class="voice-name">${escVoiceText(v.name)}${v.is_default ? '<span class="voice-tag">current default</span>' : ''}</div>
-          <div class="voice-actions">
-            ${v.preview_url ? `<button type="button" class="voice-btn voice-btn-play" data-preview="${escVoiceText(v.preview_url)}" onclick="previewVoice(this)">▶ Preview</button>` : ''}
-            <button type="button" class="voice-btn voice-btn-select" ${isSelected ? 'disabled' : ''} onclick="selectVoice('${storeValue}')">${isSelected ? 'Selected' : 'Use this voice'}</button>
-          </div>
-        </div>`;
-    }).join('');
+    // Selected means: this exact voice was explicitly chosen, OR (myVoiceId
+    // is null, meaning "use the default") and this is the voice VOICE_ID
+    // currently points to.
+    const isSelectedFn = v => myVoiceId ? (myVoiceId === v.voice_id) : !!v.is_default;
+    const selected = voicesList.find(isSelectedFn) || null;
+    const rest     = voicesList.filter(v => v !== selected);
+
+    let html = '';
+    if (selected) {
+      html += `<div class="voice-current-label">Currently selected</div>`;
+      html += voiceRowHtml(selected, true);
+      if (rest.length) html += `<div class="voice-current-label" style="margin-top:14px">Other voices</div>`;
+    }
+
+    const visibleRest = voiceListExpanded ? rest : rest.slice(0, VOICE_LIST_COLLAPSED_COUNT);
+    html += visibleRest.map(v => voiceRowHtml(v, false)).join('');
+
+    if (rest.length > VOICE_LIST_COLLAPSED_COUNT) {
+      const hiddenCount = rest.length - VOICE_LIST_COLLAPSED_COUNT;
+      html += voiceListExpanded
+        ? `<button type="button" class="voice-btn voice-toggle" onclick="toggleVoiceList()">Show fewer</button>`
+        : `<button type="button" class="voice-btn voice-toggle" onclick="toggleVoiceList()">Show ${hiddenCount} more voice${hiddenCount === 1 ? '' : 's'}</button>`;
+    }
+
+    container.innerHTML = html;
+  }
+
+  function toggleVoiceList() {
+    voiceListExpanded = !voiceListExpanded;
+    renderVoiceList();
   }
 
   function previewVoice(btn) {
