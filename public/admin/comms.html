@@ -190,6 +190,36 @@
 
 <div class="page">
 
+  <!-- ── Test destination ── -->
+  <div>
+    <div class="section-label">Test destination</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Where test-sends go</div>
+        <button class="btn sm primary" onclick="saveTestDestination()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Test email</div>
+          <div class="config-desc">Default target for every "Send test" email button below. Falls back to your own admin email if left blank.</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
+          <input class="inline-input" type="email" id="testDestEmail" placeholder="e.g. qa@yourdomain.com" style="width:260px"/>
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Test phone</div>
+          <div class="config-desc">Default target for every "Send test" SMS button below. Falls back to your own admin phone (My Account) if left blank.</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
+          <input class="inline-input" type="tel" id="testDestPhone" placeholder="+447..." style="width:260px"/>
+        </div>
+      </div>
+      <div class="feedback" id="testDestFeedback"></div>
+    </div>
+  </div>
+
   <!-- ── Message of the Day ── -->
   <div>
     <div class="section-label">Message of the day</div>
@@ -1744,11 +1774,55 @@
     }
   }
 
+  // ════════════════════════════════════
+  // Test destination (Per Bot 7) — one saved email + phone used as the
+  // default for every test-send button on this page. Prefills every
+  // individual test-send field so nothing needs retyping, but each field
+  // stays a normal editable input — typing something else into a specific
+  // field still overrides it for that one send.
+  // ════════════════════════════════════
+  async function loadTestDestination() {
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      const email = cfg.test_email || '';
+      const phone = cfg.test_phone || '';
+      document.getElementById('testDestEmail').value = email;
+      document.getElementById('testDestPhone').value = phone;
+      ['motdTestTo','reminderTestTo','renewalTestTo','newsletterTestTo'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.value) el.value = email;
+      });
+      ['motdTestPhone','reminderTestSmsTo','renewalTestSmsTo'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.value) el.value = phone;
+      });
+    } catch(e) { /* fields keep their HTML defaults */ }
+  }
+
+  async function saveTestDestination() {
+    const testEmail = document.getElementById('testDestEmail').value.trim();
+    const testPhone = document.getElementById('testDestPhone').value.trim();
+    try {
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ testEmail, testPhone })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save.');
+      showFeedback('testDestFeedback', 'Saved.', 'ok');
+      loadTestDestination();
+    } catch(e) {
+      showFeedback('testDestFeedback', e.message, 'err');
+    }
+  }
+
   // ── Boot ──
   checkAuth().then(() => {
     loadMotd();
     loadLegal();
     loadPlans();
+    loadTestDestination();
     loadReminderConfig();
     loadRenewalConfig();
     loadNewsletters();

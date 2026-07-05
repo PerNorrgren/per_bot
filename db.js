@@ -650,6 +650,14 @@ async function getDb() {
     // see PATCH /api/account — so this column only ever holds a real,
     // currently-available voice_id, never an arbitrary string.
     "ALTER TABLE users ADD COLUMN voice_id TEXT",
+    // Shared test-send destination (Per Bot 7) — previously every test-send
+    // button across MOTD/Reminders/Renewal/Newsletter defaulted to the
+    // logged-in admin's own email/phone, with no way to point all of them
+    // at one QA inbox/number without retyping it into every single field,
+    // every time. Set once here, used as the fallback everywhere a
+    // test-send has no explicit override typed into that particular field.
+    "ALTER TABLE app_config ADD COLUMN test_email TEXT",
+    "ALTER TABLE app_config ADD COLUMN test_phone TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2193,7 +2201,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer','renewal_reminder_days','renewal_reminder_subject'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','test_email','test_phone'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

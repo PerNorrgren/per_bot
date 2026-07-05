@@ -303,6 +303,26 @@ function stripMarkdown(text) {
 // facilitator/org) so email templates never hardcode a specific
 // organization's name — db.getAppConfig() is synchronous (sql.js is
 // in-memory), so this is safe to call anywhere without await.
+// ── Shared test-send destination (Per Bot 7) ──
+// Every test-send button (MOTD/Reminders/Renewal/Newsletter, email and SMS)
+// resolves its target the same way: an explicit override typed into that
+// specific field wins every time; otherwise fall back to the one saved
+// test_email/test_phone in Settings (so QA can point everything at one
+// inbox/number without retyping it into every modal); otherwise fall back
+// to the logged-in admin's own email/phone, same as before this existed.
+function resolveTestEmail(explicit, reqUserEmail) {
+  if (explicit && explicit.trim()) return explicit.trim();
+  const cfg = db.getAppConfig() || {};
+  if (cfg.test_email) return cfg.test_email;
+  return reqUserEmail || '';
+}
+function resolveTestPhone(explicit, adminPhone) {
+  if (explicit && explicit.trim()) return explicit.trim();
+  const cfg = db.getAppConfig() || {};
+  if (cfg.test_phone) return cfg.test_phone;
+  return adminPhone || '';
+}
+
 function brand() {
   const cfg = db.getAppConfig() || {};
   return {
@@ -3292,7 +3312,7 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
 // request body, nothing else.
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', testEmail: 'test_email', testPhone: 'test_phone' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -3867,7 +3887,7 @@ app.post('/api/admin/motd/test-send', auth.requireAuthApi(['admin']), async (req
     const { body, to } = req.body;
     if (!body || !body.trim()) return res.status(400).json({ error: 'Message body is empty.' });
 
-    const toEmail = (to && to.trim()) || req.user.email;
+    const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to — override the address or check your admin account has an email set.' });
 
     const b = brand();
@@ -3891,7 +3911,7 @@ app.post('/api/admin/motd/test-send-sms', auth.requireAuthApi(['admin']), async 
     if (!body || !body.trim()) return res.status(400).json({ error: 'Message body is empty.' });
 
     const admin = db.getFacilitatorById(req.user.id);
-    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    const toPhone = resolveTestPhone(to, admin && admin.phone);
     if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const result = await sms.sendSms(toPhone, body.trim());
@@ -3911,7 +3931,7 @@ app.post('/api/admin/motd/test-send-sms', auth.requireAuthApi(['admin']), async 
 app.post('/api/admin/reminders/test', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { subject, to } = req.body;
-    const toEmail = (to && to.trim()) || req.user.email;
+    const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
     const cfg = db.getAppConfig() || {};
@@ -3931,7 +3951,7 @@ app.post('/api/admin/reminders/test-sms', auth.requireAuthApi(['admin']), async 
     if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
     const { to } = req.body;
     const admin = db.getFacilitatorById(req.user.id);
-    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    const toPhone = resolveTestPhone(to, admin && admin.phone);
     if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const b = brand();
@@ -3951,7 +3971,7 @@ app.post('/api/admin/reminders/test-sms', auth.requireAuthApi(['admin']), async 
 app.post('/api/admin/renewal/test', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { subject, to } = req.body;
-    const toEmail = (to && to.trim()) || req.user.email;
+    const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
     const cfg = db.getAppConfig() || {};
@@ -3972,7 +3992,7 @@ app.post('/api/admin/renewal/test-sms', auth.requireAuthApi(['admin']), async (r
     if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
     const { to } = req.body;
     const admin = db.getFacilitatorById(req.user.id);
-    const toPhone = (to && to.trim()) || (admin && admin.phone) || '';
+    const toPhone = resolveTestPhone(to, admin && admin.phone);
     if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
 
     const b = brand();
@@ -4054,7 +4074,7 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Write a subject first.' });
     if (!body || !body.trim())       return res.status(400).json({ error: 'Write the body first.' });
 
-    const toEmail = (to && to.trim()) || req.user.email;
+    const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
     // Preview only — there's no real recipient for a test send, so
