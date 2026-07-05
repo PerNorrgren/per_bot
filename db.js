@@ -643,6 +643,13 @@ async function getDb() {
     // active so different users can still receive it across their own
     // scheduled hours on the same calendar day.
     "ALTER TABLE messages_of_the_day ADD COLUMN activated_date TEXT",
+    // Per-user voice choice (Per Bot 7) — NULL means "use the default voice"
+    // (VOICE_ID env var, Per's own cloned voice). Set once a client picks
+    // something else on their My Account voice picker. Validated against
+    // the live ElevenLabs voice list server-side before ever being saved —
+    // see PATCH /api/account — so this column only ever holds a real,
+    // currently-available voice_id, never an arbitrary string.
+    "ALTER TABLE users ADD COLUMN voice_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1579,7 +1586,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,

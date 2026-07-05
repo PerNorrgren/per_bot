@@ -78,6 +78,18 @@
     .pref-label { flex:1; }
     .pref-name { font-size:14px; color:rgba(255,255,255,0.75); }
     .pref-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:2px; line-height:1.5; }
+    .voice-list { display:flex; flex-direction:column; gap:8px; }
+    .voice-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border-radius:9px; border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.02); }
+    .voice-row.selected { border-color:rgba(180,230,200,0.4); background:rgba(180,230,200,0.06); }
+    .voice-name { font-size:13px; color:rgba(255,255,255,0.75); display:flex; align-items:center; gap:8px; }
+    .voice-tag { font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(180,230,200,0.75); border:1px solid rgba(180,230,200,0.3); border-radius:20px; padding:2px 8px; }
+    .voice-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+    .voice-btn { padding:7px 12px; border-radius:8px; font-size:11px; letter-spacing:0.05em; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; white-space:nowrap; }
+    .voice-btn-play { border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.55); }
+    .voice-btn-play:hover { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.8); }
+    .voice-btn-select { border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); }
+    .voice-btn-select:hover { background:rgba(180,230,200,0.18); }
+    .voice-btn-select:disabled { opacity:0.5; cursor:default; }
     .toggle { position:relative; width:40px; height:22px; flex-shrink:0; cursor:pointer; }
     .toggle input { opacity:0; width:0; height:0; position:absolute; }
     .toggle-track { position:absolute; inset:0; border-radius:11px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.12); transition:all 0.2s; }
@@ -312,6 +324,18 @@
     </div>
   </div>
 
+  <!-- ── Voice ── -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Voice</div></div>
+    <div class="card-body">
+      <div class="pref-desc">Choose the voice your companion speaks with. Preview any of them, then pick one.</div>
+      <div class="voice-list" id="voiceList">
+        <div class="modal-note">Loading voices…</div>
+      </div>
+      <div class="msg" id="voiceMsg"></div>
+    </div>
+  </div>
+
   <!-- ── Keep History ── -->
   <div class="card">
     <div class="card-header"><div class="card-title">My conversations with the companion</div></div>
@@ -473,9 +497,10 @@
 
   async function loadAccount() {
     try {
-      const [accountRes, configRes] = await Promise.all([
+      const [accountRes, configRes, voicesRes] = await Promise.all([
         fetch('/api/account'),
         fetch('/api/config'),
+        fetch('/api/voices'),
       ]);
       if (accountRes.status === 401) { window.location.href = '/login'; return; }
       account = await accountRes.json();
@@ -487,11 +512,17 @@
           document.title = document.title.split('Deeper Mindfulness').join(cfg.brandName);
         }
       } catch(e) { /* keep defaults already in the HTML */ }
+      try { voicesList = await voicesRes.json(); if (!Array.isArray(voicesList)) voicesList = []; }
+      catch(e) { voicesList = []; }
       populate(account);
     } catch(e) {
       showMsg('profileMsg', 'Could not load account. Please refresh.', 'err');
     }
   }
+
+  let voicesList = [];
+  let myVoiceId  = null;
+  let previewAudio = null;
 
   function populate(a) {
     // Page subtitle
@@ -505,6 +536,10 @@
     // Membership
     renderMembership(a);
     renderFacilitatorCard(a);
+
+    // Voice
+    myVoiceId = a.voice_id || null;
+    renderVoiceList();
 
     // Preferences
     document.getElementById('prefMotdEmail').checked      = !!a.pref_email_motd;
@@ -543,6 +578,65 @@
     const consentDate = fmtDate(a.consent_date);
     document.getElementById('gdprConsentDate').textContent = consentDate || 'Not recorded';
     document.getElementById('gdprBasis').textContent       = a.lawful_basis || 'Consent';
+  }
+
+  // ── Voice picker (Per Bot 7) ──
+  // "Default" (voice_id: null) always sits first and represents whatever
+  // VOICE_ID is currently set to server-side — not a specific named voice
+  // we can preview here, since it's an env var, not one of the entries
+  // ElevenLabs itself returns.
+  function escVoiceText(s) {
+    const d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+
+  function renderVoiceList() {
+    const container = document.getElementById('voiceList');
+    if (!container) return;
+    const rows = [{ voice_id: null, name: 'Default', preview_url: null }, ...voicesList];
+    container.innerHTML = rows.map(v => {
+      const isSelected = myVoiceId === v.voice_id;
+      const idAttr = v.voice_id || '';
+      return `
+        <div class="voice-row${isSelected ? ' selected' : ''}">
+          <div class="voice-name">${escVoiceText(v.name)}${v.voice_id === null ? '<span class="voice-tag">current</span>' : ''}</div>
+          <div class="voice-actions">
+            ${v.preview_url ? `<button type="button" class="voice-btn voice-btn-play" data-preview="${escVoiceText(v.preview_url)}" onclick="previewVoice(this)">▶ Preview</button>` : ''}
+            <button type="button" class="voice-btn voice-btn-select" ${isSelected ? 'disabled' : ''} onclick="selectVoice('${idAttr}')">${isSelected ? 'Selected' : 'Use this voice'}</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function previewVoice(btn) {
+    const url = btn.getAttribute('data-preview');
+    if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+    document.querySelectorAll('.voice-btn-play').forEach(b => b.textContent = '▶ Preview');
+    previewAudio = new Audio(url);
+    btn.textContent = '⏸ Playing…';
+    previewAudio.play().catch(() => { btn.textContent = '▶ Preview'; });
+    previewAudio.onended = () => { btn.textContent = '▶ Preview'; };
+  }
+
+  async function selectVoice(voiceId) {
+    const msg = document.getElementById('voiceMsg');
+    msg.textContent = 'Saving…';
+    msg.className = 'msg';
+    try {
+      const res = await fetch('/api/account', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice_id: voiceId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save that voice.');
+      myVoiceId = voiceId || null;
+      renderVoiceList();
+      showMsg('voiceMsg', 'Voice updated.', 'ok');
+    } catch(e) {
+      showMsg('voiceMsg', e.message, 'err');
+    }
   }
 
   function renderMembership(a) {

@@ -38,6 +38,36 @@ const VOICE_ID           = process.env.VOICE_ID;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
+
+// ── Voice picker (Per Bot 7) ── Backs the My Account voice picker: rather
+// than hand-maintain a curated list of voice_ids in code (which drifts the
+// moment Per adds/removes a voice in ElevenLabs), fetch the real list from
+// ElevenLabs's own /v1/voices — this naturally returns only voices Per's
+// account actually has access to (premade defaults + anything he's added
+// or cloned), not the entire public voice library. Cached in memory for an
+// hour since this doesn't change often and there's no reason to hit
+// ElevenLabs on every account-page load.
+let voicesCache = { data: null, fetchedAt: 0 };
+const VOICES_CACHE_TTL_MS = 60 * 60 * 1000;
+
+async function fetchElevenLabsVoices() {
+  if (voicesCache.data && (Date.now() - voicesCache.fetchedAt) < VOICES_CACHE_TTL_MS) {
+    return voicesCache.data;
+  }
+  const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+    headers: { 'xi-api-key': ELEVENLABS_API_KEY }
+  });
+  if (!response.ok) throw new Error(`ElevenLabs voices fetch failed: ${response.status}`);
+  const json = await response.json();
+  const voices = (json.voices || []).map(v => ({
+    voice_id:    v.voice_id,
+    name:        v.name,
+    preview_url: v.preview_url || null,
+    category:    v.category || null
+  }));
+  voicesCache = { data: voices, fetchedAt: Date.now() };
+  return voices;
+}
 // Scaleway Transactional Email (TEM) — EU-sovereign, transactional-only,
 // no US subprocessors. Replaces Brevo. SCW_SECRET_KEY and SCW_PROJECT_ID
 // come from an IAM application's API key in the Scaleway console; the
@@ -2083,12 +2113,53 @@ app.patch('/api/admin/users/:id/expiry', auth.requireAuthApi(['admin']), (req, r
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── /api/voices — list of voices for the My Account picker ──
+// Public (no login needed to browse/preview on the setup page, same as
+// /api/speak already is). Never exposes the ElevenLabs API key itself.
+app.get('/api/voices', async (req, res) => {
+  try {
+    const voices = await fetchElevenLabsVoices();
+    res.json(voices);
+  } catch (e) {
+    console.error('voices fetch error:', e.message);
+    res.status(500).json({ error: 'Could not load voices right now.' });
+  }
+});
+
 // ── /api/speak — ElevenLabs, piped directly (Mare Bot architecture) ──
 app.post('/api/speak', async (req, res) => { // public — used by guest and client
   try {
-    const { text } = req.body;
+    const { text, voice_id } = req.body;
     if (!text) return res.status(400).json({ error: 'No text' });
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
+
+    // Resolve which voice to actually use. Priority:
+    //  1. An explicit voice_id on the request — used by the account-page
+    //     "try this voice" preview, and by a logged-in client's own Talk
+    //     session once they've picked something in My Account (the client
+    //     sends their saved choice with each request rather than the
+    //     server re-querying the DB on every single TTS call).
+    //  2. Otherwise, if a login cookie is present, the user's saved
+    //     voice_id from the DB.
+    //  3. Otherwise the global default (VOICE_ID env var — Per's voice).
+    // Either way, an explicit voice_id is ALWAYS checked against the real
+    // ElevenLabs voice list first — never pass an untrusted request value
+    // straight through to the ElevenLabs API.
+    let resolvedVoiceId = VOICE_ID;
+    if (voice_id) {
+      try {
+        const voices = await fetchElevenLabsVoices();
+        if (voices.some(v => v.voice_id === voice_id)) resolvedVoiceId = voice_id;
+      } catch (e) { /* voice list unavailable — fall back to default below */ }
+    } else {
+      const token   = req.cookies?.[auth.COOKIE_NAME];
+      const payload = token ? auth.verifyToken(token) : null;
+      if (payload && payload.role === 'client') {
+        const user = db.getUser(payload.id);
+        if (user?.voice_id) resolvedVoiceId = user.voice_id;
+      }
+    }
+
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY },
       body: JSON.stringify({
@@ -2817,9 +2888,9 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
 });
 
 // Update communication preferences and profile fields
-app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
+app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
   try {
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     // Light validation — bad values here would silently break someone's schedule
@@ -2838,6 +2909,25 @@ app.patch('/api/account', auth.requireAuthApi(['client']), (req, res) => {
     if (prefs.timezone !== undefined && prefs.timezone !== null && prefs.timezone !== '') {
       try { new Intl.DateTimeFormat(undefined, { timeZone: prefs.timezone }); }
       catch (e) { return res.status(400).json({ error: 'That timezone isn\'t recognised.' }); }
+    }
+    // An empty string means "back to the default voice" — stored as NULL,
+    // not an empty string, so /api/speak's `if (user?.voice_id)` check
+    // treats it the same as never having chosen one. Anything else must be
+    // a real, currently-available ElevenLabs voice_id — never trust this
+    // straight from the request body.
+    if (prefs.voice_id !== undefined) {
+      if (prefs.voice_id === '' || prefs.voice_id === null) {
+        prefs.voice_id = null;
+      } else {
+        try {
+          const voices = await fetchElevenLabsVoices();
+          if (!voices.some(v => v.voice_id === prefs.voice_id)) {
+            return res.status(400).json({ error: 'That voice is not currently available.' });
+          }
+        } catch (e) {
+          return res.status(500).json({ error: 'Could not verify that voice right now — please try again.' });
+        }
+      }
     }
     // Timezone is optional in general, but mandatory the moment MOTD
     // notifications are on — the scheduled sender can't work out a user's
