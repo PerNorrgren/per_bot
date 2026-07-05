@@ -594,16 +594,25 @@
   function renderVoiceList() {
     const container = document.getElementById('voiceList');
     if (!container) return;
-    const rows = [{ voice_id: null, name: 'Default', preview_url: null }, ...voicesList];
-    container.innerHTML = rows.map(v => {
-      const isSelected = myVoiceId === v.voice_id;
-      const idAttr = v.voice_id || '';
+    if (!voicesList.length) {
+      container.innerHTML = '<div class="modal-note">No voices available right now.</div>';
+      return;
+    }
+    container.innerHTML = voicesList.map(v => {
+      // Selected means: this exact voice was explicitly chosen, OR (myVoiceId
+      // is null, meaning "use the default") and this is the voice VOICE_ID
+      // currently points to.
+      const isSelected = myVoiceId ? (myVoiceId === v.voice_id) : !!v.is_default;
+      // Clicking the default voice's button stores null, not its literal
+      // voice_id — so this account keeps following the default if Per ever
+      // changes VOICE_ID later, rather than freezing to today's default voice.
+      const storeValue = v.is_default ? '' : v.voice_id;
       return `
         <div class="voice-row${isSelected ? ' selected' : ''}">
-          <div class="voice-name">${escVoiceText(v.name)}${v.voice_id === null ? '<span class="voice-tag">current</span>' : ''}</div>
+          <div class="voice-name">${escVoiceText(v.name)}${v.is_default ? '<span class="voice-tag">current default</span>' : ''}</div>
           <div class="voice-actions">
             ${v.preview_url ? `<button type="button" class="voice-btn voice-btn-play" data-preview="${escVoiceText(v.preview_url)}" onclick="previewVoice(this)">▶ Preview</button>` : ''}
-            <button type="button" class="voice-btn voice-btn-select" ${isSelected ? 'disabled' : ''} onclick="selectVoice('${idAttr}')">${isSelected ? 'Selected' : 'Use this voice'}</button>
+            <button type="button" class="voice-btn voice-btn-select" ${isSelected ? 'disabled' : ''} onclick="selectVoice('${storeValue}')">${isSelected ? 'Selected' : 'Use this voice'}</button>
           </div>
         </div>`;
     }).join('');

@@ -2139,7 +2139,12 @@ app.patch('/api/admin/users/:id/expiry', auth.requireAuthApi(['admin']), (req, r
 app.get('/api/voices', async (req, res) => {
   try {
     const voices = await fetchElevenLabsVoices();
-    res.json(voices);
+    // Flags whichever real voice matches the current VOICE_ID env var, so
+    // the frontend doesn't need a separate synthetic "Default" row — the
+    // default is one of these real entries (ElevenLabs's own /v1/voices
+    // response includes their default/premade voices alongside anything
+    // added or cloned), with its own name and real preview_url.
+    res.json(voices.map(v => ({ ...v, is_default: v.voice_id === VOICE_ID })));
   } catch (e) {
     console.error('voices fetch error:', e.message);
     res.status(500).json({ error: 'Could not load voices right now.' });
