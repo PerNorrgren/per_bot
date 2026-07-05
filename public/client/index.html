@@ -79,6 +79,29 @@
     /* Practices */
     .practices-view { display:none; flex-direction:column; overflow:hidden; }
     .practices-view.visible { display:flex; }
+    .timer-view { display:none; flex-direction:column; overflow:hidden; }
+    .timer-view.visible { display:flex; }
+    .timer-scroll { flex:1; overflow-y:auto; padding:4px 2px 24px; display:flex; flex-direction:column; align-items:center; }
+    .timer-display { font-size:56px; font-family:'Georgia',serif; color:rgba(255,255,255,0.9); letter-spacing:0.02em; margin-top:18px; line-height:1; }
+    .timer-display-sub { font-size:12px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.55); margin:6px 0 22px; }
+    .timer-controls { width:100%; max-width:340px; display:flex; flex-direction:column; gap:20px; }
+    .timer-section-label { font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:10px; }
+    .timer-chip-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+    .timer-chip { padding:8px 14px; border-radius:20px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.6); font-size:13px; font-family:'Georgia',serif; cursor:pointer; }
+    .timer-chip.active { border-color:rgba(180,230,200,0.5); background:rgba(180,230,200,0.13); color:rgba(180,230,200,0.9); }
+    .timer-custom-row { display:flex; align-items:center; gap:12px; }
+    .timer-custom-row input[type=range] { flex:1; }
+    .timer-custom-row span { font-size:13px; color:rgba(255,255,255,0.5); min-width:56px; text-align:right; }
+    .timer-toggle-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.65); padding:7px 0; cursor:pointer; }
+    .timer-toggle-row input[type=number] { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:rgba(255,255,255,0.8); text-align:center; font-family:'Georgia',serif; padding:3px; }
+    .timer-field-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; }
+    .timer-field-row label { font-size:12px; color:rgba(255,255,255,0.4); flex-shrink:0; }
+    .timer-field-row select { flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:7px 9px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; }
+    .timer-err { font-size:12px; color:rgba(255,140,120,0.8); min-height:14px; }
+    .timer-start-btn { padding:14px; border-radius:12px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.13); color:rgba(180,230,200,0.9); font-size:15px; font-family:'Georgia',serif; cursor:pointer; margin-top:4px; }
+    .timer-running-buttons { display:flex; gap:12px; justify-content:center; margin-top:8px; }
+    .timer-btn { flex:1; padding:13px; border-radius:12px; border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.7); font-size:14px; font-family:'Georgia',serif; cursor:pointer; }
+    .timer-btn-stop { border-color:rgba(255,140,120,0.3); background:rgba(255,140,120,0.08); color:rgba(255,160,140,0.85); }
     .practices-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
     .practices-scroll::-webkit-scrollbar { width:3px; }
     .practices-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
@@ -305,6 +328,8 @@
      holds far more consistently when the exact same element that was
      unlocked is reused for every later play() call instead. -->
 <audio id="ttsPlayer" style="display:none"></audio>
+<audio id="timerBellAudio" style="display:none"></audio>
+<audio id="timerMusicAudio" style="display:none" loop></audio>
 
 <!-- Start screen — user must tap before any audio -->
 <div id="start">
@@ -339,6 +364,7 @@
     <div class="tabs">
       <button class="tab active" id="tabTalk"      onclick="switchTab('talk')">Talk</button>
       <button class="tab"        id="tabPractices" onclick="switchTab('practices')">Practices</button>
+      <button class="tab"        id="tabTimer"      onclick="switchTab('timer')">Timer</button>
       <button class="tab"        id="tabCourses"   onclick="switchTab('courses')">Courses</button>
       <button class="tab"        id="tabSessions"  onclick="switchTab('sessions')">Sessions</button>
       <button class="tab"        id="tabHistory"   onclick="switchTab('history')">History</button>
@@ -378,6 +404,71 @@
     <!-- Practices -->
     <div class="practices-view" id="practicesView">
       <div class="practices-scroll" id="practicesList"><div class="no-practices">No practices yet.</div></div>
+    </div>
+
+    <!-- Timer -->
+    <div class="timer-view" id="timerView">
+      <div class="timer-scroll">
+
+        <div class="timer-display" id="timerDisplay">20:00</div>
+        <div class="timer-display-sub" id="timerDisplaySub">Ready</div>
+
+        <div class="timer-controls" id="timerControlsPre">
+          <div class="timer-section">
+            <div class="timer-section-label">Duration</div>
+            <div class="timer-chip-row" id="timerDurationChips">
+              <button type="button" class="timer-chip" data-min="5">5</button>
+              <button type="button" class="timer-chip" data-min="10">10</button>
+              <button type="button" class="timer-chip" data-min="15">15</button>
+              <button type="button" class="timer-chip" data-min="20">20</button>
+              <button type="button" class="timer-chip" data-min="30">30</button>
+              <button type="button" class="timer-chip" data-min="45">45</button>
+              <button type="button" class="timer-chip" data-min="60">60</button>
+            </div>
+            <div class="timer-custom-row">
+              <input type="range" id="timerDurationSlider" min="1" max="90" value="20"/>
+              <span id="timerDurationLabel">20 min</span>
+            </div>
+          </div>
+
+          <div class="timer-section">
+            <div class="timer-section-label">Bells</div>
+            <label class="timer-toggle-row">
+              <input type="checkbox" id="timerStartBell" checked/> Bell at start
+            </label>
+            <label class="timer-toggle-row">
+              <input type="checkbox" id="timerEndBell" checked/> Bell at end
+            </label>
+            <label class="timer-toggle-row">
+              <input type="checkbox" id="timerIntervalBell"/> Bell every
+              <input type="number" id="timerIntervalMinutes" min="1" max="60" value="5" style="width:44px" onclick="event.stopPropagation()"/> min
+            </label>
+            <div class="timer-field-row">
+              <label>Bell sound</label>
+              <select id="timerBellSelect"><option value="">Loading…</option></select>
+            </div>
+          </div>
+
+          <div class="timer-section">
+            <div class="timer-section-label">Background sound</div>
+            <div class="timer-field-row">
+              <label>Loops for the whole practice</label>
+              <select id="timerMusicSelect"><option value="">None</option></select>
+            </div>
+          </div>
+
+          <div class="timer-err" id="timerErr"></div>
+          <button class="timer-start-btn" id="timerStartBtn" onclick="startMeditationTimer()">Begin</button>
+        </div>
+
+        <div class="timer-controls" id="timerControlsRunning" style="display:none">
+          <div class="timer-running-buttons">
+            <button class="timer-btn" id="timerPauseBtn" onclick="pauseResumeTimer()">Pause</button>
+            <button class="timer-btn timer-btn-stop" onclick="stopMeditationTimer()">End</button>
+          </div>
+        </div>
+
+      </div>
     </div>
 
     <!-- Sessions -->
@@ -561,11 +652,12 @@
 
   function switchTab(tab) {
     if (tab !== 'talk') sendFinalizeBeacon();
-    ['talk','practices','courses','sessions','history','content','poems','journal'].forEach(t => {
+    ['talk','practices','timer','courses','sessions','history','content','poems','journal'].forEach(t => {
       document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
     document.getElementById('talkView').style.display      = tab === 'talk' ? '' : 'none';
     document.getElementById('practicesView').classList.toggle('visible', tab === 'practices');
+    document.getElementById('timerView').classList.toggle('visible',    tab === 'timer');
     document.getElementById('coursesView').classList.toggle('visible',   tab === 'courses');
     document.getElementById('sessionsView').classList.toggle('visible',  tab === 'sessions');
     document.getElementById('historyView').classList.toggle('visible',   tab === 'history');
@@ -573,6 +665,7 @@
     document.getElementById('poemsView').classList.toggle('visible',     tab === 'poems');
     document.getElementById('journalView').classList.toggle('visible',   tab === 'journal');
     if (tab === 'practices') loadPractices();
+    if (tab === 'timer')     loadTimerSounds();
     if (tab === 'courses')   { closeCourseDetail(); loadCourses(); }
     if (tab === 'sessions')  loadSessions();
     if (tab === 'history')   loadHistory();
@@ -1407,12 +1500,17 @@
 
   function renderContentScroll() {
     const el   = document.getElementById('contentScroll');
-    const favs = _contentData.filter(f => f.is_favourite);
+    // Bell sounds and background loops are utility assets for the Timer
+    // tab, not browsable meditation content — kept out of this list
+    // entirely rather than cluttering it, same reasoning as
+    // facilitator_resource files never appearing here either.
+    const visible = _contentData.filter(f => f.content_type !== 'timer_bell' && f.content_type !== 'timer_music');
+    const favs = visible.filter(f => f.is_favourite);
 
     // Single list of everything else, filtered by the active type chip (or all),
     // sorted newest first. Favourites stay pinned above this regardless of filter,
     // so a favourited item is always reachable in one tap.
-    const rest = _contentData
+    const rest = visible
       .filter(f => !f.is_favourite)
       .filter(f => _contentFilter === 'all' || contentType(f) === _contentFilter)
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
@@ -1780,6 +1878,232 @@
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
       audio.onended = () => { document.getElementById('playerText').textContent='Done.'; };
     }
+  }
+
+  // ── Meditation Timer (Per Bot 7) ──
+  // Bell/background files are just library_files tagged content_type
+  // 'timer_bell'/'timer_music' — reuses /api/client/content (same tier
+  // access rules as everything else) rather than a dedicated endpoint,
+  // and reuses the existing playback-url endpoint to actually fetch them.
+  let timerSounds = { bells: [], music: [] };
+  let timerSoundsLoaded = false;
+  let timerBellUrl = null;
+  let timerMusicUrl = null;
+  let timerState = 'idle'; // idle | running | paused
+  let timerTotalSeconds = 20 * 60;
+  let timerRemainingSeconds = 20 * 60;
+  let timerElapsedSeconds = 0;
+  let timerNextIntervalBellAt = null;
+  let timerIntervalHandle = null;
+  const TIMER_SETTINGS_KEY = 'meditationTimerSettings';
+
+  function saveTimerSettingsToStorage() {
+    try {
+      localStorage.setItem(TIMER_SETTINGS_KEY, JSON.stringify({
+        minutes: parseInt(document.getElementById('timerDurationSlider').value, 10),
+        startBell: document.getElementById('timerStartBell').checked,
+        endBell: document.getElementById('timerEndBell').checked,
+        intervalBell: document.getElementById('timerIntervalBell').checked,
+        intervalMinutes: parseInt(document.getElementById('timerIntervalMinutes').value, 10) || 5,
+        bellId: document.getElementById('timerBellSelect').value,
+        musicId: document.getElementById('timerMusicSelect').value,
+      }));
+    } catch(e) { /* best effort — settings just won't persist */ }
+  }
+  function loadTimerSettingsFromStorage() {
+    try { return JSON.parse(localStorage.getItem(TIMER_SETTINGS_KEY) || 'null'); }
+    catch(e) { return null; }
+  }
+
+  async function loadTimerSounds() {
+    updateTimerDurationLabel();
+    if (timerSoundsLoaded) return;
+    timerSoundsLoaded = true;
+
+    try {
+      const res = await fetch('/api/client/content');
+      const files = await res.json();
+      timerSounds.bells = files.filter(f => f.content_type === 'timer_bell');
+      timerSounds.music = files.filter(f => f.content_type === 'timer_music');
+    } catch(e) { timerSounds = { bells: [], music: [] }; }
+
+    const bellSel  = document.getElementById('timerBellSelect');
+    const musicSel = document.getElementById('timerMusicSelect');
+
+    if (!timerSounds.bells.length) {
+      bellSel.innerHTML = '<option value="">No bell sounds uploaded yet</option>';
+      ['timerStartBell','timerEndBell','timerIntervalBell'].forEach(id => {
+        document.getElementById(id).checked  = false;
+        document.getElementById(id).disabled = true;
+      });
+    } else {
+      bellSel.innerHTML = timerSounds.bells.map(f => `<option value="${f.id}">${escHtmlPoem(f.title)}</option>`).join('');
+    }
+    musicSel.innerHTML = '<option value="">None</option>' +
+      timerSounds.music.map(f => `<option value="${f.id}">${escHtmlPoem(f.title)}</option>`).join('');
+
+    // Restore last-used settings now that real options exist to restore into.
+    const saved = loadTimerSettingsFromStorage();
+    if (saved) {
+      if (saved.minutes) setTimerDuration(saved.minutes);
+      if (timerSounds.bells.length) {
+        document.getElementById('timerStartBell').checked    = !!saved.startBell;
+        document.getElementById('timerEndBell').checked      = !!saved.endBell;
+        document.getElementById('timerIntervalBell').checked = !!saved.intervalBell;
+      }
+      if (saved.intervalMinutes) document.getElementById('timerIntervalMinutes').value = saved.intervalMinutes;
+      if (saved.bellId  && timerSounds.bells.some(f => f.id === saved.bellId))  bellSel.value  = saved.bellId;
+      if (saved.musicId && timerSounds.music.some(f => f.id === saved.musicId)) musicSel.value = saved.musicId;
+    }
+  }
+
+  function setTimerDuration(minutes) {
+    document.getElementById('timerDurationSlider').value = minutes;
+    updateTimerDurationLabel();
+  }
+  function updateTimerDurationLabel() {
+    const minutes = parseInt(document.getElementById('timerDurationSlider').value, 10) || 1;
+    document.getElementById('timerDurationLabel').textContent = `${minutes} min`;
+    document.querySelectorAll('.timer-chip').forEach(c => c.classList.toggle('active', parseInt(c.dataset.min, 10) === minutes));
+    if (timerState === 'idle') {
+      timerTotalSeconds = minutes * 60;
+      timerRemainingSeconds = timerTotalSeconds;
+      renderTimerDisplay();
+    }
+  }
+  document.querySelectorAll('.timer-chip').forEach(chip => {
+    chip.addEventListener('click', () => setTimerDuration(parseInt(chip.dataset.min, 10)));
+  });
+  document.getElementById('timerDurationSlider').addEventListener('input', updateTimerDurationLabel);
+
+  function formatMMSS(totalSeconds) {
+    const s = Math.max(0, totalSeconds);
+    return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  }
+  function renderTimerDisplay() {
+    document.getElementById('timerDisplay').textContent = formatMMSS(timerRemainingSeconds);
+  }
+
+  async function getTimerPlaybackUrl(fileId) {
+    if (!fileId) return null;
+    try {
+      const res  = await fetch(`/api/content/library/${fileId}/playback-url`);
+      const data = await res.json();
+      return data.url || null;
+    } catch(e) { return null; }
+  }
+
+  function playTimerBell() {
+    if (!timerBellUrl) return;
+    const bellAudio = document.getElementById('timerBellAudio');
+    try { bellAudio.currentTime = 0; bellAudio.play().catch(() => {}); } catch(e) { /* best effort */ }
+  }
+
+  async function startMeditationTimer() {
+    const err = document.getElementById('timerErr');
+    err.textContent = '';
+
+    const minutes         = parseInt(document.getElementById('timerDurationSlider').value, 10) || 1;
+    const startBellOn     = document.getElementById('timerStartBell').checked;
+    const endBellOn       = document.getElementById('timerEndBell').checked;
+    const intervalBellOn  = document.getElementById('timerIntervalBell').checked;
+    const intervalMinutes = parseInt(document.getElementById('timerIntervalMinutes').value, 10) || 5;
+    const bellId          = document.getElementById('timerBellSelect').value;
+    const musicId         = document.getElementById('timerMusicSelect').value;
+
+    if ((startBellOn || endBellOn || intervalBellOn) && !bellId) {
+      err.textContent = 'Select a bell sound, or turn off the bell options above.';
+      return;
+    }
+
+    saveTimerSettingsToStorage();
+
+    timerTotalSeconds       = minutes * 60;
+    timerRemainingSeconds   = timerTotalSeconds;
+    timerElapsedSeconds     = 0;
+    timerNextIntervalBellAt = intervalBellOn ? intervalMinutes * 60 : null;
+
+    // Resolving these now, inside the tap that started everything, keeps
+    // the eventual .play() calls close enough to the original gesture to
+    // still work reliably on iOS Safari — same reasoning as the TTS
+    // player's unlock pattern elsewhere in this file.
+    timerBellUrl  = bellId  ? await getTimerPlaybackUrl(bellId)  : null;
+    timerMusicUrl = musicId ? await getTimerPlaybackUrl(musicId) : null;
+
+    const bellAudio  = document.getElementById('timerBellAudio');
+    const musicAudio = document.getElementById('timerMusicAudio');
+    if (timerBellUrl)  bellAudio.src  = timerBellUrl;
+    if (timerMusicUrl) musicAudio.src = timerMusicUrl;
+
+    if (startBellOn && timerBellUrl) playTimerBell();
+    if (timerMusicUrl) { musicAudio.currentTime = 0; musicAudio.play().catch(() => {}); }
+
+    timerState = 'running';
+    document.getElementById('timerControlsPre').style.display = 'none';
+    document.getElementById('timerControlsRunning').style.display = '';
+    document.getElementById('timerDisplaySub').textContent = 'Practicing';
+    renderTimerDisplay();
+
+    timerIntervalHandle = setInterval(timerTick, 1000);
+  }
+
+  function timerTick() {
+    if (timerState !== 'running') return;
+    timerRemainingSeconds--;
+    timerElapsedSeconds++;
+    renderTimerDisplay();
+
+    if (timerNextIntervalBellAt != null && timerElapsedSeconds >= timerNextIntervalBellAt && timerRemainingSeconds > 0) {
+      playTimerBell();
+      const intervalMinutes = parseInt(document.getElementById('timerIntervalMinutes').value, 10) || 5;
+      timerNextIntervalBellAt += intervalMinutes * 60;
+    }
+
+    if (timerRemainingSeconds <= 0) finishMeditationTimer();
+  }
+
+  function pauseResumeTimer() {
+    const btn        = document.getElementById('timerPauseBtn');
+    const musicAudio = document.getElementById('timerMusicAudio');
+    if (timerState === 'running') {
+      timerState = 'paused';
+      btn.textContent = 'Resume';
+      document.getElementById('timerDisplaySub').textContent = 'Paused';
+      musicAudio.pause();
+    } else if (timerState === 'paused') {
+      timerState = 'running';
+      btn.textContent = 'Pause';
+      document.getElementById('timerDisplaySub').textContent = 'Practicing';
+      if (timerMusicUrl) musicAudio.play().catch(() => {});
+    }
+  }
+
+  function finishMeditationTimer() {
+    clearInterval(timerIntervalHandle);
+    timerIntervalHandle = null;
+    if (document.getElementById('timerEndBell').checked) playTimerBell();
+    document.getElementById('timerMusicAudio').pause();
+    document.getElementById('timerDisplaySub').textContent = 'Complete';
+    document.getElementById('timerControlsRunning').style.display = 'none';
+    document.getElementById('timerControlsPre').style.display = '';
+    document.getElementById('timerPauseBtn').textContent = 'Pause';
+    timerState = 'idle';
+    timerRemainingSeconds = timerTotalSeconds;
+    renderTimerDisplay();
+  }
+
+  function stopMeditationTimer() {
+    clearInterval(timerIntervalHandle);
+    timerIntervalHandle = null;
+    document.getElementById('timerMusicAudio').pause();
+    document.getElementById('timerBellAudio').pause();
+    timerState = 'idle';
+    timerRemainingSeconds = timerTotalSeconds;
+    document.getElementById('timerDisplaySub').textContent = 'Ready';
+    document.getElementById('timerControlsRunning').style.display = 'none';
+    document.getElementById('timerControlsPre').style.display = '';
+    document.getElementById('timerPauseBtn').textContent = 'Pause';
+    renderTimerDisplay();
   }
 
   // ── Tier gating (Per Bot 5, item 5) — Sessions/History are Member features. ──
