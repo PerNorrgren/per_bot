@@ -2263,7 +2263,7 @@ app.post('/api/speak', async (req, res) => { // public — used by guest and cli
       }
     }
 
-    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}?output_format=mp3_44100_192`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
       body: JSON.stringify({
@@ -2368,7 +2368,7 @@ facilitatorWss.on('connection', (ws, ctx) => {
 
       // Voice playback for the facilitator, same TTS pipeline as the client uses
       try {
-        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
+        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
           body: JSON.stringify({
