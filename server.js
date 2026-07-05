@@ -55,7 +55,8 @@ async function fetchElevenLabsVoices() {
     return voicesCache.data;
   }
   const response = await fetch('https://api.elevenlabs.io/v1/voices', {
-    headers: { 'xi-api-key': ELEVENLABS_API_KEY }
+    headers: { 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
+    signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error(`ElevenLabs voices fetch failed: ${response.status}`);
   const json = await response.json();
@@ -2186,12 +2187,13 @@ app.post('/api/speak', async (req, res) => { // public — used by guest and cli
 
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
       body: JSON.stringify({
         text,
         model_id: 'eleven_multilingual_v2',
         voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
-      })
+      }),
+      signal: AbortSignal.timeout(30000),
     });
     if (!response.ok) {
       const err = await response.text();
@@ -2290,12 +2292,13 @@ facilitatorWss.on('connection', (ws, ctx) => {
       try {
         const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY },
+          headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
           body: JSON.stringify({
             text: reply,
             model_id: 'eleven_multilingual_v2',
             voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
-          })
+          }),
+          signal: AbortSignal.timeout(30000),
         });
         if (ttsRes.ok) {
           const buf = await ttsRes.buffer();
