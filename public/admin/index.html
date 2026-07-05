@@ -1008,7 +1008,15 @@
     clientSel.clear();
     const archived = document.getElementById('showArchivedClients').checked ? 1 : 0;
     const res  = await fetch(`/api/admin/clients?archived=${archived}`);
-    _clientData = await res.json();
+    // is_client=1 marks someone as an actual clinical client (assigned for
+    // direct facilitator work) — everyone else (Explorers, Members,
+    // newsletter-only contacts) has their own dedicated table elsewhere in
+    // this page. This table previously showed every user in the database
+    // with no filtering at all, which only became obvious once several
+    // hundred newsletter-only contacts were imported at once and all
+    // appeared here too — cosmetic only, never a notification issue (their
+    // email/SMS preferences are all correctly off), but wrong all the same.
+    _clientData = (await res.json()).filter(u => !!u.is_client);
     renderClients();
   }
 
