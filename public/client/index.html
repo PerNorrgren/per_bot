@@ -94,9 +94,9 @@
     .timer-custom-row span { font-size:13px; color:rgba(255,255,255,0.5); min-width:56px; text-align:right; }
     .timer-toggle-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.65); padding:7px 0; cursor:pointer; }
     .timer-toggle-row input[type=number] { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:rgba(255,255,255,0.8); text-align:center; font-family:'Georgia',serif; padding:3px; }
-    .timer-field-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; }
-    .timer-field-row label { font-size:12px; color:rgba(255,255,255,0.4); flex-shrink:0; }
-    .timer-field-row select { flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:7px 9px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; }
+    .timer-field-row { display:flex; flex-direction:column; gap:6px; padding:8px 0; }
+    .timer-field-row label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+    .timer-field-row select { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:9px 10px; font-size:14px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; }
     .timer-err { font-size:12px; color:rgba(255,140,120,0.8); min-height:14px; }
     .timer-start-btn { padding:14px; border-radius:12px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.13); color:rgba(180,230,200,0.9); font-size:15px; font-family:'Georgia',serif; cursor:pointer; margin-top:4px; }
     .timer-running-buttons { display:flex; gap:12px; justify-content:center; margin-top:8px; }
@@ -1886,7 +1886,6 @@
   // access rules as everything else) rather than a dedicated endpoint,
   // and reuses the existing playback-url endpoint to actually fetch them.
   let timerSounds = { bells: [], music: [] };
-  let timerSoundsLoaded = false;
   let timerBellUrl = null;
   let timerMusicUrl = null;
   let timerState = 'idle'; // idle | running | paused
@@ -1915,10 +1914,16 @@
     catch(e) { return null; }
   }
 
+  let timerSettingsRestored = false;
   async function loadTimerSounds() {
     updateTimerDurationLabel();
-    if (timerSoundsLoaded) return;
-    timerSoundsLoaded = true;
+    const bellSel  = document.getElementById('timerBellSelect');
+    const musicSel = document.getElementById('timerMusicSelect');
+    // Preserve whatever's currently selected before rebuilding the list —
+    // revisiting this tab shouldn't silently reset a choice someone just
+    // made, only refresh what's available to choose from.
+    const currentBellId  = bellSel.value;
+    const currentMusicId = musicSel.value;
 
     try {
       const res = await fetch('/api/client/content');
@@ -1927,9 +1932,6 @@
       timerSounds.music = files.filter(f => f.content_type === 'timer_music');
     } catch(e) { timerSounds = { bells: [], music: [] }; }
 
-    const bellSel  = document.getElementById('timerBellSelect');
-    const musicSel = document.getElementById('timerMusicSelect');
-
     if (!timerSounds.bells.length) {
       bellSel.innerHTML = '<option value="">No bell sounds uploaded yet</option>';
       ['timerStartBell','timerEndBell','timerIntervalBell'].forEach(id => {
@@ -1937,12 +1939,22 @@
         document.getElementById(id).disabled = true;
       });
     } else {
+      document.getElementById('timerStartBell').disabled    = false;
+      document.getElementById('timerEndBell').disabled      = false;
+      document.getElementById('timerIntervalBell').disabled = false;
       bellSel.innerHTML = timerSounds.bells.map(f => `<option value="${f.id}">${escHtmlPoem(f.title)}</option>`).join('');
+      if (timerSounds.bells.some(f => f.id === currentBellId)) bellSel.value = currentBellId;
     }
     musicSel.innerHTML = '<option value="">None</option>' +
       timerSounds.music.map(f => `<option value="${f.id}">${escHtmlPoem(f.title)}</option>`).join('');
+    if (timerSounds.music.some(f => f.id === currentMusicId)) musicSel.value = currentMusicId;
 
-    // Restore last-used settings now that real options exist to restore into.
+    // Restore last-used settings, but only the very first time this loads
+    // per page visit — otherwise switching tabs and back would silently
+    // overwrite a choice made moments earlier with whatever was saved
+    // from a previous session.
+    if (timerSettingsRestored) return;
+    timerSettingsRestored = true;
     const saved = loadTimerSettingsFromStorage();
     if (saved) {
       if (saved.minutes) setTimerDuration(saved.minutes);
