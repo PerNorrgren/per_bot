@@ -1067,6 +1067,7 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('visibility',    it.vis);
   fd.append('contentKind',   it.contentKind || '');
   fd.append('assignedClientId', it.assignedClientId || '');
+  fd.append('r2Key',         key);
   fd.append('originalName',  it.file.name);
   fd.append('contentType',   it.file.type || 'application/octet-stream');
   fd.append('fileSize',      it.file.size);
