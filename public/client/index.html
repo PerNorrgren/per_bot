@@ -35,6 +35,8 @@
     /* Talk */
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
+    .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
+    .save-talk-btn:active { background:rgba(180,230,200,0.18); }
     .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.88); font-style:italic; transition:opacity 0.3s; }
     .transcript-text.dim  { opacity:0.4; }
     .transcript-text.user { font-style:normal; color:rgba(255,255,255,0.5); font-size:14px; }
@@ -376,6 +378,7 @@
       <div class="transcript-area">
         <p class="transcript-text" id="transcript">—</p>
       </div>
+      <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
       <div class="indicators">
         <div class="wave" id="wave"><span></span><span></span><span></span><span></span><span></span></div>
         <div class="dots" id="dots"><span></span><span></span><span></span></div>
@@ -939,6 +942,7 @@
 
   let isSpeaking = false;
   let busy       = false;
+  let lastBotReply = '';
   let micActive  = false;
   let currentAudio = null;
   let mediaStream  = null;
@@ -1090,10 +1094,40 @@
     }, 600);
   }
 
+  // ── Save a Talk reply into the person's own Practices list (Per Bot 7) ──
+  // Auto-titles from the first few words rather than asking — asking for a
+  // title here would interrupt a voice-first flow with a text-entry step
+  // that doesn't belong in it. Reuses the exact same practices table the
+  // Practices tab already reads from, so it just appears there.
+  async function saveTalkAsPractice() {
+    if (!lastBotReply) return;
+    const btn = document.getElementById('saveTalkBtn');
+    const words = lastBotReply.split(/\s+/).slice(0, 8).join(' ');
+    const title = words.length < lastBotReply.length ? words + '…' : words;
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/practices/save-from-talk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, content: lastBotReply })
+      });
+      if (res.ok) {
+        btn.textContent = 'Saved ✓';
+        setTimeout(() => { btn.style.display = 'none'; }, 1800);
+      } else {
+        btn.textContent = 'Could not save — try again';
+        btn.disabled = false;
+      }
+    } catch(e) {
+      btn.textContent = 'Could not save — try again';
+      btn.disabled = false;
+    }
+  }
+
   // ── Send to bot — identical to Mare Bot's sendToMare ──
   async function sendToBot(userMsg) {
     if (busy) return;
     busy = true;
+    document.getElementById('saveTalkBtn').style.display = 'none';
     setThinkingText(userMsg === '[START]' ? 'Getting ready…' : 'Thinking…');
     setState('processing');
 
@@ -1115,7 +1149,16 @@
         transcriptEl.textContent = reply.split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').replace(/\s+/g, ' ').trim();
         transcriptEl.className = 'transcript-text';
         busy = false;
+        document.getElementById('saveTalkBtn').style.display = 'none';
         await speak(reply);
+        // Save button only makes sense for a real exchange, not the
+        // opening greeting — and only once they can actually see/hear
+        // something worth saving, i.e. after speak() has finished.
+        if (userMsg !== '[START]') {
+          lastBotReply = transcriptEl.textContent;
+          document.getElementById('saveTalkBtn').style.display = '';
+          document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
+        }
         // The opening greeting ('[[START]]') is the first thing anyone
         // actually hears spoken aloud — the earliest moment choosing a
         // voice means anything. A real exchange, on the other hand, is

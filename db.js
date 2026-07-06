@@ -728,6 +728,15 @@ async function getDb() {
     // management. NULL means "not one-to-one" — falls back to the normal
     // visibility tier as before. See canSeeFile() below.
     "ALTER TABLE library_files ADD COLUMN assigned_client_id TEXT",
+    // Framework + presentation awareness (Per Bot 7) — facilitator-set
+    // clinical context for Talk, distinct from pref_keep_history (which
+    // governs whether the automated bot remembers casual conversations).
+    // framework defaults to the full FELT·FIBRE range; presentation_flags
+    // is a plain comma-separated list ('adhd,trauma' etc.) rather than
+    // separate boolean columns, same reasoning as content_type earlier —
+    // new presentations can be added without a migration.
+    "ALTER TABLE users ADD COLUMN framework TEXT DEFAULT 'felt_fibre_full'",
+    "ALTER TABLE users ADD COLUMN presentation_flags TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1497,6 +1506,14 @@ function getAllUsersAdmin(includeArchived = false) {
 const getAllClientsAdmin = getAllUsersAdmin; // alias
 
 function updateArc(userId, arc) { getDbSync().run('UPDATE users SET arc=? WHERE id=?', [arc, userId]); save(); }
+// Framework + presentation flags (Per Bot 7) — see the migration comment
+// for why presentation_flags is a plain comma-separated string rather
+// than separate boolean columns.
+function updateClientClinicalContext(id, framework, presentationFlags) {
+  getDbSync().run('UPDATE users SET framework=?,presentation_flags=? WHERE id=?',
+    [framework || 'felt_fibre_full', presentationFlags || null, id]);
+  save();
+}
 function archiveClient(id) { getDbSync().run('UPDATE users SET archived=1-archived WHERE id=?', [id]); save(); }
 function updateClientPassword(id, hash) {
   getDbSync().run('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
@@ -2608,7 +2625,7 @@ module.exports = {
   // Users (legacy aliases — keep so nothing breaks during transition)
   createClient, getClient, getClientByEmail, getAllClients, getAllClientsAdmin,
   // User management
-  updateArc, archiveClient, updateClientPassword, updateClientEmail, updateClientProgramme,
+  updateArc, archiveClient, updateClientPassword, updateClientEmail, updateClientProgramme, updateClientClinicalContext,
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,

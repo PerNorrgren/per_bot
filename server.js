@@ -1553,6 +1553,17 @@ app.post('/api/practices/audio', auth.requireAuthApi(['admin','facilitator']), u
 });
 app.patch('/api/practices/:id/favourite', (req, res) => { db.toggleFavourite(req.params.id); res.json({ ok: true }); });
 app.patch('/api/practices/:id/use',       (req, res) => { db.incrementUseCount(req.params.id); res.json({ ok: true }); });
+// Save something offered in Talk straight into the client's own Practices
+// list — reuses the exact same practices table/tab that facilitator- and
+// admin-added practices already use. type 'text' matches how those are
+// already rendered (openPractice() in client/index.html).
+app.post('/api/practices/save-from-talk', auth.requireAuthApi(['client']), (req, res) => {
+  const { title, content } = req.body;
+  if (!content || !content.trim()) return res.status(400).json({ error: 'Nothing to save.' });
+  const id = uuidv4();
+  db.addPractice(id, req.user.id, (title || 'From a conversation').trim().slice(0, 120), 'text', content.trim(), '');
+  res.json({ id });
+});
 app.delete('/api/practices/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   db.deletePractice(req.params.id); res.json({ ok: true });
 });
@@ -1645,22 +1656,27 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       const cId = session.clientId;
       if (cId) {
         const client = db.getUser(cId);
-        // Arc/history continuity for the AUTOMATED bot is gated on
-        // pref_keep_history specifically — deliberately separate from any
-        // facilitator-led clinical relationship, which has its own
-        // consent already. Someone who hasn't opted in here gets a clean
-        // slate every conversation, even if an arc exists from
-        // facilitator sessions elsewhere.
-        if (client?.pref_keep_history) {
-          const sessions = db.getSessionsForClient(cId);
-          const arc = client?.arc || '';
-          if (arc || sessions.length > 0) sp += prompts.CLIENT_ARC_PREFIX(arc, sessions.length);
-          if (client?.programme || sessions.length > 0) {
-            sp += prompts.CLIENT_ADAPTIVE_CONTEXT(client?.programme, client?.track, sessions.length);
-          }
-          const journalEntries = db.getJournalEntriesForBot(cId, 5);
-          sp += prompts.CLIENT_JOURNAL_CONTEXT(journalEntries);
+        // Arc, framework, presentation, and shared journal entries are all
+        // facilitator-set (or facilitator-relationship-derived) clinical
+        // context — they apply regardless of pref_keep_history, which is
+        // a separate consent specifically about whether THIS automated,
+        // self-serve conversation gets summarised and folded into the arc
+        // afterward (see finalizeChatSession below). Journal entries carry
+        // their own per-entry share_with_bot consent already (see
+        // getJournalEntriesForBot), so there's no double-gating needed here.
+        const sessions = db.getSessionsForClient(cId);
+        const arc = client?.arc || '';
+        if (arc || sessions.length > 0) {
+          sp += prompts.CLIENT_ARC_PREFIX(arc, sessions.length);
+          sp += prompts.CLIENT_ADAPTIVE_CONTEXT(sessions.length);
         }
+        sp += prompts.CLIENT_FRAMEWORK_CONTEXT(client?.framework);
+        sp += prompts.CLIENT_PRESENTATION_CONTEXT(client?.presentation_flags);
+        if (arc || sessions.length > 0 || client?.presentation_flags) {
+          sp += prompts.CLIENT_INTEGRATION_INSTRUCTION;
+        }
+        const journalEntries = db.getJournalEntriesForBot(cId, 5);
+        sp += prompts.CLIENT_JOURNAL_CONTEXT(journalEntries);
         sp += languageInstruction(client?.language);
       }
       session.systemPrompt = sp;
@@ -1933,10 +1949,24 @@ app.delete('/api/admin/facilitator-requests/:id', auth.requireAuthApi(['admin'])
 });
 
 // ── Client edit / delete ──
+const CLIENT_FRAMEWORKS = ['mbct','mbsr','mindfulness_for_life','yoga','micro_moves','felt_fibre_full'];
+const CLIENT_PRESENTATIONS = ['adhd','audhd','autism','trauma'];
 app.patch('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
-  const { name, email, facilitator_id } = req.body;
+  const { name, email, facilitator_id, framework, presentation_flags } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required.' });
   db.updateClientDetails(req.params.id, name.trim(), email?.trim()||null, facilitator_id||null);
+  if (framework !== undefined || presentation_flags !== undefined) {
+    if (framework !== undefined && framework && !CLIENT_FRAMEWORKS.includes(framework)) {
+      return res.status(400).json({ error: 'Not a recognised framework.' });
+    }
+    // Comma-separated, each piece checked individually — never trust the
+    // combined string as-is, in case something unexpected got appended.
+    const flagsList = (presentation_flags || '').split(',').map(f => f.trim()).filter(Boolean);
+    if (flagsList.some(f => !CLIENT_PRESENTATIONS.includes(f))) {
+      return res.status(400).json({ error: 'Not a recognised presentation flag.' });
+    }
+    db.updateClientClinicalContext(req.params.id, framework || 'felt_fibre_full', flagsList.join(',') || null);
+  }
   res.json({ ok: true });
 });
 app.delete('/api/clients/:id', auth.requireAuthApi(['admin']), (req, res) => {

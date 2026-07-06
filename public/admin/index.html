@@ -346,6 +346,26 @@
           <option value="">Unassigned</option>
         </select>
       </div>
+      <div>
+        <label>Framework <span style="color:rgba(255,255,255,0.25);font-size:10px;letter-spacing:0;text-transform:none">— shapes Talk's vocabulary and pacing, defaults to the full range</span></label>
+        <select id="editClientFramework" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 13px;font-size:14px;color:rgba(255,255,255,0.82);font-family:Georgia,serif;outline:none">
+          <option value="felt_fibre_full">FELT · FIBRE — full range (default)</option>
+          <option value="mbct">MBCT</option>
+          <option value="mbsr">MBSR</option>
+          <option value="mindfulness_for_life">Mindfulness for Life</option>
+          <option value="yoga">Yoga</option>
+          <option value="micro_moves">Micro Moves</option>
+        </select>
+      </div>
+      <div>
+        <label>Presentation <span style="color:rgba(255,255,255,0.25);font-size:10px;letter-spacing:0;text-transform:none">— known, shapes how signals are delivered in Talk</span></label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;padding:8px 0;font-size:13px;color:rgba(255,255,255,0.6)">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientAdhd"/> ADHD</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientAudhd"/> auDHD</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientAutism"/> Autism</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientTrauma"/> Known trauma history</label>
+        </div>
+      </div>
       <div class="modal-err" id="editClientErr"></div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('editClientModal')">Cancel</button>
@@ -1083,6 +1103,12 @@
     document.getElementById('editClientName').value=c.name;
     document.getElementById('editClientEmail').value=c.email||'';
     document.getElementById('editClientErr').textContent='';
+    document.getElementById('editClientFramework').value = c.framework || 'felt_fibre_full';
+    const flags = (c.presentation_flags || '').split(',').map(f=>f.trim()).filter(Boolean);
+    document.getElementById('editClientAdhd').checked   = flags.includes('adhd');
+    document.getElementById('editClientAudhd').checked  = flags.includes('audhd');
+    document.getElementById('editClientAutism').checked = flags.includes('autism');
+    document.getElementById('editClientTrauma').checked = flags.includes('trauma');
     const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
     const facEl=document.getElementById('editClientFac');
     facEl.innerHTML='<option value="">Unassigned</option>';
@@ -1092,7 +1118,13 @@
   async function saveEditClient() {
     const id=document.getElementById('editClientId').value, name=document.getElementById('editClientName').value.trim(), email=document.getElementById('editClientEmail').value.trim(), facId=document.getElementById('editClientFac').value, err=document.getElementById('editClientErr');
     if (!name) { err.textContent='Name required.'; return; }
-    await fetch(`/api/clients/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null})});
+    const framework = document.getElementById('editClientFramework').value;
+    const flags = [];
+    if (document.getElementById('editClientAdhd').checked)   flags.push('adhd');
+    if (document.getElementById('editClientAudhd').checked)  flags.push('audhd');
+    if (document.getElementById('editClientAutism').checked) flags.push('autism');
+    if (document.getElementById('editClientTrauma').checked) flags.push('trauma');
+    await fetch(`/api/clients/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null,framework,presentation_flags:flags.join(',')})});
     closeModal('editClientModal'); loadClients();
   }
   async function archiveSelectedClient() {
