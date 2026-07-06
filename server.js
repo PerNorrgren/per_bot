@@ -1949,8 +1949,8 @@ app.delete('/api/admin/facilitator-requests/:id', auth.requireAuthApi(['admin'])
 });
 
 // ── Client edit / delete ──
-const CLIENT_FRAMEWORKS = ['mbct','mbsr','mindfulness_for_life','yoga','micro_moves','felt_fibre_full'];
-const CLIENT_PRESENTATIONS = ['adhd','audhd','autism','trauma'];
+const CLIENT_FRAMEWORKS = ['mbct','mbsr','mindfulness_for_life','yoga','micro_moves','cbt','emdr','felt_fibre_full'];
+const CLIENT_PRESENTATIONS = ['adhd','audhd','autism','trauma','fibromyalgia','chronic_fatigue','inflammatory_focus'];
 app.patch('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   const { name, email, facilitator_id, framework, presentation_flags } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required.' });

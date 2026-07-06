@@ -355,6 +355,8 @@
           <option value="mindfulness_for_life">Mindfulness for Life</option>
           <option value="yoga">Yoga</option>
           <option value="micro_moves">Micro Moves</option>
+          <option value="cbt">CBT (adjunct)</option>
+          <option value="emdr">EMDR (adjunct)</option>
         </select>
       </div>
       <div>
@@ -364,6 +366,9 @@
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientAudhd"/> auDHD</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientAutism"/> Autism</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientTrauma"/> Known trauma history</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientFibro"/> Fibromyalgia</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientCfs"/> Chronic fatigue</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="editClientInflam"/> Inflammatory focus (general)</label>
         </div>
       </div>
       <div class="modal-err" id="editClientErr"></div>
@@ -1109,6 +1114,9 @@
     document.getElementById('editClientAudhd').checked  = flags.includes('audhd');
     document.getElementById('editClientAutism').checked = flags.includes('autism');
     document.getElementById('editClientTrauma').checked = flags.includes('trauma');
+    document.getElementById('editClientFibro').checked  = flags.includes('fibromyalgia');
+    document.getElementById('editClientCfs').checked    = flags.includes('chronic_fatigue');
+    document.getElementById('editClientInflam').checked = flags.includes('inflammatory_focus');
     const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
     const facEl=document.getElementById('editClientFac');
     facEl.innerHTML='<option value="">Unassigned</option>';
@@ -1124,6 +1132,9 @@
     if (document.getElementById('editClientAudhd').checked)  flags.push('audhd');
     if (document.getElementById('editClientAutism').checked) flags.push('autism');
     if (document.getElementById('editClientTrauma').checked) flags.push('trauma');
+    if (document.getElementById('editClientFibro').checked)  flags.push('fibromyalgia');
+    if (document.getElementById('editClientCfs').checked)    flags.push('chronic_fatigue');
+    if (document.getElementById('editClientInflam').checked) flags.push('inflammatory_focus');
     await fetch(`/api/clients/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facId||null,framework,presentation_flags:flags.join(',')})});
     closeModal('editClientModal'); loadClients();
   }
