@@ -1203,7 +1203,16 @@
       deepgramWs.onclose = () => { micActive = false; if (!isSpeaking) setTimeout(startListening, 1000); };
 
     } catch(e) {
-      setStatus('mic not available');
+      // getUserMedia() called without a direct tap (this is the auto-restart
+      // path, after the bot finishes speaking) is subject to each browser's
+      // own — inconsistent, and seemingly getting stricter over time —
+      // policy on reusing mic permission without a fresh gesture. When it's
+      // refused, the old behaviour left status text nobody would notice and
+      // no clear next step. Falling back to 'idle' surfaces the same
+      // pulsing "Tap to speak" hint used everywhere else the mic is
+      // genuinely waiting, so a blocked auto-restart looks and behaves
+      // exactly like "your turn to tap," rather than a silent dead end.
+      setState('idle');
     }
   }
 

@@ -480,7 +480,11 @@
       deepgramWs.onerror = () => { micActive = false; setTimeout(startListening, 2000); };
       deepgramWs.onclose = () => { micActive = false; if (!isSpeaking) setTimeout(startListening, 1000); };
     } catch(e) {
-      statusEl.textContent = 'mic not available';
+      // Same reasoning as client/index.html — an ungestured mic restart can
+      // be refused by the browser's own (inconsistent) permission policy.
+      // Falling back to 'idle' shows the same pulsing "Tap to speak" hint
+      // used everywhere else, rather than silent status text nobody sees.
+      setState('idle');
     }
   }
 
