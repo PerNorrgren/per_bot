@@ -1677,6 +1677,10 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         }
         const journalEntries = db.getJournalEntriesForBot(cId, 5);
         sp += prompts.CLIENT_JOURNAL_CONTEXT(journalEntries);
+        // Variety rotation applies to everyone, unconditionally — this is
+        // about avoiding staleness across sessions, not sensitive clinical
+        // context, so it doesn't need any of the gating above.
+        sp += prompts.CLIENT_VARIETY_CONTEXT(db.getSignalRotation(cId, prompts.SIGNAL_VARIATIONS));
         sp += languageInstruction(client?.language);
       }
       session.systemPrompt = sp;

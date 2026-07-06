@@ -737,6 +737,12 @@ async function getDb() {
     // new presentations can be added without a migration.
     "ALTER TABLE users ADD COLUMN framework TEXT DEFAULT 'felt_fibre_full'",
     "ALTER TABLE users ADD COLUMN presentation_flags TEXT",
+    // Signal rotation state (Per Bot 7) — a small JSON blob, one integer
+    // index per signal category, so Talk can rotate through the variety
+    // bank (see SIGNAL_VARIATIONS in prompts.js) instead of defaulting to
+    // the same phrasing every session. Advances once per new Talk session,
+    // never per message — see getSignalRotation() and its call site.
+    "ALTER TABLE users ADD COLUMN signal_rotation_state TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1513,6 +1519,32 @@ function updateClientClinicalContext(id, framework, presentationFlags) {
   getDbSync().run('UPDATE users SET framework=?,presentation_flags=? WHERE id=?',
     [framework || 'felt_fibre_full', presentationFlags || null, id]);
   save();
+}
+
+// Signal rotation (Per Bot 7) — computes "today's palette" (one variation
+// per signal category, advanced from wherever this client left off) and
+// persists the advanced state so the next NEW session picks up from there.
+// variationBank is passed in from prompts.js (SIGNAL_VARIATIONS) rather
+// than duplicated here, so the two stay in sync automatically as the bank
+// grows — this file only ever stores indices, never the text itself.
+function getSignalRotation(userId, variationBank) {
+  const user = getUser(userId);
+  let state = {};
+  try { state = JSON.parse(user?.signal_rotation_state || '{}'); } catch(e) { state = {}; }
+
+  const palette = {};
+  const nextState = {};
+  for (const key of Object.keys(variationBank)) {
+    const options = variationBank[key];
+    if (!options || !options.length) continue;
+    const idx = Number.isInteger(state[key]) ? state[key] : 0;
+    palette[key] = options[idx % options.length];
+    nextState[key] = (idx + 1) % options.length;
+  }
+
+  getDbSync().run('UPDATE users SET signal_rotation_state=? WHERE id=?', [JSON.stringify(nextState), userId]);
+  save();
+  return palette;
 }
 function archiveClient(id) { getDbSync().run('UPDATE users SET archived=1-archived WHERE id=?', [id]); save(); }
 function updateClientPassword(id, hash) {
@@ -2625,7 +2657,7 @@ module.exports = {
   // Users (legacy aliases — keep so nothing breaks during transition)
   createClient, getClient, getClientByEmail, getAllClients, getAllClientsAdmin,
   // User management
-  updateArc, archiveClient, updateClientPassword, updateClientEmail, updateClientProgramme, updateClientClinicalContext,
+  updateArc, archiveClient, updateClientPassword, updateClientEmail, updateClientProgramme, updateClientClinicalContext, getSignalRotation,
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
