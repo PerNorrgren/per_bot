@@ -280,7 +280,7 @@
   </div>
 
   <!-- Upgrade Explorer Modal -->
-  <div class="modal-bg" id="upgradeModal" style="display:none" onclick="if(event.target===this)closeModal('upgradeModal')">
+  <div class="modal-overlay" id="upgradeModal" onclick="if(event.target===this)closeModal('upgradeModal')">
     <div class="modal">
       <h3>Upgrade user</h3>
       <input type="hidden" id="upgradeUserId"/>
@@ -303,7 +303,7 @@
   </div>
 
   <!-- Set membership expiry — for honouring existing WordPress subscribers by hand -->
-  <div class="modal-bg" id="expiryModal" style="display:none" onclick="if(event.target===this)closeModal('expiryModal')">
+  <div class="modal-overlay" id="expiryModal" onclick="if(event.target===this)closeModal('expiryModal')">
     <div class="modal">
       <h3>Set membership expiry</h3>
       <input type="hidden" id="expiryUserId"/>
