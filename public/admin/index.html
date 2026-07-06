@@ -193,6 +193,7 @@
             <button class="btn sm" onclick="openModal('newMemberModal')">Add Member</button>
             <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
+            <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
             <button class="btn sm danger disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
           </div>
         </div>
@@ -1195,7 +1196,7 @@
   // ── MEMBERS ──
   // ══════════════════════════════════════════
   let _memberData = [];
-  const memberSel = makeSelection(['memberEditBtn','memberDelBtn'], 'memberEditBtn');
+  const memberSel = makeSelection(['memberEditBtn','memberResetPwBtn','memberDelBtn'], 'memberEditBtn');
 
   async function loadMembers() {
     memberSel.clear();
@@ -1238,6 +1239,22 @@
     const id = [...memberSel.sel][0]; if (!id) return;
     const u  = _memberData.find(x => x.id === id); if (!u) return;
     upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
+  }
+  async function resetSelectedMemberPassword() {
+    const ids = [...memberSel.sel]; if (!ids.length) return;
+    const names = ids.map(id => _memberData.find(x => x.id === id)?.name || id).join(', ');
+    showConfirm('Reset password' + (ids.length > 1 ? 's' : ''),
+      `Reset the password for ${names}? They'll be emailed a new temporary password and asked to choose their own the next time they sign in.`,
+      async () => {
+        const results = await Promise.all(ids.map(async id => {
+          const res  = await fetch(`/api/admin/users/${id}/reset-password`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+          const data = await res.json();
+          const name = _memberData.find(x => x.id === id)?.name || id;
+          return `${name}: ${data.tempPassword || 'error — ' + (data.error || 'unknown')}`;
+        }));
+        alert('Password reset — temporary password below (also emailed):\n\n' + results.join('\n'));
+        memberSel.clear(); loadMembers();
+      });
   }
   async function deleteSelectedMembers() {
     const ids = [...memberSel.sel]; if (!ids.length) return;

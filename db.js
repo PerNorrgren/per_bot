@@ -753,6 +753,12 @@ async function getDb() {
     "ALTER TABLE practices ADD COLUMN category_id TEXT",
     "ALTER TABLE practices ADD COLUMN subcategory_id TEXT",
     "ALTER TABLE practices ADD COLUMN facilitator_id TEXT",
+    // Password reset (Per Bot 8) — self-service "forgot password" token
+    // flow plus an admin-triggered immediate reset, for both account tables.
+    "ALTER TABLE users ADD COLUMN reset_token TEXT",
+    "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
+    "ALTER TABLE facilitators ADD COLUMN reset_token TEXT",
+    "ALTER TABLE facilitators ADD COLUMN reset_token_expires TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1014,6 +1020,18 @@ function getFacilitatorByEmail(email) { return queryOne('SELECT * FROM facilitat
 function getFacilitatorById(id) { return queryOne('SELECT * FROM facilitators WHERE id=?', [id]); }
 function updateFacilitatorPassword(id, hash) {
   getDbSync().run('UPDATE facilitators SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
+}
+function setFacilitatorResetToken(id, token, expiresAt) {
+  getDbSync().run('UPDATE facilitators SET reset_token=?,reset_token_expires=? WHERE id=?', [token, expiresAt, id]); save();
+}
+function getFacilitatorByResetToken(token) {
+  return queryOne("SELECT * FROM facilitators WHERE reset_token=? AND reset_token_expires>datetime('now')", [token]);
+}
+function clearFacilitatorResetToken(id) {
+  getDbSync().run('UPDATE facilitators SET reset_token=NULL,reset_token_expires=NULL WHERE id=?', [id]); save();
+}
+function adminResetFacilitatorPassword(id, hash) {
+  getDbSync().run('UPDATE facilitators SET password_hash=?,must_change_password=1,reset_token=NULL,reset_token_expires=NULL WHERE id=?', [hash, id]); save();
 }
 function deleteFacilitator(id) { getDbSync().run('DELETE FROM facilitators WHERE id=?', [id]); save(); }
 function archiveFacilitator(id) {
@@ -1632,6 +1650,24 @@ function getSignalRotation(userId, variationBank) {
 function archiveClient(id) { getDbSync().run('UPDATE users SET archived=1-archived WHERE id=?', [id]); save(); }
 function updateClientPassword(id, hash) {
   getDbSync().run('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
+}
+// ── Password reset (Per Bot 8) ──
+// Self-service token flow: setUserResetToken issues a time-limited token
+// (cleared on use or lookup miss/expiry via the WHERE clause below);
+// adminResetUserPassword is the separate immediate-reset path an admin
+// triggers directly, deliberately forcing must_change_password=1 so an
+// admin-generated temp password can't quietly become a permanent one.
+function setUserResetToken(id, token, expiresAt) {
+  getDbSync().run('UPDATE users SET reset_token=?,reset_token_expires=? WHERE id=?', [token, expiresAt, id]); save();
+}
+function getUserByResetToken(token) {
+  return queryOne("SELECT * FROM users WHERE reset_token=? AND reset_token_expires>datetime('now')", [token]);
+}
+function clearUserResetToken(id) {
+  getDbSync().run('UPDATE users SET reset_token=NULL,reset_token_expires=NULL WHERE id=?', [id]); save();
+}
+function adminResetUserPassword(id, hash) {
+  getDbSync().run('UPDATE users SET password_hash=?,must_change_password=1,reset_token=NULL,reset_token_expires=NULL WHERE id=?', [hash, id]); save();
 }
 function updateClientEmail(id, email) { getDbSync().run('UPDATE users SET email=? WHERE id=?', [email.toLowerCase(), id]); save(); }
 function updateClientProgramme(id, categoryId, subcategoryId) {
@@ -2733,6 +2769,8 @@ module.exports = {
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
+  setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
+  setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,
   // Categories
   getAllCategories, getTopCategories, getSubcategories,

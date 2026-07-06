@@ -467,6 +467,46 @@ function emailWelcomeClient(name, email, tempPassword, language) {
   }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL }, email);
 }
 
+// ── Password reset emails (Per Bot 8) ──
+// Self-service link (1-hour token) vs an admin-triggered temp password —
+// same visual template, different content block, so the difference in
+// what the recipient needs to do is obvious at a glance.
+function emailPasswordResetLink(name, email, token, language) {
+  const b = brand();
+  const resetUrl = `${APP_URL}/reset-password?token=${token}`;
+  return sendLocalizedEmail('password_reset_link', language, {
+    subject: `Reset your {{brand}} password`,
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Reset your password</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Hi {{name}}, someone (hopefully you) asked to reset the password for {{email}}. This link works once and expires in an hour.</p>
+      <a href="{{resetUrl}}" style="display:inline-block;background:#2d6a4f;color:#fff;padding:13px 24px;border-radius:8px;text-decoration:none;font-size:14px;margin-bottom:24px">Choose a new password</a>
+      <p style="font-size:13px;line-height:1.6;color:#888">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">{{brand}}</div>
+    </div>`
+  }, { brand: b.name, name, email, resetUrl }, email);
+}
+function emailAdminPasswordReset(name, email, tempPassword, language) {
+  const b = brand();
+  return sendLocalizedEmail('admin_password_reset', language, {
+    subject: `Your {{brand}} password has been reset`,
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hi {{name}}</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your facilitator has reset your password. Sign in with the temporary password below — you'll be asked to choose your own straight after.</p>
+      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">{{tempPassword}}</div>
+      </div>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">{{brand}}</div>
+    </div>`
+  }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL }, email);
+}
+
 // ── Trial email sequence (Per Bot 5, item 4) ──
 // Day 3: what you've unlocked. Day 10: 4 days left. Day 14: trial ended.
 function emailTrialDay3(user) {
@@ -754,6 +794,7 @@ function emailFacilitatorRequestDeferred(request) {
 
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
+app.get('/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'reset-password.html')));
 app.get('/join/:token', (req, res) => res.sendFile(path.join(__dirname, 'public', 'join.html')));
 
 // ── One-click unsubscribe ── Public, no auth — has to work for newsletter-
@@ -846,6 +887,82 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => {
   res.clearCookie(auth.COOKIE_NAME);
   res.json({ ok: true });
+});
+
+// ── Forgot password (Per Bot 8) — self-service, works for both client and
+// facilitator/admin accounts. Always returns the same generic response
+// regardless of whether the email matched anything, so this can't be used
+// to probe which addresses have accounts. ──
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const email = (req.body.email || '').toLowerCase().trim();
+    if (email) {
+      const token     = uuidv4() + uuidv4();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const user = db.getUserByEmail(email);
+      const fac  = user ? null : db.getFacilitatorByEmail(email);
+      if (user) { db.setUserResetToken(user.id, token, expiresAt); emailPasswordResetLink(user.name, user.email, token, user.language); }
+      else if (fac) { db.setFacilitatorResetToken(fac.id, token, expiresAt); emailPasswordResetLink(fac.name, fac.email, token); }
+    }
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('forgot-password error:', e);
+    res.json({ ok: true }); // still don't leak anything on error
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) return res.status(400).json({ error: 'Missing token or password.' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    const hash = await auth.hashPassword(password);
+    const user = db.getUserByResetToken(token);
+    if (user) { db.updateClientPassword(user.id, hash); db.clearUserResetToken(user.id); return res.json({ ok: true }); }
+    const fac = db.getFacilitatorByResetToken(token);
+    if (fac) { db.updateFacilitatorPassword(fac.id, hash); db.clearFacilitatorResetToken(fac.id); return res.json({ ok: true }); }
+    res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one from the login page.' });
+  } catch(e) {
+    console.error('reset-password error:', e);
+    res.status(500).json({ error: 'Something went wrong.' });
+  }
+});
+
+// ── Admin-triggered immediate reset (Per Bot 8) — for when someone can't
+// get to their email, or an admin just wants to hand over a password
+// directly. Generates a temp password the same way Add Member does,
+// forces a change on next login, and returns the temp password in the
+// response too (not just the email) so it's still usable if the email
+// bounces or the admin wants to read it out over the phone. ──
+app.patch('/api/admin/users/:id/reset-password', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const user = db.getUser(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const hash = await auth.hashPassword(tempPassword);
+    db.adminResetUserPassword(req.params.id, hash);
+    const sendEmail = req.body.sendEmail !== false;
+    if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language);
+    res.json({ ok: true, tempPassword, emailSent: sendEmail });
+  } catch(e) {
+    console.error('admin reset-password error:', e);
+    res.status(500).json({ error: 'Something went wrong.' });
+  }
+});
+app.patch('/api/admin/facilitators/:id/reset-password', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const fac = db.getFacilitatorById(req.params.id);
+    if (!fac) return res.status(404).json({ error: 'Facilitator not found.' });
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const hash = await auth.hashPassword(tempPassword);
+    db.adminResetFacilitatorPassword(req.params.id, hash);
+    const sendEmail = req.body.sendEmail !== false;
+    if (sendEmail) emailAdminPasswordReset(fac.name, fac.email, tempPassword);
+    res.json({ ok: true, tempPassword, emailSent: sendEmail });
+  } catch(e) {
+    console.error('admin reset-password error:', e);
+    res.status(500).json({ error: 'Something went wrong.' });
+  }
 });
 
 // ── Self-registration ──
