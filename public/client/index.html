@@ -32,6 +32,28 @@
     .tab { flex:1; padding:11px; text-align:center; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.35); cursor:pointer; background:none; border:none; font-family:'Georgia',serif; transition:all 0.2s; }
     .tab.active { color:rgba(255,255,255,0.85); border-bottom:1.5px solid rgba(180,230,200,0.6); }
 
+    /* Bottom nav (Per Bot 8) — replaces the old 9-across top tab row */
+    .bottom-nav { display:flex; border-top:1px solid rgba(255,255,255,0.08); flex-shrink:0; background:rgba(0,0,0,0.12); }
+    .bnav-btn { flex:1; padding:10px 4px 9px; display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:10px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
+    .bnav-icon { font-size:18px; line-height:1; opacity:0.75; }
+    .bnav-btn.active { color:rgba(180,230,200,0.9); }
+    .bnav-btn.active .bnav-icon { opacity:1; }
+
+    /* Library / You mega-views — internal sub-nav + switchable regions */
+    .library-view { display:none; flex-direction:column; overflow:hidden; }
+    .library-view.visible { display:flex; }
+    .lib-subnav { display:flex; gap:6px; padding:12px 16px 8px; flex-shrink:0; overflow-x:auto; }
+    .lib-subnav-btn { padding:7px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); font-size:12px; font-family:'Georgia',serif; cursor:pointer; white-space:nowrap; }
+    .lib-subnav-btn.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
+    .lib-sub-panel { display:none; flex-direction:column; overflow:hidden; flex:1; min-height:0; }
+    .lib-sub-panel.visible { display:flex; }
+
+    .med-cat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:6px 4px; }
+    .med-cat-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 14px; cursor:pointer; transition:border-color 0.2s; }
+    .med-cat-card:hover { border-color:rgba(180,230,200,0.3); }
+    .med-cat-name { font-size:14px; color:rgba(255,255,255,0.82); }
+    .med-cat-count { font-size:11px; color:rgba(255,255,255,0.32); margin-top:4px; }
+
     /* Talk */
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
@@ -117,6 +139,11 @@
     .heart-btn.fav { opacity:1; }
     .heart-btn:hover { opacity:0.8; transform:scale(1.15); }
     .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+    .practices-group-row { display:flex; gap:8px; padding:10px 5px 12px; }
+    .practices-group-chip { font-size:11px; padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; }
+    .practices-group-chip.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
+    .practices-group-hdr { display:flex; align-items:center; justify-content:space-between; padding:10px 5px; cursor:pointer; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.5); border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px; }
+    .practices-group-count { font-size:11px; color:rgba(255,255,255,0.3); }
 
     /* Sessions */
     .sessions-view { display:none; flex-direction:column; overflow:hidden; }
@@ -350,21 +377,6 @@
 
     <div class="header">
       <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
-      <a href="/account" style="display:flex;align-items:center;gap:5px;text-decoration:none">
-        <span style="font-size:13px;color:rgba(255,255,255,0.5);font-family:Georgia,serif;letter-spacing:0.05em">My account</span>
-      </a>
-    </div>
-
-    <div class="tabs">
-      <button class="tab active" id="tabTalk"      onclick="switchTab('talk')">Talk</button>
-      <button class="tab"        id="tabPractices" onclick="switchTab('practices')">Practices</button>
-      <button class="tab"        id="tabTimer"      onclick="switchTab('timer')">Timer</button>
-      <button class="tab"        id="tabCourses"   onclick="switchTab('courses')">Courses</button>
-      <button class="tab"        id="tabSessions"  onclick="switchTab('sessions')">Sessions</button>
-      <button class="tab"        id="tabHistory"   onclick="switchTab('history')">History</button>
-      <button class="tab"        id="tabContent"   onclick="switchTab('content')">Content</button>
-      <button class="tab"        id="tabPoems"     onclick="switchTab('poems')">Poems</button>
-      <button class="tab"        id="tabJournal"   onclick="switchTab('journal')">Journal</button>
     </div>
 
     <!-- Talk -->
@@ -396,9 +408,98 @@
       </div>
     </div>
 
-    <!-- Practices -->
-    <div class="practices-view" id="practicesView">
-      <div class="practices-scroll" id="practicesList"><div class="no-practices">No practices yet.</div></div>
+    <!-- Library — absorbs the old Practices, Content and Meditations
+         browsing into one destination with three switchable regions -->
+    <div class="library-view" id="libraryView">
+      <div class="lib-subnav">
+        <button class="lib-subnav-btn active" id="libSubPractices" onclick="switchLibrarySub('practices')">Practices</button>
+        <button class="lib-subnav-btn" id="libSubMeditations" onclick="switchLibrarySub('meditations')">Meditations</button>
+        <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
+      </div>
+
+      <!-- Practices region -->
+      <div class="lib-sub-panel visible" id="libPracticesPanel">
+        <div class="practices-scroll" id="practicesList"><div class="no-practices">No practices yet.</div></div>
+      </div>
+
+      <!-- Meditations region -->
+      <div class="lib-sub-panel" id="libMeditationsPanel">
+        <div class="practices-scroll" id="meditationsScroll"><div class="no-poems">Loading…</div></div>
+      </div>
+
+      <!-- Read & watch region (formerly Content) -->
+      <div class="lib-sub-panel" id="libReadWatchPanel">
+        <div class="content-filters" id="contentFilters">
+          <button class="content-filter-chip active" data-filter="all" onclick="setContentFilter('all')">All</button>
+          <button class="content-filter-chip" data-filter="blog" onclick="setContentFilter('blog')">📝 Blog</button>
+          <button class="content-filter-chip" data-filter="video_blog" onclick="setContentFilter('video_blog')">🎬 Video</button>
+          <button class="content-filter-chip" data-filter="poem" onclick="setContentFilter('poem')">✒️ Poems</button>
+          <button class="content-filter-chip" data-filter="whitepaper" onclick="setContentFilter('whitepaper')">📄 Whitepapers</button>
+          <button class="content-filter-chip" data-filter="book" onclick="setContentFilter('book')">📖 Books</button>
+        </div>
+        <div class="content-scroll" id="contentScroll"></div>
+        <div class="mini-player" id="miniPlayer">
+          <div class="mini-player-title" id="miniPlayerTitle">—</div>
+          <div class="mini-player-controls">
+            <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
+            <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
+              <div class="mp-progress-fill" id="mpFill" style="width:0%"></div>
+            </div>
+            <span class="mp-time" id="mpTime">0:00</span>
+            <button class="mp-btn" onclick="mpClose()" style="font-size:14px">×</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- You — absorbs Journal, the daily-message Poems archive, History
+         and Account settings into one destination -->
+    <div class="library-view" id="youView">
+      <div class="lib-subnav">
+        <button class="lib-subnav-btn active" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
+        <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
+        <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
+        <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
+      </div>
+
+      <!-- Account region -->
+      <div class="lib-sub-panel visible" id="youAccountPanel">
+        <div class="practices-scroll" id="youAccountSummary"><div class="no-practices">Loading…</div></div>
+      </div>
+
+      <!-- Journal region -->
+      <div class="lib-sub-panel" id="youJournalPanel">
+        <div class="poems-scroll" id="journalScroll" style="display:flex; flex-direction:column; gap:16px;">
+          <button class="btn-primary" style="align-self:flex-start" onclick="openJournalForm()">+ Write an entry</button>
+          <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
+            <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
+            <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
+            <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label></div>
+            <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let the companion use this</label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+              <button class="btn sm" onclick="closeJournalForm()">Cancel</button>
+              <button class="btn-primary" id="journalSaveBtn" onclick="saveJournalEntry()">Save entry</button>
+            </div>
+            <div class="msg" id="journalFormMsg"></div>
+          </div>
+          <div id="journalList"><div class="no-poems">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- Poems region — the daily message archive -->
+      <div class="lib-sub-panel" id="youPoemsPanel">
+        <div class="poems-scroll" id="poemsScroll">
+          <div class="no-poems">Loading…</div>
+        </div>
+      </div>
+
+      <!-- History region — the client's own activity log -->
+      <div class="lib-sub-panel" id="youHistoryPanel">
+        <div class="history-scroll" id="historyList"><div class="no-history">No history yet.</div></div>
+      </div>
     </div>
 
     <!-- Timer -->
@@ -466,69 +567,6 @@
       </div>
     </div>
 
-    <!-- Sessions -->
-    <div class="sessions-view" id="sessionsView">
-      <div class="sessions-scroll" id="sessionsList"><div class="no-sessions">No sessions yet.</div></div>
-    </div>
-
-    <!-- History -->
-    <div class="history-view" id="historyView">
-      <div class="history-scroll" id="historyList"><div class="no-history">No history yet.</div></div>
-    </div>
-
-    <!-- Poems -->
-    <div class="poems-view" id="poemsView">
-      <div class="poems-scroll" id="poemsScroll">
-        <div class="no-poems">Loading…</div>
-      </div>
-    </div>
-
-    <!-- Journal — client's own written entries, each with independent
-         sharing controls (see openJournalForm below) -->
-    <div class="poems-view" id="journalView">
-      <div class="poems-scroll" id="journalScroll" style="display:flex; flex-direction:column; gap:16px;">
-        <button class="btn-primary" style="align-self:flex-start" onclick="openJournalForm()">+ Write an entry</button>
-        <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
-          <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
-          <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
-          <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label></div>
-          <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
-            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let the companion use this</label>
-            <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
-          </div>
-          <div style="display:flex; gap:8px; justify-content:flex-end;">
-            <button class="btn sm" onclick="closeJournalForm()">Cancel</button>
-            <button class="btn-primary" id="journalSaveBtn" onclick="saveJournalEntry()">Save entry</button>
-          </div>
-          <div class="msg" id="journalFormMsg"></div>
-        </div>
-        <div id="journalList"><div class="no-poems">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Content -->
-    <div class="content-view" id="contentView">
-      <div class="content-filters" id="contentFilters">
-        <button class="content-filter-chip active" data-filter="all" onclick="setContentFilter('all')">All</button>
-        <button class="content-filter-chip" data-filter="audio" onclick="setContentFilter('audio')">🎵 Audio</button>
-        <button class="content-filter-chip" data-filter="video" onclick="setContentFilter('video')">🎬 Video</button>
-        <button class="content-filter-chip" data-filter="document" onclick="setContentFilter('document')">📄 Documents</button>
-      </div>
-      <div class="content-scroll" id="contentScroll"></div>
-      <!-- Mini player -->
-      <div class="mini-player" id="miniPlayer">
-        <div class="mini-player-title" id="miniPlayerTitle">—</div>
-        <div class="mini-player-controls">
-          <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
-          <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
-            <div class="mp-progress-fill" id="mpFill" style="width:0%"></div>
-          </div>
-          <span class="mp-time" id="mpTime">0:00</span>
-          <button class="mp-btn" onclick="mpClose()" style="font-size:14px">×</button>
-        </div>
-      </div>
-    </div>
-
     <!-- Courses -->
     <div class="courses-view" id="coursesView">
       <div class="courses-scroll" id="coursesListScroll">
@@ -553,6 +591,14 @@
         <button class="player-close" id="fullscreenBtn" onclick="toggleFullscreen()" style="display:none">Full screen</button>
         <button class="player-close" onclick="closePlayerOverlay()">Close</button>
       </div>
+    </div>
+
+    <div class="bottom-nav">
+      <button class="bnav-btn active" id="navTalk"     onclick="switchTab('talk')"><span class="bnav-icon">🗣️</span>Talk</button>
+      <button class="bnav-btn"        id="navLibrary"  onclick="switchTab('library')"><span class="bnav-icon">📚</span>Library</button>
+      <button class="bnav-btn"        id="navCourses"  onclick="switchTab('courses')"><span class="bnav-icon">🎓</span>Courses</button>
+      <button class="bnav-btn"        id="navTimer"    onclick="switchTab('timer')"><span class="bnav-icon">⏱️</span>Timer</button>
+      <button class="bnav-btn"        id="navYou"      onclick="switchTab('you')"><span class="bnav-icon">🧘</span>You</button>
     </div>
 
   </div>
@@ -632,26 +678,66 @@
 
   function switchTab(tab) {
     if (tab !== 'talk') sendFinalizeBeacon();
-    ['talk','practices','timer','courses','sessions','history','content','poems','journal'].forEach(t => {
-      document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+    ['talk','library','courses','timer','you'].forEach(t => {
+      document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
-    document.getElementById('talkView').style.display      = tab === 'talk' ? '' : 'none';
-    document.getElementById('practicesView').classList.toggle('visible', tab === 'practices');
-    document.getElementById('timerView').classList.toggle('visible',    tab === 'timer');
-    document.getElementById('coursesView').classList.toggle('visible',   tab === 'courses');
-    document.getElementById('sessionsView').classList.toggle('visible',  tab === 'sessions');
-    document.getElementById('historyView').classList.toggle('visible',   tab === 'history');
-    document.getElementById('contentView').classList.toggle('visible',   tab === 'content');
-    document.getElementById('poemsView').classList.toggle('visible',     tab === 'poems');
-    document.getElementById('journalView').classList.toggle('visible',   tab === 'journal');
-    if (tab === 'practices') loadPractices();
-    if (tab === 'timer')     loadTimerSounds();
-    if (tab === 'courses')   { closeCourseDetail(); loadCourses(); }
-    if (tab === 'sessions')  loadSessions();
-    if (tab === 'history')   loadHistory();
-    if (tab === 'content')   loadContent();
-    if (tab === 'poems')     loadPoems();
-    if (tab === 'journal')   loadJournal();
+    document.getElementById('talkView').style.display   = tab === 'talk' ? '' : 'none';
+    document.getElementById('libraryView').classList.toggle('visible', tab === 'library');
+    document.getElementById('coursesView').classList.toggle('visible', tab === 'courses');
+    document.getElementById('timerView').classList.toggle('visible',   tab === 'timer');
+    document.getElementById('youView').classList.toggle('visible',     tab === 'you');
+    if (tab === 'timer')   loadTimerSounds();
+    if (tab === 'courses') { closeCourseDetail(); loadCourses(); }
+    if (tab === 'library') { loadContent().then(() => { loadPractices(); loadLibraryMeditations(); }); switchLibrarySub(_currentLibSub); }
+    if (tab === 'you')     switchYouSub(_currentYouSub);
+  }
+
+  // ── Library sub-nav ──
+  let _currentLibSub = 'practices';
+  function switchLibrarySub(sub) {
+    _currentLibSub = sub;
+    ['practices','meditations','readwatch'].forEach(s => {
+      document.getElementById('libSub' + s.charAt(0).toUpperCase() + s.slice(1).replace('watch','Watch')).classList.toggle('active', s === sub);
+    });
+    document.getElementById('libPracticesPanel').classList.toggle('visible', sub === 'practices');
+    document.getElementById('libMeditationsPanel').classList.toggle('visible', sub === 'meditations');
+    document.getElementById('libReadWatchPanel').classList.toggle('visible', sub === 'readwatch');
+    if (sub === 'meditations') loadLibraryMeditations();
+  }
+
+  // ── You sub-nav ──
+  let _currentYouSub = 'account';
+  function switchYouSub(sub) {
+    _currentYouSub = sub;
+    ['account','journal','poems','history'].forEach(s => {
+      document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
+    });
+    document.getElementById('youAccountPanel').classList.toggle('visible', sub === 'account');
+    document.getElementById('youJournalPanel').classList.toggle('visible', sub === 'journal');
+    document.getElementById('youPoemsPanel').classList.toggle('visible', sub === 'poems');
+    document.getElementById('youHistoryPanel').classList.toggle('visible', sub === 'history');
+    if (sub === 'account') loadYouAccountSummary();
+    if (sub === 'journal') loadJournal();
+    if (sub === 'poems')   loadPoems();
+    if (sub === 'history') loadHistory();
+  }
+
+  // Small summary card in the You > Account region — full settings stay
+  // on the mature standalone /account page rather than re-embedding
+  // 1000+ lines of settings UI inline here.
+  async function loadYouAccountSummary() {
+    const el = document.getElementById('youAccountSummary');
+    try {
+      const a = await getFullAccount();
+      el.innerHTML = `
+        <div style="padding:6px 4px 18px">
+          <div style="font-size:16px;color:rgba(255,255,255,0.85);margin-bottom:4px">${a.name || 'Your account'}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.35)">${a.email || ''}</div>
+        </div>
+        <a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>`;
+    } catch(e) {
+      el.innerHTML = '<a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>';
+    }
   }
 
   // ── Poems — the daily message archive, read aloud on demand ──
@@ -1499,26 +1585,20 @@
     }
   }
 
+  // ── Read & watch (Library) — everything in the content library that
+  // isn't a practice/meditation, filtered by content_type chips ──
+  const READ_WATCH_KINDS = ['blog','video_blog','poem','whitepaper','book','course_intro','other'];
   function renderContentScroll() {
     const el   = document.getElementById('contentScroll');
-    // Bell sounds and background loops are utility assets for the Timer
-    // tab, not browsable meditation content — kept out of this list
-    // entirely rather than cluttering it, same reasoning as
-    // facilitator_resource files never appearing here either.
-    const visible = _contentData.filter(f => f.content_type !== 'timer_bell' && f.content_type !== 'timer_music');
+    const visible = _contentData.filter(f => READ_WATCH_KINDS.includes(f.content_type) || !f.content_type);
     const favs = visible.filter(f => f.is_favourite);
 
-    // Single list of everything else, filtered by the active type chip (or all),
-    // sorted newest first. Favourites stay pinned above this regardless of filter,
-    // so a favourited item is always reachable in one tap.
     const rest = visible
       .filter(f => !f.is_favourite)
-      .filter(f => _contentFilter === 'all' || contentType(f) === _contentFilter)
+      .filter(f => _contentFilter === 'all' || f.content_type === _contentFilter)
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
     let html = '';
-
-    // Favourites
     html += `<div class="content-section">
       <div class="content-section-hdr">Favourites</div>
       <div id="content-favs">${
@@ -1528,7 +1608,6 @@
       }</div>
     </div>`;
 
-    // Everything else, as one list
     html += `<div class="content-section">
       <div id="content-all">${
         rest.length
@@ -1537,7 +1616,6 @@
       }</div>
     </div>`;
 
-    // User playlists
     html += `<div class="content-section">
       <div class="content-section-hdr">My playlists</div>
       <button class="pl-create-btn" onclick="createUserPlaylist()">+ New playlist</button>
@@ -1545,6 +1623,62 @@
     </div>`;
 
     el.innerHTML = html;
+  }
+
+  // ── Meditations (Library) — category drill-down over content_type='meditation' ──
+  let _medCategories = [];
+  let _medCatId = null;
+  let _medSubId = null;
+
+  async function loadLibraryMeditations() {
+    if (!_medCategories.length) {
+      try { _medCategories = await (await fetch('/api/content/categories')).json(); } catch(e) { _medCategories = []; }
+    }
+    renderMeditations();
+  }
+  function meditationFiles() {
+    return (_contentData || []).filter(f => f.content_type === 'meditation');
+  }
+  function openMeditationCategory(catId) { _medCatId = catId; _medSubId = null; renderMeditations(); }
+  function openMeditationSubcategory(subId) { _medSubId = subId; renderMeditations(); }
+  function backMeditations() {
+    if (_medSubId) _medSubId = null; else _medCatId = null;
+    renderMeditations();
+  }
+  function renderMeditations() {
+    const el = document.getElementById('meditationsScroll');
+    const files = meditationFiles();
+    const topCats = _medCategories.filter(c => !c.parent_id && c.id !== 'cat-appfiles');
+
+    if (!_medCatId) {
+      el.innerHTML = `<div class="med-cat-grid">` + topCats.map(c => {
+        const count = files.filter(f => f.category_id === c.id).length;
+        return `<div class="med-cat-card" onclick="openMeditationCategory('${c.id}')">
+          <div class="med-cat-name">${c.name}</div>
+          <div class="med-cat-count">${count} practice${count!==1?'s':''}</div>
+        </div>`;
+      }).join('') + `</div>`;
+      return;
+    }
+    const cat = _medCategories.find(c => c.id === _medCatId);
+    if (!_medSubId) {
+      const subs = _medCategories.filter(c => c.parent_id === _medCatId);
+      el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; All categories</button>
+        <div class="content-section-hdr">${cat ? cat.name : ''}</div>
+        <div class="med-cat-grid">` + subs.map(s => {
+        const count = files.filter(f => f.subcategory_id === s.id).length;
+        return `<div class="med-cat-card" onclick="openMeditationSubcategory('${s.id}')">
+          <div class="med-cat-name">${s.name}</div>
+          <div class="med-cat-count">${count} practice${count!==1?'s':''}</div>
+        </div>`;
+      }).join('') + `</div>`;
+      return;
+    }
+    const sub = _medCategories.find(c => c.id === _medSubId);
+    const list = files.filter(f => f.subcategory_id === _medSubId);
+    el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; ${cat ? cat.name : ''}</button>
+      <div class="content-section-hdr">${sub ? sub.name : ''}</div>` +
+      (list.length ? list.map(f => contentItemHTML(f)).join('') : '<div class="no-poems">No practices here yet.</div>');
   }
 
   function renderUserPlaylistsHTML() {
@@ -1843,26 +1977,84 @@
   });
 
   // ── Practices ──
+  let _practicesGroupMode = 'course'; // 'course' | 'area'
+  let _practicesData = [];
+  let openPracticeGroups = new Set();
+
   async function loadPractices() {
     const res  = await fetch('/api/my/profile');
     const data = await res.json();
-    renderPractices(data.practices || []);
+    _practicesData = data.practices || [];
+    renderPractices();
   }
-  function renderPractices(list) {
-    const el = document.getElementById('practicesList');
-    if (!list.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
-    const favs   = list.filter(p=>p.is_favourite);
-    const others = list.filter(p=>!p.is_favourite);
-    el.innerHTML = [...favs,...others].map(p=>`
-      <div class="practice-item" onclick="openPractice('${p.id}','${p.title.replace(/'/g,"\\'")}','${p.type}','${(p.content||'').replace(/'/g,"\\'")}','${p.filename||''}')">
+  function setPracticesGroupMode(mode) {
+    _practicesGroupMode = mode;
+    document.querySelectorAll('.practices-group-chip').forEach(c => c.classList.toggle('active', c.dataset.mode === mode));
+    renderPractices();
+  }
+  function togglePracticeGroup(key) {
+    if (openPracticeGroups.has(key)) openPracticeGroups.delete(key); else openPracticeGroups.add(key);
+    renderPractices();
+  }
+  // "Course" groups = subcategories under University/Mindfulness/Therapy (structured programmes);
+  // "Area" groups = subcategories under FELT·FIBRE (thematic/somatic domains).
+  const AREA_CATEGORY_ID = 'cat-felt';
+  function practiceItemHTML(p) {
+    const sourceLabel = p.source_type === 'session' ? 'From a session' : 'Saved from Talk';
+    return `
+      <div class="practice-item" onclick="openPractice('${p.id}','${(p.title||'').replace(/'/g,"\\'")}','${p.type}','${(p.content||'').replace(/'/g,"\\'")}','${p.filename||''}')">
         <span class="practice-icon">${p.type==='audio'?'🎵':'📄'}</span>
         <div class="practice-info">
           <div class="practice-title">${p.title}</div>
-          <div class="practice-meta">${p.type==='audio'?'Audio':'Text'} · Used ${p.use_count||0} times</div>
+          <div class="practice-meta">${sourceLabel}${p.use_count ? ' · Used ' + p.use_count + ' times' : ''}</div>
         </div>
         <button class="heart-btn ${p.is_favourite?'fav':''}" onclick="event.stopPropagation();toggleFav('${p.id}')">♥</button>
-      </div>
-    `).join('');
+      </div>`;
+  }
+  function renderPractices() {
+    const el = document.getElementById('practicesList');
+    const list = _practicesData;
+    if (!list.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
+
+    const favs = list.filter(p => p.is_favourite);
+    const grouped = list.filter(p => !p.is_favourite && p.subcategory_id &&
+      (_practicesGroupMode === 'area' ? p.category_id === AREA_CATEGORY_ID : p.category_id !== AREA_CATEGORY_ID));
+    const ungrouped = list.filter(p => !p.is_favourite && !grouped.includes(p));
+
+    let html = '';
+    if (favs.length) {
+      html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
+    }
+
+    html += `<div class="practices-group-row">
+      <button class="practices-group-chip ${_practicesGroupMode==='course'?'active':''}" data-mode="course" onclick="setPracticesGroupMode('course')">By course</button>
+      <button class="practices-group-chip ${_practicesGroupMode==='area'?'active':''}" data-mode="area" onclick="setPracticesGroupMode('area')">By area</button>
+    </div>`;
+
+    const groups = {};
+    grouped.forEach(p => {
+      const key = p.subcategory_id;
+      if (!groups[key]) groups[key] = { name: p.subcategory_name || 'Other', items: [] };
+      groups[key].items.push(p);
+    });
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      html += `<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No ${_practicesGroupMode === 'area' ? 'FELT·FIBRE area' : 'course'} tagged practices yet.</div>`;
+    } else {
+      groupKeys.forEach(key => {
+        const open = openPracticeGroups.has(key);
+        html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('${key}')">
+          <span>${groups[key].name}</span><span class="practices-group-count">${groups[key].items.length} ${open ? '▾' : '▸'}</span>
+        </div>`;
+        if (open) html += groups[key].items.map(practiceItemHTML).join('');
+      });
+    }
+
+    if (ungrouped.length) {
+      html += `<div class="content-section-hdr">Other saved practices</div>` + ungrouped.map(practiceItemHTML).join('');
+    }
+
+    el.innerHTML = html;
   }
   async function toggleFav(id) { await fetch(`/api/practices/${id}/favourite`,{method:'PATCH'}); loadPractices(); }
   function openPractice(id, title, type, content, filename) {
@@ -2140,23 +2332,9 @@
       </div>`;
   }
 
-  // ── Sessions ──
-  async function loadSessions() {
-    if ((await getUserTier()) < 1) { renderUpgradePrompt('sessionsList', 'Sessions'); return; }
-    const res  = await fetch('/api/my/profile');
-    const data = await res.json();
-    renderSessions(data.sessions || []);
-  }
-  function renderSessions(list) {
-    const el = document.getElementById('sessionsList');
-    if (!list.length) { el.innerHTML='<div class="no-sessions">No sessions recorded yet.</div>'; return; }
-    el.innerHTML = list.map(s=>`
-      <div class="session-item">
-        <div class="session-date">${s.created_at?.slice(0,10)||''}</div>
-        <div class="session-summary">${s.client_summary||'Session recorded.'}</div>
-      </div>
-    `).join('');
-  }
+  // ── Sessions — dissolved into Practices (Per Bot 8); a released
+  // session now surfaces via getPracticesForClient's union, tagged
+  // source_type='session'. Nothing left to load here separately.
 
   async function loadHistory() {
     if ((await getUserTier()) < 1) { renderUpgradePrompt('historyList', 'History'); return; }

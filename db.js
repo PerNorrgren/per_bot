@@ -743,6 +743,16 @@ async function getDb() {
     // the same phrasing every session. Advances once per new Talk session,
     // never per message — see getSignalRotation() and its call site.
     "ALTER TABLE users ADD COLUMN signal_rotation_state TEXT",
+    // Practices — Course/Area grouping + source tracking (Per Bot 8).
+    // source_type distinguishes a client's own saved Talk moment ('talk')
+    // from a practice that arrived via a released facilitator session
+    // ('session'); category_id/subcategory_id let a practice be grouped
+    // under a Course (Mindfulness/University/Therapy subcategories) or an
+    // Area (FELT·FIBRE subcategories) in the Library UI.
+    "ALTER TABLE practices ADD COLUMN source_type TEXT DEFAULT 'talk'",
+    "ALTER TABLE practices ADD COLUMN category_id TEXT",
+    "ALTER TABLE practices ADD COLUMN subcategory_id TEXT",
+    "ALTER TABLE practices ADD COLUMN facilitator_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -831,6 +841,15 @@ async function getDb() {
   db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-appfiles','App Files','app-files',NULL,999)`);
   db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('sub-appfiles','App Files','app-files-sub','cat-appfiles',1)`);
 
+  // Category tree v2 (Per Bot 8) — University / Mindfulness / FELT·FIBRE /
+  // Therapy, replacing the old Mindfulness/FELT·FIBRE/Girls Programme/Therapy
+  // set. Runs unconditionally on every boot, same reasoning as the App
+  // Files insert above: existing deployments already have a non-empty
+  // categories table and would never hit seedCategories(). Naturally
+  // idempotent — INSERT OR IGNORE is safe to repeat, and the remap/delete
+  // steps below become no-ops once the old ids are gone.
+  migrateCategoryTreeV2(db);
+
   // Seed default membership plans if empty
   const existingPlans = queryAll('SELECT id FROM membership_plans LIMIT 1');
   if (!existingPlans.length) seedMembershipPlans();
@@ -847,28 +866,92 @@ function seedCategories() {
   const cats = [
     { id:'cat-mindfulness',  name:'Mindfulness',      slug:'mindfulness',       parent_id:null,             sort_order:1 },
     { id:'cat-felt',         name:'FELT·FIBRE',        slug:'felt-fibre',        parent_id:null,             sort_order:2 },
-    { id:'cat-girls',        name:'Girls Programme',   slug:'girls-programme',   parent_id:null,             sort_order:3 },
+    { id:'cat-girls',        name:'University',        slug:'university',        parent_id:null,             sort_order:3 },
     { id:'cat-therapy',      name:'Therapy',           slug:'therapy',           parent_id:null,             sort_order:4 },
     { id:'sub-mfl',          name:'Mindfulness for Life', slug:'mindfulness-for-life', parent_id:'cat-mindfulness', sort_order:1 },
     { id:'sub-mbct',         name:'MBCT',              slug:'mbct',              parent_id:'cat-mindfulness', sort_order:2 },
     { id:'sub-mbsr',         name:'MBSR',              slug:'mbsr',              parent_id:'cat-mindfulness', sort_order:3 },
-    { id:'sub-mind-intro',   name:'Introduction',      slug:'mindfulness-intro', parent_id:'cat-mindfulness', sort_order:4 },
+    { id:'sub-finding-peace',name:'Finding Peace',     slug:'finding-peace',     parent_id:'cat-mindfulness', sort_order:4 },
     { id:'sub-deeper',       name:'Deeper Mindfulness', slug:'deeper-mindfulness',parent_id:'cat-mindfulness', sort_order:5 },
-    { id:'sub-felt-intro',   name:'Introduction',      slug:'felt-intro',        parent_id:'cat-felt',        sort_order:1 },
-    { id:'sub-felt-prac',    name:'Practitioner',      slug:'felt-practitioner', parent_id:'cat-felt',        sort_order:2 },
-    { id:'sub-finding-calm', name:'Finding Calm',      slug:'finding-calm',      parent_id:'cat-felt',        sort_order:3 },
-    { id:'sub-finding-joy',  name:'Finding Joy',       slug:'finding-joy',       parent_id:'cat-felt',        sort_order:4 },
+    { id:'sub-felt-facilitation', name:'Facilitation', slug:'felt-facilitation', parent_id:'cat-felt',       sort_order:1 },
+    { id:'sub-felt-compassion',   name:'Compassion',   slug:'felt-compassion',   parent_id:'cat-felt',       sort_order:2 },
+    { id:'sub-felt-relax',        name:'Relax',        slug:'felt-relax',        parent_id:'cat-felt',       sort_order:3 },
+    { id:'sub-felt-sleep',        name:'Sleep',        slug:'felt-sleep',        parent_id:'cat-felt',       sort_order:4 },
+    { id:'sub-felt-stress',       name:'Stress',       slug:'felt-stress',       parent_id:'cat-felt',       sort_order:5 },
+    { id:'sub-felt-anger',        name:'Anger',        slug:'felt-anger',        parent_id:'cat-felt',       sort_order:6 },
+    { id:'sub-felt-adhd',         name:'ADHD',         slug:'felt-adhd',         parent_id:'cat-felt',       sort_order:7 },
+    { id:'sub-finding-calm', name:'Finding Calm',      slug:'finding-calm',      parent_id:'cat-felt',        sort_order:8 },
+    { id:'sub-finding-joy',  name:'Finding Joy',       slug:'finding-joy',       parent_id:'cat-felt',        sort_order:9 },
     { id:'sub-girls-y',      name:'Younger Girls',     slug:'girls-younger',     parent_id:'cat-girls',       sort_order:1 },
     { id:'sub-girls-o',      name:'Older Girls',       slug:'girls-older',       parent_id:'cat-girls',       sort_order:2 },
+    { id:'sub-student-programme', name:'Student programme', slug:'student-programme', parent_id:'cat-girls',  sort_order:3 },
+    { id:'sub-felt-to-teach',     name:'FELT to Teach',     slug:'felt-to-teach',     parent_id:'cat-girls',  sort_order:4 },
+    { id:'sub-childrens-book',    name:"Children's Book",   slug:'childrens-book',    parent_id:'cat-girls',  sort_order:5 },
     { id:'sub-cbt',          name:'CBT',               slug:'cbt',               parent_id:'cat-therapy',     sort_order:1 },
-    { id:'sub-felt-therapy', name:'FELT·FIBRE Therapy',slug:'felt-therapy',      parent_id:'cat-therapy',     sort_order:2 },
-    { id:'sub-therapy-gen',  name:'General',           slug:'therapy-general',   parent_id:'cat-therapy',     sort_order:3 },
+    { id:'sub-therapy-adhd',        name:'ADHD',         slug:'therapy-adhd',        parent_id:'cat-therapy', sort_order:2 },
+    { id:'sub-therapy-audhs',       name:'AuDHS',        slug:'therapy-audhs',       parent_id:'cat-therapy', sort_order:3 },
+    { id:'sub-therapy-inflammatory',name:'Inflammatory', slug:'therapy-inflammatory',parent_id:'cat-therapy', sort_order:4 },
+    { id:'sub-therapy-facilitation',name:'Facilitation', slug:'therapy-facilitation',parent_id:'cat-therapy', sort_order:5 },
   ];
   cats.forEach(c => {
     db.run('INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,?,?)',
       [c.id, c.name, c.slug, c.parent_id, c.sort_order]);
   });
 }
+
+// ── Category tree v2 migration (Per Bot 8) ──
+// Retires four old subcategories (Introduction ×2, Practitioner, FELT·FIBRE
+// Therapy, General) into the new named subcategories, reparents the Girls
+// Programme category into University, and adds the new subcategories that
+// have no old equivalent. Every content-bearing table with a category_id/
+// subcategory_id column is remapped so nothing silently disappears.
+function migrateCategoryTreeV2(dbHandle) {
+  const NEW_SUBS = [
+    ['sub-finding-peace',      'Finding Peace',  'finding-peace',       'cat-mindfulness', 4],
+    ['sub-felt-facilitation', 'Facilitation',    'felt-facilitation',   'cat-felt', 1],
+    ['sub-felt-compassion',   'Compassion',      'felt-compassion',     'cat-felt', 2],
+    ['sub-felt-relax',        'Relax',           'felt-relax',          'cat-felt', 3],
+    ['sub-felt-sleep',        'Sleep',           'felt-sleep',          'cat-felt', 4],
+    ['sub-felt-stress',       'Stress',          'felt-stress',         'cat-felt', 5],
+    ['sub-felt-anger',        'Anger',           'felt-anger',          'cat-felt', 6],
+    ['sub-felt-adhd',         'ADHD',            'felt-adhd',           'cat-felt', 7],
+    ['sub-student-programme', 'Student programme','student-programme', 'cat-girls', 3],
+    ['sub-felt-to-teach',     'FELT to Teach',   'felt-to-teach',       'cat-girls', 4],
+    ['sub-childrens-book',    "Children's Book", 'childrens-book',      'cat-girls', 5],
+    ['sub-therapy-adhd',         'ADHD',         'therapy-adhd',        'cat-therapy', 2],
+    ['sub-therapy-audhs',        'AuDHS',        'therapy-audhs',       'cat-therapy', 3],
+    ['sub-therapy-inflammatory', 'Inflammatory', 'therapy-inflammatory','cat-therapy', 4],
+    ['sub-therapy-facilitation', 'Facilitation', 'therapy-facilitation','cat-therapy', 5],
+  ];
+  try {
+    // Rename Girls Programme -> University in place, so anything already
+    // tagged category_id='cat-girls' repoints automatically with zero data migration.
+    dbHandle.run(`UPDATE categories SET name='University', slug='university' WHERE id='cat-girls'`);
+
+    NEW_SUBS.forEach(([id, name, slug, parent, sort]) => {
+      dbHandle.run('INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,?,?)',
+        [id, name, slug, parent, sort]);
+    });
+
+    const REMAP = [
+      ['sub-mind-intro',  'sub-deeper'],
+      ['sub-felt-intro',  'sub-felt-facilitation'],
+      ['sub-felt-prac',   'sub-felt-facilitation'],
+      ['sub-felt-therapy','sub-therapy-facilitation'],
+      ['sub-therapy-gen', 'sub-therapy-inflammatory'],
+    ];
+    const TABLES_WITH_SUBCAT = ['library_files', 'courses', 'playlists', 'users', 'programme_assignments'];
+    REMAP.forEach(([oldId, newId]) => {
+      TABLES_WITH_SUBCAT.forEach(table => {
+        try { dbHandle.run(`UPDATE ${table} SET subcategory_id=? WHERE subcategory_id=?`, [newId, oldId]); } catch(e) {}
+      });
+      try { dbHandle.run(`DELETE FROM categories WHERE id=?`, [oldId]); } catch(e) {}
+    });
+  } catch(e) {
+    console.error('[db] migrateCategoryTreeV2 error:', e.message);
+  }
+}
+
 
 function seedMembershipPlans() {
   // Three tiers × three billing cycles, no trial by default.
@@ -1903,12 +1986,44 @@ function unreleaseSession(id) {
 }
 
 // ── Practices ──
-function addPractice(id, clientId, title, type, content, filename) {
-  getDbSync().run('INSERT INTO practices (id,client_id,title,type,content,filename) VALUES (?,?,?,?,?,?)',
-    [id, clientId, title, type, content||'', filename||'']); save();
+function addPractice(id, clientId, title, type, content, filename, sourceType, categoryId, subcategoryId, facilitatorId) {
+  getDbSync().run('INSERT INTO practices (id,client_id,title,type,content,filename,source_type,category_id,subcategory_id,facilitator_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [id, clientId, title, type, content||'', filename||'', sourceType||'talk', categoryId||null, subcategoryId||null, facilitatorId||null]); save();
 }
+// Session notes released to a client (sessions.client_summary) are shown
+// alongside self-saved Talk practices rather than duplicated into the
+// practices table — a facilitator editing or unreleasing a session updates
+// what the client sees here automatically, with nothing to keep in sync.
+// Defaulted to FELT·FIBRE > Facilitation for Area grouping since that's
+// where delivered-session material belongs until a facilitator can tag
+// something more specific (not yet built).
 function getPracticesForClient(clientId) {
-  return queryAll('SELECT * FROM practices WHERE client_id=? ORDER BY created_at DESC', [clientId]);
+  const own = queryAll(`SELECT p.*, c.name as category_name, s.name as subcategory_name
+    FROM practices p
+    LEFT JOIN categories c ON p.category_id=c.id
+    LEFT JOIN categories s ON p.subcategory_id=s.id
+    WHERE p.client_id=?`, [clientId]);
+  const sessionRows = queryAll(`SELECT sess.id, sess.client_id, sess.client_summary, sess.created_at, sess.facilitator_id, f.name as facilitator_name
+    FROM sessions sess LEFT JOIN facilitators f ON sess.facilitator_id=f.id
+    WHERE sess.client_id=? AND sess.client_summary!=''`, [clientId]);
+  const sessionAsPractices = sessionRows.map(s => ({
+    id: s.id,
+    client_id: s.client_id,
+    title: `Session with ${s.facilitator_name || 'your facilitator'} · ${(s.created_at||'').slice(0,10)}`,
+    type: 'text',
+    content: s.client_summary,
+    filename: '',
+    is_favourite: 0,
+    use_count: 0,
+    created_at: s.created_at,
+    source_type: 'session',
+    category_id: 'cat-felt',
+    subcategory_id: 'sub-felt-facilitation',
+    category_name: 'FELT·FIBRE',
+    subcategory_name: 'Facilitation',
+    facilitator_id: s.facilitator_id,
+  }));
+  return [...own, ...sessionAsPractices].sort((a, b) => (b.created_at||'').localeCompare(a.created_at||''));
 }
 function toggleFavourite(id) { getDbSync().run('UPDATE practices SET is_favourite=1-is_favourite WHERE id=?', [id]); save(); }
 function incrementUseCount(id) { getDbSync().run('UPDATE practices SET use_count=use_count+1 WHERE id=?', [id]); save(); }

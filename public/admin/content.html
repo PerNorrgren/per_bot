@@ -850,26 +850,36 @@ document.getElementById('bulkInput').addEventListener('change',e=>addToQ(e.targe
 
 // ── Filename inference ──
 const CAT_KEYWORDS = {
-  'cat-mindfulness': ['mindfulness','mbct','mbsr','meditation'],
-  'cat-felt':        ['felt','fibre','fiber','findingjoy','findingcalm','finding-joy','finding-calm','finding_joy','finding_calm'],
-  'cat-girls':       ['girls','girlsprogramme','girls-programme','girls_programme','hfpm'],
-  'cat-therapy':     ['therapy','therapist','cbt','counsell'],
+  'cat-mindfulness': ['mindfulness','mbct','mbsr','meditation','findingpeace','finding-peace'],
+  'cat-felt':        ['felt','fibre','fiber','findingjoy','findingcalm','finding-joy','finding-calm','finding_joy','finding_calm','compassion','relax','sleep','stress','anger','adhd'],
+  'cat-girls':       ['girls','girlsprogramme','girls-programme','girls_programme','hfpm','university','studentprogramme','student-programme','felttoteach','felt-to-teach','childrensbook','childrens-book'],
+  'cat-therapy':     ['therapy','therapist','cbt','counsell','audhs','inflammatory'],
 };
 const SUB_KEYWORDS = {
   'sub-mfl':          ['forlife','for-life','for_life','mfl'],
   'sub-mbct':         ['mbct'],
   'sub-mbsr':         ['mbsr'],
-  'sub-mind-intro':   ['mindintro','mind-intro','mindfulness-intro'],
+  'sub-finding-peace':['findingpeace','finding-peace','finding_peace'],
   'sub-deeper':       ['deepermindfulness','deeper-mindfulness','deeper_mindfulness','deeper'],
-  'sub-felt-intro':   ['feltintro','felt-intro','felt_intro'],
-  'sub-felt-prac':    ['practitioner','prac'],
+  'sub-felt-facilitation': ['facilitation','facilitator'],
+  'sub-felt-compassion':   ['compassion'],
+  'sub-felt-relax':        ['relax'],
+  'sub-felt-sleep':        ['sleep'],
+  'sub-felt-stress':       ['stress'],
+  'sub-felt-anger':        ['anger'],
+  'sub-felt-adhd':         ['adhd'],
   'sub-finding-calm': ['findingcalm','finding-calm','finding_calm'],
   'sub-finding-joy':  ['findingjoy','finding-joy','finding_joy'],
   'sub-girls-y':      ['youngergirls','younger-girls','younger_girls','yg'],
   'sub-girls-o':      ['oldergirls','older-girls','older_girls','og'],
+  'sub-student-programme': ['studentprogramme','student-programme','student_programme'],
+  'sub-felt-to-teach':     ['felttoteach','felt-to-teach','felt_to_teach'],
+  'sub-childrens-book':    ['childrensbook','childrens-book','mare'],
   'sub-cbt':          ['cbt'],
-  'sub-felt-therapy': ['felttherapy','felt-therapy','felt_therapy'],
-  'sub-therapy-gen':  ['general','gen'],
+  'sub-therapy-adhd':         ['therapyadhd'],
+  'sub-therapy-audhs':        ['audhs'],
+  'sub-therapy-inflammatory': ['inflammatory'],
+  'sub-therapy-facilitation': ['therapyfacilitation'],
 };
 // Content type (Per Bot 7) — the new library taxonomy, separate from
 // file_type (audio/video/document, inferred from the actual file) and from
@@ -878,7 +888,7 @@ const SUB_KEYWORDS = {
 // needed since content_type is a free-text column.
 const CONTENT_KINDS = [
   { value: '',            label: 'Not set' },
-  { value: 'meditation',  label: 'Meditation practice' },
+  { value: 'meditation',  label: 'Practice / meditation' },
   { value: 'course_intro',label: 'Course intro video' },
   { value: 'blog',        label: 'Blog post' },
   { value: 'video_blog',  label: 'Video blog' },
