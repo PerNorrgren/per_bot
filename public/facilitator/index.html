@@ -459,7 +459,12 @@
     </div>
     <input type="text" id="practiceTitle" placeholder="Practice title"/>
     <textarea id="practiceContent" rows="4" placeholder="Practice instructions…" style="display:block"></textarea>
-    <input type="file" id="practiceFile" accept="audio/*" style="display:none; color:rgba(255,255,255,0.6)"/>
+    <div id="practiceDropZone" style="display:none; border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:22px 16px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+      <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag audio files here, or click to browse</div>
+      <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Multiple files OK — each becomes its own practice, named from its filename</div>
+    </div>
+    <input type="file" id="practiceFile" accept="audio/*" multiple style="display:none"/>
+    <div id="practiceFileList" style="display:none; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;"></div>
     <div class="modal-btns">
       <button class="modal-cancel" id="cancelPractice">Cancel</button>
       <button class="modal-confirm" id="confirmPractice">Add</button>
@@ -1002,11 +1007,21 @@
 
   // ── Add practice ──
   let practiceType = 'text';
+  let _pendingFiles = [];
+
+  function titleFromFilename(filename) {
+    const base = filename.replace(/\.[^/.]+$/, '');
+    return base.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  }
+
   function openAddPractice() {
     document.getElementById('addPracticeModal').classList.add('visible');
     document.getElementById('practiceTitle').value = '';
     document.getElementById('practiceContent').value = '';
     document.getElementById('practiceFile').value = '';
+    _pendingFiles = [];
+    renderPracticeFileList();
   }
   document.getElementById('addPracticeBtn').addEventListener('click', openAddPractice);
   document.getElementById('addPracticeBtn2').addEventListener('click', openAddPractice);
@@ -1018,28 +1033,81 @@
       practiceType = btn.dataset.type;
       document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('practiceContent').style.display = practiceType === 'text' ? 'block' : 'none';
-      document.getElementById('practiceFile').style.display = practiceType === 'audio' ? 'block' : 'none';
+      document.getElementById('practiceContent').style.display  = practiceType === 'text' ? 'block' : 'none';
+      document.getElementById('practiceDropZone').style.display = practiceType === 'audio' ? 'block' : 'none';
+      document.getElementById('practiceTitle').placeholder = practiceType === 'audio'
+        ? 'Title (leave blank to name each file automatically)'
+        : 'Practice title';
+      if (practiceType === 'text') { _pendingFiles = []; renderPracticeFileList(); }
     });
   });
+
+  // Drag-and-drop — files are held in _pendingFiles rather than trying to
+  // sync a dropped FileList back into the native <input>, since not every
+  // browser allows constructing an input's .files from a DataTransfer.
+  // Click-to-browse still works via the same hidden input, whose files get
+  // folded into the same array so both paths behave identically.
+  const dropZone = document.getElementById('practiceDropZone');
+  dropZone.addEventListener('click', () => document.getElementById('practiceFile').click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'rgba(180,230,200,0.5)'; dropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'rgba(255,255,255,0.18)'; dropZone.style.background = 'none'; });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'rgba(255,255,255,0.18)'; dropZone.style.background = 'none';
+    addPendingFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('audio/')));
+  });
+  document.getElementById('practiceFile').addEventListener('change', e => {
+    addPendingFiles([...e.target.files]);
+  });
+  function addPendingFiles(files) {
+    _pendingFiles = _pendingFiles.concat(files);
+    renderPracticeFileList();
+  }
+  function removePendingFile(idx) {
+    _pendingFiles.splice(idx, 1);
+    renderPracticeFileList();
+  }
+  function renderPracticeFileList() {
+    const el = document.getElementById('practiceFileList');
+    if (!_pendingFiles.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = 'flex';
+    el.innerHTML = _pendingFiles.map((f, i) => `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px; font-size:12px; color:rgba(255,255,255,0.7);">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${titleFromFilename(f.name)}</span>
+        <button onclick="removePendingFile(${i})" style="background:none; border:none; color:rgba(255,120,100,0.7); cursor:pointer; font-size:14px; line-height:1;">×</button>
+      </div>`).join('');
+  }
+
   document.getElementById('confirmPractice').addEventListener('click', async () => {
-    const title = document.getElementById('practiceTitle').value.trim();
-    if (!title || !currentClientId) return;
+    if (!currentClientId) return;
 
     if (practiceType === 'text') {
+      const title = document.getElementById('practiceTitle').value.trim();
+      if (!title) return;
       const content = document.getElementById('practiceContent').value;
       await fetch('/api/practices/text', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: currentClientId, title, content })
       });
     } else {
-      const file = document.getElementById('practiceFile').files[0];
-      if (!file) return;
-      const fd = new FormData();
-      fd.append('client_id', currentClientId);
-      fd.append('title', title);
-      fd.append('file', file);
-      await fetch('/api/practices/audio', { method: 'POST', body: fd });
+      if (!_pendingFiles.length) return;
+      const sharedTitle = document.getElementById('practiceTitle').value.trim();
+      // One file + an explicit title: upload as-is. Otherwise (bulk, or a
+      // single file with no title given) each file is named from its own
+      // filename — a shared title on multiple files would otherwise
+      // silently collide, which is worse than just auto-naming them.
+      const btn = document.getElementById('confirmPractice');
+      btn.disabled = true;
+      for (const file of _pendingFiles) {
+        const title = (sharedTitle && _pendingFiles.length === 1) ? sharedTitle : titleFromFilename(file.name);
+        const fd = new FormData();
+        fd.append('client_id', currentClientId);
+        fd.append('title', title);
+        fd.append('file', file);
+        try { await fetch('/api/practices/audio', { method: 'POST', body: fd }); }
+        catch(e) { console.error('practice upload failed:', file.name, e); }
+      }
+      btn.disabled = false;
     }
 
     document.getElementById('addPracticeModal').classList.remove('visible');

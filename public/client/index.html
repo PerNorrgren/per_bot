@@ -677,7 +677,14 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendFinalizeBeacon(); });
 
   function switchTab(tab) {
-    if (tab !== 'talk') sendFinalizeBeacon();
+    if (tab !== 'talk') {
+      sendFinalizeBeacon();
+      // The finalize beacon above only tells the server the conversation
+      // turn is done — it never touched client-side playback, so Talk's
+      // reply kept speaking right through a tab switch. Stopping it here.
+      const tts = document.getElementById('ttsPlayer');
+      if (tts) tts.pause();
+    }
     ['talk','library','courses','timer','you'].forEach(t => {
       document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
