@@ -34,7 +34,11 @@
       overflow:hidden;
     }
     .card-header { padding:16px 20px 12px; border-bottom:1px solid rgba(255,255,255,0.06); }
-    .card-title { font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .card-header.collapsible { display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
+    .card-header.collapsible:hover .card-title { color:rgba(255,255,255,0.5); }
+    .card-chevron { font-size:11px; color:rgba(255,255,255,0.25); transition:transform 0.2s; flex-shrink:0; margin-left:12px; }
+    .card-chevron.open { transform:rotate(180deg); }
+    .card-title { font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); transition:color 0.15s; }
     .card-body { padding:16px 20px 20px; display:flex; flex-direction:column; gap:14px; }
 
     /* Fields */
@@ -171,10 +175,13 @@
 
 <div class="panel">
 
-  <a class="back-link" href="/client/">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-    Back to practice
-  </a>
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <a class="back-link" href="/client/" style="margin-bottom:0">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      Back to practice
+    </a>
+    <button onclick="logout()" class="back-link" style="background:none;border:none;cursor:pointer;margin-bottom:0">Sign out</button>
+  </div>
 
   <div>
     <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
@@ -184,7 +191,7 @@
 
   <!-- ── Membership ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">Membership</div></div>
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Membership</div><span class="card-chevron open">▾</span></div>
     <div class="card-body">
       <div id="membershipStatus" style="display:flex;flex-direction:column;gap:6px">
         <div class="skeleton" style="width:120px;height:26px;border-radius:13px"></div>
@@ -202,16 +209,16 @@
 
   <!-- ── Facilitator access (Per Bot 5, item 11) — members only ── -->
   <div class="card" id="facilitatorCard" style="display:none">
-    <div class="card-header"><div class="card-title">Facilitator access</div></div>
-    <div class="card-body" id="facilitatorCardBody">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Facilitator access</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" id="facilitatorCardBody" style="display:none">
       <div class="skeleton" style="width:200px"></div>
     </div>
   </div>
 
   <!-- ── Profile ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">Profile</div></div>
-    <div class="card-body">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Profile</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
       <div class="field">
         <label>First name</label>
         <input type="text" id="fieldName" placeholder="Your name"/>
@@ -253,8 +260,8 @@
 
   <!-- ── Communication preferences ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">What I'd like to receive</div></div>
-    <div class="card-body" style="gap:0;padding-bottom:16px">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">What I'd like to receive</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="gap:0;padding-bottom:16px;display:none">
 
       <div class="pref-row">
         <div class="pref-label">
@@ -340,8 +347,8 @@
 
   <!-- ── Voice ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">Voice</div></div>
-    <div class="card-body">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Voice</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
       <div class="pref-desc">Choose the voice your companion speaks with. Preview any of them, then pick one.</div>
       <div class="voice-list" id="voiceList">
         <div class="modal-note">Loading voices…</div>
@@ -352,8 +359,8 @@
 
   <!-- ── Keep History ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">My conversations with the companion</div></div>
-    <div class="card-body">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">My conversations with the companion</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
       <div class="pref-row">
         <div class="pref-label">
           <div class="pref-name">Keep history between conversations</div>
@@ -372,8 +379,8 @@
 
   <!-- ── Password ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">Password</div></div>
-    <div class="card-body">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Password</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
       <div class="field">
         <label>Current password</label>
         <input type="password" id="pwCurrent" placeholder="••••••••"/>
@@ -393,8 +400,8 @@
 
   <!-- ── Privacy & data ── -->
   <div class="card">
-    <div class="card-header"><div class="card-title">Privacy &amp; data</div></div>
-    <div class="card-body" style="gap:0;padding-bottom:16px">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Privacy &amp; data</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="gap:0;padding-bottom:16px;display:none">
 
       <div class="gdpr-row">
         <div class="gdpr-label">Consent given</div>
@@ -988,6 +995,19 @@
   }
 
   // ── Feedback messages ──
+  // ── Accordion sections (Per Bot 7) — every card header toggles its own
+  // body via .style.display, never touching the rest of that element's
+  // inline style (some bodies also carry gap/padding overrides inline) —
+  // '' falls back to the CSS class's own display:flex rather than
+  // hardcoding 'flex' here, so nothing gets clobbered either way.
+  function toggleCard(headerEl) {
+    const body    = headerEl.nextElementSibling;
+    const chevron = headerEl.querySelector('.card-chevron');
+    const isOpen  = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : '';
+    if (chevron) chevron.classList.toggle('open', !isOpen);
+  }
+
   function showMsg(id, text, type) {
     const el = document.getElementById(id);
     el.textContent = text;
