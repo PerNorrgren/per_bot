@@ -1237,7 +1237,7 @@
   function editSelectedMember() {
     const id = [...memberSel.sel][0]; if (!id) return;
     const u  = _memberData.find(x => x.id === id); if (!u) return;
-    upgradeSelected([id], u.name, u.membership_level);
+    upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
   }
   async function deleteSelectedMembers() {
     const ids = [...memberSel.sel]; if (!ids.length) return;
@@ -1294,14 +1294,23 @@
   }
   function userSort(col) { setSort('user',col); renderUsers(); }
 
-  async function upgradeSelected() {
-    if (!userSel.sel.size) return;
+  async function upgradeSelected(ids, name, level, currentFacId) {
+    // Called two ways: with no args from the Registered Explorers table's
+    // own Upgrade button (reads userSel.sel), or with explicit args from
+    // editSelectedMember() below. Previously this silently ignored the
+    // latter's args and read userSel.sel regardless — which is empty when
+    // editing from the Members table, so the guard below returned early
+    // and the modal never opened. Falling back only when nothing was passed.
+    ids = ids || [...userSel.sel];
+    if (!ids.length) return;
     const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
     const facEl=document.getElementById('upgradeAssignFac');
     facEl.innerHTML='<option value="">No facilitator</option>';
     facs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}">${f.name}</option>`; });
-    document.getElementById('upgradeUserName').textContent=`${userSel.sel.size} user${userSel.sel.size>1?'s':''} selected`;
-    document.getElementById('upgradeUserId').value=[...userSel.sel].join(',');
+    facEl.value = currentFacId || '';
+    document.getElementById('upgradeUserName').textContent = name || `${ids.length} user${ids.length>1?'s':''} selected`;
+    document.getElementById('upgradeUserId').value = ids.join(',');
+    if (level) document.getElementById('upgradeMemberLevel').value = level;
     document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
   }
