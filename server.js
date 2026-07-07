@@ -476,6 +476,11 @@ async function scwGetEmailStatus(scalewayEmailId) {
 async function scwListEmailsBySubjectSince(subject, sinceISO) {
   if (!SCW_SECRET_KEY) return [];
   const results = [];
+  // Our own db stores 'YYYY-MM-DD HH:MM:SS' (no T/Z), Scaleway returns full
+  // ISO-8601 with a T and a Z — comparing those two formats as raw strings
+  // is unreliable (a space character sorts differently than 'T' regardless
+  // of actual time), so both get parsed to real Date objects here instead.
+  const sinceMs = new Date(sinceISO.replace(' ', 'T') + 'Z').getTime();
   let page = 1;
   const pageSize = 100;
   for (let i = 0; i < 20; i++) { // hard cap — 2000 emails is far more than one newsletter batch
@@ -490,14 +495,14 @@ async function scwListEmailsBySubjectSince(subject, sinceISO) {
     const emails = (data && data.emails) || [];
     if (!emails.length) break;
     for (const e of emails) {
-      if (e.created_at && e.created_at < sinceISO) continue;
-      // Best-effort — Scaleway's list response may not carry the subject
-      // line at all (undocumented either way). If it's absent, skip this
-      // check rather than wrongly excluding everything; the caller cross-
-      // references rcpt_to against the actual target audience anyway,
-      // which narrows things down regardless of whether this matches.
+      if (e.created_at && new Date(e.created_at).getTime() < sinceMs) continue;
       if (subject && e.subject && e.subject !== subject) continue;
-      results.push(e);
+      // Only a genuinely successful send counts as "reached" — anything
+      // still processing, bounced, or failed gets treated as missing and
+      // retried, since re-sending to someone whose bounce turns out to
+      // have been permanent is a much smaller problem than skipping
+      // someone who never actually got it.
+      if (e.status === 'sent') results.push(e);
     }
     if (emails.length < pageSize) break; // last page
     page++;
