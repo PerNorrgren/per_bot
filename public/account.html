@@ -357,6 +357,33 @@
     </div>
   </div>
 
+  <!-- ── Tomte personalization (Per Bot 8) ── -->
+  <div class="card">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Your helper</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
+      <div class="pref-desc">The little helper who explains how the app works, in the corner of every page. Give him your own name and picture if you like — or leave him as Tomte.</div>
+      <div style="display:flex; align-items:center; gap:14px; margin:12px 0;">
+        <img id="tomteImgPreview" src="/assets/tomte.png" style="width:56px;height:56px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          <label class="btn sm" style="cursor:pointer; text-align:center;">
+            Upload a photo
+            <input type="file" id="tomteImgInput" accept="image/*" style="display:none" onchange="uploadTomteImage()"/>
+          </label>
+          <label class="btn sm" style="cursor:pointer; text-align:center;">
+            Take a photo
+            <input type="file" id="tomteCameraInput" accept="image/*" capture="user" style="display:none" onchange="uploadTomteImage('tomteCameraInput')"/>
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="tomteNameInput" placeholder="Tomte" maxlength="30"/>
+      </div>
+      <div class="msg" id="tomteMsg"></div>
+      <button class="btn-primary" onclick="saveTomteName()">Save name</button>
+    </div>
+  </div>
+
   <!-- ── Keep History ── -->
   <div class="card">
     <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">My conversations with the companion</div><span class="card-chevron">▾</span></div>
@@ -610,6 +637,52 @@
     document.getElementById('gdprConsentDate').textContent = consentDate || 'Not recorded';
     document.getElementById('gdprBasis').textContent       = a.lawful_basis || 'Consent';
   }
+
+  // ── Tomte personalization (Per Bot 8) ──
+  async function loadTomteSettings() {
+    try {
+      const res  = await fetch('/api/my/tomte-settings');
+      const data = await res.json();
+      document.getElementById('tomteNameInput').value = data.name || '';
+      if (data.imageUrl) document.getElementById('tomteImgPreview').src = data.imageUrl;
+    } catch(e) { /* leave defaults showing */ }
+  }
+  async function saveTomteName() {
+    const msg = document.getElementById('tomteMsg');
+    const name = document.getElementById('tomteNameInput').value.trim();
+    try {
+      await fetch('/api/my/tomte-name', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      msg.textContent = 'Saved.';
+      msg.style.color = 'rgba(180,230,200,0.85)';
+    } catch(e) {
+      msg.textContent = 'Could not save — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    }
+  }
+  async function uploadTomteImage(inputId) {
+    const input = document.getElementById(inputId || 'tomteImgInput');
+    const file = input.files[0];
+    if (!file) return;
+    const msg = document.getElementById('tomteMsg');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res  = await fetch('/api/my/tomte-image', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.url) {
+        document.getElementById('tomteImgPreview').src = data.url;
+        msg.textContent = 'Photo updated.';
+        msg.style.color = 'rgba(180,230,200,0.85)';
+      } else {
+        msg.textContent = data.error || 'Could not upload — please try again.';
+        msg.style.color = 'rgba(255,140,120,0.85)';
+      }
+    } catch(e) {
+      msg.textContent = 'Could not upload — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    } finally { input.value = ''; }
+  }
+  loadTomteSettings();
 
   // ── Voice picker (Per Bot 7) ──
   // "Default" (voice_id: null) always sits first and represents whatever

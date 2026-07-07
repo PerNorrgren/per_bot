@@ -1650,6 +1650,23 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
+// ── Tomte personalization (Per Bot 8) — works for any logged-in role
+// (client/facilitator/admin); public/logged-out visitors just get the
+// default everywhere, since there's no account to read a preference from.
+app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
+  const s = db.getTomteSettings(req.user.role, req.user.id);
+  res.json({ name: s.tomte_name || null, imageUrl: s.tomte_image_filename ? `/uploads/${s.tomte_image_filename}` : null });
+});
+app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
+  db.setTomteName(req.user.role, req.user.id, (req.body.name || '').trim().slice(0, 30));
+  res.json({ ok: true });
+});
+app.post('/api/my/tomte-image', auth.requireAuthApi(), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  db.setTomteImage(req.user.role, req.user.id, req.file.filename);
+  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+});
+
 // ── Tomte — the app-navigation helper (Per Bot 8) ──
 // Lives in a corner of every page, public and logged-in alike, answering
 // ONLY "how does this app work" questions — never clinical or personal
@@ -1671,16 +1688,17 @@ function tomteRateLimitOk(ip) {
   tomteRateLog.set(ip, recent);
   return true;
 }
-function tomteSystemPrompt(page, focus) {
+function tomteSystemPrompt(page, focus, name) {
   const b = brand();
-  return `You are Tomte, a small helper character who lives in the corner of every page of the ${b.name} app. You help with exactly one thing: how the app works — what a page is for, what a button or field does, where to find something, how a feature is used.
+  const displayName = name || 'Tomte';
+  return `You are ${displayName}, a small helper character who lives in the corner of every page of the ${b.name} app. You help with exactly one thing: how the app works — what a page is for, what a button or field does, where to find something, how a feature is used.
 
 You do NOT answer questions about mindfulness practice, the nervous system, FELT·FIBRE content, therapy, or anything personal or clinical the person is going through, even briefly. If asked something like that, warmly redirect them instead: for anything reflective or practice-related, point them to Talk; for anything personal or clinical, suggest they reach out to their facilitator directly. Never attempt the answer yourself.
 
 Current page: ${page || 'unknown'}.
 ${focus ? `The person just interacted with: ${focus}. Start there — that's almost certainly what they want explained, not the whole page.` : 'Nothing specific in focus — if asked a general question, explain what this page is for.'}
 
-Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as Tomte and use "I" naturally.`;
+Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as ${displayName} and use "I" naturally.`;
 }
 
 const tomteWss = new WebSocket.Server({ server, path: '/tomte' });
@@ -1691,7 +1709,44 @@ tomteWss.on('connection', (ws, req) => {
   let currentFocus = '';
   let dgWs = null;
 
+  // Identifying the logged-in user here is purely optional — Tomte works
+  // fine for anonymous visitors on the public pages too. When there IS a
+  // valid session cookie, this just looks up whether they've personalized
+  // his name, so he refers to himself correctly in replies.
+  let tomteName = null;
+  try {
+    const cookies = parseCookies(req.headers.cookie);
+    const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
+    if (payload) {
+      const settings = db.getTomteSettings(payload.role, payload.id);
+      tomteName = settings.tomte_name || null;
+    }
+  } catch(e) { /* not logged in, or a bad/expired cookie — just use the default name */ }
+
   function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+  // Shared by both a real reply and the first-contact greeting below —
+  // sends the text immediately, then speaks it in the background once
+  // ElevenLabs returns (never blocks the text arriving first).
+  async function speak(text) {
+    send({ type: 'response_text', text });
+    try {
+      const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
+        body: JSON.stringify({
+          text,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (ttsRes.ok) {
+        const buf = await ttsRes.buffer();
+        send({ type: 'audio', data: buf.toString('base64') });
+      }
+    } catch(e) { console.error('tomte tts error:', e.message); }
+  }
 
   async function respond(userText) {
     if (!userText || !userText.trim()) return;
@@ -1700,32 +1755,29 @@ tomteWss.on('connection', (ws, req) => {
       return;
     }
     try {
-      const systemPrompt = tomteSystemPrompt(currentPage, currentFocus);
+      const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName);
       history.push({ role: 'user', content: userText });
       if (history.length > 12) history = history.slice(-12); // keep it light — Tomte doesn't need deep memory
       const reply = await callClaude(systemPrompt, history, 300);
       history.push({ role: 'assistant', content: reply });
-      send({ type: 'response_text', text: reply });
-      try {
-        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
-          body: JSON.stringify({
-            text: reply,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
-          }),
-          signal: AbortSignal.timeout(30000),
-        });
-        if (ttsRes.ok) {
-          const buf = await ttsRes.buffer();
-          send({ type: 'audio', data: buf.toString('base64') });
-        }
-      } catch(e) { console.error('tomte tts error:', e.message); }
+      await speak(reply);
     } catch(e) {
       console.error('tomte respond error:', e.message);
       send({ type: 'response_text', text: 'Something went wrong there — try again in a moment.' });
     }
+  }
+
+  // First-contact greeting (Per Bot 8) — a short scripted intro rather
+  // than a Claude call: faster, free, and there's nothing to get wrong
+  // about "hi, I'm X" that benefits from an LLM generating it fresh each
+  // time. Personalized with whatever name the person's set (or Tomte by
+  // default) and the current page, so it doesn't feel like a canned popup.
+  async function greet() {
+    const name = tomteName || 'Tomte';
+    const page = currentPage ? ` here on ${currentPage}` : '';
+    const text = `Hi, I'm ${name}. If you're not sure how something works${page}, just ask me — by typing or talking — and I'll walk you through it.`;
+    history.push({ role: 'assistant', content: text });
+    await speak(text);
   }
 
   ws.on('message', async (raw) => {
@@ -1735,6 +1787,10 @@ tomteWss.on('connection', (ws, req) => {
       case 'context':
         currentPage = msg.page || currentPage;
         currentFocus = msg.focus || '';
+        break;
+      case 'greet':
+        currentPage = msg.page || currentPage;
+        await greet();
         break;
       case 'text_input':
         await respond(msg.text);
