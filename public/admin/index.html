@@ -363,8 +363,8 @@
           <input type="text" id="udPhone" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
         </div>
         <div>
-          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Language</label>
-          <input type="text" id="udLanguage" placeholder="en" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Language (account — drives emails and the app's own interface)</label>
+          <select id="udLanguage" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"></select>
         </div>
 
         <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:6px 0"/>
@@ -1463,9 +1463,9 @@
         const data = await res.json();
         _udLanguages = data.languages || {};
       } catch(e) { _udLanguages = {}; }
-      const langSel = document.getElementById('udTomteLanguage');
-      langSel.innerHTML = '<option value="">Same as account language</option>' +
-        Object.entries(_udLanguages).map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+      const langOptions = Object.entries(_udLanguages).map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+      document.getElementById('udLanguage').innerHTML = langOptions;
+      document.getElementById('udTomteLanguage').innerHTML = '<option value="">Same as account language</option>' + langOptions;
     }
     if (_udVoices === null) {
       try {
