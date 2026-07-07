@@ -275,6 +275,15 @@
     .type-btn { flex:1; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.4); cursor:pointer; font-size:12px; transition:all 0.2s; }
     .type-btn.active { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); background:rgba(180,230,200,0.08); }
 
+    /* ── Working-button feedback (Per Bot 8) — reusable pattern: call
+       setBtnLoading(btn, true/false, 'Label…') around any async action.
+       Rotating yin-yang rather than a generic spinner, on-brand for a
+       mindfulness app. Keep this block + the JS helper identical if
+       copying the pattern into other admin/client/facilitator pages. ── */
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:14px; height:14px; vertical-align:-2.5px; margin-right:7px; animation:yy-spin 0.85s linear infinite; }
+    button:disabled { opacity:0.75; cursor:default; }
+
     .wave-small { display:none; gap:3px; align-items:flex-end; height:16px; }
     .wave-small.on { display:flex; }
     .wave-small span { display:block; width:2px; border-radius:2px; background:rgba(180,230,200,0.7); animation:wv 1.1s ease-in-out infinite; }
@@ -473,6 +482,28 @@
 </div>
 
 <script>
+  // ── Working-button feedback (Per Bot 8) ──
+  // Reusable across any button: setBtnLoading(btn, true, 'Uploading…')
+  // swaps its label for a spinner + text and disables it; setBtnLoading(btn, false)
+  // restores exactly what was there before, whatever that markup was.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+
   let currentClientId = null;
   let ws = null;
   let fogLevel = 12;
@@ -1080,15 +1111,19 @@
 
   document.getElementById('confirmPractice').addEventListener('click', async () => {
     if (!currentClientId) return;
+    const btn = document.getElementById('confirmPractice');
 
     if (practiceType === 'text') {
       const title = document.getElementById('practiceTitle').value.trim();
       if (!title) return;
       const content = document.getElementById('practiceContent').value;
-      await fetch('/api/practices/text', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: currentClientId, title, content })
-      });
+      setBtnLoading(btn, true, 'Saving…');
+      try {
+        await fetch('/api/practices/text', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: currentClientId, title, content })
+        });
+      } finally { setBtnLoading(btn, false); }
     } else {
       if (!_pendingFiles.length) return;
       const sharedTitle = document.getElementById('practiceTitle').value.trim();
@@ -1096,18 +1131,20 @@
       // single file with no title given) each file is named from its own
       // filename — a shared title on multiple files would otherwise
       // silently collide, which is worse than just auto-naming them.
-      const btn = document.getElementById('confirmPractice');
-      btn.disabled = true;
-      for (const file of _pendingFiles) {
-        const title = (sharedTitle && _pendingFiles.length === 1) ? sharedTitle : titleFromFilename(file.name);
-        const fd = new FormData();
-        fd.append('client_id', currentClientId);
-        fd.append('title', title);
-        fd.append('file', file);
-        try { await fetch('/api/practices/audio', { method: 'POST', body: fd }); }
-        catch(e) { console.error('practice upload failed:', file.name, e); }
-      }
-      btn.disabled = false;
+      setBtnLoading(btn, true, _pendingFiles.length > 1 ? `Uploading 1 of ${_pendingFiles.length}…` : 'Uploading…');
+      try {
+        for (let i = 0; i < _pendingFiles.length; i++) {
+          if (_pendingFiles.length > 1) setBtnLoading(btn, true, `Uploading ${i + 1} of ${_pendingFiles.length}…`);
+          const file = _pendingFiles[i];
+          const title = (sharedTitle && _pendingFiles.length === 1) ? sharedTitle : titleFromFilename(file.name);
+          const fd = new FormData();
+          fd.append('client_id', currentClientId);
+          fd.append('title', title);
+          fd.append('file', file);
+          try { await fetch('/api/practices/audio', { method: 'POST', body: fd }); }
+          catch(e) { console.error('practice upload failed:', file.name, e); }
+        }
+      } finally { setBtnLoading(btn, false); }
     }
 
     document.getElementById('addPracticeModal').classList.remove('visible');
