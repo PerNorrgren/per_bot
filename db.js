@@ -511,6 +511,38 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Email log (Per Bot 8) ──
+  // Every email the app sends — welcome, password reset, reminders,
+  // renewals, message alerts, newsletters, anything — logs itself here via
+  // sendEmail() below, with zero changes needed at any individual call
+  // site. kind classifies what it was; newsletter_id is only set for
+  // kind='newsletter', letting the same log serve both a general "every
+  // email ever sent" admin view and the newsletter-specific progress/
+  // reconcile view as just a filtered slice of this one table.
+  // For newsletters specifically, a row is written for every intended
+  // recipient BEFORE the send attempt, not after — a crash mid-batch then
+  // leaves a clear record of who was *supposed* to get it (status stays
+  // 'pending') rather than silence. Transactional (non-newsletter) emails
+  // are one-off sends with no batch to crash mid-way through, so those log
+  // after attempting, not before.
+  // scaleway_email_id is the id Scaleway's API returns for that specific
+  // send, letting us later ask Scaleway directly "what happened to this
+  // one" (delivered/bounced/spam) rather than guessing from a subject-line
+  // search.
+  db.run(`CREATE TABLE IF NOT EXISTS email_log (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'other',
+    newsletter_id TEXT,
+    user_id TEXT,
+    email TEXT NOT NULL,
+    subject TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    scaleway_email_id TEXT,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Legal documents ──
   db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
     id TEXT PRIMARY KEY,
@@ -2441,10 +2473,56 @@ function deleteNewsletterDraft(id) {
   getDbSync().run("DELETE FROM newsletters WHERE id=? AND status='draft'", [id]);
   save();
 }
+function updateNewsletterStatus(id, status) {
+  getDbSync().run("UPDATE newsletters SET status=? WHERE id=?", [status, id]);
+  save();
+}
 function markNewsletterSent(id, recipientCount) {
   getDbSync().run("UPDATE newsletters SET status='sent', sent_at=datetime('now'), recipient_count=? WHERE id=?", [recipientCount, id]);
   save();
 }
+
+// ── Email log (Per Bot 8) ──
+// logEmailPending: written up front for a whole newsletter batch, before
+// any sending starts, so a mid-batch crash still leaves every intended
+// recipient on record (stuck at 'pending' rather than vanishing).
+// logEmailResult: used directly by transactional sendEmail() calls, which
+// have no batch to survive a crash mid-way through — one row, immediately
+// resolved to its outcome, no separate pending step needed.
+function logEmailPending(id, kind, email, subject, newsletterId, userId) {
+  getDbSync().run(
+    `INSERT INTO email_log (id,kind,email,subject,newsletter_id,user_id,status) VALUES (?,?,?,?,?,?,'pending')`,
+    [id, kind, email, subject || '', newsletterId || null, userId || null]
+  ); save();
+}
+function logEmailResult(id, kind, email, subject, newsletterId, userId, status, scalewayEmailId, error) {
+  getDbSync().run(
+    `INSERT INTO email_log (id,kind,email,subject,newsletter_id,user_id,status,scaleway_email_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
+    [id, kind, email, subject || '', newsletterId || null, userId || null, status, scalewayEmailId || null, error || null]
+  ); save();
+}
+function updateEmailLogResult(id, status, scalewayEmailId, error) {
+  getDbSync().run(
+    `UPDATE email_log SET status=?, scaleway_email_id=?, error=?, updated_at=datetime('now') WHERE id=?`,
+    [status, scalewayEmailId || null, error || null, id]
+  ); save();
+}
+function getEmailLogForNewsletter(newsletterId) {
+  return queryAll('SELECT * FROM email_log WHERE newsletter_id=? ORDER BY created_at ASC', [newsletterId]);
+}
+function getEmailLogCountsForNewsletter(newsletterId) {
+  const rows = queryAll('SELECT status, COUNT(*) as n FROM email_log WHERE newsletter_id=? GROUP BY status', [newsletterId]);
+  const counts = { pending: 0, sent: 0, failed: 0 };
+  rows.forEach(r => { counts[r.status] = r.n; });
+  return counts;
+}
+// General admin view across every kind of email the app sends, not just
+// newsletters — welcome, password reset, reminders, renewals, alerts.
+function getRecentEmailLog(limit, kind) {
+  if (kind) return queryAll('SELECT * FROM email_log WHERE kind=? ORDER BY created_at DESC LIMIT ?', [kind, limit || 100]);
+  return queryAll('SELECT * FROM email_log ORDER BY created_at DESC LIMIT ?', [limit || 100]);
+}
+function getEmailLogById(id) { return queryOne('SELECT * FROM email_log WHERE id=?', [id]); }
 
 // ── Newsletter audience segments ──
 // The 377-person mailing-list import created accounts at member_tier=0 with
@@ -2939,7 +3017,8 @@ module.exports = {
   addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd,
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
-  addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, getNewsletterRecipients,
+  addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
+  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById,
   // Reminders
   getInactiveUsers,
   markReminderSent,

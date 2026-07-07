@@ -972,7 +972,7 @@
           <span class="badge ${n.status === 'sent' ? '' : 'badge-draft'}" style="margin-left:6px">${n.status}</span>
         </div>
         <div class="doc-consent">
-          ${n.status === 'sent' ? `${n.recipient_count || 0} recipients · ${fmtDate(n.sent_at)}` : `Created ${fmtDate(n.created_at)}`}
+          ${n.status === 'sent' ? `${n.recipient_count || 0} recipients · ${fmtDate(n.sent_at)}` : n.status === 'sending' ? `Sending now — started ${fmtDate(n.created_at)}` : `Created ${fmtDate(n.created_at)}`}
           · ${audienceSummary(n.audience)}
         </div>
         <div class="doc-actions">
@@ -980,9 +980,15 @@
             <button class="btn sm" onclick="editNewsletter('${n.id}')">Edit</button>
             <button class="btn sm primary" onclick="sendNewsletterNow('${n.id}')">Send now</button>
             <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
+            <button class="btn sm" onclick="reconcileNewsletter('${n.id}')" title="For a send from before per-recipient tracking existed">Reconcile with Scaleway</button>
             <button class="btn sm danger" onclick="deleteNewsletterRow('${n.id}')">Delete</button>
+          ` : n.status === 'sending' ? `
+            <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
+            <button class="btn sm" onclick="retryNewsletter('${n.id}')">Retry outstanding</button>
           ` : `
             <button class="btn sm" onclick="viewSentNewsletter('${n.id}')">View</button>
+            <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
+            <button class="btn sm" onclick="retryNewsletter('${n.id}')">Retry outstanding</button>
             <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
           `}
         </div>
@@ -1775,8 +1781,46 @@
 
     const res  = await fetch(`/api/admin/newsletters/${id}/send`, { method: 'POST' });
     const data = await res.json();
-    if (data.ok) { alert(`Sent to ${data.sent} recipient${data.sent === 1 ? '' : 's'}.`); loadNewsletters(); }
+    // The send now runs in the background rather than this request waiting
+    // for the whole batch — for anything beyond a handful of recipients,
+    // that wait could exceed a platform timeout with no way to tell
+    // afterward how far it actually got. This just confirms it started;
+    // loadNewsletters() below shows it as "Sending…" with a live progress
+    // count instead.
+    if (data.ok) { alert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
     else alert(data.error || 'Could not send.');
+  }
+
+  async function retryNewsletter(id) {
+    if (!confirm('Retry sending to everyone not yet successfully sent for this newsletter?')) return;
+    const res  = await fetch(`/api/admin/newsletters/${id}/retry`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok && data.started) alert(`Retrying ${data.recipientCount} outstanding recipient${data.recipientCount === 1 ? '' : 's'}.`);
+    else if (data.ok) alert(data.message || 'Nothing outstanding.');
+    else alert(data.error || 'Could not retry.');
+    loadNewsletters();
+  }
+
+  async function reconcileNewsletter(id) {
+    if (!confirm('Ask Scaleway what actually happened to this send, and reconcile our records against it? Use this for a send from before per-recipient tracking existed.')) return;
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    try {
+      const res  = await fetch(`/api/admin/newsletters/${id}/reconcile`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        alert(`Scaleway had ${data.scalewayRecordsFound} matching records.\n\nOf your ${data.audienceSize} recipients: ${data.alreadyReached} already reached, ${data.missing} missing.\n\nUse "Retry" now to send to just the ${data.missing} missing.`);
+        loadNewsletters();
+      } else alert(data.error || 'Could not reconcile.');
+    } finally { if (btn) { btn.disabled = false; btn.textContent = 'Reconcile with Scaleway'; } }
+  }
+
+  async function showNewsletterProgress(id) {
+    try {
+      const res  = await fetch(`/api/admin/newsletters/${id}/progress`);
+      const data = await res.json();
+      alert(`Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`);
+    } catch(e) { alert('Could not load progress.'); }
   }
 
   async function deleteNewsletterRow(id) {

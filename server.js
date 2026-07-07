@@ -401,8 +401,23 @@ function htmlToText(html) {
     .trim();
 }
 
-async function sendEmail(to, subject, html) {
-  if (!SCW_SECRET_KEY || !SCW_PROJECT_ID) { console.log('SCW_SECRET_KEY/SCW_PROJECT_ID not set — skipping email to', to); return; }
+// meta: { kind, newsletterId, userId, logId } — all optional. logId is only
+// passed by the newsletter batch sender below, which pre-writes a 'pending'
+// row for every recipient before this function ever runs; every other
+// caller (welcome emails, password resets, reminders, message alerts —
+// anything calling sendEmail directly) gets a fresh log row created and
+// resolved right here, with zero changes needed at any of those call
+// sites. Returns {ok, id, error} — id is Scaleway's own email id, useful
+// later for asking Scaleway directly what happened to this specific send.
+async function sendEmail(to, subject, html, meta = {}) {
+  const kind = meta.kind || 'other';
+  const id = meta.logId || uuidv4();
+  if (!meta.logId) db.logEmailPending(id, kind, to, subject, meta.newsletterId, meta.userId);
+  if (!SCW_SECRET_KEY || !SCW_PROJECT_ID) {
+    console.log('SCW_SECRET_KEY/SCW_PROJECT_ID not set — skipping email to', to);
+    db.updateEmailLogResult(id, 'failed', null, 'Email not configured (missing Scaleway credentials).');
+    return { ok: false, error: 'Email not configured.' };
+  }
   try {
     const res = await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails`, {
       method: 'POST',
@@ -417,9 +432,77 @@ async function sendEmail(to, subject, html) {
       })
     });
     const data = await res.json().catch(() => {});
-    if (!res.ok) console.error('Scaleway TEM error:', res.status, data);
-    else console.log('Email sent to', to);
-  } catch (e) { console.error('Email error:', e.message); }
+    if (!res.ok) {
+      console.error('Scaleway TEM error:', res.status, data);
+      const errMsg = (data && (data.message || JSON.stringify(data))) || `HTTP ${res.status}`;
+      db.updateEmailLogResult(id, 'failed', null, errMsg);
+      return { ok: false, error: errMsg };
+    }
+    // Scaleway wraps the result in an `emails` array (even for a single
+    // recipient) on send, but returns a bare object on GET-by-id later —
+    // handling both shapes here rather than assuming one.
+    const scalewayId = (data && data.emails && data.emails[0] && data.emails[0].id) || (data && data.id) || null;
+    console.log('Email sent to', to);
+    db.updateEmailLogResult(id, 'sent', scalewayId, null);
+    return { ok: true, id: scalewayId };
+  } catch (e) {
+    console.error('Email error:', e.message);
+    db.updateEmailLogResult(id, 'failed', null, e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── Scaleway TEM lookups (Per Bot 8) ──
+// Direct per-email status check, used once we already have a
+// scaleway_email_id on file (from the log above) — the reliable path
+// going forward, since it asks about one specific email by its own id
+// rather than guessing from a subject-line search.
+async function scwGetEmailStatus(scalewayEmailId) {
+  if (!SCW_SECRET_KEY) return null;
+  try {
+    const res = await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails/${scalewayEmailId}`, {
+      headers: { 'X-Auth-Token': SCW_SECRET_KEY }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch(e) { return null; }
+}
+// Retroactive reconciliation only — for sends that happened before this
+// logging existed (the "Finding Calm" send), where we have no
+// scaleway_email_id on file at all and the only option is asking Scaleway
+// "what emails with this subject went out since this time", paginating
+// through its list endpoint. Not needed for anything sent after this
+// change, which always has a direct id to check instead.
+async function scwListEmailsBySubjectSince(subject, sinceISO) {
+  if (!SCW_SECRET_KEY) return [];
+  const results = [];
+  let page = 1;
+  const pageSize = 100;
+  for (let i = 0; i < 20; i++) { // hard cap — 2000 emails is far more than one newsletter batch
+    let data;
+    try {
+      const res = await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails?page=${page}&page_size=${pageSize}&project_id=${SCW_PROJECT_ID}`, {
+        headers: { 'X-Auth-Token': SCW_SECRET_KEY }
+      });
+      if (!res.ok) break;
+      data = await res.json();
+    } catch(e) { break; }
+    const emails = (data && data.emails) || [];
+    if (!emails.length) break;
+    for (const e of emails) {
+      if (e.created_at && e.created_at < sinceISO) continue;
+      // Best-effort — Scaleway's list response may not carry the subject
+      // line at all (undocumented either way). If it's absent, skip this
+      // check rather than wrongly excluding everything; the caller cross-
+      // references rcpt_to against the actual target audience anyway,
+      // which narrows things down regardless of whether this matches.
+      if (subject && e.subject && e.subject !== subject) continue;
+      results.push(e);
+    }
+    if (emails.length < pageSize) break; // last page
+    page++;
+  }
+  return results;
 }
 
 function emailWelcomeFacilitator(name, email, tempPassword) {
@@ -4660,6 +4743,55 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
 // they don't already have one); someone who already has a real account just
 // gets pointed at /login. This is what makes a single "come try it" send
 // work correctly across a mixed audience without composing two newsletters.
+// Runs the actual send loop in the background — called after the endpoint
+// below has already responded, so a slow or large batch can never hit an
+// HTTP/platform timeout mid-send the way the original version could.
+// Every recipient was already pre-logged as 'pending' before this function
+// is even called (see the endpoint), so if the whole Node process dies
+// mid-loop, the log still shows exactly who was and wasn't reached —
+// nothing to reconstruct from Scaleway's side afterward, unlike the
+// "Finding Calm" send this replaces the design for.
+async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
+  const b = brand();
+  const cfg = db.getAppConfig() || {};
+  let sentCount = 0, failedCount = 0;
+
+  for (const user of recipients) {
+    const inviteLink = user.has_login
+      ? `${APP_URL}/login`
+      : `${APP_URL}/join/${db.ensureInviteToken(user.id)}`;
+
+    const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
+    const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
+
+    const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
+    const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);
+    const html = buildNewsletterHtml(subject, body, b, newsletter.format, footerHtml);
+
+    // A failed send here must never stop the loop — the original bug was
+    // exactly this: one bad address could abort everyone after it with no
+    // record of how far it got. Every outcome, good or bad, is caught and
+    // logged, and the loop always continues to the next person.
+    try {
+      const result = await sendEmail(user.email, subject, html, {
+        kind: 'newsletter', newsletterId: newsletter.id, userId: user.id, logId: logRowsByUserId[user.id],
+      });
+      if (result.ok) sentCount++; else failedCount++;
+    } catch(e) {
+      failedCount++;
+      db.updateEmailLogResult(logRowsByUserId[user.id], 'failed', null, e.message);
+    }
+  }
+
+  // Marked sent regardless of partial failures, with real counts attached
+  // — the newsletter no longer sits stuck on "draft" just because a few
+  // addresses failed, which was the second half of the original bug (the
+  // status only ever flipped after a loop that could never actually
+  // finish cleanly at any real scale).
+  db.markNewsletterSent(newsletter.id, sentCount);
+  console.log(`Newsletter ${newsletter.id} send complete: ${sentCount} sent, ${failedCount} failed, ${recipients.length} total.`);
+}
+
 app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const newsletter = db.getNewsletter(req.params.id);
@@ -4667,30 +4799,120 @@ app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), asyn
     if (newsletter.status !== 'draft') return res.status(400).json({ error: 'Already sent.' });
 
     const recipients = db.getNewsletterRecipients(newsletter.audience);
-    const b = brand();
-    const cfg = db.getAppConfig() || {};
 
-    let sent = 0;
+    // Pre-log every recipient as pending BEFORE any sending starts — the
+    // core fix. Even if the server crashes or redeploys one email into the
+    // batch, this table already shows all 377 intended recipients, so
+    // "who's missing" is a query against our own data, not a forensic
+    // exercise against Scaleway's console.
+    const logRowsByUserId = {};
     for (const user of recipients) {
-      const inviteLink = user.has_login
-        ? `${APP_URL}/login`
-        : `${APP_URL}/join/${db.ensureInviteToken(user.id)}`;
-
-      const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
-      const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
-
-      const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
-      const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);
-      const html = buildNewsletterHtml(subject, body, b, newsletter.format, footerHtml);
-
-      await sendEmail(user.email, subject, html);
-      sent++;
+      const id = uuidv4();
+      logRowsByUserId[user.id] = id;
+      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
     }
 
-    db.markNewsletterSent(newsletter.id, sent);
-    res.json({ ok: true, sent });
+    // Mark as sending immediately and respond right away — the actual
+    // loop below runs after this response goes out, so however long 377
+    // (or 3,770) sequential sends takes, it can never hit an HTTP or
+    // platform timeout waiting for a response that was already sent.
+    db.updateNewsletterStatus(newsletter.id, 'sending');
+    res.json({ ok: true, started: true, recipientCount: recipients.length });
+
+    runNewsletterSend(newsletter, recipients, logRowsByUserId).catch(e => {
+      console.error('newsletter send background error:', e.message);
+    });
   } catch (e) {
     console.error('newsletter send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Progress — poll this while a newsletter is 'sending' to show a live
+// count instead of nothing. Reads straight from the log table, which is
+// exactly why every recipient got pre-logged as pending up front.
+app.get('/api/admin/newsletters/:id/progress', auth.requireAuthApi(['admin']), (req, res) => {
+  const newsletter = db.getNewsletter(req.params.id);
+  if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
+  const counts = db.getEmailLogCountsForNewsletter(req.params.id);
+  res.json({ status: newsletter.status, ...counts, total: counts.pending + counts.sent + counts.failed });
+});
+
+// Per-recipient detail — the actual list behind the counts above, for
+// figuring out exactly who's missing rather than just how many.
+app.get('/api/admin/newsletters/:id/recipients', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getEmailLogForNewsletter(req.params.id));
+});
+
+// Retry — re-sends only to recipients still 'pending' or 'failed' in the
+// log for this newsletter, skipping anyone already 'sent'. Safe to run
+// repeatedly; each retry only ever touches whoever's still outstanding.
+app.post('/api/admin/newsletters/:id/retry', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const newsletter = db.getNewsletter(req.params.id);
+    if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
+    const log = db.getEmailLogForNewsletter(req.params.id);
+    const outstanding = log.filter(r => r.status !== 'sent');
+    if (!outstanding.length) return res.json({ ok: true, started: false, message: 'Nothing outstanding — everyone already sent.' });
+
+    const allRecipients = db.getNewsletterRecipients(newsletter.audience);
+    const byUserId = {};
+    allRecipients.forEach(u => { byUserId[u.id] = u; });
+    const retryRecipients = outstanding.map(r => byUserId[r.user_id]).filter(Boolean);
+    const logRowsByUserId = {};
+    outstanding.forEach(r => { if (r.user_id) logRowsByUserId[r.user_id] = r.id; });
+
+    res.json({ ok: true, started: true, recipientCount: retryRecipients.length });
+    runNewsletterSend(newsletter, retryRecipients, logRowsByUserId).catch(e => {
+      console.error('newsletter retry background error:', e.message);
+    });
+  } catch (e) {
+    console.error('newsletter retry error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reconciliation — for the "Finding Calm" send specifically, and any other
+// past send that went out before this logging existed. Asks Scaleway
+// directly what it has on record since this newsletter's created_at, then
+// cross-references rcpt_to against the newsletter's actual target
+// audience to work out who's genuinely missing — rather than anyone
+// having to page through Scaleway's console by hand.
+app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const newsletter = db.getNewsletter(req.params.id);
+    if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
+    const recipients = db.getNewsletterRecipients(newsletter.audience);
+
+    const scwEmails = await scwListEmailsBySubjectSince(newsletter.subject, newsletter.created_at);
+    const reachedAddresses = new Set(scwEmails.map(e => (e.rcpt_to || '').toLowerCase()));
+
+    const already = recipients.filter(u => reachedAddresses.has((u.email || '').toLowerCase()));
+    const missing = recipients.filter(u => !reachedAddresses.has((u.email || '').toLowerCase()));
+
+    // Backfill the log so this newsletter behaves like any other from now
+    // on — the progress/retry endpoints above just work on it afterward,
+    // no separate "legacy newsletter" handling needed anywhere else.
+    already.forEach(u => {
+      const id = uuidv4();
+      db.logEmailResult(id, 'newsletter', u.email, newsletter.subject, newsletter.id, u.id, 'sent', null, null);
+    });
+    missing.forEach(u => {
+      const id = uuidv4();
+      db.logEmailPending(id, 'newsletter', u.email, newsletter.subject, newsletter.id, u.id);
+    });
+    if (newsletter.status === 'draft') db.updateNewsletterStatus(newsletter.id, 'sending');
+
+    res.json({
+      ok: true,
+      scalewayRecordsFound: scwEmails.length,
+      audienceSize: recipients.length,
+      alreadyReached: already.length,
+      missing: missing.length,
+      missingEmails: missing.map(u => u.email),
+    });
+  } catch (e) {
+    console.error('newsletter reconcile error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
