@@ -376,6 +376,10 @@
             <input type="file" id="udTomteImgInput" accept="image/*" style="display:none" onchange="uploadUdTomteImage()"/>
           </label>
         </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Or choose an existing photo</label>
+          <div id="udTomteImgGallery" style="display:flex;gap:8px;overflow-x:auto;padding:2px 0"></div>
+        </div>
         <input type="text" id="udTomteName" placeholder="Tomte" maxlength="30" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
         <div>
           <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Tomte language (overrides account language above, for Tomte only)</label>
@@ -1439,10 +1443,19 @@
     upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
   }
 
-  // ── Tomte language override + voice picker lookups (Per Bot 9) —
-  // fetched lazily once, cached, and reused each time the modal opens.
+  // ── Tomte language override + voice picker + existing-image gallery
+  // lookups (Per Bot 9) — fetched lazily once, cached, reused each open.
   let _udLanguages = null; // { code: name }
   let _udVoices = null;    // [{voice_id, name, ...}]
+  let _udImages = null;    // [{filename, url}]
+  let _udSelectedImageFilename = null; // set when the admin picks from the gallery this session
+  // Mirrors the server's tomteImageUrl() — old (pre-R2) photos are a bare
+  // filename with no slash, served via /uploads/:filename; new ones are an
+  // R2 key like "tomte-images/xyz.png", served via /tomte-images/:key.
+  function tomteImgSrc(filename) {
+    if (!filename) return '/assets/tomte.png';
+    return filename.includes('/') ? `/${filename}` : `/uploads/${filename}`;
+  }
   async function ensureUdLookupsLoaded() {
     if (_udLanguages === null) {
       try {
@@ -1464,6 +1477,28 @@
       voiceSel.innerHTML = '<option value="">Default (based on language)</option>' +
         _udVoices.map(v => `<option value="${v.voice_id}">${v.name}</option>`).join('');
     }
+    if (_udImages === null) {
+      try {
+        const res = await fetch('/api/admin/tomte-images');
+        _udImages = await res.json();
+        if (!Array.isArray(_udImages)) _udImages = [];
+      } catch(e) { _udImages = []; }
+    }
+  }
+  function renderUdImageGallery(currentFilename) {
+    const el = document.getElementById('udTomteImgGallery');
+    if (!_udImages.length) { el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3);font-style:italic">No photos uploaded yet.</div>'; return; }
+    el.innerHTML = _udImages.map(img => {
+      const isSelected = img.filename === currentFilename;
+      return `<img src="${img.url}" data-filename="${img.filename.replace(/"/g,'&quot;')}" onclick="selectUdTomteImage(this)"
+        style="width:36px;height:36px;border-radius:50%;object-fit:cover;object-position:50% 15%;cursor:pointer;flex-shrink:0;
+        border:2px solid ${isSelected ? 'rgba(180,230,200,0.8)' : 'rgba(255,255,255,0.12)'}"/>`;
+    }).join('');
+  }
+  function selectUdTomteImage(imgEl) {
+    _udSelectedImageFilename = imgEl.dataset.filename;
+    document.getElementById('udTomteImgPreview').src = imgEl.src;
+    renderUdImageGallery(_udSelectedImageFilename);
   }
 
   // ── Edit user details (Per Bot 8) — name/email/phone/language + Tomte ──
@@ -1477,10 +1512,12 @@
     document.getElementById('udPhone').value = u.phone || '';
     document.getElementById('udLanguage').value = u.language || '';
     document.getElementById('udTomteName').value = u.tomte_name || '';
-    document.getElementById('udTomteImgPreview').src = u.tomte_image_filename ? `/uploads/${u.tomte_image_filename}` : '/assets/tomte.png';
+    document.getElementById('udTomteImgPreview').src = tomteImgSrc(u.tomte_image_filename);
     document.getElementById('udTomteLanguage').value = u.tomte_language || '';
     document.getElementById('udTomteVoice').value = u.voice_id || '';
     document.getElementById('udErr').textContent = '';
+    _udSelectedImageFilename = null; // no new gallery pick yet this session — keep whatever's already set
+    renderUdImageGallery(u.tomte_image_filename || null);
     openModal('userDetailsModal');
   }
   async function saveUserDetails() {
@@ -1489,16 +1526,21 @@
     const btn = event?.target;
     setBtnLoading(btn, true, 'Saving…');
     try {
+      const body = {
+        name: document.getElementById('udName').value.trim(),
+        email: document.getElementById('udEmail').value.trim(),
+        phone: document.getElementById('udPhone').value.trim(),
+        language: document.getElementById('udLanguage').value.trim(),
+        tomte_language: document.getElementById('udTomteLanguage').value,
+        voice_id: document.getElementById('udTomteVoice').value,
+      };
+      // Only send a photo change if the admin actually picked one from the
+      // gallery this session — otherwise leave whatever's already set alone
+      // (a fresh upload, if any, already saved itself via its own endpoint).
+      if (_udSelectedImageFilename !== null) body.tomte_image_filename = _udSelectedImageFilename;
       const detailsRes = await fetch(`/api/admin/users/${id}/details`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: document.getElementById('udName').value.trim(),
-          email: document.getElementById('udEmail').value.trim(),
-          phone: document.getElementById('udPhone').value.trim(),
-          language: document.getElementById('udLanguage').value.trim(),
-          tomte_language: document.getElementById('udTomteLanguage').value,
-          voice_id: document.getElementById('udTomteVoice').value,
-        })
+        body: JSON.stringify(body)
       });
       const detailsData = await detailsRes.json();
       if (!detailsData.ok) { errEl.textContent = detailsData.error || 'Could not save.'; return; }
@@ -1524,8 +1566,15 @@
       fd.append('file', file);
       const res  = await fetch(`/api/admin/users/${id}/tomte-image`, { method: 'POST', body: fd });
       const data = await res.json();
-      if (data.url) document.getElementById('udTomteImgPreview').src = data.url;
-      else document.getElementById('udErr').textContent = data.error || 'Could not upload photo.';
+      if (data.url) {
+        document.getElementById('udTomteImgPreview').src = data.url;
+        // A fresh upload already persisted itself — clear any pending
+        // gallery pick so Save doesn't overwrite it with a stale selection.
+        _udSelectedImageFilename = null;
+        _udImages = null; // the new photo should appear in the gallery next time it's opened
+      } else {
+        document.getElementById('udErr').textContent = data.error || 'Could not upload photo.';
+      }
     } catch(e) {
       document.getElementById('udErr').textContent = 'Could not upload photo.';
     } finally { input.value = ''; }

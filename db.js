@@ -2609,6 +2609,25 @@ function getTomteSettings(role, id) {
 function getTomteLanguageDefaults() {
   return queryAll('SELECT * FROM tomte_language_defaults ORDER BY language ASC, action ASC');
 }
+// Every distinct Tomte photo ever uploaded, across personal photos (users +
+// facilitators) and language-default photos — lets an admin pick an
+// existing image (e.g. reuse a photo already set for someone else) instead
+// of always having to upload a fresh file (Per Bot 9).
+function getAllTomteImages() {
+  const rows = [
+    ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM users WHERE tomte_image_filename IS NOT NULL`),
+    ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM facilitators WHERE tomte_image_filename IS NOT NULL`),
+    ...queryAll(`SELECT DISTINCT image_filename AS filename FROM tomte_language_defaults WHERE image_filename IS NOT NULL`),
+  ];
+  const seen = new Set();
+  const filenames = [];
+  for (const r of rows) {
+    if (!r.filename || seen.has(r.filename)) continue;
+    seen.add(r.filename);
+    filenames.push(r.filename);
+  }
+  return filenames;
+}
 // Exact match only, no fallback-to-default inside this call — the caller
 // (resolveTomteImage in server.js) decides what to do if nothing's found.
 function getTomteLanguageDefaultImage(language, action) {
@@ -2630,7 +2649,7 @@ function deleteTomteLanguageDefault(language, action) {
 }
 
 function updateUserAdminDetails(id, fields) {
-  const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id'];
+  const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id', 'tomte_image_filename'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   getDbSync().run(`UPDATE users SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
@@ -3133,7 +3152,7 @@ module.exports = {
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
   setTomteName, setTomteImage, getTomteSettings, updateUserAdminDetails,
-  getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault,
+  getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
   // Reminders
   getInactiveUsers,
   markReminderSent,

@@ -1711,6 +1711,12 @@ app.get('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), (req, res) 
   const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: tomteImageUrl(r.image_filename) }));
   res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES });
 });
+// Every distinct Tomte photo already uploaded anywhere in the app — lets an
+// admin pick an existing one instead of always uploading a fresh file
+// (Per Bot 9).
+app.get('/api/admin/tomte-images', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getAllTomteImages().map(filename => ({ filename, url: tomteImageUrl(filename) })));
+});
 app.post('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const language = (req.body.language || '').trim();
@@ -1743,6 +1749,21 @@ app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async 
   // Tomte reads a nullable override.
   if (req.body.tomte_language !== undefined) {
     fields.tomte_language = req.body.tomte_language === '' ? null : req.body.tomte_language;
+  }
+
+  // Picking an existing Tomte photo from the admin gallery (Per Bot 9) —
+  // distinct from POST .../tomte-image (an actual new upload). Never trust
+  // an arbitrary filename straight from the request onto a field that gets
+  // rendered back as an <img src>; only allow one that's a real, already-
+  // uploaded image somewhere in the app.
+  if (req.body.tomte_image_filename !== undefined) {
+    if (req.body.tomte_image_filename === '' || req.body.tomte_image_filename === null) {
+      fields.tomte_image_filename = null;
+    } else if (db.getAllTomteImages().includes(req.body.tomte_image_filename)) {
+      fields.tomte_image_filename = req.body.tomte_image_filename;
+    } else {
+      return res.status(400).json({ error: 'That image is not recognised.' });
+    }
   }
 
   // Voice override — same validation as the self-service picker in
