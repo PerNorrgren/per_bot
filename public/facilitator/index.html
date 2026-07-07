@@ -625,15 +625,31 @@
   function renderFacPractices(practices) {
     const list = document.getElementById('facPracticesList');
     if (!practices.length) { list.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.25);font-style:italic;padding:0 0 10px">No practices yet</div>'; return; }
-    list.innerHTML = practices.map(p => `
-      <div class="fac-practice-item">
-        <span>${p.type==='audio'?'🎵':'📄'}</span>
-        <div class="fac-practice-info">
-          <div class="fac-practice-title">${p.title}</div>
-          <div class="fac-practice-meta">Used ${p.use_count}× ${p.is_favourite?'· ❤️':''}</div>
+    list.innerHTML = practices.map(p => {
+      // Session-delivered items are a live view over the sessions table
+      // (see getPracticesForClient in db.js) — there's no real practices
+      // row to play or delete, so those controls only show for genuinely
+      // uploaded/saved practices.
+      const isRealRow = p.source_type !== 'session';
+      return `
+      <div class="fac-practice-item" style="flex-direction:column; align-items:stretch; gap:6px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span>${p.type==='audio'?'🎵':'📄'}</span>
+          <div class="fac-practice-info">
+            <div class="fac-practice-title">${p.title}</div>
+            <div class="fac-practice-meta">Used ${p.use_count||0}× ${p.is_favourite?'· ❤️':''}</div>
+          </div>
+          ${isRealRow ? `<button onclick="deleteFacPractice('${p.id}','${(p.title||'').replace(/'/g,"\\'")}')" style="background:none;border:none;color:rgba(255,120,100,0.6);cursor:pointer;font-size:13px;padding:4px 6px;flex-shrink:0">Delete</button>` : ''}
         </div>
+        ${isRealRow && p.type === 'audio' && p.filename ? `<audio controls preload="none" src="/uploads/${p.filename}" style="width:100%; height:32px;"></audio>` : ''}
       </div>
-    `).join('');
+    `;
+    }).join('');
+  }
+  async function deleteFacPractice(id, title) {
+    if (!confirm(`Delete "${title}"? This can't be undone.`)) return;
+    await fetch(`/api/practices/${id}`, { method: 'DELETE' });
+    loadClientData();
   }
 
   // ── Conversation ──
