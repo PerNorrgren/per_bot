@@ -1112,6 +1112,7 @@
             ['link', 'image', 'image-link', 'video-link'],
             ['nl-button'],
             ['columns-1', 'columns-2', 'columns-3'],
+            ['ai-polish'],
             ['clean'],
           ],
           handlers: {
@@ -1122,6 +1123,7 @@
             'columns-1': () => insertColumnsBlock(1),
             'columns-2': () => insertColumnsBlock(2),
             'columns-3': () => insertColumnsBlock(3),
+            'ai-polish': function() { runAiPolish(this.quill, this.container.querySelector('.ql-ai-polish')); },
             // Every standard format button below has the same problem the
             // paste fix already solved: Quill's default handlers operate on
             // ITS OWN Delta-model selection, which has no concept of a
@@ -1214,6 +1216,7 @@
     label('.ql-columns-1',  '1 col', 'Insert a single wide column');
     label('.ql-columns-2',  '2 col', 'Insert two side-by-side columns');
     label('.ql-columns-3',  '3 col', 'Insert three side-by-side columns');
+    label('.ql-ai-polish',  '✨ AI Help', 'Suggest an improved version of the whole message');
 
     // Tracks the last image clicked anywhere in the editor, including
     // inside a columns-block cell — see linkSelectedImage above for why
@@ -1307,6 +1310,33 @@
     quill.format(format, !quill.getFormat()[format]);
   }
 
+  // ── AI Help (Per Bot 8) — reads the whole editor, sends it for a full
+  // rewrite, replaces the editor's content outright on success. No
+  // accept/discard step by design — easy to amend anything afterward, and
+  // a review modal would just add friction for something meant to be a
+  // quick "make this better" nudge.
+  async function runAiPolish(quill, btn) {
+    if (!btn) return;
+    if (!quill.getText().trim()) { alert('Write something first.'); return; }
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res  = await fetch('/api/ai-polish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: quill.root.innerHTML })
+      });
+      const data = await res.json();
+      if (data.html) quill.root.innerHTML = data.html;
+      else alert(data.error || 'Could not get a suggestion right now.');
+    } catch(e) {
+      alert('Something went wrong — please try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
   function insertNodeAtCellRange(target, node) {
     target.range.deleteContents();
     target.range.insertNode(node);
@@ -1350,20 +1380,51 @@
     const url = prompt('Button link (https://...):');
     if (!url || !url.trim()) return;
     const label = text.trim();
-    const target = getInsertionTarget();
+    const linkUrl = url.trim();
 
+    // Native OS color picker rather than a custom modal — click() on a
+    // hidden <input type="color"> opens it immediately. Defaults to
+    // today's green, so leaving it alone (or just closing the picker)
+    // reproduces the exact old behaviour with nothing to configure.
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = '#2d6a4f';
+    colorInput.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
+    document.body.appendChild(colorInput);
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      insertNewsletterButtonWithColor(label, linkUrl, colorInput.value);
+      colorInput.remove();
+    };
+    colorInput.addEventListener('change', finish, { once: true });
+    // Picker dismissed without picking a color (Escape, click-away) still
+    // fires blur — proceed with the default green rather than silently
+    // doing nothing.
+    colorInput.addEventListener('blur', () => setTimeout(finish, 150), { once: true });
+    colorInput.click();
+  }
+
+  function insertNewsletterButtonWithColor(label, linkUrl, color) {
+    const target = getInsertionTarget();
     if (target.inCell) {
       const a = document.createElement('a');
-      a.href = url.trim();
+      a.href = linkUrl;
       a.className = 'nl-button';
+      a.style.background = color;
       a.textContent = label;
       insertNodeAtCellRange(target, a);
       return;
     }
     const quill = getQuill();
-    quill.insertText(target.quillRange.index, label, 'buttonLink', url.trim());
+    quill.insertText(target.quillRange.index, label, 'buttonLink', linkUrl);
     quill.insertText(target.quillRange.index + label.length, '\n');
     quill.setSelection(target.quillRange.index + label.length + 1);
+    // Quill's Link format only carries an href, no color concept — applied
+    // directly to the DOM node right after insertion instead, same idea as
+    // the cell-inserted button above.
+    const leaf = quill.getLeaf(target.quillRange.index)[0];
+    if (leaf && leaf.domNode) leaf.domNode.style.background = color;
   }
 
   function setNewsletterFormat(format) {

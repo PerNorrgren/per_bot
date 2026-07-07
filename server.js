@@ -1863,6 +1863,36 @@ async function callClaudeRaw(systemPrompt, messages, maxTokens = 400) {
   return anthropicFetch(systemPrompt, messages, maxTokens);
 }
 
+// ── AI Help / polish (Per Bot 8) — "make this more engaging" button shared
+// across every rich editor in the app (newsletter, session drafts, journal,
+// admin descriptions, lesson content, and the light message composers).
+// Deliberately always uses the ADMIN's own account language, not the
+// requesting user's — Per's own call, since this is meant to keep everything
+// written in Per's working language regardless of which staff member
+// triggers it (a facilitator polishing a session draft, say).
+function getAdminLanguage() {
+  try {
+    const admins = db.getAllAdmins();
+    const withLang = admins.find(a => a.language);
+    return (withLang && withLang.language) || 'en';
+  } catch(e) { return 'en'; }
+}
+app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
+  try {
+    const { html } = req.body;
+    const plain = (html || '').replace(/<[^>]+>/g, '').trim();
+    if (!plain) return res.status(400).json({ error: 'Write something first.' });
+    const b = brand();
+    const language = getAdminLanguage();
+    const systemPrompt = `You help refine short pieces of written communication for ${b.name}, a mindfulness and wellbeing platform. Improve clarity, warmth, and flow while keeping the original meaning, voice, and intent intact. Preserve every link, button, image, and template placeholder (like {{name}}) exactly as they appear in the source — never remove, reword, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
+    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 2000);
+    res.json({ html: reply.trim() });
+  } catch(e) {
+    console.error('ai-polish error:', e.message);
+    res.status(500).json({ error: 'Could not get a suggestion right now. Please try again.' });
+  }
+});
+
 // ── /api/chat — Mare Bot architecture ──
 // Client POSTs { message, sessionId, clientId } — server calls Claude and returns reply.
 // Client then calls /api/speak with the reply text.
@@ -4081,7 +4111,14 @@ function postProcessRichBody(html) {
     .replace(/<a\s+([^>]*\bclass=["']nl-button["'][^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, innerText) => {
       const hrefMatch = attrs.match(/href=["']([^"']*)["']/i);
       const href = hrefMatch ? hrefMatch[1] : '#';
-      return `<a href="${href}" style="display:inline-block;background:#2d6a4f;color:#ffffff;padding:11px 26px;border-radius:6px;text-decoration:none;font-family:Georgia,serif;font-size:14px;margin:10px 0;">${innerText}</a>`;
+      // Color choice (Per Bot 8) — the editor applies the chosen color as
+      // an inline style on the button itself, so it's read back here
+      // rather than assumed; old buttons with no stored color (sent
+      // before this feature existed) fall back to the original green.
+      const styleMatch = attrs.match(/style=["']([^"']*)["']/i);
+      const bgMatch = styleMatch && styleMatch[1].match(/background(?:-color)?\s*:\s*([^;]+)/i);
+      const bg = bgMatch ? bgMatch[1].trim() : '#2d6a4f';
+      return `<a href="${href}" style="display:inline-block;background:${bg};color:#ffffff;padding:11px 26px;border-radius:6px;text-decoration:none;font-family:Georgia,serif;font-size:14px;margin:10px 0;">${innerText}</a>`;
     })
     .replace(/\s*contenteditable=["'][^"']*["']/gi, '')
     .replace(/\s*data-column-cell=["'][^"']*["']/gi, '');
