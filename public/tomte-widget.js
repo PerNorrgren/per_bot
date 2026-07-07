@@ -135,6 +135,25 @@
       return window.TOMTE_PAGE || document.title || location.pathname;
     }
 
+    // Personalization (Per Bot 8) — silently falls back to the default
+    // name/image if the person isn't logged in, or just hasn't set
+    // anything. Public pages will always hit the "not logged in" case,
+    // which is expected and not an error.
+    (async function applyPersonalization() {
+      try {
+        const res = await fetch('/api/my/tomte-settings');
+        if (!res.ok) return; // not logged in — defaults stay as-is
+        const data = await res.json();
+        if (data.name) {
+          document.querySelectorAll('#tomte-header .tomte-title').forEach(el => el.textContent = data.name);
+          fab.title = `Ask ${data.name} how this works`;
+        }
+        if (data.imageUrl) {
+          document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = data.imageUrl; });
+        }
+      } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
+    })();
+
     function connect() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -215,6 +234,13 @@
       panel.classList.add('tomte-open');
       connect();
       inputEl.focus();
+      // First contact (Per Bot 8) — greets once per browser session, not
+      // every time the panel opens, so it doesn't get repetitive if
+      // someone opens/closes him a few times while using the app.
+      if (!sessionStorage.getItem('tomte_greeted')) {
+        sessionStorage.setItem('tomte_greeted', '1');
+        whenReady(() => ws.send(JSON.stringify({ type: 'greet', page: pageName() })));
+      }
     }
     function closePanel() { panel.classList.remove('tomte-open'); }
 
