@@ -1656,6 +1656,15 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
+// ── Tomte language defaults (Per Bot 8) — currently just Dutch/Mare;
+// applies to anyone whose language is Dutch and hasn't set their own
+// personal Tomte image (see /api/my/tomte-settings above).
+app.post('/api/admin/tomte-defaults/nl-image', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  db.updateAppConfig({ tomte_nl_image_filename: req.file.filename });
+  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+});
+
 // ── Admin editing a user's own details directly (Per Bot 8) ──
 app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), (req, res) => {
   const user = db.getUser(req.params.id);
@@ -1684,7 +1693,14 @@ app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upl
 // default everywhere, since there's no account to read a preference from.
 app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const s = db.getTomteSettings(req.user.role, req.user.id);
-  res.json({ name: s.tomte_name || null, imageUrl: s.tomte_image_filename ? `/uploads/${s.tomte_image_filename}` : null });
+  let imageUrl = s.tomte_image_filename ? `/uploads/${s.tomte_image_filename}` : null;
+  // No personal image set — fall back to the language-level default
+  // (currently just Dutch/Mare) before giving up and using the generic one.
+  if (!imageUrl && s.language === 'nl') {
+    const cfg = db.getAppConfig() || {};
+    if (cfg.tomte_nl_image_filename) imageUrl = `/uploads/${cfg.tomte_nl_image_filename}`;
+  }
+  res.json({ name: s.tomte_name || null, imageUrl });
 });
 app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
   db.setTomteName(req.user.role, req.user.id, (req.body.name || '').trim().slice(0, 30));

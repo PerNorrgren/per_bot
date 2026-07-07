@@ -829,6 +829,11 @@ async function getDb() {
     // too, not just a client's.
     "ALTER TABLE facilitators ADD COLUMN language TEXT DEFAULT 'en'",
     "ALTER TABLE facilitators ADD COLUMN voice_id TEXT",
+    // Tomte language-level image default (Per Bot 8) — separate from any
+    // individual person's own upload. Currently just one language slot
+    // (Dutch/Mare); if more get added later this can grow into a small
+    // language->filename table instead of one column per language.
+    "ALTER TABLE app_config ADD COLUMN tomte_nl_image_filename TEXT",
     // Message notifications (Per Bot 8) — default on, since there's no
     // settings toggle for these yet; gated on having an email/phone on
     // file at all, same as every other notification type here.
@@ -2717,7 +2722,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
