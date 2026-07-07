@@ -1,0 +1,458 @@
+<%-- 
+  Tomte - Deeper Mindfulness Platform Helper
+  Include in your main layout: <%- include('partials/tomte') %>
+  Pass page context via window.TOMTE_CONTEXT (set before this loads)
+--%>
+
+<div id="tomte-root" aria-live="polite" aria-label="Tomte assistant">
+
+  <!-- The character bubble -->
+  <div id="tomte-bubble" class="tomte-bubble tomte-hidden">
+    <div class="tomte-header">
+      <span class="tomte-name">Tomten</span>
+      <div class="tomte-controls">
+        <button id="tomte-mute" class="tomte-ctrl-btn" title="Toggle voice" aria-label="Toggle voice">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+            <path id="tomte-speaker-icon" d="M9.5 3.5L5 7H2a1 1 0 00-1 1v4a1 1 0 001 1h3l4.5 3.5A.5.5 0 0010 16V4a.5.5 0 00-.5-.5z"/>
+            <path id="tomte-wave1" d="M13 7a4 4 0 010 6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <path id="tomte-wave2" d="M15 5a7 7 0 010 10" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <line id="tomte-muted-line" x1="1" y1="1" x2="19" y2="19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="display:none"/>
+          </svg>
+        </button>
+        <button id="tomte-close" class="tomte-ctrl-btn" title="Close" aria-label="Close Tomte">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+            <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Message area with typewriter -->
+    <div id="tomte-message" class="tomte-message">
+      <span id="tomte-text"></span>
+      <span class="tomte-cursor">|</span>
+    </div>
+
+    <!-- Action buttons (for confirmations like Retry) -->
+    <div id="tomte-actions" class="tomte-actions" style="display:none"></div>
+
+    <!-- Chat input -->
+    <div class="tomte-chat-area">
+      <div class="tomte-input-row">
+        <input 
+          id="tomte-input" 
+          type="text" 
+          placeholder="Ask Tomten…" 
+          autocomplete="off"
+          aria-label="Ask Tomten a question"
+        />
+        <button id="tomte-mic" class="tomte-mic-btn" title="Speak" aria-label="Speak to Tomten">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <rect x="6" y="1" width="8" height="12" rx="4" />
+            <path d="M3 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <line x1="10" y1="17" x2="10" y2="19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="tomte-send" class="tomte-send-btn" aria-label="Send question">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path d="M2 10l16-8-8 16-2-6z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The Tomte SVG character -->
+  <button id="tomte-character" class="tomte-character" aria-label="Open Tomten" title="Tomten — click to open">
+    <svg id="tomte-svg" viewBox="0 0 80 100" xmlns="http://www.w3.org/2000/svg" width="72" height="90">
+      <!-- Shadow -->
+      <ellipse cx="40" cy="97" rx="18" ry="3" fill="rgba(0,0,0,0.12)"/>
+
+      <!-- Body - grey coat -->
+      <ellipse cx="40" cy="72" rx="17" ry="20" fill="#8B8B8B"/>
+      <ellipse cx="40" cy="72" rx="14" ry="17" fill="#9A9A9A"/>
+
+      <!-- Belt -->
+      <rect x="25" y="70" width="30" height="5" rx="2" fill="#5C4A2A"/>
+      <rect x="37" y="69" width="6" height="7" rx="1" fill="#C8960C"/>
+
+      <!-- Arms -->
+      <ellipse cx="24" cy="68" rx="6" ry="11" fill="#8B8B8B" transform="rotate(-15 24 68)"/>
+      <ellipse cx="56" cy="68" rx="6" ry="11" fill="#8B8B8B" transform="rotate(15 56 68)"/>
+
+      <!-- Hands -->
+      <circle cx="21" cy="78" r="5" fill="#E8C99A"/>
+      <circle cx="59" cy="78" r="5" fill="#E8C99A"/>
+
+      <!-- Head -->
+      <circle cx="40" cy="42" r="16" fill="#E8C99A"/>
+
+      <!-- White beard - wide and full -->
+      <ellipse cx="40" cy="56" rx="14" ry="10" fill="white"/>
+      <ellipse cx="40" cy="52" rx="11" ry="7" fill="white"/>
+      <!-- Beard texture wisps -->
+      <path d="M30 54 Q33 62 36 58" stroke="#E8E8E8" stroke-width="1" fill="none"/>
+      <path d="M40 56 Q40 65 40 60" stroke="#E8E8E8" stroke-width="1" fill="none"/>
+      <path d="M50 54 Q47 62 44 58" stroke="#E8E8E8" stroke-width="1" fill="none"/>
+
+      <!-- Moustache -->
+      <path d="M33 48 Q40 52 47 48" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+      <!-- Eyes -->
+      <circle cx="34" cy="40" r="2.5" fill="#2C3E50"/>
+      <circle cx="46" cy="40" r="2.5" fill="#2C3E50"/>
+      <!-- Eye shine -->
+      <circle cx="35" cy="39" r="0.8" fill="white"/>
+      <circle cx="47" cy="39" r="0.8" fill="white"/>
+
+      <!-- Eyebrows - bushy white -->
+      <path d="M31 36 Q34 33 37 36" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <path d="M43 36 Q46 33 49 36" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+
+      <!-- Nose -->
+      <ellipse cx="40" cy="45" rx="3" ry="2" fill="#D4956A"/>
+
+      <!-- Red conical hat -->
+      <path d="M24 32 L40 2 L56 32 Q48 30 40 31 Q32 30 24 32Z" fill="#C0392B"/>
+      <!-- Hat highlight -->
+      <path d="M36 6 Q38 4 40 2 L44 12 Q42 10 38 10Z" fill="#E74C3C" opacity="0.6"/>
+      <!-- Hat brim -->
+      <ellipse cx="40" cy="32" rx="17" ry="4" fill="#A93226"/>
+      <!-- White hat trim -->
+      <path d="M23 32 Q40 38 57 32" stroke="white" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+      <!-- Feet / boots -->
+      <ellipse cx="33" cy="90" rx="8" ry="5" fill="#3D2B1F"/>
+      <ellipse cx="47" cy="90" rx="8" ry="5" fill="#3D2B1F"/>
+
+      <!-- Notification dot (hidden by default) -->
+      <circle id="tomte-dot" cx="62" cy="12" r="7" fill="#E74C3C" style="display:none"/>
+      <text id="tomte-dot-text" x="62" y="16" text-anchor="middle" fill="white" font-size="8" font-family="sans-serif" font-weight="bold"></text>
+    </svg>
+
+    <!-- Thinking animation dots (hidden by default) -->
+    <div id="tomte-thinking" class="tomte-thinking" style="display:none">
+      <span></span><span></span><span></span>
+    </div>
+  </button>
+
+</div>
+
+<style>
+/* ═══════════════════════════════════════════════
+   TOMTE SYSTEM STYLES
+   ═══════════════════════════════════════════════ */
+
+#tomte-root {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ─── Character button ─── */
+.tomte-character {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  width: 80px;
+  height: 100px;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.25));
+  transition: transform 0.2s ease, filter 0.2s ease;
+  flex-shrink: 0;
+}
+
+.tomte-character:hover {
+  transform: translateY(-3px) scale(1.05);
+  filter: drop-shadow(0 8px 20px rgba(0,0,0,0.3));
+}
+
+.tomte-character:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* Idle sway animation */
+@keyframes tomte-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25%       { transform: rotate(1.5deg); }
+  75%       { transform: rotate(-1.5deg); }
+}
+
+#tomte-svg {
+  animation: tomte-sway 4s ease-in-out infinite;
+  transform-origin: 40px 90px;
+}
+
+/* Speaking - gentle bob */
+@keyframes tomte-speak {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  20%       { transform: translateY(-3px) rotate(1deg); }
+  50%       { transform: translateY(-1px) rotate(-0.5deg); }
+  80%       { transform: translateY(-2px) rotate(0.8deg); }
+}
+
+#tomte-svg.is-speaking {
+  animation: tomte-speak 0.6s ease-in-out infinite;
+}
+
+/* Thinking dots */
+.tomte-thinking {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  border-radius: 12px;
+  padding: 6px 10px;
+  display: flex;
+  gap: 4px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  margin-bottom: 6px;
+}
+
+.tomte-thinking::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: white;
+  border-bottom: none;
+}
+
+.tomte-thinking span {
+  width: 6px;
+  height: 6px;
+  background: #2D7873;
+  border-radius: 50%;
+  animation: tomte-dot-bounce 1.2s ease-in-out infinite;
+}
+
+.tomte-thinking span:nth-child(2) { animation-delay: 0.2s; }
+.tomte-thinking span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes tomte-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40%           { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ─── Speech bubble ─── */
+.tomte-bubble {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.1);
+  width: 300px;
+  overflow: hidden;
+  border: 1px solid rgba(45, 120, 115, 0.15);
+  transform-origin: bottom right;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.tomte-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9) translateY(8px);
+}
+
+.tomte-visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: scale(1) translateY(0);
+}
+
+/* Header */
+.tomte-header {
+  background: linear-gradient(135deg, #2D7873 0%, #1E5C58 100%);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tomte-name {
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.tomte-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.tomte-ctrl-btn {
+  background: rgba(255,255,255,0.15);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.tomte-ctrl-btn:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+/* Message */
+.tomte-message {
+  padding: 14px 16px 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #2C3E50;
+  min-height: 48px;
+}
+
+.tomte-cursor {
+  display: inline-block;
+  color: #2D7873;
+  animation: tomte-blink 0.8s step-end infinite;
+  font-weight: 100;
+  margin-left: 1px;
+}
+
+@keyframes tomte-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* Actions */
+.tomte-actions {
+  padding: 0 16px 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tomte-action-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #2D7873;
+  background: white;
+  color: #2D7873;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tomte-action-btn:hover {
+  background: #2D7873;
+  color: white;
+}
+
+.tomte-action-btn.primary {
+  background: #2D7873;
+  color: white;
+}
+
+.tomte-action-btn.primary:hover {
+  background: #1E5C58;
+}
+
+.tomte-action-btn .tomte-btn-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: tomte-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes tomte-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Chat area */
+.tomte-chat-area {
+  padding: 0 12px 12px;
+  border-top: 1px solid rgba(0,0,0,0.07);
+  margin-top: 8px;
+  padding-top: 10px;
+}
+
+.tomte-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+#tomte-input {
+  flex: 1;
+  border: 1.5px solid #E0E0E0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #333;
+  outline: none;
+  transition: border-color 0.15s;
+  background: #FAFAFA;
+}
+
+#tomte-input:focus {
+  border-color: #2D7873;
+  background: white;
+}
+
+#tomte-input::placeholder {
+  color: #ABABAB;
+}
+
+.tomte-mic-btn,
+.tomte-send-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.tomte-mic-btn {
+  background: #F0F0F0;
+  color: #666;
+}
+
+.tomte-mic-btn:hover { background: #E0E0E0; }
+.tomte-mic-btn.recording {
+  background: #E74C3C;
+  color: white;
+  animation: tomte-pulse 1s ease-in-out infinite;
+}
+
+.tomte-send-btn {
+  background: #2D7873;
+  color: white;
+}
+
+.tomte-send-btn:hover { background: #1E5C58; }
+
+@keyframes tomte-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(231,76,60,0); }
+}
+
+/* Notification dot */
+#tomte-dot { transition: opacity 0.3s; }
+</style>
