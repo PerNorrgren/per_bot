@@ -144,6 +144,10 @@
         sendContext();
       };
       ws.onclose = () => { wsReady = false; };
+      ws.onerror = () => {
+        wsReady = false;
+        addMessage('bot', "I couldn't connect just now — try again in a moment, or refresh the page.");
+      };
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === 'response_text') addMessage('bot', msg.text);
@@ -151,6 +155,23 @@
         if (msg.type === 'audio') playAudio(msg.data);
         if (msg.type === 'listening_started') { /* no-op, UI already shows mic state */ }
       };
+    }
+
+    // Shared by sendText/startListening below — polls briefly for the
+    // connection to be ready rather than assuming it always will be; if it
+    // never opens (blocked, offline, server hiccup), this surfaces that
+    // instead of waiting silently forever with no feedback at all.
+    function whenReady(fn) {
+      const start = Date.now();
+      const tryNow = () => {
+        if (wsReady) { fn(); return; }
+        if (Date.now() - start > 8000) {
+          addMessage('bot', "Still trying to connect — check your connection and try again.");
+          return;
+        }
+        setTimeout(tryNow, 150);
+      };
+      tryNow();
     }
 
     function sendContext() {
@@ -208,8 +229,7 @@
       connect();
       addMessage('user', text);
       inputEl.value = '';
-      const trySend = () => { if (wsReady) ws.send(JSON.stringify({ type: 'text_input', text })); else setTimeout(trySend, 150); };
-      trySend();
+      whenReady(() => ws.send(JSON.stringify({ type: 'text_input', text })));
     }
     sendBtn.addEventListener('click', sendText);
     inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
@@ -222,8 +242,7 @@
       fab.classList.add('tomte-listening');
       micBtn.classList.add('tomte-mic-on');
       connect();
-      const trySend = () => { if (wsReady) ws.send(JSON.stringify({ type: 'start_listening' })); else setTimeout(trySend, 150); };
-      trySend();
+      whenReady(() => ws.send(JSON.stringify({ type: 'start_listening' })));
       mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0 && wsReady) {
