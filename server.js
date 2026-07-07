@@ -920,6 +920,8 @@ app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'pub
 // than adding an express.static() mount, so it doesn't change how the rest
 // of the app serves files.
 app.get('/brand-inject.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'brand-inject.js')));
+app.get('/tomte-widget.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')));
+app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
 app.get('/',                (req, res) => res.redirect('/login'));
 
 function roleRouter(allowedRoles, file) {
