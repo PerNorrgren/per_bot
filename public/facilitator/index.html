@@ -304,6 +304,7 @@
     .msg-composer-actions { display:flex; align-items:center; gap:6px; }
     .msg-icon-btn { width:34px; height:34px; flex:0 0 34px; display:flex; align-items:center; justify-content:center; background:none; border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:0; cursor:pointer; font-size:14px; line-height:1; }
     .msg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
+    .msg-icon-btn.pending { border-color:rgba(220,200,120,0.5); background:rgba(220,200,120,0.08); opacity:0.7; cursor:wait; }
     .msg-send-btn { height:34px; display:flex; align-items:center; }
     .msg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:8px; background:rgba(255,255,255,0.04); border-radius:8px; }
 
@@ -826,6 +827,16 @@
         }));
     } catch(e) { console.error('loadMessages error:', e); }
   }
+  // Per Bot 9: messages had no live update at all — a client's reply only
+  // ever showed up once the facilitator sent something themselves and the
+  // thread happened to reload. This polls quietly in the background instead.
+  // Skipped while a message is mid-edit (an inline <input> is on screen) so
+  // a refresh can't yank it out from under someone typing a correction.
+  setInterval(() => {
+    if (!currentClientId) return;
+    if (document.querySelector('#msgList input[id^="editInput_"]')) return;
+    loadMessages();
+  }, 7000);
   function renderMsgThreadTabs(threads) {
     const el = document.getElementById('msgThreadTabs');
     el.innerHTML = `<button class="msg-thread-tab ${!_msgSessionId?'active':''}" onclick="switchMsgThread('')">General</button>` +
@@ -955,12 +966,35 @@
   document.getElementById('msgVoiceBtn').addEventListener('click', () => toggleRecording('voice'));
   document.getElementById('msgVideoBtn').addEventListener('click', () => toggleRecording('video'));
 
+  // Per Bot 9: nothing previously stopped a second click (voice or video)
+  // from firing a second, overlapping getUserMedia()/MediaRecorder setup
+  // while the first was still waiting on the browser's permission prompt —
+  // which can take a while and gave no visual feedback in the meantime, so
+  // clicking again out of confusion was the natural thing to do. That race
+  // corrupted the recording (the "Error" player afterward). _msgRecordingPending
+  // blocks that window; both buttons are disabled/marked "pending" the moment
+  // a click starts, before the awaited permission prompt even appears.
+  let _msgRecordingPending = false;
   async function toggleRecording(kind) {
     if (_msgRecorder && _msgRecorder.state === 'recording') { _msgRecorder.stop(); return; }
+    if (_msgRecordingPending) return;
+    const voiceBtn = document.getElementById('msgVoiceBtn');
+    const videoBtn = document.getElementById('msgVideoBtn');
+    _msgRecordingPending = true;
+    [voiceBtn, videoBtn].forEach(b => { b.disabled = true; b.classList.add('pending'); });
+    let stream;
     try {
       const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
-      _msgRecordStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch(e) { alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.'); return; }
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) {
+      _msgRecordingPending = false;
+      [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+      alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.');
+      return;
+    }
+    _msgRecordStream = stream;
+    _msgRecordingPending = false;
+    [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
 
     _msgRecordingKind = kind;
     const chunks = [];
