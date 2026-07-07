@@ -1661,18 +1661,70 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
 // fallback for any action without its own image yet (see
 // resolveTomteImage below for the actual fallback logic).
 const TOMTE_ACTIONS = ['default', 'greeting', 'shrug', 'smile', 'thinking', 'wink', 'laugh', 'bow'];
+// ── Tomte photo storage (Per Bot 9) — R2, not the Railway volume ──
+// Local-disk uploads (the original Per Bot 8 behaviour) turned out to be
+// unreliable: a 500 (not a clean 404) intermittently reading back a photo
+// that had uploaded fine minutes earlier, consistent with the same volume-
+// mount flakiness already seen elsewhere in this app. R2 is what every
+// other upload in this app already moved to for exactly this durability
+// reason — this brings Tomte's photo uploads in line with that, using the
+// same "public object" pattern as newsletter images (no tier-gating makes
+// sense for an app-helper avatar, so a plain public URL is fine here too).
+//
+// Backward compatible with anything uploaded before this migration: those
+// rows hold a bare local filename with no slash in it (e.g. "abc123.png"),
+// so tomteImageUrl() keeps serving those through the old /uploads/:filename
+// route, while every new upload is stored as an R2 key with the
+// "tomte-images/" prefix baked in (e.g. "tomte-images/abc123.png") and
+// served through the new, durable /tomte-images/:key route below. No data
+// migration needed — old references just keep working exactly as before,
+// nothing gets migrated out from under them.
+function tomteImageUrl(stored) {
+  if (!stored) return null;
+  return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
+}
+// Uploads req.file (multer's local temp copy) to R2 and returns the stored
+// key to save in the DB, or null with the local filename as a fallback if
+// R2 isn't configured — same "R2 preferred, disk as legacy fallback"
+// pattern already used for content library files.
+async function uploadTomteImageToR2(file) {
+  if (!media.isConfigured()) return file.filename; // legacy disk fallback, unchanged behaviour
+  const buffer = fs.readFileSync(file.path);
+  const ext = path.extname(file.originalname) || path.extname(file.filename) || '';
+  const key = `tomte-images/${uuidv4()}${ext}`;
+  await media.uploadPublicObject(key, buffer, file.mimetype);
+  fs.unlink(file.path, () => {});
+  return key;
+}
+app.get('/tomte-images/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`tomte-images/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
+
 app.get('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), (req, res) => {
-  const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: r.image_filename ? `/uploads/${r.image_filename}` : null }));
+  const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: tomteImageUrl(r.image_filename) }));
   res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES });
 });
-app.post('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+app.post('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const language = (req.body.language || '').trim();
   const action = (req.body.action || 'default').trim();
   if (!language) return res.status(400).json({ error: 'Choose a language.' });
   if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
-  db.setTomteLanguageDefaultImage(language, action, req.file.filename);
-  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.setTomteLanguageDefaultImage(language, action, stored);
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('tomte-defaults image upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload image right now — please try again.' });
+  }
 });
 app.delete('/api/admin/tomte-defaults/:language/:action', auth.requireAuthApi(['admin']), (req, res) => {
   db.deleteTomteLanguageDefault(req.params.language, req.params.action);
@@ -1721,12 +1773,18 @@ app.patch('/api/admin/users/:id/tomte-name', auth.requireAuthApi(['admin']), (re
   db.setTomteName('client', req.params.id, (req.body.name || '').trim().slice(0, 30));
   res.json({ ok: true });
 });
-app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   const user = db.getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
-  db.setTomteImage('client', req.params.id, req.file.filename);
-  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.setTomteImage('client', req.params.id, stored);
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('tomte-image upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
 });
 
 
@@ -1744,11 +1802,11 @@ app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upl
 function resolveTomteImage(personalImageFilename, language, action) {
   if (action && action !== 'default') {
     const actionImg = db.getTomteLanguageDefaultImage(language, action);
-    if (actionImg) return `/uploads/${actionImg}`;
+    if (actionImg) return tomteImageUrl(actionImg);
   }
-  if (personalImageFilename) return `/uploads/${personalImageFilename}`;
+  if (personalImageFilename) return tomteImageUrl(personalImageFilename);
   const langDefault = db.getTomteLanguageDefaultImage(language, 'default');
-  if (langDefault) return `/uploads/${langDefault}`;
+  if (langDefault) return tomteImageUrl(langDefault);
   return null;
 }
 
@@ -1761,10 +1819,16 @@ app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
   db.setTomteName(req.user.role, req.user.id, (req.body.name || '').trim().slice(0, 30));
   res.json({ ok: true });
 });
-app.post('/api/my/tomte-image', auth.requireAuthApi(), upload.single('file'), (req, res) => {
+app.post('/api/my/tomte-image', auth.requireAuthApi(), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
-  db.setTomteImage(req.user.role, req.user.id, req.file.filename);
-  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.setTomteImage(req.user.role, req.user.id, stored);
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('my tomte-image upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
 });
 
 // ── Tomte — the app-navigation helper (Per Bot 8) ──
