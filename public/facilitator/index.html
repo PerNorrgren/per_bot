@@ -284,6 +284,25 @@
     .btn-spinner { display:inline-block; width:14px; height:14px; vertical-align:-2.5px; margin-right:7px; animation:yy-spin 0.85s linear infinite; }
     button:disabled { opacity:0.75; cursor:default; }
 
+    /* ── Messages (Per Bot 8) ── */
+    .msg-thread-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+    .msg-thread-tab { padding:5px 11px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); font-size:11px; cursor:pointer; }
+    .msg-thread-tab.active { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.8); background:rgba(180,230,200,0.08); }
+    .msg-list { display:flex; flex-direction:column; gap:8px; max-height:280px; overflow-y:auto; padding:4px 2px; margin-bottom:10px; }
+    .msg-bubble-row { display:flex; }
+    .msg-bubble-row.me { justify-content:flex-end; }
+    .msg-bubble { max-width:78%; padding:8px 11px; border-radius:10px; font-size:12.5px; line-height:1.5; position:relative; }
+    .msg-bubble-row.me .msg-bubble { background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.2); color:rgba(220,255,235,0.9); }
+    .msg-bubble-row.them .msg-bubble { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.8); }
+    .msg-meta { font-size:10px; color:rgba(255,255,255,0.3); margin-top:4px; display:flex; gap:8px; align-items:center; }
+    .msg-meta button { background:none; border:none; color:rgba(255,255,255,0.3); cursor:pointer; font-size:10px; padding:0; text-decoration:underline; }
+    .msg-deleted { font-style:italic; color:rgba(255,255,255,0.3); }
+    .msg-composer { display:flex; align-items:center; gap:6px; }
+    .msg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.85); font-size:12.5px; font-family:inherit; }
+    .msg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:6px 8px; cursor:pointer; font-size:14px; line-height:1; }
+    .msg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
+    .msg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:8px; background:rgba(255,255,255,0.04); border-radius:8px; }
+
     .wave-small { display:none; gap:3px; align-items:flex-end; height:16px; }
     .wave-small.on { display:flex; }
     .wave-small span { display:block; width:2px; border-radius:2px; background:rgba(180,230,200,0.7); animation:wv 1.1s ease-in-out infinite; }
@@ -392,6 +411,29 @@
           <div class="practices-list" id="facPracticesList"></div>
           <div class="add-practice-wrap">
             <button class="add-practice-btn" id="addPracticeBtn2">+ Add practice</button>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-title">Messages</span>
+            <span class="section-toggle" id="msgUnreadBadge"></span>
+          </div>
+          <div class="section-body">
+            <div class="msg-thread-tabs" id="msgThreadTabs">
+              <button class="msg-thread-tab active" data-session="" onclick="switchMsgThread('')">General</button>
+            </div>
+            <div class="msg-list" id="msgList"></div>
+            <div class="msg-recording-preview" id="msgRecordingPreview" style="display:none"></div>
+            <div class="msg-composer">
+              <input type="text" id="msgInput" placeholder="Write a message…"/>
+              <button class="msg-icon-btn" id="msgAttachBtn" title="Attach file">📎</button>
+              <button class="msg-icon-btn" id="msgVoiceBtn" title="Record voice note">🎙️</button>
+              <button class="msg-icon-btn" id="msgVideoBtn" title="Record video note">🎥</button>
+              <button class="modal-confirm" id="msgSendBtn">Send</button>
+            </div>
+            <input type="file" id="msgFileInput" style="display:none"/>
           </div>
         </div>
       </div>
@@ -548,6 +590,9 @@
     renderSessions(data.sessions || []);
     renderFacPractices(data.practices || []);
 
+    _msgSessionId = '';
+    loadMessages();
+
     // Open WebSocket
     openWs(id);
     loadClients();
@@ -650,6 +695,189 @@
     if (!confirm(`Delete "${title}"? This can't be undone.`)) return;
     await fetch(`/api/practices/${id}`, { method: 'DELETE' });
     loadClientData();
+  }
+
+  // ══════════════════════════════════════════
+  // ── Messages (Per Bot 8) ──
+  // ══════════════════════════════════════════
+  let _msgSessionId = '';           // '' = General thread
+  let _msgRecorder = null;
+  let _msgRecordedBlob = null;
+  let _msgRecordingKind = null;     // 'voice' | 'video'
+  let _msgRecordStream = null;
+
+  async function loadMessages() {
+    if (!currentClientId) return;
+    try {
+      const [threadsRes, msgsRes] = await Promise.all([
+        fetch(`/api/clients/${currentClientId}/messages/session-threads`),
+        fetch(`/api/clients/${currentClientId}/messages${_msgSessionId ? '?sessionId=' + _msgSessionId : ''}`)
+      ]);
+      const threads = await threadsRes.json();
+      const msgs    = await msgsRes.json();
+      renderMsgThreadTabs(threads);
+      renderMsgList(msgs);
+      fetch(`/api/clients/${currentClientId}/messages/unread-count`)
+        .then(r => r.json())
+        .then(d => { document.getElementById('msgUnreadBadge').textContent = d.count > 0 ? d.count : ''; })
+        .then(() => fetch(`/api/clients/${currentClientId}/messages/read`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: _msgSessionId || null })
+        }));
+    } catch(e) { console.error('loadMessages error:', e); }
+  }
+  function renderMsgThreadTabs(threads) {
+    const el = document.getElementById('msgThreadTabs');
+    el.innerHTML = `<button class="msg-thread-tab ${!_msgSessionId?'active':''}" onclick="switchMsgThread('')">General</button>` +
+      threads.map(t => `<button class="msg-thread-tab ${_msgSessionId===t.session_id?'active':''}" onclick="switchMsgThread('${t.session_id}')">Session ${(t.session_created_at||'').slice(0,10)}</button>`).join('');
+  }
+  function switchMsgThread(sessionId) {
+    _msgSessionId = sessionId;
+    loadMessages();
+  }
+  function jumpToSessionMessages() {
+    document.getElementById('sessionReviewModal').classList.remove('visible');
+    switchMsgThread(reviewSessionId);
+    document.getElementById('msgList').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function msgBubbleContent(m) {
+    if (m.deleted_at) return `<span class="msg-deleted">Message deleted</span>`;
+    if (m.content_type === 'voice')  return `<audio controls preload="none" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
+    if (m.content_type === 'video')  return `<video controls preload="none" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
+    if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
+    return (m.content || '').replace(/</g,'&lt;');
+  }
+  function renderMsgList(msgs) {
+    const el = document.getElementById('msgList');
+    if (!msgs.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.25);font-style:italic">No messages yet</div>'; return; }
+    el.innerHTML = msgs.map(m => {
+      const mine = m.sender_role === 'facilitator';
+      const time = (m.created_at || '').slice(0,16).replace('T',' ');
+      const canEdit = mine && !m.deleted_at;
+      return `
+      <div class="msg-bubble-row ${mine?'me':'them'}">
+        <div>
+          <div class="msg-bubble" id="msgBubble_${m.id}">${msgBubbleContent(m)}</div>
+          <div class="msg-meta">
+            <span>${mine?'You':'Client'} · ${time}${m.edited_at?' · edited':''}</span>
+            ${canEdit && m.content_type==='text' ? `<button onclick="startEditMsg('${m.id}')">Edit</button><button onclick="deleteMsg('${m.id}')">Delete</button>` : ''}
+            ${canEdit && m.content_type!=='text' ? `<button onclick="deleteMsg('${m.id}')">Delete</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function startEditMsg(id) {
+    const bubble = document.getElementById(`msgBubble_${id}`);
+    const current = bubble.textContent;
+    bubble.innerHTML = `<input type="text" id="editInput_${id}" value="${current.replace(/"/g,'&quot;')}" style="width:100%;background:rgba(0,0,0,0.2);border:1px solid rgba(180,230,200,0.3);border-radius:6px;padding:4px 7px;color:inherit;font-family:inherit;font-size:inherit"/>
+      <div style="display:flex;gap:8px;margin-top:5px">
+        <button onclick="saveEditMsg('${id}')" style="font-size:10px;color:rgba(180,230,200,0.8);background:none;border:none;cursor:pointer;text-decoration:underline">Save</button>
+        <button onclick="loadMessages()" style="font-size:10px;color:rgba(255,255,255,0.4);background:none;border:none;cursor:pointer;text-decoration:underline">Cancel</button>
+      </div>`;
+    document.getElementById(`editInput_${id}`).focus();
+  }
+  async function saveEditMsg(id) {
+    const content = document.getElementById(`editInput_${id}`).value.trim();
+    if (!content) return;
+    await fetch(`/api/messages/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+    loadMessages();
+  }
+  async function deleteMsg(id) {
+    if (!confirm('Delete this message? This can\'t be undone.')) return;
+    await fetch(`/api/messages/${id}`, { method: 'DELETE' });
+    loadMessages();
+  }
+
+  // ── Send text ──
+  document.getElementById('msgSendBtn').addEventListener('click', sendMsgText);
+  document.getElementById('msgInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendMsgText(); });
+  async function sendMsgText() {
+    const input = document.getElementById('msgInput');
+    const content = input.value.trim();
+    if (!content || !currentClientId) return;
+    const btn = document.getElementById('msgSendBtn');
+    setBtnLoading(btn, true, 'Sending…');
+    try {
+      await fetch(`/api/clients/${currentClientId}/messages`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: _msgSessionId || null, content })
+      });
+      input.value = '';
+      await loadMessages();
+    } finally { setBtnLoading(btn, false); }
+  }
+
+  // ── Attachment ──
+  document.getElementById('msgAttachBtn').addEventListener('click', () => document.getElementById('msgFileInput').click());
+  document.getElementById('msgFileInput').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file || !currentClientId) return;
+    const btn = document.getElementById('msgAttachBtn');
+    setBtnLoading(btn, true, '');
+    try {
+      const fd = new FormData();
+      fd.append('client_id', currentClientId);
+      fd.append('session_id', _msgSessionId || '');
+      fd.append('content_type', 'attachment');
+      fd.append('file', file);
+      await fetch(`/api/clients/${currentClientId}/messages/upload`, { method: 'POST', body: fd });
+      await loadMessages();
+    } finally { setBtnLoading(btn, false); e.target.value = ''; }
+  });
+
+  // ── Voice / video notes — MediaRecorder, record → preview → send/discard ──
+  document.getElementById('msgVoiceBtn').addEventListener('click', () => toggleRecording('voice'));
+  document.getElementById('msgVideoBtn').addEventListener('click', () => toggleRecording('video'));
+
+  async function toggleRecording(kind) {
+    if (_msgRecorder && _msgRecorder.state === 'recording') { _msgRecorder.stop(); return; }
+    try {
+      const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
+      _msgRecordStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) { alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.'); return; }
+
+    _msgRecordingKind = kind;
+    const chunks = [];
+    _msgRecorder = new MediaRecorder(_msgRecordStream);
+    _msgRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    _msgRecorder.onstop = () => {
+      _msgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
+      _msgRecordStream.getTracks().forEach(t => t.stop());
+      document.getElementById(kind === 'video' ? 'msgVideoBtn' : 'msgVoiceBtn').classList.remove('recording');
+      showRecordingPreview(kind);
+    };
+    _msgRecorder.start();
+    document.getElementById(kind === 'video' ? 'msgVideoBtn' : 'msgVoiceBtn').classList.add('recording');
+  }
+  function showRecordingPreview(kind) {
+    const el = document.getElementById('msgRecordingPreview');
+    const url = URL.createObjectURL(_msgRecordedBlob);
+    el.style.display = 'flex';
+    el.innerHTML = (kind === 'video'
+      ? `<video src="${url}" controls style="max-width:140px;border-radius:6px"></video>`
+      : `<audio src="${url}" controls style="max-width:180px"></audio>`) +
+      `<button class="msg-icon-btn" onclick="sendRecordedNote()">Send</button>
+       <button class="msg-icon-btn" onclick="discardRecordedNote()">Discard</button>`;
+  }
+  function discardRecordedNote() {
+    _msgRecordedBlob = null;
+    document.getElementById('msgRecordingPreview').style.display = 'none';
+    document.getElementById('msgRecordingPreview').innerHTML = '';
+  }
+  async function sendRecordedNote() {
+    if (!_msgRecordedBlob || !currentClientId) return;
+    const fd = new FormData();
+    fd.append('client_id', currentClientId);
+    fd.append('session_id', _msgSessionId || '');
+    fd.append('content_type', _msgRecordingKind);
+    fd.append('file', _msgRecordedBlob, `${_msgRecordingKind}-note.webm`);
+    discardRecordedNote();
+    await fetch(`/api/clients/${currentClientId}/messages/upload`, { method: 'POST', body: fd });
+    await loadMessages();
   }
 
   // ── Conversation ──
@@ -1272,6 +1500,7 @@
 
     <div class="modal-btns">
       <button class="modal-cancel" onclick="document.getElementById('sessionReviewModal').classList.remove('visible')">Close</button>
+      <button class="modal-confirm" onclick="jumpToSessionMessages()">Message about this session</button>
     </div>
   </div>
 </div>

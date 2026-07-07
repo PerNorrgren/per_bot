@@ -330,6 +330,31 @@ async function getDb() {
     FOREIGN KEY (client_id) REFERENCES users(id)
   )`);
 
+  // ── Messages (Per Bot 8) — facilitator ↔ client, two-way. session_id
+  // NULL means the client's general thread; set means it's tied to that
+  // specific session (opened from the session's own record so context
+  // stays attached). course_instance_id is unused for now — a deliberate
+  // placeholder so the later cohort/course-instance messaging feature
+  // (community channel + per-lesson teacher channel) extends this same
+  // table instead of needing a second, parallel messaging system.
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    facilitator_id TEXT NOT NULL,
+    session_id TEXT,
+    course_instance_id TEXT,
+    sender_role TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'text',
+    content TEXT DEFAULT '',
+    filename TEXT DEFAULT '',
+    original_filename TEXT DEFAULT '',
+    edited_at TEXT,
+    deleted_at TEXT,
+    read_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Client journal entries (Per Bot 6) ── Client-authored, distinct
   // from the sessions table above which holds facilitator/bot-generated
   // summaries. Each entry has TWO independent sharing flags — a client
@@ -759,6 +784,11 @@ async function getDb() {
     "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
     "ALTER TABLE facilitators ADD COLUMN reset_token TEXT",
     "ALTER TABLE facilitators ADD COLUMN reset_token_expires TEXT",
+    // Message notifications (Per Bot 8) — default on, since there's no
+    // settings toggle for these yet; gated on having an email/phone on
+    // file at all, same as every other notification type here.
+    "ALTER TABLE users ADD COLUMN pref_email_messages INTEGER DEFAULT 1",
+    "ALTER TABLE users ADD COLUMN pref_sms_messages INTEGER DEFAULT 1",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1847,7 +1877,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
@@ -1940,6 +1970,60 @@ function getSessionsForClient(clientId) {
 }
 function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
+}
+
+// ── Messages (Per Bot 8) ──
+function addMessage(id, clientId, facilitatorId, sessionId, senderRole, senderId, contentType, content, filename, originalFilename) {
+  getDbSync().run(
+    `INSERT INTO messages (id,client_id,facilitator_id,session_id,sender_role,sender_id,content_type,content,filename,original_filename)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [id, clientId, facilitatorId, sessionId || null, senderRole, senderId, contentType || 'text', content || '', filename || '', originalFilename || '']
+  ); save();
+  return queryOne('SELECT * FROM messages WHERE id=?', [id]);
+}
+// sessionId omitted/null → the client's general thread with this facilitator.
+function getMessageThread(clientId, facilitatorId, sessionId) {
+  return sessionId
+    ? queryAll('SELECT * FROM messages WHERE client_id=? AND facilitator_id=? AND session_id=? ORDER BY created_at ASC', [clientId, facilitatorId, sessionId])
+    : queryAll('SELECT * FROM messages WHERE client_id=? AND facilitator_id=? AND session_id IS NULL ORDER BY created_at ASC', [clientId, facilitatorId]);
+}
+// One row per session that actually has messages, for the thread-picker list.
+function getSessionThreadsForClient(clientId, facilitatorId) {
+  return queryAll(`
+    SELECT s.id as session_id, s.type, s.created_at as session_created_at,
+      (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) as message_count
+    FROM sessions s
+    WHERE s.client_id=? AND s.facilitator_id=? AND (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) > 0
+    ORDER BY s.created_at DESC`, [clientId, facilitatorId]);
+}
+function getMessageById(id) { return queryOne('SELECT * FROM messages WHERE id=?', [id]); }
+function editMessage(id, content) {
+  getDbSync().run("UPDATE messages SET content=?, edited_at=datetime('now') WHERE id=?", [content, id]); save();
+}
+function deleteMessage(id) {
+  // Soft delete — keeps the row (and its place in the thread) for the
+  // clinical record, but clears the body so it renders as "Message
+  // deleted" rather than actually vanishing without a trace.
+  getDbSync().run("UPDATE messages SET content='', filename='', deleted_at=datetime('now') WHERE id=?", [id]); save();
+}
+function markThreadRead(clientId, facilitatorId, sessionId, readerRole) {
+  const otherRole = readerRole === 'facilitator' ? 'client' : 'facilitator';
+  if (sessionId) {
+    getDbSync().run("UPDATE messages SET read_at=datetime('now') WHERE client_id=? AND facilitator_id=? AND session_id=? AND sender_role=? AND read_at IS NULL",
+      [clientId, facilitatorId, sessionId, otherRole]);
+  } else {
+    getDbSync().run("UPDATE messages SET read_at=datetime('now') WHERE client_id=? AND facilitator_id=? AND session_id IS NULL AND sender_role=? AND read_at IS NULL",
+      [clientId, facilitatorId, otherRole]);
+  }
+  save();
+}
+function getUnreadMessageCountForFacilitator(facilitatorId, clientId) {
+  return queryOne('SELECT COUNT(*) as n FROM messages WHERE facilitator_id=? AND client_id=? AND sender_role=? AND read_at IS NULL',
+    [facilitatorId, clientId, 'client']).n;
+}
+function getUnreadMessageCountForClient(clientId) {
+  return queryOne('SELECT COUNT(*) as n FROM messages WHERE client_id=? AND sender_role=? AND read_at IS NULL',
+    [clientId, 'facilitator']).n;
 }
 
 // ── Client journal entries ──
@@ -2771,6 +2855,8 @@ module.exports = {
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,
+  addMessage, getMessageThread, getSessionThreadsForClient, getMessageById, editMessage, deleteMessage,
+  markThreadRead, getUnreadMessageCountForFacilitator, getUnreadMessageCountForClient,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,
   // Categories
   getAllCategories, getTopCategories, getSubcategories,

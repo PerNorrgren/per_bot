@@ -54,6 +54,30 @@
     .med-cat-name { font-size:14px; color:rgba(255,255,255,0.82); }
     .med-cat-count { font-size:11px; color:rgba(255,255,255,0.32); margin-top:4px; }
 
+    /* ── Working-button feedback (Per Bot 8) — see setBtnLoading() below */
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:14px; height:14px; vertical-align:-2.5px; margin-right:7px; animation:yy-spin 0.85s linear infinite; }
+    button:disabled { opacity:0.75; cursor:default; }
+
+    /* ── Messages (Per Bot 8) — client side ── */
+    #youMsgBadge:not(:empty) { display:inline-block; min-width:15px; padding:0 4px; margin-left:5px; border-radius:8px; background:rgba(255,140,120,0.85); color:#1a1a1a; font-size:10px; line-height:15px; text-align:center; }
+    .cmsg-thread-tabs { display:flex; gap:6px; flex-wrap:wrap; padding:10px 5px 8px; }
+    .cmsg-thread-tab { padding:6px 13px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); font-size:12px; cursor:pointer; }
+    .cmsg-thread-tab.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
+    .cmsg-list { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:6px 5px; }
+    .cmsg-row { display:flex; }
+    .cmsg-row.me { justify-content:flex-end; }
+    .cmsg-bubble { max-width:80%; padding:10px 13px; border-radius:12px; font-size:13.5px; line-height:1.5; }
+    .cmsg-row.me .cmsg-bubble { background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.25); color:rgba(220,255,235,0.92); }
+    .cmsg-row.them .cmsg-bubble { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.82); }
+    .cmsg-meta { font-size:10px; color:rgba(255,255,255,0.3); margin-top:4px; }
+    .cmsg-deleted { font-style:italic; color:rgba(255,255,255,0.3); }
+    .cmsg-composer { display:flex; align-items:center; gap:6px; padding:8px 5px 4px; flex-shrink:0; }
+    .cmsg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 12px; color:rgba(255,255,255,0.85); font-size:13.5px; font-family:inherit; }
+    .cmsg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 9px; cursor:pointer; font-size:15px; line-height:1; }
+    .cmsg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
+    .cmsg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin:0 5px 8px; background:rgba(255,255,255,0.04); border-radius:10px; }
+
     /* Talk */
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
@@ -457,6 +481,7 @@
     <div class="library-view" id="youView">
       <div class="lib-subnav">
         <button class="lib-subnav-btn active" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
+        <button class="lib-subnav-btn" id="youSubMessages" onclick="switchYouSub('messages')">Messages<span id="youMsgBadge"></span></button>
         <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
         <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
         <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
@@ -465,6 +490,23 @@
       <!-- Account region -->
       <div class="lib-sub-panel visible" id="youAccountPanel">
         <div class="practices-scroll" id="youAccountSummary"><div class="no-practices">Loading…</div></div>
+      </div>
+
+      <!-- Messages region -->
+      <div class="lib-sub-panel" id="youMessagesPanel" style="flex-direction:column">
+        <div class="cmsg-thread-tabs" id="cmsgThreadTabs">
+          <button class="cmsg-thread-tab active" onclick="switchCmsgThread('')">General</button>
+        </div>
+        <div class="cmsg-list" id="cmsgList"></div>
+        <div class="cmsg-recording-preview" id="cmsgRecordingPreview" style="display:none"></div>
+        <div class="cmsg-composer">
+          <input type="text" id="cmsgInput" placeholder="Message your facilitator…"/>
+          <button class="cmsg-icon-btn" id="cmsgAttachBtn" title="Attach file">📎</button>
+          <button class="cmsg-icon-btn" id="cmsgVoiceBtn" title="Record voice note">🎙️</button>
+          <button class="cmsg-icon-btn" id="cmsgVideoBtn" title="Record video note">🎥</button>
+          <button class="btn-primary" id="cmsgSendBtn">Send</button>
+        </div>
+        <input type="file" id="cmsgFileInput" style="display:none"/>
       </div>
 
       <!-- Journal region -->
@@ -619,6 +661,28 @@
 </div>
 
 <script>
+  // ── Working-button feedback (Per Bot 8) — same reusable pattern as the
+  // facilitator screen: setBtnLoading(btn, true, 'Label…') swaps a button's
+  // content for a rotating yin-yang + text and disables it; setBtnLoading(btn, false)
+  // restores exactly what was there before.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+
   // ── Session ID ──
   const sessionId = Math.random().toString(36).slice(2);
 
@@ -716,14 +780,16 @@
   let _currentYouSub = 'account';
   function switchYouSub(sub) {
     _currentYouSub = sub;
-    ['account','journal','poems','history'].forEach(s => {
+    ['account','messages','journal','poems','history'].forEach(s => {
       document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
     });
     document.getElementById('youAccountPanel').classList.toggle('visible', sub === 'account');
+    document.getElementById('youMessagesPanel').classList.toggle('visible', sub === 'messages');
     document.getElementById('youJournalPanel').classList.toggle('visible', sub === 'journal');
     document.getElementById('youPoemsPanel').classList.toggle('visible', sub === 'poems');
     document.getElementById('youHistoryPanel').classList.toggle('visible', sub === 'history');
-    if (sub === 'account') loadYouAccountSummary();
+    if (sub === 'account')  loadYouAccountSummary();
+    if (sub === 'messages') loadCmsgMessages();
     if (sub === 'journal') loadJournal();
     if (sub === 'poems')   loadPoems();
     if (sub === 'history') loadHistory();
@@ -745,6 +811,152 @@
     } catch(e) {
       el.innerHTML = '<a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>';
     }
+  }
+
+  // ══════════════════════════════════════════
+  // ── Messages (Per Bot 8) — client side. View + send only; editing and
+  // deleting a sent message is scoped to the facilitator, same as the
+  // clinical record itself. ──
+  // ══════════════════════════════════════════
+  let _cmsgSessionId = '';
+  let _cmsgRecorder = null;
+  let _cmsgRecordedBlob = null;
+  let _cmsgRecordingKind = null;
+  let _cmsgRecordStream = null;
+
+  async function loadCmsgMessages() {
+    try {
+      const [threadsRes, msgsRes] = await Promise.all([
+        fetch('/api/my/messages/session-threads'),
+        fetch('/api/my/messages' + (_cmsgSessionId ? '?sessionId=' + _cmsgSessionId : ''))
+      ]);
+      renderCmsgThreadTabs(await threadsRes.json());
+      renderCmsgList(await msgsRes.json());
+      fetch('/api/my/messages/read', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: _cmsgSessionId || null })
+      });
+      refreshYouMsgBadge();
+    } catch(e) { console.error('loadCmsgMessages error:', e); }
+  }
+  async function refreshYouMsgBadge() {
+    try {
+      const res  = await fetch('/api/my/messages/unread-count');
+      const data = await res.json();
+      document.getElementById('youMsgBadge').textContent = data.count > 0 ? data.count : '';
+    } catch(e) {}
+  }
+  refreshYouMsgBadge();
+  function renderCmsgThreadTabs(threads) {
+    const el = document.getElementById('cmsgThreadTabs');
+    el.innerHTML = `<button class="cmsg-thread-tab ${!_cmsgSessionId?'active':''}" onclick="switchCmsgThread('')">General</button>` +
+      threads.map(t => `<button class="cmsg-thread-tab ${_cmsgSessionId===t.session_id?'active':''}" onclick="switchCmsgThread('${t.session_id}')">Session ${(t.session_created_at||'').slice(0,10)}</button>`).join('');
+  }
+  function switchCmsgThread(sessionId) { _cmsgSessionId = sessionId; loadCmsgMessages(); }
+
+  function cmsgBubbleContent(m) {
+    if (m.deleted_at) return `<span class="cmsg-deleted">Message deleted</span>`;
+    if (m.content_type === 'voice')  return `<audio controls preload="none" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
+    if (m.content_type === 'video')  return `<video controls preload="none" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
+    if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
+    return (m.content || '').replace(/</g,'&lt;');
+  }
+  function renderCmsgList(msgs) {
+    const el = document.getElementById('cmsgList');
+    if (!msgs.length) { el.innerHTML = '<div class="no-poems">No messages yet — say hello.</div>'; return; }
+    el.innerHTML = msgs.map(m => {
+      const mine = m.sender_role === 'client';
+      const time = (m.created_at || '').slice(0,16).replace('T',' ');
+      return `
+      <div class="cmsg-row ${mine?'me':'them'}">
+        <div>
+          <div class="cmsg-bubble">${cmsgBubbleContent(m)}</div>
+          <div class="cmsg-meta">${mine?'You':'Your facilitator'} · ${time}${m.edited_at?' · edited':''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  document.getElementById('cmsgSendBtn').addEventListener('click', sendCmsgText);
+  document.getElementById('cmsgInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendCmsgText(); });
+  async function sendCmsgText() {
+    const input = document.getElementById('cmsgInput');
+    const content = input.value.trim();
+    if (!content) return;
+    const btn = document.getElementById('cmsgSendBtn');
+    setBtnLoading(btn, true, 'Sending…');
+    try {
+      const res = await fetch('/api/my/messages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: _cmsgSessionId || null, content })
+      });
+      if (res.ok) { input.value = ''; await loadCmsgMessages(); }
+      else { const d = await res.json().catch(()=>({})); alert(d.error || 'Could not send message.'); }
+    } finally { setBtnLoading(btn, false); }
+  }
+
+  document.getElementById('cmsgAttachBtn').addEventListener('click', () => document.getElementById('cmsgFileInput').click());
+  document.getElementById('cmsgFileInput').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const btn = document.getElementById('cmsgAttachBtn');
+    setBtnLoading(btn, true, '');
+    try {
+      const fd = new FormData();
+      fd.append('session_id', _cmsgSessionId || '');
+      fd.append('content_type', 'attachment');
+      fd.append('file', file);
+      await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
+      await loadCmsgMessages();
+    } finally { setBtnLoading(btn, false); e.target.value = ''; }
+  });
+
+  document.getElementById('cmsgVoiceBtn').addEventListener('click', () => toggleCmsgRecording('voice'));
+  document.getElementById('cmsgVideoBtn').addEventListener('click', () => toggleCmsgRecording('video'));
+  async function toggleCmsgRecording(kind) {
+    if (_cmsgRecorder && _cmsgRecorder.state === 'recording') { _cmsgRecorder.stop(); return; }
+    try {
+      const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
+      _cmsgRecordStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) { alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.'); return; }
+    _cmsgRecordingKind = kind;
+    const chunks = [];
+    _cmsgRecorder = new MediaRecorder(_cmsgRecordStream);
+    _cmsgRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    _cmsgRecorder.onstop = () => {
+      _cmsgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
+      _cmsgRecordStream.getTracks().forEach(t => t.stop());
+      document.getElementById(kind === 'video' ? 'cmsgVideoBtn' : 'cmsgVoiceBtn').classList.remove('recording');
+      showCmsgRecordingPreview(kind);
+    };
+    _cmsgRecorder.start();
+    document.getElementById(kind === 'video' ? 'cmsgVideoBtn' : 'cmsgVoiceBtn').classList.add('recording');
+  }
+  function showCmsgRecordingPreview(kind) {
+    const el = document.getElementById('cmsgRecordingPreview');
+    const url = URL.createObjectURL(_cmsgRecordedBlob);
+    el.style.display = 'flex';
+    el.innerHTML = (kind === 'video'
+      ? `<video src="${url}" controls style="max-width:140px;border-radius:6px"></video>`
+      : `<audio src="${url}" controls style="max-width:180px"></audio>`) +
+      `<button class="cmsg-icon-btn" onclick="sendCmsgRecordedNote()">Send</button>
+       <button class="cmsg-icon-btn" onclick="discardCmsgRecordedNote()">Discard</button>`;
+  }
+  function discardCmsgRecordedNote() {
+    _cmsgRecordedBlob = null;
+    document.getElementById('cmsgRecordingPreview').style.display = 'none';
+    document.getElementById('cmsgRecordingPreview').innerHTML = '';
+  }
+  async function sendCmsgRecordedNote() {
+    if (!_cmsgRecordedBlob) return;
+    const fd = new FormData();
+    fd.append('session_id', _cmsgSessionId || '');
+    fd.append('content_type', _cmsgRecordingKind);
+    fd.append('file', _cmsgRecordedBlob, `${_cmsgRecordingKind}-note.webm`);
+    discardCmsgRecordedNote();
+    await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
+    await loadCmsgMessages();
   }
 
   // ── Poems — the daily message archive, read aloud on demand ──

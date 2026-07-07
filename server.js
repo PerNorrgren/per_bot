@@ -1685,6 +1685,137 @@ app.delete('/api/practices/:id', auth.requireAuthApi(['admin','facilitator']), (
   db.deletePractice(req.params.id); res.json({ ok: true });
 });
 
+// ── Messages (Per Bot 8) ──
+// Two-way, tied optionally to a session (opened from that session's own
+// record so context stays attached) or general otherwise. Built on a flat
+// table with a reserved course_instance_id column so the future cohort/
+// course-instance messaging (community + per-lesson channels) extends
+// this same table rather than needing a second, parallel system.
+function messageSummaryText(m) {
+  if (m.deleted_at) return 'Message deleted';
+  if (m.content_type === 'voice') return 'Sent a voice note';
+  if (m.content_type === 'video') return 'Sent a video note';
+  if (m.content_type === 'attachment') return `Sent a file${m.content ? ': ' + m.content : ''}`;
+  return m.content;
+}
+async function notifyClientOfMessage(client, message) {
+  try {
+    const preview = messageSummaryText(message).slice(0, 140);
+    if (client.pref_email_messages && client.email) {
+      const b = brand();
+      await sendEmail(client.email, `New message from your facilitator`, `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+        <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+        <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:20px">Hi ${client.name || ''},</h1>
+        <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">You have a new message: <em>"${preview}"</em></p>
+        <a href="${APP_URL}" style="display:inline-block;background:#2d6a4f;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px">Open Per Bot</a>
+        <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/><div style="font-size:12px;color:#aaa">${b.name}</div>
+      </div>`);
+    }
+    if (client.pref_sms_messages && client.phone && sms.isConfigured()) {
+      await sms.sendSms(client.phone, `${brand().name}: New message from your facilitator — "${preview}". Open the app to reply.`);
+    }
+  } catch(e) { console.error('notifyClientOfMessage error:', e.message); }
+}
+
+function requireClientOwnedByFacilitator(req, res, next) {
+  const client = db.getUser(req.params.id);
+  if (!client) return res.status(404).json({ error: 'Client not found.' });
+  if (req.user.role !== 'admin' && client.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied.' });
+  req.messageClient = client;
+  next();
+}
+
+// Facilitator/admin side
+app.get('/api/clients/:id/messages', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, (req, res) => {
+  const sessionId = req.query.sessionId || null;
+  res.json(db.getMessageThread(req.params.id, req.messageClient.facilitator_id || req.user.id, sessionId));
+});
+app.get('/api/clients/:id/messages/session-threads', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, (req, res) => {
+  res.json(db.getSessionThreadsForClient(req.params.id, req.messageClient.facilitator_id || req.user.id));
+});
+app.post('/api/clients/:id/messages', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, async (req, res) => {
+  const { session_id, content } = req.body;
+  if (!content || !content.trim()) return res.status(400).json({ error: 'Message is empty.' });
+  const facilitatorId = req.messageClient.facilitator_id || req.user.id;
+  const msg = db.addMessage(uuidv4(), req.params.id, facilitatorId, session_id || null, 'facilitator', req.user.id, 'text', content.trim(), '', '');
+  notifyClientOfMessage(req.messageClient, msg);
+  res.json(msg);
+});
+app.post('/api/clients/:id/messages/upload', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  const { session_id, content_type, content } = req.body;
+  const facilitatorId = req.messageClient.facilitator_id || req.user.id;
+  const msg = db.addMessage(uuidv4(), req.params.id, facilitatorId, session_id || null, 'facilitator', req.user.id,
+    content_type || 'attachment', content || '', req.file.filename, req.file.originalname);
+  notifyClientOfMessage(req.messageClient, msg);
+  res.json(msg);
+});
+app.patch('/api/clients/:id/messages/read', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, (req, res) => {
+  const facilitatorId = req.messageClient.facilitator_id || req.user.id;
+  db.markThreadRead(req.params.id, facilitatorId, req.body.session_id || null, 'facilitator');
+  res.json({ ok: true });
+});
+app.get('/api/clients/:id/messages/unread-count', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, (req, res) => {
+  res.json({ count: db.getUnreadMessageCountForFacilitator(req.messageClient.facilitator_id || req.user.id, req.params.id) });
+});
+
+// Client side — "my facilitator" is implicit from the logged-in client's own record
+app.get('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
+  const me = db.getUser(req.user.id);
+  if (!me.facilitator_id) return res.json([]);
+  res.json(db.getMessageThread(req.user.id, me.facilitator_id, req.query.sessionId || null));
+});
+app.get('/api/my/messages/session-threads', auth.requireAuthApi(['client']), (req, res) => {
+  const me = db.getUser(req.user.id);
+  if (!me.facilitator_id) return res.json([]);
+  res.json(db.getSessionThreadsForClient(req.user.id, me.facilitator_id));
+});
+app.post('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
+  const me = db.getUser(req.user.id);
+  if (!me.facilitator_id) return res.status(400).json({ error: 'No facilitator assigned yet.' });
+  const { session_id, content } = req.body;
+  if (!content || !content.trim()) return res.status(400).json({ error: 'Message is empty.' });
+  const msg = db.addMessage(uuidv4(), req.user.id, me.facilitator_id, session_id || null, 'client', req.user.id, 'text', content.trim(), '', '');
+  res.json(msg);
+});
+app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.single('file'), (req, res) => {
+  const me = db.getUser(req.user.id);
+  if (!me.facilitator_id) return res.status(400).json({ error: 'No facilitator assigned yet.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  const { session_id, content_type, content } = req.body;
+  const msg = db.addMessage(uuidv4(), req.user.id, me.facilitator_id, session_id || null, 'client', req.user.id,
+    content_type || 'attachment', content || '', req.file.filename, req.file.originalname);
+  res.json(msg);
+});
+app.patch('/api/my/messages/read', auth.requireAuthApi(['client']), (req, res) => {
+  const me = db.getUser(req.user.id);
+  if (!me.facilitator_id) return res.json({ ok: true });
+  db.markThreadRead(req.user.id, me.facilitator_id, req.body.session_id || null, 'client');
+  res.json({ ok: true });
+});
+app.get('/api/my/messages/unread-count', auth.requireAuthApi(['client']), (req, res) => {
+  res.json({ count: db.getUnreadMessageCountForClient(req.user.id) });
+});
+
+// Edit/delete — facilitator only, and only their own messages (Per Bot 8
+// explicitly scoped this to the facilitator; a client can't edit or
+// retract what they've sent, same as the sessions clinical record).
+app.patch('/api/messages/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  const msg = db.getMessageById(req.params.id);
+  if (!msg) return res.status(404).json({ error: 'Message not found.' });
+  if (msg.sender_role !== 'facilitator' || (req.user.role !== 'admin' && msg.sender_id !== req.user.id)) return res.status(403).json({ error: 'Access denied.' });
+  if (!req.body.content || !req.body.content.trim()) return res.status(400).json({ error: 'Message is empty.' });
+  db.editMessage(req.params.id, req.body.content.trim());
+  res.json(db.getMessageById(req.params.id));
+});
+app.delete('/api/messages/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
+  const msg = db.getMessageById(req.params.id);
+  if (!msg) return res.status(404).json({ error: 'Message not found.' });
+  if (msg.sender_role !== 'facilitator' || (req.user.role !== 'admin' && msg.sender_id !== req.user.id)) return res.status(403).json({ error: 'Access denied.' });
+  db.deleteMessage(req.params.id);
+  res.json({ ok: true });
+});
+
 // ── Claude ──
 // Shared low-level call — both callClaude and callClaudeRaw below delegate
 // here, so this one fix applies everywhere (chat, legal translation, MOTD
