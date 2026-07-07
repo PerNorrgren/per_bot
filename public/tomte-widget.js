@@ -140,6 +140,17 @@
     // name/image if the person isn't logged in, or just hasn't set
     // anything. Public pages will always hit the "not logged in" case,
     // which is expected and not an error.
+    //
+    // Per Bot 9: a personal photo can fail to load even when it's set
+    // correctly server-side — e.g. a transient Railway volume hiccup, or
+    // the file genuinely missing. Either way, this should never surface as
+    // a broken image icon. setImgWithFallback() below wires an onerror on
+    // every image we touch so a failed load quietly reverts to the plain
+    // default asset instead.
+    function setImgWithFallback(img, url) {
+      img.onerror = () => { img.onerror = null; img.src = '/assets/tomte.png'; };
+      img.src = url;
+    }
     (async function applyPersonalization() {
       try {
         const res = await fetch('/api/my/tomte-settings');
@@ -151,7 +162,7 @@
         }
         if (data.imageUrl) {
           defaultImageUrl = data.imageUrl;
-          document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = data.imageUrl; });
+          document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, data.imageUrl));
         }
       } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
     })();
@@ -166,9 +177,9 @@
     function applyAction(imageUrl) {
       if (!imageUrl) return;
       clearTimeout(actionRevertTimer);
-      document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = imageUrl; });
+      document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, imageUrl));
       actionRevertTimer = setTimeout(() => {
-        document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = defaultImageUrl; });
+        document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, defaultImageUrl));
       }, 6000);
     }
 
