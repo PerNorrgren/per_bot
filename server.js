@@ -4878,6 +4878,29 @@ app.post('/api/admin/newsletters/:id/retry', auth.requireAuthApi(['admin']), asy
 // cross-references rcpt_to against the newsletter's actual target
 // audience to work out who's genuinely missing — rather than anyone
 // having to page through Scaleway's console by hand.
+// Debug only (Per Bot 8) — read-only, no state changes. Shows exactly what
+// Scaleway's list endpoint actually returns, since the reconcile endpoint's
+// assumption about that response shape needs checking against a real
+// account rather than documentation alone.
+app.get('/api/admin/scaleway-debug', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const url = `https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails?page=1&page_size=5&project_id=${SCW_PROJECT_ID}`;
+    const r = await fetch(url, { headers: { 'X-Auth-Token': SCW_SECRET_KEY } });
+    const bodyText = await r.text();
+    let parsed;
+    try { parsed = JSON.parse(bodyText); } catch(e) { parsed = null; }
+    res.json({
+      requestUrl: url,
+      httpStatus: r.status,
+      rawBody: bodyText.slice(0, 3000),
+      parsedKeys: parsed ? Object.keys(parsed) : null,
+      firstEmailSample: parsed && parsed.emails ? parsed.emails[0] : (Array.isArray(parsed) ? parsed[0] : null),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const newsletter = db.getNewsletter(req.params.id);
@@ -4890,9 +4913,10 @@ app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']),
     const already = recipients.filter(u => reachedAddresses.has((u.email || '').toLowerCase()));
     const missing = recipients.filter(u => !reachedAddresses.has((u.email || '').toLowerCase()));
 
-    // Backfill the log so this newsletter behaves like any other from now
-    // on — the progress/retry endpoints above just work on it afterward,
-    // no separate "legacy newsletter" handling needed anywhere else.
+    // Safe to re-run — clears any previous reconcile attempt for this
+    // newsletter first, so trying again while dialling in the Scaleway
+    // lookup doesn't pile up duplicate log rows each time.
+    db.clearEmailLogForNewsletter(newsletter.id);
     already.forEach(u => {
       const id = uuidv4();
       db.logEmailResult(id, 'newsletter', u.email, newsletter.subject, newsletter.id, u.id, 'sent', null, null);

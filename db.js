@@ -2523,6 +2523,9 @@ function getRecentEmailLog(limit, kind) {
   return queryAll('SELECT * FROM email_log ORDER BY created_at DESC LIMIT ?', [limit || 100]);
 }
 function getEmailLogById(id) { return queryOne('SELECT * FROM email_log WHERE id=?', [id]); }
+function clearEmailLogForNewsletter(newsletterId) {
+  getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
+}
 
 // ── Newsletter audience segments ──
 // The 377-person mailing-list import created accounts at member_tier=0 with
@@ -3018,7 +3021,7 @@ module.exports = {
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
-  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById,
+  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
   // Reminders
   getInactiveUsers,
   markReminderSent,
