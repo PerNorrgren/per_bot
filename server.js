@@ -1680,11 +1680,39 @@ app.delete('/api/admin/tomte-defaults/:language/:action', auth.requireAuthApi(['
 });
 
 // ── Admin editing a user's own details directly (Per Bot 8) ──
-app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), (req, res) => {
+app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async (req, res) => {
   const user = db.getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   const { name, email, phone, language } = req.body;
-  db.updateUserAdminDetails(req.params.id, { name, email, phone, language });
+  const fields = { name, email, phone, language };
+
+  // Tomte language override (Per Bot 9) — empty string means "same as
+  // account language", stored as NULL, same convention as everywhere else
+  // Tomte reads a nullable override.
+  if (req.body.tomte_language !== undefined) {
+    fields.tomte_language = req.body.tomte_language === '' ? null : req.body.tomte_language;
+  }
+
+  // Voice override — same validation as the self-service picker in
+  // PATCH /api/account: never trust an arbitrary string straight from the
+  // request, always check it against the live ElevenLabs voice list first.
+  if (req.body.voice_id !== undefined) {
+    if (req.body.voice_id === '' || req.body.voice_id === null) {
+      fields.voice_id = null;
+    } else {
+      try {
+        const voices = await fetchElevenLabsVoices();
+        if (!voices.some(v => v.voice_id === req.body.voice_id)) {
+          return res.status(400).json({ error: 'That voice is not currently available.' });
+        }
+        fields.voice_id = req.body.voice_id;
+      } catch (e) {
+        return res.status(500).json({ error: 'Could not verify that voice right now — please try again.' });
+      }
+    }
+  }
+
+  db.updateUserAdminDetails(req.params.id, fields);
   res.json({ ok: true });
 });
 app.patch('/api/admin/users/:id/tomte-name', auth.requireAuthApi(['admin']), (req, res) => {
@@ -1726,7 +1754,7 @@ function resolveTomteImage(personalImageFilename, language, action) {
 
 app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const s = db.getTomteSettings(req.user.role, req.user.id);
-  const imageUrl = resolveTomteImage(s.tomte_image_filename, s.language, 'default');
+  const imageUrl = resolveTomteImage(s.tomte_image_filename, s.tomte_language || s.language, 'default');
   res.json({ name: s.tomte_name || null, imageUrl });
 });
 app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
@@ -1799,7 +1827,11 @@ tomteWss.on('connection', (ws, req) => {
     if (payload) {
       const settings = db.getTomteSettings(payload.role, payload.id);
       tomteName = settings.tomte_name || null;
-      tomteLanguage = settings.language || null;
+      // Per Bot 9: an explicit Tomte-only language override wins over the
+      // account's own language field — lets someone get Tomte replies/voice
+      // in a different language than the rest of their account (emails,
+      // UI) without touching that account language at all.
+      tomteLanguage = settings.tomte_language || settings.language || null;
       tomtePersonalImage = settings.tomte_image_filename || null;
       // Personal choice always wins; otherwise Dutch defaults to Mare
       // (if configured), otherwise the app's own default voice.

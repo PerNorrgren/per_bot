@@ -377,6 +377,18 @@
           </label>
         </div>
         <input type="text" id="udTomteName" placeholder="Tomte" maxlength="30" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Tomte language (overrides account language above, for Tomte only)</label>
+          <select id="udTomteLanguage" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box">
+            <option value="">Same as account language</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Tomte voice</label>
+          <select id="udTomteVoice" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box">
+            <option value="">Default (based on language)</option>
+          </select>
+        </div>
       </div>
       <div class="modal-err" id="udErr"></div>
       <div class="modal-btns">
@@ -1427,10 +1439,38 @@
     upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
   }
 
+  // ── Tomte language override + voice picker lookups (Per Bot 9) —
+  // fetched lazily once, cached, and reused each time the modal opens.
+  let _udLanguages = null; // { code: name }
+  let _udVoices = null;    // [{voice_id, name, ...}]
+  async function ensureUdLookupsLoaded() {
+    if (_udLanguages === null) {
+      try {
+        const res = await fetch('/api/admin/tomte-defaults');
+        const data = await res.json();
+        _udLanguages = data.languages || {};
+      } catch(e) { _udLanguages = {}; }
+      const langSel = document.getElementById('udTomteLanguage');
+      langSel.innerHTML = '<option value="">Same as account language</option>' +
+        Object.entries(_udLanguages).map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+    }
+    if (_udVoices === null) {
+      try {
+        const res = await fetch('/api/voices');
+        _udVoices = await res.json();
+        if (!Array.isArray(_udVoices)) _udVoices = [];
+      } catch(e) { _udVoices = []; }
+      const voiceSel = document.getElementById('udTomteVoice');
+      voiceSel.innerHTML = '<option value="">Default (based on language)</option>' +
+        _udVoices.map(v => `<option value="${v.voice_id}">${v.name}</option>`).join('');
+    }
+  }
+
   // ── Edit user details (Per Bot 8) — name/email/phone/language + Tomte ──
-  function editSelectedMemberDetails() {
+  async function editSelectedMemberDetails() {
     const id = [...memberSel.sel][0]; if (!id) return;
     const u = _memberData.find(x => x.id === id); if (!u) return;
+    await ensureUdLookupsLoaded();
     document.getElementById('udUserId').value = id;
     document.getElementById('udName').value = u.name || '';
     document.getElementById('udEmail').value = u.email || '';
@@ -1438,6 +1478,8 @@
     document.getElementById('udLanguage').value = u.language || '';
     document.getElementById('udTomteName').value = u.tomte_name || '';
     document.getElementById('udTomteImgPreview').src = u.tomte_image_filename ? `/uploads/${u.tomte_image_filename}` : '/assets/tomte.png';
+    document.getElementById('udTomteLanguage').value = u.tomte_language || '';
+    document.getElementById('udTomteVoice').value = u.voice_id || '';
     document.getElementById('udErr').textContent = '';
     openModal('userDetailsModal');
   }
@@ -1454,6 +1496,8 @@
           email: document.getElementById('udEmail').value.trim(),
           phone: document.getElementById('udPhone').value.trim(),
           language: document.getElementById('udLanguage').value.trim(),
+          tomte_language: document.getElementById('udTomteLanguage').value,
+          voice_id: document.getElementById('udTomteVoice').value,
         })
       });
       const detailsData = await detailsRes.json();

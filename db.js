@@ -856,6 +856,15 @@ async function getDb() {
     // file at all, same as every other notification type here.
     "ALTER TABLE users ADD COLUMN pref_email_messages INTEGER DEFAULT 1",
     "ALTER TABLE users ADD COLUMN pref_sms_messages INTEGER DEFAULT 1",
+    // Tomte language override (Per Bot 9) — separate from the account's own
+    // `language` (which still drives emails/UI). NULL means "same as
+    // account language", the same convention used everywhere else in Tomte
+    // personalization. Lets an admin give someone Tomte replies/voice in a
+    // different language than their account without touching their actual
+    // account language. Added to facilitators too since getTomteSettings()
+    // already reads from either table depending on role.
+    "ALTER TABLE users ADD COLUMN tomte_language TEXT",
+    "ALTER TABLE facilitators ADD COLUMN tomte_language TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2588,13 +2597,14 @@ function setTomteImage(role, id, filename) {
 }
 function getTomteSettings(role, id) {
   const table = role === 'client' ? 'users' : 'facilitators';
-  return queryOne(`SELECT tomte_name, tomte_image_filename, language, voice_id FROM ${table} WHERE id=?`, [id]) || {};
+  return queryOne(`SELECT tomte_name, tomte_image_filename, language, tomte_language, voice_id FROM ${table} WHERE id=?`, [id]) || {};
 }
 
 // ── Admin editing a user's own profile fields directly (Per Bot 8) —
-// deliberately scoped to identity/contact fields only (name, email, phone,
-// language), not tier/facilitator (already has its own modal/flow) or
-// anything Stripe/consent-related, which shouldn't be hand-edited casually.
+// deliberately scoped to identity/contact fields plus Tomte's own
+// language/voice overrides (Per Bot 9), not tier/facilitator (already has
+// its own modal/flow) or anything Stripe/consent-related, which shouldn't
+// be hand-edited casually.
 // ── Tomte language + action image defaults (Per Bot 8) ──
 function getTomteLanguageDefaults() {
   return queryAll('SELECT * FROM tomte_language_defaults ORDER BY language ASC, action ASC');
@@ -2620,7 +2630,7 @@ function deleteTomteLanguageDefault(language, action) {
 }
 
 function updateUserAdminDetails(id, fields) {
-  const allowed = ['name', 'email', 'phone', 'language'];
+  const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   getDbSync().run(`UPDATE users SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
