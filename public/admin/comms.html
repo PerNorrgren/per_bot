@@ -1122,6 +1122,57 @@
             'columns-1': () => insertColumnsBlock(1),
             'columns-2': () => insertColumnsBlock(2),
             'columns-3': () => insertColumnsBlock(3),
+            // Every standard format button below has the same problem the
+            // paste fix already solved: Quill's default handlers operate on
+            // ITS OWN Delta-model selection, which has no concept of a
+            // position inside a column cell's raw contenteditable. Without
+            // this, clicking Bold with a cell selection active applies
+            // Quill's format at whatever stale position it last knew about
+            // (often the whole document, or right after the columns block —
+            // the same place paste was landing before that fix), rather
+            // than the text you actually selected. Each handler here checks
+            // lastCellSelection (already tracked continuously for the image
+            // feature above) and, when it's live, restores that real
+            // browser selection and applies the native equivalent instead —
+            // otherwise falling through to exactly what Quill's own default
+            // handler would have done.
+            bold:      () => formatInCellOrQuill('bold'),
+            italic:    () => formatInCellOrQuill('italic'),
+            underline: () => formatInCellOrQuill('underline'),
+            list: (value) => {
+              if (inCell()) { restoreCellSelection(); document.execCommand(value === 'ordered' ? 'insertOrderedList' : 'insertUnorderedList'); return; }
+              const quill = getQuill();
+              const current = quill.getFormat().list;
+              quill.format('list', current === value ? false : value);
+            },
+            align: (value) => {
+              if (inCell()) {
+                restoreCellSelection();
+                document.execCommand(value === 'center' ? 'justifyCenter' : value === 'right' ? 'justifyRight' : value === 'justify' ? 'justifyFull' : 'justifyLeft');
+                return;
+              }
+              getQuill().format('align', value);
+            },
+            // link intentionally left on Quill's own default handler — it
+            // opens the Snow theme's inline tooltip for entering a URL,
+            // which is nicer than anything a prompt()-based replacement
+            // could offer. That means linking text inside a column cell
+            // specifically remains unfixed for now (same as before this
+            // round of fixes) rather than trading a regression in the
+            // common case for a fix in a case nobody's hit yet.
+            clean: () => {
+              // This is the one that was actually destructive — Quill's
+              // default "clean" calls removeFormat() on its own selection,
+              // which (same root cause as everything else here) resolved to
+              // the columns block's own position and stripped the embed
+              // format itself, deleting the whole block. Native
+              // removeFormat on the cell's real selection has no way to
+              // reach outside the cell, so it can't touch the block at all.
+              if (inCell()) { restoreCellSelection(); document.execCommand('removeFormat'); return; }
+              const quill = getQuill();
+              const range = quill.getSelection();
+              if (range) quill.removeFormat(range.index, range.length);
+            },
           },
         },
         imageResize: {
@@ -1218,6 +1269,22 @@
     }
     const quill = getQuill();
     return { inCell: false, quillRange: quill.getSelection(true) || { index: quill.getLength() } };
+  }
+
+  // ── Shared by every formatting toolbar handler below (bold/italic/
+  // underline/list/align/link/clean) — same lastCellSelection tracker the
+  // image-insertion feature already relies on above. ──
+  function inCell() {
+    return !!(lastCellSelection && document.contains(lastCellSelection.cellEl));
+  }
+  function restoreCellSelection() {
+    lastCellSelection.browserSel.removeAllRanges();
+    lastCellSelection.browserSel.addRange(lastCellSelection.range);
+  }
+  function formatInCellOrQuill(format) {
+    if (inCell()) { restoreCellSelection(); document.execCommand(format); return; }
+    const quill = getQuill();
+    quill.format(format, !quill.getFormat()[format]);
   }
 
   function insertNodeAtCellRange(target, node) {
@@ -1339,9 +1406,18 @@
           img.src = data.url;
           img.style.maxWidth = '100%';
           insertNodeAtCellRange(target, img);
+          // The image-resize module's click-to-select and alignment
+          // toolbar need a real sibling node to attach to — an image with
+          // nothing after it couldn't be "selected" at all, which is
+          // exactly why alignment silently did nothing until a text line
+          // existed below it. A trailing space guarantees that always.
+          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
         } else {
           quill.deleteText(target.quillRange.index, 'Uploading image…'.length);
           quill.insertEmbed(target.quillRange.index, 'image', data.url);
+          if (target.quillRange.index + 1 >= quill.getLength() - 1) {
+            quill.insertText(target.quillRange.index + 1, ' ');
+          }
           quill.setSelection(target.quillRange.index + 1);
         }
       } catch(e) {
