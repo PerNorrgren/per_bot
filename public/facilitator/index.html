@@ -299,10 +299,12 @@
     .msg-meta { font-size:10px; color:rgba(255,255,255,0.3); margin-top:4px; display:flex; gap:8px; align-items:center; }
     .msg-meta button { background:none; border:none; color:rgba(255,255,255,0.3); cursor:pointer; font-size:10px; padding:0; text-decoration:underline; }
     .msg-deleted { font-style:italic; color:rgba(255,255,255,0.3); }
-    .msg-composer { display:flex; align-items:center; gap:6px; }
+    .msg-composer { display:flex; flex-direction:column; gap:6px; }
     .msg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.85); font-size:12.5px; font-family:inherit; }
-    .msg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:6px 8px; cursor:pointer; font-size:14px; line-height:1; }
+    .msg-composer-actions { display:flex; align-items:center; gap:6px; }
+    .msg-icon-btn { width:34px; height:34px; flex:0 0 34px; display:flex; align-items:center; justify-content:center; background:none; border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:0; cursor:pointer; font-size:14px; line-height:1; }
     .msg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
+    .msg-send-btn { height:34px; display:flex; align-items:center; }
     .msg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:8px; background:rgba(255,255,255,0.04); border-radius:8px; }
 
     /* ── Rich editor (Per Bot 8) ── */
@@ -316,9 +318,9 @@
     .rich-editor-container .ql-picker-options { background:#1a201d; }
     .rich-editor-container .ql-toolbar.ql-snow button.ql-ai-polish { width:auto; padding:0 8px; font-size:12px; color:rgba(180,230,200,0.8); }
 
-    .msg-rich-container { flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; }
-    .msg-rich-container .ql-toolbar.ql-snow { border:none; padding:3px 5px; }
-    .msg-rich-container .ql-toolbar.ql-snow button { width:20px; height:20px; }
+    .msg-rich-container { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; box-sizing:border-box; }
+    .msg-rich-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.1); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); padding:3px 5px; }
+    .msg-rich-container .ql-toolbar.ql-snow button { width:22px; height:22px; }
     .msg-rich-container .ql-container.ql-snow { border:none; font-family:inherit; font-size:12.5px; color:rgba(255,255,255,0.85); }
     .msg-rich-container .ql-editor { padding:6px 9px; min-height:18px; max-height:90px; overflow-y:auto; }
     .msg-rich-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
@@ -450,11 +452,15 @@
             <div class="msg-list" id="msgList"></div>
             <div class="msg-recording-preview" id="msgRecordingPreview" style="display:none"></div>
             <div class="msg-composer">
-              <div id="msgInput_rich" class="msg-rich-container"></div>
-              <button class="msg-icon-btn" id="msgAttachBtn" title="Attach file">📎</button>
-              <button class="msg-icon-btn" id="msgVoiceBtn" title="Record voice note">🎙️</button>
-              <button class="msg-icon-btn" id="msgVideoBtn" title="Record video note">🎥</button>
-              <button class="modal-confirm" id="msgSendBtn">Send</button>
+              <div id="msgInput_rich" class="msg-rich-container">
+                <div id="msgEditor_rich"></div>
+              </div>
+              <div class="msg-composer-actions">
+                <button class="msg-icon-btn" id="msgAttachBtn" title="Attach file">📎</button>
+                <button class="msg-icon-btn" id="msgVoiceBtn" title="Record voice note">🎙️</button>
+                <button class="msg-icon-btn" id="msgVideoBtn" title="Record video note">🎥</button>
+                <button class="modal-confirm msg-send-btn" id="msgSendBtn">Send</button>
+              </div>
             </div>
             <input type="file" id="msgFileInput" style="display:none"/>
           </div>
@@ -890,7 +896,15 @@
   let _msgQuill = null;
   function ensureMsgEditor() {
     if (_msgQuill) return _msgQuill;
-    _msgQuill = new Quill(document.getElementById('msgInput_rich'), {
+    // Mounted on the nested #msgEditor_rich div (not #msgInput_rich itself) —
+    // Quill inserts its auto-generated toolbar as a sibling of whatever
+    // element it's given, one level up. Nesting the mount point one level
+    // deeper means that "one level up" is .msg-rich-container, so the
+    // toolbar actually lands inside the bordered box the CSS above targets,
+    // instead of escaping into the flex row next to it (Per Bot 9 fix —
+    // that escape was what caused the composer to collapse to near-zero
+    // width and become unusable).
+    _msgQuill = new Quill(document.getElementById('msgEditor_rich'), {
       theme: 'snow',
       placeholder: 'Type a message…',
       modules: { toolbar: {
