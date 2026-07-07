@@ -543,6 +543,23 @@ async function getDb() {
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Tomte language + action image defaults (Per Bot 8) ── One row per
+  // (language, action) pair — e.g. Dutch+shrug, Dutch+smile — each with its
+  // own image. 'default' is the plain neutral pose and also the fallback
+  // for any action that doesn't have its own image yet. A person's own
+  // personal Tomte image always wins for the 'default' action specifically;
+  // for every other action, this table is checked directly (exact
+  // language+action match only, no cascading) before falling through to
+  // the standard default resolution — see resolveTomteImage in server.js.
+  db.run(`CREATE TABLE IF NOT EXISTS tomte_language_defaults (
+    language TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT 'default',
+    image_filename TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (language, action)
+  )`);
+
   // ── Legal documents ──
   db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
     id TEXT PRIMARY KEY,
@@ -935,6 +952,19 @@ async function getDb() {
   // idempotent — INSERT OR IGNORE is safe to repeat, and the remap/delete
   // steps below become no-ops once the old ids are gone.
   migrateCategoryTreeV2(db);
+
+  // Migrate the one-off Dutch/Mare column into the new generalized
+  // language-defaults table, so the image Per already uploaded isn't lost.
+  // Naturally idempotent — once migrated, the app_config column is cleared,
+  // so this becomes a no-op on every subsequent boot.
+  try {
+    const cfg = getAppConfig();
+    if (cfg && cfg.tomte_nl_image_filename) {
+      db.run(`INSERT OR REPLACE INTO tomte_language_defaults (language, action, image_filename, updated_at) VALUES ('nl', 'default', ?, datetime('now'))`, [cfg.tomte_nl_image_filename]);
+      db.run(`UPDATE app_config SET tomte_nl_image_filename=NULL WHERE id='default'`);
+      save();
+    }
+  } catch(e) { console.error('[db] tomte_nl_image_filename migration error:', e.message); }
 
   // Seed default membership plans if empty
   const existingPlans = queryAll('SELECT id FROM membership_plans LIMIT 1');
@@ -2565,6 +2595,30 @@ function getTomteSettings(role, id) {
 // deliberately scoped to identity/contact fields only (name, email, phone,
 // language), not tier/facilitator (already has its own modal/flow) or
 // anything Stripe/consent-related, which shouldn't be hand-edited casually.
+// ── Tomte language + action image defaults (Per Bot 8) ──
+function getTomteLanguageDefaults() {
+  return queryAll('SELECT * FROM tomte_language_defaults ORDER BY language ASC, action ASC');
+}
+// Exact match only, no fallback-to-default inside this call — the caller
+// (resolveTomteImage in server.js) decides what to do if nothing's found.
+function getTomteLanguageDefaultImage(language, action) {
+  if (!language) return null;
+  const row = queryOne('SELECT image_filename FROM tomte_language_defaults WHERE language=? AND action=?', [language, action || 'default']);
+  return row ? row.image_filename : null;
+}
+function setTomteLanguageDefaultImage(language, action, filename) {
+  getDbSync().run(
+    `INSERT INTO tomte_language_defaults (language, action, image_filename, updated_at) VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(language, action) DO UPDATE SET image_filename=excluded.image_filename, updated_at=datetime('now')`,
+    [language, action || 'default', filename]
+  );
+  save();
+}
+function deleteTomteLanguageDefault(language, action) {
+  getDbSync().run('DELETE FROM tomte_language_defaults WHERE language=? AND action=?', [language, action || 'default']);
+  save();
+}
+
 function updateUserAdminDetails(id, fields) {
   const allowed = ['name', 'email', 'phone', 'language'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
@@ -3069,6 +3123,7 @@ module.exports = {
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
   setTomteName, setTomteImage, getTomteSettings, updateUserAdminDetails,
+  getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault,
   // Reminders
   getInactiveUsers,
   markReminderSent,

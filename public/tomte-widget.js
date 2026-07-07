@@ -130,6 +130,7 @@
     let isListening = false;
     let mediaStream = null;
     let mediaRecorder = null;
+    let defaultImageUrl = '/assets/tomte.png';
 
     function pageName() {
       return window.TOMTE_PAGE || document.title || location.pathname;
@@ -149,10 +150,27 @@
           fab.title = `Ask ${data.name} how this works`;
         }
         if (data.imageUrl) {
+          defaultImageUrl = data.imageUrl;
           document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = data.imageUrl; });
         }
       } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
     })();
+
+    // Expressions (Per Bot 8) — swaps to whatever image the server resolved
+    // for this action (shrug, smile, thinking, etc.), then quietly reverts
+    // to the person's own default a few seconds later so it doesn't get
+    // stuck mid-expression. imageUrl can be null (no image uploaded for
+    // that action yet) — in which case this just no-ops and the default
+    // stays showing, exactly the "use the default" fallback.
+    let actionRevertTimer = null;
+    function applyAction(imageUrl) {
+      if (!imageUrl) return;
+      clearTimeout(actionRevertTimer);
+      document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = imageUrl; });
+      actionRevertTimer = setTimeout(() => {
+        document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => { img.src = defaultImageUrl; });
+      }, 6000);
+    }
 
     function connect() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
@@ -172,6 +190,7 @@
         if (msg.type === 'response_text') addMessage('bot', msg.text);
         if (msg.type === 'final_transcript') addMessage('user', msg.text);
         if (msg.type === 'audio') playAudio(msg.data);
+        if (msg.type === 'action') applyAction(msg.imageUrl);
         if (msg.type === 'listening_started') { /* no-op, UI already shows mic state */ }
       };
     }

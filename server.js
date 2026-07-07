@@ -1656,13 +1656,27 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
-// ── Tomte language defaults (Per Bot 8) — currently just Dutch/Mare;
-// applies to anyone whose language is Dutch and hasn't set their own
-// personal Tomte image (see /api/my/tomte-settings above).
-app.post('/api/admin/tomte-defaults/nl-image', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+// ── Tomte language + action image defaults (Per Bot 8) — one row per
+// (language, action); 'default' is both the plain neutral pose and the
+// fallback for any action without its own image yet (see
+// resolveTomteImage below for the actual fallback logic).
+const TOMTE_ACTIONS = ['default', 'greeting', 'shrug', 'smile', 'thinking', 'wink', 'laugh', 'bow'];
+app.get('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), (req, res) => {
+  const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: r.image_filename ? `/uploads/${r.image_filename}` : null }));
+  res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES });
+});
+app.post('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
-  db.updateAppConfig({ tomte_nl_image_filename: req.file.filename });
+  const language = (req.body.language || '').trim();
+  const action = (req.body.action || 'default').trim();
+  if (!language) return res.status(400).json({ error: 'Choose a language.' });
+  if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
+  db.setTomteLanguageDefaultImage(language, action, req.file.filename);
   res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+});
+app.delete('/api/admin/tomte-defaults/:language/:action', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteTomteLanguageDefault(req.params.language, req.params.action);
+  res.json({ ok: true });
 });
 
 // ── Admin editing a user's own details directly (Per Bot 8) ──
@@ -1691,15 +1705,28 @@ app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upl
 // ── Tomte personalization (Per Bot 8) — works for any logged-in role
 // (client/facilitator/admin); public/logged-out visitors just get the
 // default everywhere, since there's no account to read a preference from.
+// Resolution order for "what image for this action, this person":
+// 1. An exact (language, action) image, if one's been uploaded — no
+//    cascading here, only a real match for that specific action.
+// 2. Otherwise, the standard default chain: their own personal image,
+//    then their language's default image, then null (widget uses the
+//    generic /assets/tomte.png). This is also what governs the 'default'
+//    action itself, and what showing a non-default request is meant to
+//    fall back to.
+function resolveTomteImage(personalImageFilename, language, action) {
+  if (action && action !== 'default') {
+    const actionImg = db.getTomteLanguageDefaultImage(language, action);
+    if (actionImg) return `/uploads/${actionImg}`;
+  }
+  if (personalImageFilename) return `/uploads/${personalImageFilename}`;
+  const langDefault = db.getTomteLanguageDefaultImage(language, 'default');
+  if (langDefault) return `/uploads/${langDefault}`;
+  return null;
+}
+
 app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const s = db.getTomteSettings(req.user.role, req.user.id);
-  let imageUrl = s.tomte_image_filename ? `/uploads/${s.tomte_image_filename}` : null;
-  // No personal image set — fall back to the language-level default
-  // (currently just Dutch/Mare) before giving up and using the generic one.
-  if (!imageUrl && s.language === 'nl') {
-    const cfg = db.getAppConfig() || {};
-    if (cfg.tomte_nl_image_filename) imageUrl = `/uploads/${cfg.tomte_nl_image_filename}`;
-  }
+  const imageUrl = resolveTomteImage(s.tomte_image_filename, s.language, 'default');
   res.json({ name: s.tomte_name || null, imageUrl });
 });
 app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
@@ -1745,7 +1772,9 @@ Current page: ${page || 'unknown'}.
 ${focus ? `The person just interacted with: ${focus}. Start there — that's almost certainly what they want explained, not the whole page.` : 'Nothing specific in focus — if asked a general question, explain what this page is for.'}
 
 Respond in ${languageName} — this is this specific person's own language preference, not necessarily the app owner's.
-Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as ${displayName} and use "I" naturally.`;
+Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as ${displayName} and use "I" naturally.
+
+Start every reply with exactly one tag on its own, chosen from: [[ACTION:default]] [[ACTION:shrug]] [[ACTION:smile]] [[ACTION:wink]] [[ACTION:laugh]] [[ACTION:bow]] — shrug for redirecting something you can't help with, bow for a closing/thank-you, wink for something playful, laugh for a delighted moment, smile for a normal helpful answer, default otherwise. Pick whichever actually fits the tone of what you're about to say. This tag is stripped before the person sees or hears anything, so it never affects your actual wording.`;
 }
 
 const tomteWss = new WebSocket.Server({ server, path: '/tomte' });
@@ -1763,6 +1792,7 @@ tomteWss.on('connection', (ws, req) => {
   let tomteName = null;
   let tomteLanguage = null;
   let tomteVoiceId = VOICE_ID;
+  let tomtePersonalImage = null;
   try {
     const cookies = parseCookies(req.headers.cookie);
     const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
@@ -1770,6 +1800,7 @@ tomteWss.on('connection', (ws, req) => {
       const settings = db.getTomteSettings(payload.role, payload.id);
       tomteName = settings.tomte_name || null;
       tomteLanguage = settings.language || null;
+      tomtePersonalImage = settings.tomte_image_filename || null;
       // Personal choice always wins; otherwise Dutch defaults to Mare
       // (if configured), otherwise the app's own default voice.
       tomteVoiceId = settings.voice_id || (tomteLanguage === 'nl' && MARE_VOICE_ID ? MARE_VOICE_ID : VOICE_ID);
@@ -1781,7 +1812,10 @@ tomteWss.on('connection', (ws, req) => {
   // Shared by both a real reply and the first-contact greeting below —
   // sends the text immediately, then speaks it in the background once
   // ElevenLabs returns (never blocks the text arriving first).
-  async function speak(text) {
+  async function speak(text, action) {
+    if (action) {
+      send({ type: 'action', action, imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, action) });
+    }
     send({ type: 'response_text', text });
     try {
       const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${tomteVoiceId}?output_format=mp3_44100_192`, {
@@ -1807,13 +1841,23 @@ tomteWss.on('connection', (ws, req) => {
       send({ type: 'response_text', text: "I've answered a lot of questions in a short time — give me a few minutes and ask again." });
       return;
     }
+    // Thinking image, shown immediately while Claude generates the real
+    // reply — swapped out for whatever action the reply actually tags
+    // once it comes back, a moment later.
+    send({ type: 'action', action: 'thinking', imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, 'thinking') });
     try {
       const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName, tomteLanguage);
       history.push({ role: 'user', content: userText });
       if (history.length > 12) history = history.slice(-12); // keep it light — Tomte doesn't need deep memory
-      const reply = await callClaude(systemPrompt, history, 300);
+      const rawReply = await callClaude(systemPrompt, history, 300);
+      // Strip the leading [[ACTION:x]] tag Claude was asked to include —
+      // this never reaches the person as text or speech, it just decides
+      // which image accompanies the reply.
+      const tagMatch = rawReply.match(/^\s*\[\[ACTION:(\w+)\]\]\s*/i);
+      const action = tagMatch && TOMTE_ACTIONS.includes(tagMatch[1].toLowerCase()) ? tagMatch[1].toLowerCase() : 'default';
+      const reply = tagMatch ? rawReply.slice(tagMatch[0].length) : rawReply;
       history.push({ role: 'assistant', content: reply });
-      await speak(reply);
+      await speak(reply, action);
     } catch(e) {
       console.error('tomte respond error:', e.message);
       send({ type: 'response_text', text: 'Something went wrong there — try again in a moment.' });
@@ -1842,7 +1886,7 @@ tomteWss.on('connection', (ws, req) => {
       } catch(e) { /* fall back to the English version if translation fails */ }
     }
     history.push({ role: 'assistant', content: text });
-    await speak(text);
+    await speak(text, 'greeting');
   }
 
   ws.on('message', async (raw) => {

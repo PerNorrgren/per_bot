@@ -187,23 +187,37 @@
     </div>
 
 
-    <!-- Tomte language defaults (Per Bot 8) -->
+    <!-- Tomte language + action image defaults (Per Bot 8) -->
     <div>
       <div class="section-label">Tomte defaults</div>
       <div class="card">
-        <div class="card-header"><div class="card-title">Dutch-language default image</div></div>
+        <div class="card-header"><div class="card-title">Language &amp; expression images</div></div>
         <div class="card-body" style="padding:16px 20px">
-          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:12px">
-            Anyone whose language is set to Dutch sees this image by default (Mare's voice already applies the same way) — unless they've set their own personal Tomte photo, which always takes priority.
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Each row is one language + expression. "default" is both the plain neutral pose and the fallback for any expression that doesn't have its own image yet. A person's own personal Tomte photo always wins over these for their own account.
           </div>
-          <div style="display:flex;align-items:center;gap:14px">
-            <img id="tomteNlImgPreview" src="/assets/tomte.png" style="width:52px;height:52px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
-            <label class="btn sm" style="cursor:pointer">
-              Upload photo
-              <input type="file" id="tomteNlImgInput" accept="image/*" style="display:none" onchange="uploadTomteNlDefaultImage()"/>
-            </label>
+
+          <div id="tomteDefaultsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
           </div>
-          <div class="msg" id="tomteNlMsg" style="margin-top:8px"></div>
+
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Language</label>
+              <select id="tdNewLanguage" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"></select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Expression</label>
+              <select id="tdNewAction" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"></select>
+            </div>
+          </div>
+
+          <div id="tdDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag an image here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Uploads for the language + expression selected above</div>
+          </div>
+          <input type="file" id="tdFileInput" accept="image/*" style="display:none"/>
+          <div class="msg" id="tdMsg" style="margin-top:8px"></div>
         </div>
       </div>
     </div>
@@ -721,38 +735,88 @@
     }
   }
 
-  // ── Tomte language defaults (Per Bot 8) ──
-  async function loadTomteNlDefault() {
+  // ── Tomte language + action image defaults (Per Bot 8) ──
+  let _tomteDefaultsActions = [];
+  let _tomteDefaultsLanguages = {};
+
+  async function loadTomteDefaults() {
     try {
-      const res  = await fetch('/api/setup/config');
+      const res  = await fetch('/api/admin/tomte-defaults');
       const data = await res.json();
-      if (data.tomte_nl_image_filename) document.getElementById('tomteNlImgPreview').src = `/uploads/${data.tomte_nl_image_filename}`;
-    } catch(e) { /* leave default preview showing */ }
+      _tomteDefaultsActions = data.actions || [];
+      _tomteDefaultsLanguages = data.languages || {};
+
+      const langSel = document.getElementById('tdNewLanguage');
+      langSel.innerHTML = Object.entries(_tomteDefaultsLanguages).map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+
+      const actionSel = document.getElementById('tdNewAction');
+      actionSel.innerHTML = _tomteDefaultsActions.map(a => `<option value="${a}">${a.charAt(0).toUpperCase() + a.slice(1)}</option>`).join('');
+
+      renderTomteDefaultsTable(data.rows || []);
+    } catch(e) {
+      document.getElementById('tomteDefaultsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
   }
-  async function uploadTomteNlDefaultImage() {
-    const input = document.getElementById('tomteNlImgInput');
-    const file = input.files[0];
-    if (!file) return;
-    const msg = document.getElementById('tomteNlMsg');
+
+  function renderTomteDefaultsTable(rows) {
+    const el = document.getElementById('tomteDefaultsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No images uploaded yet — add one below.</div>'; return; }
+    el.innerHTML = rows.map(r => {
+      const langName = _tomteDefaultsLanguages[r.language] || r.language;
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <img src="${r.imageUrl || '/assets/tomte.png'}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+        <div style="flex:1; font-size:13px; color:rgba(255,255,255,0.75)">${langName} <span style="color:rgba(255,255,255,0.35)">·</span> ${r.action.charAt(0).toUpperCase() + r.action.slice(1)}</div>
+        <button class="btn sm danger" onclick="deleteTomteDefault('${r.language}','${r.action}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteTomteDefault(language, action) {
+    if (!confirm(`Remove the ${action} image for this language?`)) return;
+    await fetch(`/api/admin/tomte-defaults/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
+    loadTomteDefaults();
+  }
+
+  async function uploadTomteDefault(file) {
+    const msg = document.getElementById('tdMsg');
+    const language = document.getElementById('tdNewLanguage').value;
+    const action = document.getElementById('tdNewAction').value;
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res  = await fetch('/api/admin/tomte-defaults/nl-image', { method: 'POST', body: fd });
+      fd.append('language', language);
+      fd.append('action', action);
+      const res  = await fetch('/api/admin/tomte-defaults', { method: 'POST', body: fd });
       const data = await res.json();
-      if (data.url) {
-        document.getElementById('tomteNlImgPreview').src = data.url;
+      if (data.ok) {
         msg.textContent = 'Saved.';
         msg.style.color = 'rgba(180,230,200,0.85)';
+        loadTomteDefaults();
       } else {
-        msg.textContent = data.error || 'Could not upload — please try again.';
+        msg.textContent = data.error || 'Could not upload.';
         msg.style.color = 'rgba(255,140,120,0.85)';
       }
     } catch(e) {
       msg.textContent = 'Could not upload — please try again.';
       msg.style.color = 'rgba(255,140,120,0.85)';
-    } finally { input.value = ''; }
+    }
   }
-  loadTomteNlDefault();
+
+  const tdDropZone = document.getElementById('tdDropZone');
+  const tdFileInput = document.getElementById('tdFileInput');
+  tdDropZone.addEventListener('click', () => tdFileInput.click());
+  tdFileInput.addEventListener('change', () => { if (tdFileInput.files[0]) uploadTomteDefault(tdFileInput.files[0]); tdFileInput.value = ''; });
+  tdDropZone.addEventListener('dragover', e => { e.preventDefault(); tdDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; tdDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  tdDropZone.addEventListener('dragleave', () => { tdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tdDropZone.style.background = 'none'; });
+  tdDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    tdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tdDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+    if (file) uploadTomteDefault(file);
+  });
+
+  loadTomteDefaults();
 
   // ── Utilities ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
