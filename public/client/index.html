@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>Deeper Mindfulness</title>
   <script src="/brand-inject.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; overflow:hidden; font-family:'Georgia',serif; background:#0a0f0d; }
@@ -53,6 +55,26 @@
     .med-cat-card:hover { border-color:rgba(180,230,200,0.3); }
     .med-cat-name { font-size:14px; color:rgba(255,255,255,0.82); }
     .med-cat-count { font-size:11px; color:rgba(255,255,255,0.32); margin-top:4px; }
+    /* ── Rich editor (Per Bot 8) — Quill dark-theme override ── */
+    .rich-editor-container { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; margin-bottom:10px; }
+    .rich-editor-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.12); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); }
+    .rich-editor-container .ql-container.ql-snow { border:none; font-family:'Georgia',serif; font-size:14px; color:rgba(255,255,255,0.9); min-height:120px; }
+    .rich-editor-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
+    .rich-editor-container .ql-stroke { stroke:rgba(255,255,255,0.55); }
+    .rich-editor-container .ql-fill { fill:rgba(255,255,255,0.55); }
+    .rich-editor-container .ql-picker-label { color:rgba(255,255,255,0.55); }
+    .rich-editor-container .ql-picker-options { background:#1a201d; }
+
+    /* Light message-composer editor — bold/italic/link only, no block toolbar row */
+    .cmsg-rich-container { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; }
+    .cmsg-rich-container .ql-toolbar.ql-snow { border:none; padding:4px 6px; }
+    .cmsg-rich-container .ql-toolbar.ql-snow button { width:22px; height:22px; }
+    .cmsg-rich-container .ql-container.ql-snow { border:none; font-family:'Georgia',serif; font-size:13.5px; color:rgba(255,255,255,0.85); min-height:20px; }
+    .cmsg-rich-container .ql-editor { padding:8px 10px; min-height:20px; max-height:100px; overflow-y:auto; }
+    .cmsg-rich-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
+    .cmsg-rich-container .ql-stroke { stroke:rgba(255,255,255,0.5); }
+    .cmsg-rich-container .ql-picker-options { background:#1a201d; }
+
 
     /* ── Working-button feedback (Per Bot 8) — see setBtnLoading() below */
     @keyframes yy-spin { to { transform: rotate(360deg); } }
@@ -500,7 +522,7 @@
         <div class="cmsg-list" id="cmsgList"></div>
         <div class="cmsg-recording-preview" id="cmsgRecordingPreview" style="display:none"></div>
         <div class="cmsg-composer">
-          <input type="text" id="cmsgInput" placeholder="Message your facilitator…"/>
+          <div id="cmsgInput_rich" class="cmsg-rich-container"></div>
           <button class="cmsg-icon-btn" id="cmsgAttachBtn" title="Attach file">📎</button>
           <button class="cmsg-icon-btn" id="cmsgVoiceBtn" title="Record voice note">🎙️</button>
           <button class="cmsg-icon-btn" id="cmsgVideoBtn" title="Record video note">🎥</button>
@@ -683,6 +705,47 @@
     }
   }
 
+  // ── Rich editor (Per Bot 8) — same pattern as admin/content.html: mounts
+  // Quill on top of a <textarea>, keeping the textarea as the real source
+  // of truth so saveJournalEntry() etc. below needed no changes at all —
+  // they already just read .value.
+  const _richEditors = {};
+  function mountRichEditor(textareaId, force) {
+    const ta = document.getElementById(textareaId);
+    if (!ta) return null;
+    if (_richEditors[textareaId] && !force) return _richEditors[textareaId];
+    ta.style.display = 'none';
+    let container = document.getElementById(textareaId + '_rich');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = textareaId + '_rich';
+      container.className = 'rich-editor-container';
+      ta.parentNode.insertBefore(container, ta.nextSibling);
+    } else {
+      container.innerHTML = '';
+    }
+    const quill = new Quill(container, {
+      theme: 'snow',
+      placeholder: ta.placeholder || '',
+      modules: { toolbar: [
+        ['bold', 'italic', 'underline'],
+        [{ align: [] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link'], ['clean'],
+      ] },
+    });
+    if (ta.value) quill.root.innerHTML = ta.value;
+    quill.on('text-change', () => { ta.value = quill.root.innerHTML; });
+    _richEditors[textareaId] = quill;
+    return quill;
+  }
+  function setRichEditorContent(textareaId, html) {
+    const ta = document.getElementById(textareaId);
+    if (ta) ta.value = html || '';
+    const quill = _richEditors[textareaId];
+    if (quill) quill.root.innerHTML = html || '';
+  }
+
   // ── Session ID ──
   const sessionId = Math.random().toString(36).slice(2);
 
@@ -825,6 +888,7 @@
   let _cmsgRecordStream = null;
 
   async function loadCmsgMessages() {
+    ensureCmsgEditor();
     try {
       const [threadsRes, msgsRes] = await Promise.all([
         fetch('/api/my/messages/session-threads'),
@@ -859,7 +923,7 @@
     if (m.content_type === 'voice')  return `<audio controls preload="none" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
     if (m.content_type === 'video')  return `<video controls preload="none" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
     if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
-    return (m.content || '').replace(/</g,'&lt;');
+    return m.content || '';
   }
   function renderCmsgList(msgs) {
     const el = document.getElementById('cmsgList');
@@ -878,12 +942,28 @@
     el.scrollTop = el.scrollHeight;
   }
 
+  // Light composer editor — bold/italic/link only, no block-level toolbar;
+  // this is deliberately NOT the same document editor as journal/session
+  // fields above, per Per's own call that a chat composer shouldn't carry
+  // a full newsletter-style toolbar. Enter no longer sends (Quill uses
+  // Enter for new lines, same as any multi-line composer) — Send is a
+  // deliberate click now rather than a keystroke that could double as
+  // "add a line break."
+  let _cmsgQuill = null;
+  function ensureCmsgEditor() {
+    if (_cmsgQuill) return _cmsgQuill;
+    _cmsgQuill = new Quill(document.getElementById('cmsgInput_rich'), {
+      theme: 'snow',
+      placeholder: 'Message your facilitator…',
+      modules: { toolbar: [['bold', 'italic'], ['link']] },
+    });
+    return _cmsgQuill;
+  }
   document.getElementById('cmsgSendBtn').addEventListener('click', sendCmsgText);
-  document.getElementById('cmsgInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendCmsgText(); });
   async function sendCmsgText() {
-    const input = document.getElementById('cmsgInput');
-    const content = input.value.trim();
-    if (!content) return;
+    const quill = ensureCmsgEditor();
+    if (!quill.getText().trim()) return;
+    const content = quill.root.innerHTML;
     const btn = document.getElementById('cmsgSendBtn');
     setBtnLoading(btn, true, 'Sending…');
     try {
@@ -891,7 +971,7 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: _cmsgSessionId || null, content })
       });
-      if (res.ok) { input.value = ''; await loadCmsgMessages(); }
+      if (res.ok) { quill.setText(''); await loadCmsgMessages(); }
       else { const d = await res.json().catch(()=>({})); alert(d.error || 'Could not send message.'); }
     } finally { setBtnLoading(btn, false); }
   }
@@ -1168,7 +1248,7 @@
           </div>
           <button class="btn sm" onclick="deleteJournalEntryUI('${e.id}')">Delete</button>
         </div>
-        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);white-space:pre-wrap;line-height:1.6">${escHtmlJournal(e.content)}</div>
+        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);line-height:1.6${e.source_type==='upload'?';white-space:pre-wrap':''}">${e.source_type==='upload' ? escHtmlJournal(e.content) : (e.content||'')}</div>
         ${badges.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
       </div>`;
     }).join('');
@@ -1177,7 +1257,8 @@
   function openJournalForm() {
     document.getElementById('journalForm').style.display = 'flex';
     document.getElementById('journalTitle').value = '';
-    document.getElementById('journalContent').value = '';
+    mountRichEditor('journalContent');
+    setRichEditorContent('journalContent', '');
     document.getElementById('journalShareBot').checked = false;
     document.getElementById('journalShareFacilitator').checked = false;
     document.getElementById('journalFormMsg').textContent = '';
@@ -2120,7 +2201,7 @@
     logHistory(type, f.id);
 
     document.getElementById('playerTitle').textContent = f.title;
-    document.getElementById('playerText').textContent  = f.description || '';
+    document.getElementById('playerText').innerHTML  = f.description || '';
     const mediaEl = document.getElementById('playerMedia');
     mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
     const overlayEl = document.getElementById('playerOverlay');
@@ -2218,10 +2299,19 @@
   // "Course" groups = subcategories under University/Mindfulness/Therapy (structured programmes);
   // "Area" groups = subcategories under FELT·FIBRE (thematic/somatic domains).
   const AREA_CATEGORY_ID = 'cat-felt';
+  function openPracticeById(id) {
+    // Looking the practice up from already-loaded data, rather than
+    // serializing its content through an inline onclick="..." string like
+    // before — that broke as soon as content could contain real HTML
+    // (Quill's output routinely includes double-quoted style attributes,
+    // which would prematurely terminate the onclick attribute itself).
+    const p = _practicesData.find(x => x.id === id);
+    if (p) openPractice(p.id, p.title, p.type, p.content, p.filename);
+  }
   function practiceItemHTML(p) {
     const sourceLabel = p.source_type === 'session' ? 'From a session' : 'Saved from Talk';
     return `
-      <div class="practice-item" onclick="openPractice('${p.id}','${(p.title||'').replace(/'/g,"\\'")}','${p.type}','${(p.content||'').replace(/'/g,"\\'")}','${p.filename||''}')">
+      <div class="practice-item" onclick="openPracticeById('${p.id}')">
         <span class="practice-icon">${p.type==='audio'?'🎵':'📄'}</span>
         <div class="practice-info">
           <div class="practice-title">${p.title}</div>
@@ -2279,7 +2369,7 @@
   function openPractice(id, title, type, content, filename) {
     document.getElementById('playerTitle').textContent = title;
     if (type==='text') {
-      document.getElementById('playerText').textContent = content || '';
+      document.getElementById('playerText').innerHTML = content || '';
       document.getElementById('playerOverlay').classList.add('visible');
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
     } else {
