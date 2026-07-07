@@ -1711,9 +1711,10 @@ function tomteRateLimitOk(ip) {
   tomteRateLog.set(ip, recent);
   return true;
 }
-function tomteSystemPrompt(page, focus, name) {
+function tomteSystemPrompt(page, focus, name, language) {
   const b = brand();
   const displayName = name || 'Tomte';
+  const languageName = (language && LANGUAGE_NAMES[language]) || language || 'English';
   return `You are ${displayName}, a small helper character who lives in the corner of every page of the ${b.name} app. You help with exactly one thing: how the app works — what a page is for, what a button or field does, where to find something, how a feature is used.
 
 You do NOT answer questions about mindfulness practice, the nervous system, FELT·FIBRE content, therapy, or anything personal or clinical the person is going through, even briefly. If asked something like that, warmly redirect them instead: for anything reflective or practice-related, point them to Talk; for anything personal or clinical, suggest they reach out to their facilitator directly. Never attempt the answer yourself.
@@ -1721,6 +1722,7 @@ You do NOT answer questions about mindfulness practice, the nervous system, FELT
 Current page: ${page || 'unknown'}.
 ${focus ? `The person just interacted with: ${focus}. Start there — that's almost certainly what they want explained, not the whole page.` : 'Nothing specific in focus — if asked a general question, explain what this page is for.'}
 
+Respond in ${languageName} — this is this specific person's own language preference, not necessarily the app owner's.
 Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as ${displayName} and use "I" naturally.`;
 }
 
@@ -1737,14 +1739,16 @@ tomteWss.on('connection', (ws, req) => {
   // valid session cookie, this just looks up whether they've personalized
   // his name, so he refers to himself correctly in replies.
   let tomteName = null;
+  let tomteLanguage = null;
   try {
     const cookies = parseCookies(req.headers.cookie);
     const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
     if (payload) {
       const settings = db.getTomteSettings(payload.role, payload.id);
       tomteName = settings.tomte_name || null;
+      tomteLanguage = settings.language || null;
     }
-  } catch(e) { /* not logged in, or a bad/expired cookie — just use the default name */ }
+  } catch(e) { /* not logged in, or a bad/expired cookie — just use the defaults */ }
 
   function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
@@ -1778,7 +1782,7 @@ tomteWss.on('connection', (ws, req) => {
       return;
     }
     try {
-      const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName);
+      const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName, tomteLanguage);
       history.push({ role: 'user', content: userText });
       if (history.length > 12) history = history.slice(-12); // keep it light — Tomte doesn't need deep memory
       const reply = await callClaude(systemPrompt, history, 300);
@@ -1798,7 +1802,19 @@ tomteWss.on('connection', (ws, req) => {
   async function greet() {
     const name = tomteName || 'Tomte';
     const page = currentPage ? ` here on ${currentPage}` : '';
-    const text = `Hi, I'm ${name}. If you're not sure how something works${page}, just ask me — by typing or talking — and I'll walk you through it.`;
+    const languageDisplayName = (tomteLanguage && LANGUAGE_NAMES[tomteLanguage]) || tomteLanguage || 'English';
+    let text = `Hi, I'm ${name}. If you're not sure how something works${page}, just ask me — by typing or talking — and I'll walk you through it.`;
+    // Only bother with a translation call when it's actually needed —
+    // English stays the plain hardcoded line above, no extra round-trip.
+    if (tomteLanguage && tomteLanguage !== 'en') {
+      try {
+        text = await callClaude(
+          `Translate this greeting naturally into ${languageDisplayName}, keeping the same warm, casual tone. Respond with ONLY the translated sentence, nothing else — no quotes, no preamble.`,
+          [{ role: 'user', content: text }],
+          150
+        );
+      } catch(e) { /* fall back to the English version if translation fails */ }
+    }
     history.push({ role: 'assistant', content: text });
     await speak(text);
   }
