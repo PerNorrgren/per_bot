@@ -1699,7 +1699,8 @@
     if (!n) return;
     if (n.format === 'rich') {
       const w = window.open('', '_blank');
-      w.document.write(`<title>${n.subject}</title><body style="font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 20px">${n.body}</body>`);
+      w.document.write(`<title>${n.subject}</title><body style="font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 20px">${n.body}
+</body>`);
     } else {
       alert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
     }
@@ -2419,5 +2420,7 @@
     loadNewsletters();
   });
 </script>
+<script>window.TOMTE_PAGE = 'Admin — Communications';</script>
+<script src="/tomte-widget.js" defer></script>
 </body>
 </html>

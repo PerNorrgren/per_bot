@@ -1648,6 +1648,125 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
+// ── Tomte — the app-navigation helper (Per Bot 8) ──
+// Lives in a corner of every page, public and logged-in alike, answering
+// ONLY "how does this app work" questions — never clinical or personal
+// content, which stays Talk's and the facilitator's territory. No auth
+// gate (he has to work on the public pages too), so this is rate-limited
+// per IP rather than per account — a blunt but real safeguard against an
+// unauthenticated endpoint calling Claude/ElevenLabs on someone else's
+// dime. Reuses the exact same Deepgram STT → Claude → ElevenLabs TTS
+// pipeline the facilitator co-pilot below already uses, just with a much
+// narrower system prompt and no session/client state to manage.
+const tomteRateLog = new Map(); // ip -> [timestamps]
+function tomteRateLimitOk(ip) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000; // 10 minutes
+  const maxRequests = 30;
+  const recent = (tomteRateLog.get(ip) || []).filter(t => now - t < windowMs);
+  if (recent.length >= maxRequests) return false;
+  recent.push(now);
+  tomteRateLog.set(ip, recent);
+  return true;
+}
+function tomteSystemPrompt(page, focus) {
+  const b = brand();
+  return `You are Tomte, a small helper character who lives in the corner of every page of the ${b.name} app. You help with exactly one thing: how the app works — what a page is for, what a button or field does, where to find something, how a feature is used.
+
+You do NOT answer questions about mindfulness practice, the nervous system, FELT·FIBRE content, therapy, or anything personal or clinical the person is going through, even briefly. If asked something like that, warmly redirect them instead: for anything reflective or practice-related, point them to Talk; for anything personal or clinical, suggest they reach out to their facilitator directly. Never attempt the answer yourself.
+
+Current page: ${page || 'unknown'}.
+${focus ? `The person just interacted with: ${focus}. Start there — that's almost certainly what they want explained, not the whole page.` : 'Nothing specific in focus — if asked a general question, explain what this page is for.'}
+
+Keep answers short: a sentence or two for a simple question, a short paragraph at most for something more involved. Plain, warm, direct language, no jargon. Refer to yourself as Tomte and use "I" naturally.`;
+}
+
+const tomteWss = new WebSocket.Server({ server, path: '/tomte' });
+tomteWss.on('connection', (ws, req) => {
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  let history = [];
+  let currentPage = '';
+  let currentFocus = '';
+  let dgWs = null;
+
+  function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+  async function respond(userText) {
+    if (!userText || !userText.trim()) return;
+    if (!tomteRateLimitOk(ip)) {
+      send({ type: 'response_text', text: "I've answered a lot of questions in a short time — give me a few minutes and ask again." });
+      return;
+    }
+    try {
+      const systemPrompt = tomteSystemPrompt(currentPage, currentFocus);
+      history.push({ role: 'user', content: userText });
+      if (history.length > 12) history = history.slice(-12); // keep it light — Tomte doesn't need deep memory
+      const reply = await callClaude(systemPrompt, history, 300);
+      history.push({ role: 'assistant', content: reply });
+      send({ type: 'response_text', text: reply });
+      try {
+        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
+          body: JSON.stringify({
+            text: reply,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+        if (ttsRes.ok) {
+          const buf = await ttsRes.buffer();
+          send({ type: 'audio', data: buf.toString('base64') });
+        }
+      } catch(e) { console.error('tomte tts error:', e.message); }
+    } catch(e) {
+      console.error('tomte respond error:', e.message);
+      send({ type: 'response_text', text: 'Something went wrong there — try again in a moment.' });
+    }
+  }
+
+  ws.on('message', async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+    switch (msg.type) {
+      case 'context':
+        currentPage = msg.page || currentPage;
+        currentFocus = msg.focus || '';
+        break;
+      case 'text_input':
+        await respond(msg.text);
+        break;
+      case 'start_listening': {
+        send({ type: 'listening_started' });
+        dgWs = new WebSocket(
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=false',
+          { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
+        );
+        dgWs.on('message', async (data) => {
+          try {
+            const parsed = JSON.parse(data.toString('utf8'));
+            const transcript = parsed?.channel?.alternatives?.[0]?.transcript;
+            if (transcript && transcript.trim() && parsed.speech_final) {
+              send({ type: 'final_transcript', text: transcript });
+              await respond(transcript);
+            }
+          } catch { /* non-JSON or partial frame — ignore */ }
+        });
+        dgWs.on('error', (e) => console.error('tomte deepgram error:', e.message));
+        break;
+      }
+      case 'audio_chunk':
+        if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) dgWs.send(Buffer.from(msg.data, 'base64'));
+        break;
+      case 'stop_listening':
+        if (dgWs) { dgWs.close(); dgWs = null; }
+        break;
+    }
+  });
+  ws.on('close', () => { if (dgWs) dgWs.close(); });
+});
+
 // ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
 // Every session generated via the facilitator co-pilot lands with a DRAFT
 // client-facing summary (client_summary_draft) that is never visible to the
