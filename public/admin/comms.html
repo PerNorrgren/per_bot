@@ -985,6 +985,7 @@
           ` : n.status === 'sending' ? `
             <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
             <button class="btn sm" onclick="retryNewsletter('${n.id}')">Retry outstanding</button>
+            <button class="btn sm" onclick="reconcileNewsletter('${n.id}')" title="Re-check against Scaleway — safe to re-run">Reconcile with Scaleway</button>
           ` : `
             <button class="btn sm" onclick="viewSentNewsletter('${n.id}')">View</button>
             <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
