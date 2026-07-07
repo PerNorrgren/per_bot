@@ -155,7 +155,8 @@
     .ql-columns-block td[data-column-cell] { border:1px dashed rgba(180,230,200,0.25); }
     .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
-    .ql-toolbar.ql-snow .ql-formats button.ql-nl-button { width:auto; padding:0 6px; font-size:14px; }
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-video { width:auto; padding:0 6px; font-size:14px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-3 { width:auto; padding:0 8px; font-size:11px; }
@@ -1088,6 +1089,27 @@
     }
     ButtonLink.blotName = 'buttonLink';
     Quill.register(ButtonLink, true);
+
+    // Video block (Per Bot 8) — atomic embed like ColumnsBlot above, since
+    // there's nothing editable inside it (just the bulletproof video/
+    // poster/fallback-link markup built in buildVideoBlockHtml below).
+    // Storing the fully-built HTML as the blot's value means the editor
+    // never has to reconstruct it from parts on reload — what you see is
+    // exactly what gets saved and sent.
+    class VideoBlot extends BlockEmbed {
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:14px 0;';
+        node.innerHTML = value.html;
+        return node;
+      }
+      static value(node) { return { html: node.innerHTML }; }
+    }
+    VideoBlot.blotName = 'videoBlock';
+    VideoBlot.tagName = 'DIV';
+    VideoBlot.className = 'ql-video-block';
+    Quill.register(VideoBlot);
   })();
 
   function getQuill() {
@@ -1110,6 +1132,7 @@
             [{ align: [] }],
             [{ list: 'ordered' }, { list: 'bullet' }],
             ['link', 'image', 'image-link', 'video-link'],
+            ['nl-video'],
             ['nl-button'],
             ['columns-1', 'columns-2', 'columns-3'],
             ['ai-polish'],
@@ -1118,6 +1141,7 @@
           handlers: {
             image: uploadImageIntoEditor,
             'video-link': insertVideoLink,
+            'nl-video': insertNewsletterVideo,
             'image-link': linkSelectedImage,
             'nl-button': insertNewsletterButton,
             'columns-1': () => insertColumnsBlock(1),
@@ -1211,6 +1235,7 @@
       if (el) { el.textContent = text; el.title = title; }
     };
     label('.ql-video-link', '▶', 'Insert a video link');
+    label('.ql-nl-video',   '🎬', 'Upload a video and insert an inline player');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
     label('.ql-nl-button',  '▭',  'Insert a button');
     label('.ql-columns-1',  '1 col', 'Insert a single wide column');
@@ -1457,6 +1482,95 @@
     quill.insertText(target.quillRange.index, label, 'link', url.trim());
     quill.insertText(target.quillRange.index + label.length, '\n');
     quill.setSelection(target.quillRange.index + label.length + 1);
+  }
+
+  // ── Upload video + inline player (Per Bot 8) ──
+  // Builds the standard "bulletproof" video-in-email pattern: a real
+  // <video> tag for clients that support inline playback (Apple Mail, iOS
+  // Mail — a large share of opens), wrapped so Outlook specifically (which
+  // chokes on <video> since it renders via Word) is steered to a plain
+  // poster-image fallback via MSO conditional comments instead. Everyone
+  // else who understands neither just sees the poster (or a plain "watch
+  // the video" box if no poster was given) as a normal clickable link.
+  // Nobody sees a broken email; some people get true inline playback.
+  function buildVideoBlockHtml(videoUrl, posterUrl) {
+    const posterImg = posterUrl
+      ? `<img src="${posterUrl}" alt="Watch the video" width="100%" style="max-width:480px;border-radius:8px;display:block;margin:0 auto"/>`
+      : `<div style="max-width:480px;margin:0 auto;padding:40px 20px;background:#f0f0eb;border-radius:8px;text-align:center;font-family:Georgia,serif;color:#2d6a4f;font-size:15px">▶ Watch the video</div>`;
+    return `<div style="text-align:center">
+      <a href="${videoUrl}" target="_blank" style="text-decoration:none">
+        <!--[if !mso]><!-->
+        <video poster="${posterUrl}" controls="controls" width="100%" style="max-width:480px;border-radius:8px;display:block;margin:0 auto">
+          <source src="${videoUrl}" type="video/mp4">
+          ${posterImg}
+        </video>
+        <!--<![endif]-->
+        <!--[if mso]>${posterImg}<![endif]-->
+      </a>
+    </div>`;
+  }
+
+  function insertVideoBlockAtTarget(target, videoUrl, posterUrl) {
+    const html = buildVideoBlockHtml(videoUrl, posterUrl);
+    if (target.inCell) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      div.setAttribute('contenteditable', 'false');
+      insertNodeAtCellRange(target, div);
+      // Same trailing-content fix as images — nothing after an atomic
+      // block can leave the cursor with nowhere sensible to land next.
+      if (!div.nextSibling) div.parentNode.insertBefore(document.createTextNode('\u00A0'), div.nextSibling);
+      return;
+    }
+    const quill = getQuill();
+    quill.insertEmbed(target.quillRange.index, 'videoBlock', { html });
+    quill.insertText(target.quillRange.index + 1, ' ');
+    quill.setSelection(target.quillRange.index + 2);
+  }
+
+  function uploadFileGetUrl(endpoint, file) {
+    return new Promise(async (resolve, reject) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res  = await fetch(endpoint, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.url) resolve(data.url); else reject(new Error(data.error || 'Upload failed.'));
+      } catch(e) { reject(e); }
+    });
+  }
+
+  async function insertNewsletterVideo() {
+    const target = getInsertionTarget();
+    const videoInput = document.createElement('input');
+    videoInput.type = 'file';
+    videoInput.accept = 'video/*';
+    videoInput.onchange = async () => {
+      const videoFile = videoInput.files[0];
+      if (!videoFile) return;
+      let videoUrl;
+      try {
+        videoUrl = await uploadFileGetUrl('/api/admin/newsletter-videos', videoFile);
+      } catch(e) { alert(e.message || 'Could not upload video.'); return; }
+
+      let posterUrl = '';
+      if (confirm('Add a thumbnail image for the video? Recommended — without one, inboxes that can\'t play it inline just show a plain "Watch the video" box instead of a picture.')) {
+        const imgInput = document.createElement('input');
+        imgInput.type = 'file';
+        imgInput.accept = 'image/*';
+        posterUrl = await new Promise((resolve) => {
+          imgInput.onchange = async () => {
+            const imgFile = imgInput.files[0];
+            if (!imgFile) { resolve(''); return; }
+            try { resolve(await uploadFileGetUrl('/api/admin/newsletter-images', imgFile)); }
+            catch(e) { alert('Could not upload thumbnail — inserting without one.'); resolve(''); }
+          };
+          imgInput.click();
+        });
+      }
+      insertVideoBlockAtTarget(target, videoUrl, posterUrl);
+    };
+    videoInput.click();
   }
 
   async function uploadImageIntoEditor() {

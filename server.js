@@ -1884,7 +1884,7 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     if (!plain) return res.status(400).json({ error: 'Write something first.' });
     const b = brand();
     const language = getAdminLanguage();
-    const systemPrompt = `You help refine short pieces of written communication for ${b.name}, a mindfulness and wellbeing platform. Improve clarity, warmth, and flow while keeping the original meaning, voice, and intent intact. Preserve every link, button, image, and template placeholder (like {{name}}) exactly as they appear in the source — never remove, reword, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
+    const systemPrompt = `You help refine short pieces of written communication for ${b.name}, a mindfulness and wellbeing platform. Improve clarity, warmth, and flow while keeping the original meaning, voice, and intent intact. Preserve every link, button, image, video embed, and template placeholder (like {{name}}) exactly as they appear in the source, character for character, including any HTML comments — never remove, reword, restructure, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
     const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 2000);
     res.json({ html: reply.trim() });
   } catch(e) {
@@ -3091,6 +3091,46 @@ app.get('/newsletter-images/:key', async (req, res) => {
   try {
     const obj = await media.getPublicObject(`newsletter-images/${req.params.key}`);
     res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
+
+// ── Newsletter videos (Per Bot 8) — same public R2 storage/serving pattern
+// as newsletter-images above, just a parallel key prefix and a video/ mimetype
+// check instead of image/. Most inboxes (Gmail, most Outlook) can't play
+// inline video at all, so the editor wraps this URL in a bulletproof
+// video/poster/fallback-link block rather than a bare <video> tag — but the
+// upload+storage side is identical to how images already work.
+app.post('/api/admin/newsletter-videos', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Video storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('video/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only video files are supported here.' });
+    }
+
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || ['.mp4'])[0];
+    const key = `newsletter-videos/${uuidv4()}${ext}`;
+
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+
+    res.json({ url: `${APP_URL}/newsletter-videos/${encodeURIComponent(key.replace('newsletter-videos/', ''))}` });
+  } catch (e) {
+    console.error('newsletter video upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload video: ' + e.message });
+  }
+});
+app.get('/newsletter-videos/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`newsletter-videos/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'video/mp4');
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     obj.Body.pipe(res);
   } catch (e) {
