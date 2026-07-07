@@ -26,6 +26,16 @@
     .btn.warn { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.65); }
     .btn.warn:hover { background:rgba(255,180,60,0.08); }
     .btn.sm { padding:5px 10px; font-size:10px; }
+    /* Working-button feedback (Per Bot 8) — the base .btn text color is
+       already quite dim (0.5 opacity above); browser-default disabled
+       dimming on top of that was making "Checking…"/spinner text nearly
+       invisible against the dark background. Brightened specifically for
+       the disabled/loading state instead of relying on the default. */
+    button:disabled { cursor:default; }
+    .btn:disabled { opacity:1; color:rgba(255,255,255,0.8); }
+    .btn.primary:disabled { color:rgba(180,230,200,0.95); }
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
     .btn:disabled, .btn.disabled { opacity:0.35; pointer-events:none; cursor:not-allowed; }
 
     /* ── Layout ── */
@@ -623,6 +633,28 @@
 </div>
 
 <script>
+  // ── Working-button feedback (Per Bot 8) — same reusable pattern as the
+  // other admin/client/facilitator pages: setBtnLoading(btn, true, 'Label…')
+  // swaps a button's content for a rotating yin-yang + text and disables
+  // it; setBtnLoading(btn, false) restores exactly what was there before.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+
   // ── Auth check ──
   async function checkAuth() {
     const res = await fetch('/api/admin/motd');
@@ -1780,32 +1812,40 @@
 
     if (!confirm(`Send "${n.subject}" now to ${countMsg}? This cannot be undone.`)) return;
 
-    const res  = await fetch(`/api/admin/newsletters/${id}/send`, { method: 'POST' });
-    const data = await res.json();
-    // The send now runs in the background rather than this request waiting
-    // for the whole batch — for anything beyond a handful of recipients,
-    // that wait could exceed a platform timeout with no way to tell
-    // afterward how far it actually got. This just confirms it started;
-    // loadNewsletters() below shows it as "Sending…" with a live progress
-    // count instead.
-    if (data.ok) { alert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
-    else alert(data.error || 'Could not send.');
+    const btn = event?.target;
+    setBtnLoading(btn, true, 'Starting…');
+    try {
+      const res  = await fetch(`/api/admin/newsletters/${id}/send`, { method: 'POST' });
+      const data = await res.json();
+      // The send now runs in the background rather than this request waiting
+      // for the whole batch — for anything beyond a handful of recipients,
+      // that wait could exceed a platform timeout with no way to tell
+      // afterward how far it actually got. This just confirms it started;
+      // loadNewsletters() below shows it as "Sending…" with a live progress
+      // count instead.
+      if (data.ok) { alert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
+      else alert(data.error || 'Could not send.');
+    } finally { setBtnLoading(btn, false); }
   }
 
   async function retryNewsletter(id) {
     if (!confirm('Retry sending to everyone not yet successfully sent for this newsletter?')) return;
-    const res  = await fetch(`/api/admin/newsletters/${id}/retry`, { method: 'POST' });
-    const data = await res.json();
-    if (data.ok && data.started) alert(`Retrying ${data.recipientCount} outstanding recipient${data.recipientCount === 1 ? '' : 's'}.`);
-    else if (data.ok) alert(data.message || 'Nothing outstanding.');
-    else alert(data.error || 'Could not retry.');
-    loadNewsletters();
+    const btn = event?.target;
+    setBtnLoading(btn, true, 'Retrying…');
+    try {
+      const res  = await fetch(`/api/admin/newsletters/${id}/retry`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok && data.started) alert(`Retrying ${data.recipientCount} outstanding recipient${data.recipientCount === 1 ? '' : 's'}.`);
+      else if (data.ok) alert(data.message || 'Nothing outstanding.');
+      else alert(data.error || 'Could not retry.');
+      loadNewsletters();
+    } finally { setBtnLoading(btn, false); }
   }
 
   async function reconcileNewsletter(id) {
     if (!confirm('Ask Scaleway what actually happened to this send, and reconcile our records against it? Use this for a send from before per-recipient tracking existed.')) return;
     const btn = event?.target;
-    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    setBtnLoading(btn, true, 'Checking…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/reconcile`, { method: 'POST' });
       const data = await res.json();
@@ -1813,7 +1853,7 @@
         alert(`Scaleway had ${data.scalewayRecordsFound} matching records.\n\nOf your ${data.audienceSize} recipients: ${data.alreadyReached} already reached, ${data.missing} missing.\n\nUse "Retry" now to send to just the ${data.missing} missing.`);
         loadNewsletters();
       } else alert(data.error || 'Could not reconcile.');
-    } finally { if (btn) { btn.disabled = false; btn.textContent = 'Reconcile with Scaleway'; } }
+    } finally { setBtnLoading(btn, false); }
   }
 
   async function showNewsletterProgress(id) {
