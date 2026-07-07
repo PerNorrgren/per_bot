@@ -1153,13 +1153,33 @@
               }
               getQuill().format('align', value);
             },
-            // link intentionally left on Quill's own default handler — it
-            // opens the Snow theme's inline tooltip for entering a URL,
-            // which is nicer than anything a prompt()-based replacement
-            // could offer. That means linking text inside a column cell
-            // specifically remains unfixed for now (same as before this
-            // round of fixes) rather than trading a regression in the
-            // common case for a fix in a case nobody's hit yet.
+            // Plain prompt() for both cases now, rather than Quill's own
+            // Snow-theme tooltip — that tooltip only has room for a few
+            // characters of the URL and doesn't work inside a cell at all
+            // (same root cause as everything else here); a prompt() is a
+            // little less polished but works identically everywhere.
+            link: () => {
+              if (inCell()) {
+                restoreCellSelection();
+                const sel = lastCellSelection.browserSel;
+                const anchor = sel.anchorNode && sel.anchorNode.nodeType === 1
+                  ? sel.anchorNode.closest('a')
+                  : sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a');
+                if (anchor) { document.execCommand('unlink'); return; }
+                const url = prompt('Link this text to:');
+                if (!url || !url.trim()) return;
+                restoreCellSelection();
+                document.execCommand('createLink', false, url.trim());
+                return;
+              }
+              const quill = getQuill();
+              const range = quill.getSelection();
+              if (!range) return;
+              const current = quill.getFormat(range).link;
+              if (current) { quill.format('link', false); return; }
+              const url = prompt('Link this text to:');
+              if (url && url.trim()) quill.format('link', url.trim());
+            },
             clean: () => {
               // This is the one that was actually destructive — Quill's
               // default "clean" calls removeFormat() on its own selection,
