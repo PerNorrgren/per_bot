@@ -1151,6 +1151,27 @@
       if (e.target && e.target.tagName === 'IMG') lastClickedImage = e.target;
     });
 
+    // Paste-into-column fix — Quill treats the whole columns block as one
+    // atomic embed (see ColumnsBlot above) and has no concept of a cursor
+    // position *inside* a cell, so its own paste handler (bubble-phase, on
+    // this same root) was dropping pasted content into the main document
+    // right after the block instead of into the cell you're actually
+    // looking at. Intercepting here in the CAPTURE phase runs before
+    // Quill's listener ever sees the event; stopPropagation() keeps it
+    // from reaching Quill's handler at all, and the paste is then inserted
+    // as plain text directly at the cursor inside the cell. Plain text
+    // rather than rich HTML deliberately — clipboard HTML from Word/Google
+    // Docs tends to carry styling that looks fine pasted but breaks badly
+    // once this newsletter goes through the email-client conversion step.
+    quillInstance.root.addEventListener('paste', (e) => {
+      const cell = e.target && e.target.closest ? e.target.closest('[data-column-cell]') : null;
+      if (!cell) return; // not in a column cell — let Quill's normal paste handling run
+      e.stopPropagation();
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+      document.execCommand('insertText', false, text);
+    }, true);
+
     return quillInstance;
   }
 
