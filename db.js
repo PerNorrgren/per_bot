@@ -828,6 +828,7 @@ async function getDb() {
     // did) — needed now so Tomte can match a facilitator's own language
     // too, not just a client's.
     "ALTER TABLE facilitators ADD COLUMN language TEXT DEFAULT 'en'",
+    "ALTER TABLE facilitators ADD COLUMN voice_id TEXT",
     // Message notifications (Per Bot 8) — default on, since there's no
     // settings toggle for these yet; gated on having an email/phone on
     // file at all, same as every other notification type here.
@@ -2552,7 +2553,7 @@ function setTomteImage(role, id, filename) {
 }
 function getTomteSettings(role, id) {
   const table = role === 'client' ? 'users' : 'facilitators';
-  return queryOne(`SELECT tomte_name, tomte_image_filename, language FROM ${table} WHERE id=?`, [id]) || {};
+  return queryOne(`SELECT tomte_name, tomte_image_filename, language, voice_id FROM ${table} WHERE id=?`, [id]) || {};
 }
 
 // ── Admin editing a user's own profile fields directly (Per Bot 8) —

@@ -35,6 +35,12 @@ const sms        = require('./sms');
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY;
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID           = process.env.VOICE_ID;
+// Tomte-specific default (Per Bot 8) — used when a person's language is
+// Dutch and they haven't explicitly picked their own voice. Trying this
+// out with Mare's existing (non-professionally-sampled) voice first; if
+// it works well this just stays as-is, no further change needed since
+// it's already a proper env var rather than anything hardcoded.
+const MARE_VOICE_ID      = process.env.MARE_VOICE_ID;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
@@ -1740,6 +1746,7 @@ tomteWss.on('connection', (ws, req) => {
   // his name, so he refers to himself correctly in replies.
   let tomteName = null;
   let tomteLanguage = null;
+  let tomteVoiceId = VOICE_ID;
   try {
     const cookies = parseCookies(req.headers.cookie);
     const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
@@ -1747,6 +1754,9 @@ tomteWss.on('connection', (ws, req) => {
       const settings = db.getTomteSettings(payload.role, payload.id);
       tomteName = settings.tomte_name || null;
       tomteLanguage = settings.language || null;
+      // Personal choice always wins; otherwise Dutch defaults to Mare
+      // (if configured), otherwise the app's own default voice.
+      tomteVoiceId = settings.voice_id || (tomteLanguage === 'nl' && MARE_VOICE_ID ? MARE_VOICE_ID : VOICE_ID);
     }
   } catch(e) { /* not logged in, or a bad/expired cookie — just use the defaults */ }
 
@@ -1758,7 +1768,7 @@ tomteWss.on('connection', (ws, req) => {
   async function speak(text) {
     send({ type: 'response_text', text });
     try {
-      const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
+      const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${tomteVoiceId}?output_format=mp3_44100_192`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
         body: JSON.stringify({
