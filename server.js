@@ -4161,7 +4161,29 @@ function postProcessRichBody(html) {
       return `<a href="${href}" style="display:inline-block;background:${bg};color:#ffffff;padding:11px 26px;border-radius:6px;text-decoration:none;font-family:Georgia,serif;font-size:14px;margin:10px 0;">${innerText}</a>`;
     })
     .replace(/\s*contenteditable=["'][^"']*["']/gi, '')
-    .replace(/\s*data-column-cell=["'][^"']*["']/gi, '');
+    .replace(/\s*data-column-cell=["'][^"']*["']/gi, '')
+    // Margin reset (Per Bot 8) — Quill's own editor CSS zeroes the margin
+    // on every block element (p, h2/h3, ul/ol, li) so spacing while writing
+    // comes only from actual blank-line paragraphs, never from browser
+    // defaults. That stylesheet is Quill's own — it never ships with the
+    // sent email — so without this, every one of those tags falls back to
+    // whatever margin the recipient's email client defaults to (often
+    // close to a full line each), which is exactly the "lots of extra
+    // white space" bug: nothing about the written text changed, the HTML
+    // just lost the styling context that had been hiding those margins.
+    // Setting margin:0 explicitly here restores what the editor actually
+    // showed — any real spacing the person wrote (a genuine blank line)
+    // still shows up on its own, since that comes from line-height, not
+    // from a paragraph's margin.
+    .replace(/<p>/gi, '<p style="margin:0;">')
+    .replace(/<p class="([^"]*)">/gi, '<p class="$1" style="margin:0;">')
+    .replace(/<h2>/gi, '<h2 style="margin:0 0 12px;">')
+    .replace(/<h2 class="([^"]*)">/gi, '<h2 class="$1" style="margin:0 0 12px;">')
+    .replace(/<h3>/gi, '<h3 style="margin:0 0 10px;">')
+    .replace(/<h3 class="([^"]*)">/gi, '<h3 class="$1" style="margin:0 0 10px;">')
+    .replace(/<ul>/gi, '<ul style="margin:0 0 12px;padding-left:24px;">')
+    .replace(/<ol>/gi, '<ol style="margin:0 0 12px;padding-left:24px;">')
+    .replace(/<li>/gi, '<li style="margin:0 0 4px;">');
 }
 
 // format: 'plain' (body is plain text, \n becomes <br/>, same as before) or
