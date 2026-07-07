@@ -15,6 +15,10 @@
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
     .topbar-right { display:flex; gap:10px; align-items:center; }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:5px; animation:yy-spin 0.85s linear infinite; }
+    button:disabled { cursor:default; opacity:1; }
+    .btn:disabled { color:rgba(255,255,255,0.8); }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
     .btn.primary:hover { background:rgba(180,230,200,0.1); }
@@ -193,6 +197,7 @@
             <button class="btn sm" onclick="openModal('newMemberModal')">Add Member</button>
             <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
+            <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
             <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
             <button class="btn sm danger disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
           </div>
@@ -299,6 +304,49 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('upgradeModal')">Cancel</button>
         <button class="modal-ok" onclick="saveUpgrade()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit user details (Per Bot 8) — name/email/phone/language plus Tomte
+       personalization, editable directly by admin on the user's behalf. -->
+  <div class="modal-overlay" id="userDetailsModal" onclick="if(event.target===this)closeModal('userDetailsModal')">
+    <div class="modal">
+      <h3>Edit user details</h3>
+      <input type="hidden" id="udUserId"/>
+      <div style="margin:16px 0;display:flex;flex-direction:column;gap:10px">
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Name</label>
+          <input type="text" id="udName" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Email</label>
+          <input type="email" id="udEmail" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Phone</label>
+          <input type="text" id="udPhone" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Language</label>
+          <input type="text" id="udLanguage" placeholder="en" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+        </div>
+
+        <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:6px 0"/>
+        <div style="font-size:12px;color:rgba(255,255,255,0.5)">Their helper (Tomte)</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <img id="udTomteImgPreview" src="/assets/tomte.png" style="width:48px;height:48px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+          <label class="btn sm" style="cursor:pointer">
+            Upload photo
+            <input type="file" id="udTomteImgInput" accept="image/*" style="display:none" onchange="uploadUdTomteImage()"/>
+          </label>
+        </div>
+        <input type="text" id="udTomteName" placeholder="Tomte" maxlength="30" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box"/>
+      </div>
+      <div class="modal-err" id="udErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('userDetailsModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveUserDetails()">Save</button>
       </div>
     </div>
   </div>
@@ -632,6 +680,26 @@
 </div>
 
 <script>
+  // ── Working-button feedback (Per Bot 8) — same reusable pattern as the
+  // other admin/client/facilitator pages.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+
   // ── Utilities ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
   function openModal(id)  { document.getElementById(id).classList.add('open'); }
@@ -1196,7 +1264,7 @@
   // ── MEMBERS ──
   // ══════════════════════════════════════════
   let _memberData = [];
-  const memberSel = makeSelection(['memberEditBtn','memberResetPwBtn','memberDelBtn'], 'memberEditBtn');
+  const memberSel = makeSelection(['memberEditBtn','memberDetailsBtn','memberResetPwBtn','memberDelBtn'], 'memberEditBtn');
 
   async function loadMembers() {
     memberSel.clear();
@@ -1239,6 +1307,66 @@
     const id = [...memberSel.sel][0]; if (!id) return;
     const u  = _memberData.find(x => x.id === id); if (!u) return;
     upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
+  }
+
+  // ── Edit user details (Per Bot 8) — name/email/phone/language + Tomte ──
+  function editSelectedMemberDetails() {
+    const id = [...memberSel.sel][0]; if (!id) return;
+    const u = _memberData.find(x => x.id === id); if (!u) return;
+    document.getElementById('udUserId').value = id;
+    document.getElementById('udName').value = u.name || '';
+    document.getElementById('udEmail').value = u.email || '';
+    document.getElementById('udPhone').value = u.phone || '';
+    document.getElementById('udLanguage').value = u.language || '';
+    document.getElementById('udTomteName').value = u.tomte_name || '';
+    document.getElementById('udTomteImgPreview').src = u.tomte_image_filename ? `/uploads/${u.tomte_image_filename}` : '/assets/tomte.png';
+    document.getElementById('udErr').textContent = '';
+    openModal('userDetailsModal');
+  }
+  async function saveUserDetails() {
+    const id = document.getElementById('udUserId').value;
+    const errEl = document.getElementById('udErr');
+    const btn = event?.target;
+    setBtnLoading(btn, true, 'Saving…');
+    try {
+      const detailsRes = await fetch(`/api/admin/users/${id}/details`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('udName').value.trim(),
+          email: document.getElementById('udEmail').value.trim(),
+          phone: document.getElementById('udPhone').value.trim(),
+          language: document.getElementById('udLanguage').value.trim(),
+        })
+      });
+      const detailsData = await detailsRes.json();
+      if (!detailsData.ok) { errEl.textContent = detailsData.error || 'Could not save.'; return; }
+
+      await fetch(`/api/admin/users/${id}/tomte-name`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: document.getElementById('udTomteName').value.trim() })
+      });
+
+      closeModal('userDetailsModal');
+      loadMembers();
+    } catch(e) {
+      errEl.textContent = 'Something went wrong — please try again.';
+    } finally { setBtnLoading(btn, false); }
+  }
+  async function uploadUdTomteImage() {
+    const id = document.getElementById('udUserId').value;
+    const input = document.getElementById('udTomteImgInput');
+    const file = input.files[0];
+    if (!file || !id) return;
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res  = await fetch(`/api/admin/users/${id}/tomte-image`, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.url) document.getElementById('udTomteImgPreview').src = data.url;
+      else document.getElementById('udErr').textContent = data.error || 'Could not upload photo.';
+    } catch(e) {
+      document.getElementById('udErr').textContent = 'Could not upload photo.';
+    } finally { input.value = ''; }
   }
   async function resetSelectedMemberPassword() {
     const ids = [...memberSel.sel]; if (!ids.length) return;

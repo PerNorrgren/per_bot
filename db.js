@@ -816,6 +816,14 @@ async function getDb() {
     "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
     "ALTER TABLE facilitators ADD COLUMN reset_token TEXT",
     "ALTER TABLE facilitators ADD COLUMN reset_token_expires TEXT",
+    // Tomte personalization (Per Bot 8) — per-account, not per-deployment;
+    // each person can rename/re-skin their own helper. NULL/empty means
+    // "use the default" everywhere this is read, so nothing needs
+    // backfilling for existing accounts.
+    "ALTER TABLE users ADD COLUMN tomte_name TEXT",
+    "ALTER TABLE users ADD COLUMN tomte_image_filename TEXT",
+    "ALTER TABLE facilitators ADD COLUMN tomte_name TEXT",
+    "ALTER TABLE facilitators ADD COLUMN tomte_image_filename TEXT",
     // Message notifications (Per Bot 8) — default on, since there's no
     // settings toggle for these yet; gated on having an email/phone on
     // file at all, same as every other notification type here.
@@ -1909,7 +1917,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
@@ -2527,6 +2535,34 @@ function clearEmailLogForNewsletter(newsletterId) {
   getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
 }
 
+// ── Tomte personalization (Per Bot 8) — one pair of functions covering
+// both account tables, since Tomte shows up for clients, facilitators,
+// and admins alike and each personalizes independently.
+function setTomteName(role, id, name) {
+  const table = role === 'client' ? 'users' : 'facilitators';
+  getDbSync().run(`UPDATE ${table} SET tomte_name=? WHERE id=?`, [name || null, id]); save();
+}
+function setTomteImage(role, id, filename) {
+  const table = role === 'client' ? 'users' : 'facilitators';
+  getDbSync().run(`UPDATE ${table} SET tomte_image_filename=? WHERE id=?`, [filename || null, id]); save();
+}
+function getTomteSettings(role, id) {
+  const table = role === 'client' ? 'users' : 'facilitators';
+  return queryOne(`SELECT tomte_name, tomte_image_filename FROM ${table} WHERE id=?`, [id]) || {};
+}
+
+// ── Admin editing a user's own profile fields directly (Per Bot 8) —
+// deliberately scoped to identity/contact fields only (name, email, phone,
+// language), not tier/facilitator (already has its own modal/flow) or
+// anything Stripe/consent-related, which shouldn't be hand-edited casually.
+function updateUserAdminDetails(id, fields) {
+  const allowed = ['name', 'email', 'phone', 'language'];
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
+  if (!keys.length) return;
+  getDbSync().run(`UPDATE users SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+
 // ── Newsletter audience segments ──
 // The 377-person mailing-list import created accounts at member_tier=0 with
 // NO password (createMailingListContact — passive, no login). A real
@@ -3022,6 +3058,7 @@ module.exports = {
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
+  setTomteName, setTomteImage, getTomteSettings, updateUserAdminDetails,
   // Reminders
   getInactiveUsers,
   markReminderSent,

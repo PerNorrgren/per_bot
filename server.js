@@ -1650,6 +1650,29 @@ app.post('/api/sessions', auth.requireAuthApi(['admin','facilitator']), (req, re
   res.json({ ok: true });
 });
 
+// ── Admin editing a user's own details directly (Per Bot 8) ──
+app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), (req, res) => {
+  const user = db.getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  const { name, email, phone, language } = req.body;
+  db.updateUserAdminDetails(req.params.id, { name, email, phone, language });
+  res.json({ ok: true });
+});
+app.patch('/api/admin/users/:id/tomte-name', auth.requireAuthApi(['admin']), (req, res) => {
+  const user = db.getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  db.setTomteName('client', req.params.id, (req.body.name || '').trim().slice(0, 30));
+  res.json({ ok: true });
+});
+app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+  const user = db.getUser(req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  db.setTomteImage('client', req.params.id, req.file.filename);
+  res.json({ ok: true, url: `/uploads/${req.file.filename}` });
+});
+
+
 // ── Tomte personalization (Per Bot 8) — works for any logged-in role
 // (client/facilitator/admin); public/logged-out visitors just get the
 // default everywhere, since there's no account to read a preference from.
