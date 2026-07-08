@@ -2110,7 +2110,7 @@ tomteWss.on('connection', (ws, req) => {
       case 'start_listening': {
         send({ type: 'listening_started' });
         dgWs = new WebSocket(
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=false',
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('open', () => console.log('[tomte] deepgram connected'));
@@ -3343,7 +3343,7 @@ facilitatorWss.on('connection', (ws, ctx) => {
       case 'start_listening': {
         send({ type: 'listening_started' });
         dgWs = new WebSocket(
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=false',
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('unexpected-response', (req, res) => {
