@@ -1890,7 +1890,13 @@ Keep answers short: a sentence or two for a simple question, a short paragraph a
 Start every reply with exactly one tag on its own, chosen from: [[ACTION:default]] [[ACTION:shrug]] [[ACTION:smile]] [[ACTION:wink]] [[ACTION:laugh]] [[ACTION:bow]] — shrug for redirecting something you can't help with, bow for a closing/thank-you, wink for something playful, laugh for a delighted moment, smile for a normal helpful answer, default otherwise. Pick whichever actually fits the tone of what you're about to say. This tag is stripped before the person sees or hears anything, so it never affects your actual wording.`;
 }
 
-const tomteWss = new WebSocket.Server({ server, path: '/tomte' });
+// Per Bot 9 debug: "Invalid frame header" errors right after a successful
+// open are a known symptom of the permessage-deflate compression extension
+// getting mangled by something in between (proxies/load balancers often
+// don't pass that negotiation through cleanly) — the two sides end up
+// disagreeing about whether frames are compressed, corrupting every one.
+// Disabling it removes that whole failure mode.
+const tomteWss = new WebSocket.Server({ server, path: '/tomte', perMessageDeflate: false });
 tomteWss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
   console.log(`[tomte] connection opened from ${ip}`);
@@ -3109,7 +3115,7 @@ app.post('/api/speak', async (req, res) => { // public — used by guest and cli
 });
 
 // ── /listen — Deepgram STT proxy (Mare Bot architecture) ──
-const listenWss = new WebSocket.Server({ server, path: '/listen' });
+const listenWss = new WebSocket.Server({ server, path: '/listen', perMessageDeflate: false });
 
 listenWss.on('connection', (clientWs) => {
   const dgWs = new WebSocket(
@@ -3140,7 +3146,7 @@ function parseCookies(header) {
   return out;
 }
 
-const facilitatorWss = new WebSocket.Server({ noServer: true });
+const facilitatorWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
 server.on('upgrade', (req, socket, head) => {
   const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host}`);
