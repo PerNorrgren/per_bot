@@ -1015,18 +1015,18 @@
         <div class="doc-actions">
           ${n.status === 'draft' ? `
             <button class="btn sm" onclick="editNewsletter('${n.id}')">Edit</button>
-            <button class="btn sm primary" onclick="sendNewsletterNow('${n.id}')">Send now</button>
+            <button class="btn sm primary" onclick="sendNewsletterNow('${n.id}', this)">Send now</button>
             <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
-            <button class="btn sm" onclick="reconcileNewsletter('${n.id}')" title="For a send from before per-recipient tracking existed">Reconcile with Scaleway</button>
+            <button class="btn sm" onclick="reconcileNewsletter('${n.id}', this)" title="For a send from before per-recipient tracking existed">Reconcile with Scaleway</button>
             <button class="btn sm danger" onclick="deleteNewsletterRow('${n.id}')">Delete</button>
           ` : n.status === 'sending' ? `
             <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
-            <button class="btn sm" onclick="retryNewsletter('${n.id}')">Retry outstanding</button>
-            <button class="btn sm" onclick="reconcileNewsletter('${n.id}')" title="Re-check against Scaleway — safe to re-run">Reconcile with Scaleway</button>
+            <button class="btn sm" onclick="retryNewsletter('${n.id}', this)">Retry outstanding</button>
+            <button class="btn sm" onclick="reconcileNewsletter('${n.id}', this)" title="Re-check against Scaleway — safe to re-run">Reconcile with Scaleway</button>
           ` : `
             <button class="btn sm" onclick="viewSentNewsletter('${n.id}')">View</button>
             <button class="btn sm" onclick="showNewsletterProgress('${n.id}')">Progress</button>
-            <button class="btn sm" onclick="retryNewsletter('${n.id}')">Retry outstanding</button>
+            <button class="btn sm" onclick="retryNewsletter('${n.id}', this)">Retry outstanding</button>
             <button class="btn sm" onclick="duplicateNewsletter('${n.id}')">Duplicate</button>
           `}
         </div>
@@ -1805,7 +1805,16 @@
     }
   }
 
-  async function sendNewsletterNow(id) {
+  // Per Bot 16 fix: these three take the button element as an explicit
+  // parameter now, not the bare global `event` object. That worked fine
+  // with the native, blocking confirm() this replaced (window.event still
+  // pointed at the original click once confirm() returned), but appConfirm
+  // is a real async Promise — by the time it resolves, window.event has
+  // moved on to whatever the LAST thing dispatched was (typically the
+  // click on the modal's own OK button, itself already removed from the
+  // DOM by then), so the loading state silently applied to nothing and
+  // the button just sat there looking like the click hadn't registered.
+  async function sendNewsletterNow(id, btnEl) {
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
 
@@ -1818,8 +1827,7 @@
 
     if (!(await appConfirm(`Send "${n.subject}" now to ${countMsg}? This cannot be undone.`))) return;
 
-    const btn = event?.target;
-    setBtnLoading(btn, true, 'Starting…');
+    setBtnLoading(btnEl, true, 'Starting…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/send`, { method: 'POST' });
       const data = await res.json();
@@ -1831,13 +1839,12 @@
       // count instead.
       if (data.ok) { appAlert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
       else appAlert(data.error || 'Could not send.');
-    } finally { setBtnLoading(btn, false); }
+    } finally { setBtnLoading(btnEl, false); }
   }
 
-  async function retryNewsletter(id) {
+  async function retryNewsletter(id, btnEl) {
     if (!(await appConfirm('Retry sending to everyone not yet successfully sent for this newsletter?'))) return;
-    const btn = event?.target;
-    setBtnLoading(btn, true, 'Retrying…');
+    setBtnLoading(btnEl, true, 'Retrying…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/retry`, { method: 'POST' });
       const data = await res.json();
@@ -1845,13 +1852,12 @@
       else if (data.ok) appAlert(data.message || 'Nothing outstanding.');
       else appAlert(data.error || 'Could not retry.');
       loadNewsletters();
-    } finally { setBtnLoading(btn, false); }
+    } finally { setBtnLoading(btnEl, false); }
   }
 
-  async function reconcileNewsletter(id) {
+  async function reconcileNewsletter(id, btnEl) {
     if (!(await appConfirm('Ask Scaleway what actually happened to this send, and reconcile our records against it? Use this for a send from before per-recipient tracking existed.'))) return;
-    const btn = event?.target;
-    setBtnLoading(btn, true, 'Checking…');
+    setBtnLoading(btnEl, true, 'Checking…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/reconcile`, { method: 'POST' });
       const data = await res.json();
@@ -1859,7 +1865,7 @@
         appAlert(`Scaleway had ${data.scalewayRecordsFound} matching records.\n\nOf your ${data.audienceSize} recipients: ${data.alreadyReached} already reached, ${data.missing} missing.\n\nUse "Retry" now to send to just the ${data.missing} missing.`);
         loadNewsletters();
       } else appAlert(data.error || 'Could not reconcile.');
-    } finally { setBtnLoading(btn, false); }
+    } finally { setBtnLoading(btnEl, false); }
   }
 
   async function showNewsletterProgress(id) {
