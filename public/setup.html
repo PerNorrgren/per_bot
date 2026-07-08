@@ -60,9 +60,10 @@
 
 <div class="panel">
   <div>
-    <div class="wordmark">First-run setup</div>
-    <div class="page-title">Let's set this up</div>
-    <div class="page-sub">This runs once, for this deployment only. Nothing here is shared with any other facilitator's copy of this app — each one is fully independent.</div>
+    <a id="backToAdminLink" href="/admin/" style="display:none;font-size:12px;color:rgba(255,255,255,0.4);text-decoration:none;margin-bottom:10px">← Admin</a>
+    <div class="wordmark" id="setupWordmark">First-run setup</div>
+    <div class="page-title" id="setupTitle">Let's set this up</div>
+    <div class="page-sub" id="setupSub">This runs once, for this deployment only. Nothing here is shared with any other facilitator's copy of this app — each one is fully independent.</div>
   </div>
 
   <div class="card">
@@ -172,10 +173,20 @@
     if (/^#[0-9a-fA-F]{6}$/.test(this.value)) document.getElementById('primaryColor').value = this.value;
   });
 
+  let _alreadySetUp = false;
+
   async function loadCurrentConfig() {
     try {
       const res  = await fetch('/api/setup/config');
       const cfg  = await res.json();
+      if (cfg.setup_completed) {
+        _alreadySetUp = true;
+        document.getElementById('backToAdminLink').style.display = 'inline-block';
+        document.getElementById('setupWordmark').textContent = 'App setup';
+        document.getElementById('setupTitle').textContent = 'Settings for this deployment';
+        document.getElementById('setupSub').textContent = "These apply to this deployment only — nothing here is shared with any other facilitator's copy of this app.";
+        document.getElementById('setupBtn').textContent = 'Save changes';
+      }
       if (cfg.brand_name)         document.getElementById('brandName').value = cfg.brand_name === 'Deeper Mindfulness' ? '' : cfg.brand_name;
       if (cfg.tagline)            document.getElementById('tagline').value = cfg.tagline;
       if (cfg.app_name)           document.getElementById('appName').value = cfg.app_name;
@@ -239,14 +250,19 @@
       const res  = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (data.ok) {
-        window.location.href = '/admin/';
+        if (_alreadySetUp) {
+          btn.disabled = false; btn.textContent = 'Saved ✓';
+          setTimeout(() => { btn.textContent = 'Save changes'; }, 2000);
+        } else {
+          window.location.href = '/admin/';
+        }
       } else {
         err.textContent = data.error || 'Something went wrong. Please try again.';
-        btn.disabled = false; btn.textContent = 'Save and continue';
+        btn.disabled = false; btn.textContent = _alreadySetUp ? 'Save changes' : 'Save and continue';
       }
     } catch(e) {
       err.textContent = 'Something went wrong. Please try again.';
-      btn.disabled = false; btn.textContent = 'Save and continue';
+      btn.disabled = false; btn.textContent = _alreadySetUp ? 'Save changes' : 'Save and continue';
     }
   }
 

@@ -4532,10 +4532,15 @@ app.get('/become-a-facilitator', (req, res) => res.sendFile(path.join(__dirname,
 app.get('/become-a-facilitator/', (req, res) => res.redirect('/become-a-facilitator'));
 app.get('/membership/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));
 
-// ── First-run setup (Path A: one deployment per facilitator/org) ──
-// Admin-only. Serves the wizard on a fresh clone; once setup_completed=1,
-// redirects straight to /admin/ rather than letting it be revisited as a
-// first-run flow (still reachable as ordinary settings via the API below).
+// ── App setup / identity settings (Path A: one deployment per facilitator/org) ──
+// Admin-only. Same page serves two purposes depending on setup_completed:
+// a first-run wizard on a fresh clone, or — once that's done — the
+// ongoing "App setup" settings screen linked from the admin nav (Per Bot
+// 11). The route itself doesn't branch on that; setup.html's own JS reads
+// setup_completed from /api/setup/config and adjusts its copy/button
+// accordingly, since this was always meant to be revisitable (see the
+// comment on PATCH /api/setup below), it just had no link pointing at it
+// before now.
 app.get('/setup', auth.requireAuth(['admin']), (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'setup.html'));
 });
