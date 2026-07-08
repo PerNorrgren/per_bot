@@ -3007,9 +3007,9 @@
     el.innerHTML = list.map(call => `
       <div class="history-item" style="flex-direction:column; align-items:stretch; gap:8px">
         <div style="display:flex; align-items:center; gap:12px">
-          <div class="history-icon">🎬</div>
+          <div class="history-icon">${call.call_type === 'audio' ? '🎙️' : '🎬'}</div>
           <div class="history-body">
-            <div class="history-title">Session — ${fmtCallDate(call.started_at)}</div>
+            <div class="history-title">${call.call_type === 'audio' ? 'Audio session' : 'Video session'} — ${fmtCallDate(call.started_at)}</div>
             <div class="history-meta">${call.recording_duration_seconds ? Math.round(call.recording_duration_seconds / 60) + ' min' : ''}${call.transcript_status === 'pending' ? ' · Transcript processing…' : ''}</div>
           </div>
         </div>

@@ -2038,7 +2038,7 @@ app.get('/api/ice-servers', (req, res) => {
 app.post('/api/facilitator/calls', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
   const client = db.getUser(req.body.clientId);
   if (!client) return res.status(404).json({ error: 'Client not found.' });
-  const call = db.createCall(uuidv4(), req.user.id, client.id);
+  const call = db.createCall(uuidv4(), req.user.id, client.id, req.body.callType);
   res.json(call);
 });
 // Facilitator polls this while waiting for the client to answer.

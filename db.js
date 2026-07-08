@@ -51,6 +51,7 @@ async function getDb() {
     id TEXT PRIMARY KEY,
     facilitator_id TEXT NOT NULL,
     client_id TEXT NOT NULL,
+    call_type TEXT NOT NULL DEFAULT 'video',
     status TEXT NOT NULL DEFAULT 'ringing',
     recording_consent TEXT,
     recording_key TEXT,
@@ -926,6 +927,10 @@ async function getDb() {
     // as logo_url.
     "ALTER TABLE app_config ADD COLUMN app_name TEXT",
     "ALTER TABLE app_config ADD COLUMN favicon_url TEXT",
+    // Audio-only calling (Per Bot 14) — the calls table already existed in
+    // production before this, so the CREATE TABLE IF NOT EXISTS above
+    // (which already lists call_type) won't retrofit it there; this does.
+    "ALTER TABLE calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'video'",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2678,10 +2683,10 @@ function clearEmailLogForNewsletter(newsletterId) {
 }
 
 // ── 1:1 video/audio calls (Per Bot 12) ──
-function createCall(id, facilitatorId, clientId) {
+function createCall(id, facilitatorId, clientId, callType) {
   getDbSync().run(
-    `INSERT INTO calls (id, facilitator_id, client_id, status, started_at) VALUES (?, ?, ?, 'ringing', datetime('now'))`,
-    [id, facilitatorId, clientId]
+    `INSERT INTO calls (id, facilitator_id, client_id, call_type, status, started_at) VALUES (?, ?, ?, ?, 'ringing', datetime('now'))`,
+    [id, facilitatorId, clientId, callType === 'audio' ? 'audio' : 'video']
   );
   save();
   return getCall(id);

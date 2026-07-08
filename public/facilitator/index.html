@@ -11,6 +11,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
   <script src="/brand-inject.js"></script>
   <script src="/js/dialogs.js"></script>
+  <script src="/js/call.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow:hidden; }
@@ -79,6 +80,15 @@
     .action-btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
     .action-btn.primary:hover { background:rgba(180,230,200,0.1); }
     .action-btn.danger { border-color:rgba(255,160,120,0.35); color:rgba(255,160,120,0.75); }
+    /* .btn.sm — small utility button used in a couple of places (call
+       recordings below, existing journal actions) that never had a
+       matching style; same visual language as .action-btn, just smaller. */
+    .btn.sm {
+      padding:6px 12px; border-radius:7px; border:1px solid rgba(255,255,255,0.15);
+      background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.6); font-size:11.5px;
+      font-family:Georgia,serif; cursor:pointer;
+    }
+    .btn.sm:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.85); }
     .action-btn.danger:hover { background:rgba(255,160,120,0.1); }
 
     /* Content area */
@@ -406,6 +416,8 @@
       <div class="no-client" id="noClientMsg">Select or create a client to begin</div>
       <div class="client-name" id="clientNameDisplay" style="display:none"></div>
       <div id="sessionActions" style="display:none; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="action-btn" id="videoCallBtn" onclick="startClientVideoCall()">📹 Video call</button>
+        <button class="action-btn" id="audioCallBtn" onclick="startClientAudioCall()">📞 Audio call</button>
         <button class="action-btn primary" id="explainBtn">Explain to me</button>
         <button class="action-btn" id="addPracticeBtn">Add practice</button>
         <button class="action-btn" id="archiveBtn">Archive client</button>
@@ -438,6 +450,18 @@
           </div>
           <div class="section-body">
             <div class="sessions-list" id="sessionsList"></div>
+          </div>
+        </div>
+
+        <!-- Video call recordings (Per Bot 12) — separate from the clinical
+             session notes above; these are actual call recordings/transcripts,
+             private to the facilitator until explicitly shared with the client. -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-title">Video call recordings</span>
+          </div>
+          <div class="section-body">
+            <div class="sessions-list" id="callRecordingsList"></div>
           </div>
         </div>
 
@@ -663,6 +687,15 @@
   }
 
   let currentClientId = null;
+  let currentClientName = null;
+  function startClientVideoCall() {
+    if (!currentClientId) return;
+    window.PerBotCall.startAsFacilitator(currentClientId, currentClientName, 'video');
+  }
+  function startClientAudioCall() {
+    if (!currentClientId) return;
+    window.PerBotCall.startAsFacilitator(currentClientId, currentClientName, 'audio');
+  }
   let ws = null;
   let fogLevel = 12;
   let isListening = false;
@@ -688,6 +721,7 @@
 
   async function selectClient(id, name) {
     currentClientId = id;
+    currentClientName = name;
     document.getElementById('noClientMsg').style.display = 'none';
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('clientNameDisplay').style.display = '';
@@ -708,6 +742,7 @@
 
     _msgSessionId = '';
     loadMessages();
+    loadCallRecordings(id);
 
     // Open WebSocket
     openWs(id);
@@ -781,6 +816,57 @@
         <div class="session-summary">${s.summary?.slice(0,120)}${s.summary?.length>120?'…':''}</div>
       </div>`;
     }).join('');
+  }
+
+  // ── Video call recordings (Per Bot 12) — separate list from the
+  // clinical session notes above; these track actual calls made through
+  // the in-app video/audio feature, private to the facilitator until the
+  // Share button is used, at which point the client sees it in their own
+  // account. ──
+  async function loadCallRecordings(clientId) {
+    try {
+      const res = await fetch(`/api/facilitator/clients/${clientId}/calls`);
+      const list = await res.json();
+      renderCallRecordings(Array.isArray(list) ? list : []);
+    } catch(e) { /* quiet — this is a secondary panel, not core to the client view */ }
+  }
+  function fmtCallDate2(s) {
+    if (!s) return '';
+    const d = new Date(s.replace(' ', 'T') + 'Z');
+    if (isNaN(d)) return s.slice(0,10);
+    return d.toLocaleDateString(undefined, { day:'numeric', month:'short' }) + ', ' + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+  }
+  function renderCallRecordings(calls) {
+    const list = document.getElementById('callRecordingsList');
+    const withRecordings = calls.filter(c => c.recording_key);
+    if (!withRecordings.length) { list.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.25);font-style:italic">No recorded calls yet</div>'; return; }
+    list.innerHTML = withRecordings.map(c => `
+      <div class="session-item" style="cursor:default">
+        <div class="session-date">${c.call_type === 'audio' ? '🎙️ Audio' : '🎬 Video'} · ${fmtCallDate2(c.started_at)}${c.recording_duration_seconds ? ' · ' + Math.round(c.recording_duration_seconds/60) + ' min' : ''}</div>
+        <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap">
+          <button class="btn sm" onclick="playCallRecording('${c.id}')">▶ Play</button>
+          <button class="btn sm" onclick="toggleShareCall('${c.id}', ${c.shared_with_client ? 'false' : 'true'})">${c.shared_with_client ? 'Unshare' : 'Share with client'}</button>
+          ${c.transcript_status === 'pending' ? '<span style="font-size:11px;color:rgba(255,255,255,0.35);align-self:center">Transcript processing…</span>' : ''}
+          ${c.shared_with_client ? '<span style="font-size:11px;color:rgba(180,230,200,0.7);align-self:center">Shared with client</span>' : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+  async function playCallRecording(callId) {
+    try {
+      const res = await fetch(`/api/calls/${callId}/recording-url`);
+      const data = await res.json();
+      if (!res.ok || !data.url) { appAlert(data.error || 'Could not open this recording.'); return; }
+      window.open(data.url, '_blank');
+    } catch(e) { appAlert('Could not open this recording — network error.'); }
+  }
+  async function toggleShareCall(callId, share) {
+    try {
+      await fetch(`/api/calls/${callId}/share`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shared: share }),
+      });
+      loadCallRecordings(currentClientId);
+    } catch(e) { appAlert('Could not update sharing right now.'); }
   }
 
   function renderFacPractices(practices) {
