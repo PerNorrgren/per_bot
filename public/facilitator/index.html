@@ -305,6 +305,14 @@
     .msg-icon-btn { width:34px; height:34px; flex:0 0 34px; display:flex; align-items:center; justify-content:center; background:none; border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:0; cursor:pointer; font-size:14px; line-height:1; }
     .msg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
     .msg-icon-btn.pending { border-color:rgba(220,200,120,0.5); background:rgba(220,200,120,0.08); opacity:0.7; cursor:wait; }
+    .msg-record-status {
+      display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:8px 12px;
+      border-radius:8px; background:rgba(255,120,100,0.1); border:1px solid rgba(255,120,100,0.35);
+      font-size:13px; color:rgba(255,190,175,0.95);
+    }
+    .msg-record-status.msg-record-loading { background:rgba(220,200,120,0.1); border-color:rgba(220,200,120,0.35); color:rgba(230,215,170,0.95); }
+    .msg-record-status-dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; animation:msg-record-pulse 1.1s ease-in-out infinite; }
+    @keyframes msg-record-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
     .msg-send-btn { height:34px; display:flex; align-items:center; }
     .msg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:8px; background:rgba(255,255,255,0.04); border-radius:8px; }
 
@@ -452,6 +460,10 @@
             </div>
             <div class="msg-list" id="msgList"></div>
             <div class="msg-recording-preview" id="msgRecordingPreview" style="display:none"></div>
+            <div class="msg-record-status" id="msgRecordStatus" style="display:none">
+              <span class="msg-record-status-dot"></span>
+              <span id="msgRecordStatusText">Loading…</span>
+            </div>
             <div class="msg-composer">
               <div id="msgInput_rich" class="msg-rich-container">
                 <div id="msgEditor_rich"></div>
@@ -980,8 +992,13 @@
     if (_msgRecordingPending) return;
     const voiceBtn = document.getElementById('msgVoiceBtn');
     const videoBtn = document.getElementById('msgVideoBtn');
+    const statusEl = document.getElementById('msgRecordStatus');
+    const statusText = document.getElementById('msgRecordStatusText');
     _msgRecordingPending = true;
     [voiceBtn, videoBtn].forEach(b => { b.disabled = true; b.classList.add('pending'); });
+    statusEl.style.display = 'flex';
+    statusEl.classList.add('msg-record-loading');
+    statusText.textContent = (kind === 'video' ? 'Camera' : 'Mic') + ' loading…';
     let stream;
     try {
       const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
@@ -989,12 +1006,15 @@
     } catch(e) {
       _msgRecordingPending = false;
       [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+      statusEl.style.display = 'none';
       alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.');
       return;
     }
     _msgRecordStream = stream;
     _msgRecordingPending = false;
     [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+    statusEl.classList.remove('msg-record-loading');
+    statusText.textContent = 'Recording ' + (kind === 'video' ? 'video' : 'voice') + ' note…';
 
     _msgRecordingKind = kind;
     const chunks = [];
@@ -1004,6 +1024,7 @@
       _msgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
       _msgRecordStream.getTracks().forEach(t => t.stop());
       document.getElementById(kind === 'video' ? 'msgVideoBtn' : 'msgVoiceBtn').classList.remove('recording');
+      statusEl.style.display = 'none';
       showRecordingPreview(kind);
     };
     _msgRecorder.start();

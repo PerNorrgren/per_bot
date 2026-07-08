@@ -139,6 +139,14 @@
     .cmsg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 9px; cursor:pointer; font-size:15px; line-height:1; }
     .cmsg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
     .cmsg-icon-btn.pending { border-color:rgba(220,200,120,0.5); background:rgba(220,200,120,0.08); opacity:0.7; cursor:wait; }
+    .msg-record-status {
+      display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:8px 12px;
+      border-radius:8px; background:rgba(255,120,100,0.1); border:1px solid rgba(255,120,100,0.35);
+      font-size:13px; color:rgba(255,190,175,0.95);
+    }
+    .msg-record-status.msg-record-loading { background:rgba(220,200,120,0.1); border-color:rgba(220,200,120,0.35); color:rgba(230,215,170,0.95); }
+    .msg-record-status-dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; animation:msg-record-pulse 1.1s ease-in-out infinite; }
+    @keyframes msg-record-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
     .cmsg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin:0 5px 8px; background:rgba(255,255,255,0.04); border-radius:10px; }
 
     /* Talk */
@@ -563,6 +571,10 @@
         </div>
         <div class="cmsg-list" id="cmsgList"></div>
         <div class="cmsg-recording-preview" id="cmsgRecordingPreview" style="display:none"></div>
+        <div class="msg-record-status" id="cmsgRecordStatus" style="display:none">
+          <span class="msg-record-status-dot"></span>
+          <span id="cmsgRecordStatusText">Loading…</span>
+        </div>
         <div class="cmsg-composer">
           <div id="cmsgInput_rich" class="cmsg-rich-container"></div>
           <button class="cmsg-icon-btn" id="cmsgAttachBtn" title="Attach file">📎</button>
@@ -1088,8 +1100,13 @@
     if (_cmsgRecordingPending) return;
     const voiceBtn = document.getElementById('cmsgVoiceBtn');
     const videoBtn = document.getElementById('cmsgVideoBtn');
+    const statusEl = document.getElementById('cmsgRecordStatus');
+    const statusText = document.getElementById('cmsgRecordStatusText');
     _cmsgRecordingPending = true;
     [voiceBtn, videoBtn].forEach(b => { b.disabled = true; b.classList.add('pending'); });
+    statusEl.style.display = 'flex';
+    statusEl.classList.add('msg-record-loading');
+    statusText.textContent = (kind === 'video' ? 'Camera' : 'Mic') + ' loading…';
     let stream;
     try {
       const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
@@ -1097,12 +1114,15 @@
     } catch(e) {
       _cmsgRecordingPending = false;
       [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+      statusEl.style.display = 'none';
       alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.');
       return;
     }
     _cmsgRecordStream = stream;
     _cmsgRecordingPending = false;
     [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+    statusEl.classList.remove('msg-record-loading');
+    statusText.textContent = 'Recording ' + (kind === 'video' ? 'video' : 'voice') + ' note…';
 
     _cmsgRecordingKind = kind;
     const chunks = [];
@@ -1112,6 +1132,7 @@
       _cmsgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
       _cmsgRecordStream.getTracks().forEach(t => t.stop());
       document.getElementById(kind === 'video' ? 'cmsgVideoBtn' : 'cmsgVoiceBtn').classList.remove('recording');
+      statusEl.style.display = 'none';
       showCmsgRecordingPreview(kind);
     };
     _cmsgRecorder.start();
