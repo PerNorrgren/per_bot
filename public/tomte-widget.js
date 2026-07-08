@@ -52,7 +52,7 @@
       background: none; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
       padding: 7px 9px; cursor: pointer; font-size: 14px; color: rgba(255,255,255,0.6); line-height: 1;
     }
-    .tomte-icon-btn.tomte-mic-on { border-color: rgba(255,120,100,0.5); background: rgba(255,120,100,0.1); color: rgba(255,150,130,0.9); }
+    .tomte-icon-btn.tomte-mic-on { border-color: rgba(255,120,100,0.7); background: rgba(255,120,100,0.18); color: rgba(255,150,130,0.95); animation: tomte-pulse 1.2s ease-in-out infinite; }
     .tomte-icon-btn.tomte-primary { border-color: rgba(180,230,200,0.35); color: rgba(180,230,200,0.85); }
   `;
 
@@ -306,6 +306,7 @@
       isListening = true;
       fab.classList.add('tomte-listening');
       micBtn.classList.add('tomte-mic-on');
+      inputEl.placeholder = 'Listening…';
       connect();
       whenReady(() => ws.send(JSON.stringify({ type: 'start_listening' })));
       mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
@@ -328,6 +329,7 @@
       isListening = false;
       fab.classList.remove('tomte-listening');
       micBtn.classList.remove('tomte-mic-on');
+      inputEl.placeholder = 'Ask Tomte…';
       if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
       if (wsReady) ws.send(JSON.stringify({ type: 'stop_listening' }));
