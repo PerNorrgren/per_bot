@@ -74,6 +74,17 @@
     .lib-subnav { display:flex; gap:6px; padding:12px 16px 8px; flex-shrink:0; overflow-x:auto; }
     .lib-subnav-btn { padding:7px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); font-size:12px; font-family:'Georgia',serif; cursor:pointer; white-space:nowrap; }
     .lib-subnav-btn.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
+    .lib-subnav-btn-danger { border-color:rgba(255,140,120,0.25); color:rgba(255,160,140,0.75); margin-left:auto; }
+    .lib-subnav-btn-danger:hover { border-color:rgba(255,140,120,0.5); color:rgba(255,170,150,0.95); }
+    /* Per Bot 9: the You page's sub-nav grew a 6th item (Log Out) — on a
+       narrow phone that's too many nowrap pill buttons to fit on one row
+       without scrolling. Wrapping into two rows instead of scrolling here,
+       scoped to just the You page since Library's own sub-nav (3 items)
+       still fits fine as-is. */
+    @media (max-width: 480px) {
+      #youView .lib-subnav { flex-wrap: wrap; overflow-x: visible; }
+      #youView .lib-subnav-btn-danger { margin-left: 0; }
+    }
     .lib-sub-panel { display:none; flex-direction:column; overflow:hidden; flex:1; min-height:0; }
     .lib-sub-panel.visible { display:flex; }
 
@@ -537,6 +548,7 @@
         <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
         <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
         <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
+        <button class="lib-subnav-btn lib-subnav-btn-danger" id="youLogoutBtn" onclick="logoutUser()">Log Out</button>
       </div>
 
       <!-- Account region -->
@@ -916,6 +928,11 @@
     if (sub === 'journal') loadJournal();
     if (sub === 'poems')   loadPoems();
     if (sub === 'history') loadHistory();
+  }
+
+  async function logoutUser() {
+    try { await fetch('/api/logout', { method: 'POST' }); } catch(e) { /* clearing the cookie is best-effort — redirect regardless */ }
+    location.href = '/login';
   }
 
   // Small summary card in the You > Account region — full settings stay
