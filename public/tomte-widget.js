@@ -334,8 +334,6 @@
       fab.classList.add('tomte-listening');
       micBtn.classList.add('tomte-mic-on');
       inputEl.placeholder = 'Listening…';
-      micStatusEl.classList.add('tomte-mic-ready');
-      micStatusText.textContent = 'Please speak…';
       connect();
       whenReady(() => ws.send(JSON.stringify({ type: 'start_listening' })));
       mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
@@ -352,6 +350,19 @@
         }
       };
       mediaRecorder.start(200);
+      // Per Bot 9: recording has already started above, so nothing is lost
+      // either way — this just holds the "Please speak…" cue back by a
+      // beat, giving the mic/browser a moment to actually settle (track
+      // init, permission handshake) before telling someone to start
+      // talking, since the very first fraction of a second was otherwise
+      // easy to talk over before anything was really ready to capture it.
+      micStatusText.textContent = 'Loading…';
+      setTimeout(() => {
+        if (isListening) {
+          micStatusEl.classList.add('tomte-mic-ready');
+          micStatusText.textContent = 'Please speak…';
+        }
+      }, 600);
     }
     function stopListening() {
       if (!isListening) return;
