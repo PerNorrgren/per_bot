@@ -186,13 +186,20 @@
     function connect() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/tomte`);
+      const url = `${proto}//${location.host}/tomte`;
+      console.log('[tomte] connecting to', url);
+      ws = new WebSocket(url);
       ws.onopen = () => {
+        console.log('[tomte] connection opened');
         wsReady = true;
         sendContext();
       };
-      ws.onclose = () => { wsReady = false; };
-      ws.onerror = () => {
+      ws.onclose = (e) => {
+        console.log(`[tomte] connection closed — code=${e.code} reason="${e.reason}" wasClean=${e.wasClean}`);
+        wsReady = false;
+      };
+      ws.onerror = (e) => {
+        console.error('[tomte] connection error', e);
         wsReady = false;
         addMessage('bot', "I couldn't connect just now — try again in a moment, or refresh the page.");
       };

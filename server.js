@@ -1893,10 +1893,21 @@ Start every reply with exactly one tag on its own, chosen from: [[ACTION:default
 const tomteWss = new WebSocket.Server({ server, path: '/tomte' });
 tomteWss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  console.log(`[tomte] connection opened from ${ip}`);
   let history = [];
   let currentPage = '';
   let currentFocus = '';
   let dgWs = null;
+
+  // Per Bot 9 debug: a WebSocket with no 'error' listener attached can, in
+  // some Node/ws versions, throw on an unhandled internal error and take
+  // the whole process down with it — which would perfectly explain "every
+  // connection just fails" with nothing obviously wrong in the request
+  // logs (Railway would auto-restart, and the next person's attempt would
+  // just fail the same way against a freshly-booted process). This should
+  // have been here from the start regardless of what turns out to be
+  // going on.
+  ws.on('error', (e) => console.error(`[tomte] ws error (${ip}):`, e.message));
 
   // Identifying the logged-in user here is purely optional — Tomte works
   // fine for anonymous visitors on the public pages too. When there IS a
@@ -1909,6 +1920,7 @@ tomteWss.on('connection', (ws, req) => {
   try {
     const cookies = parseCookies(req.headers.cookie);
     const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
+    console.log(`[tomte] cookie present: ${!!cookies[auth.COOKIE_NAME]}, valid session: ${!!payload}${payload ? `, role=${payload.role} id=${payload.id}` : ''}`);
     if (payload) {
       const settings = db.getTomteSettings(payload.role, payload.id);
       tomteName = settings.tomte_name || null;
@@ -1921,8 +1933,11 @@ tomteWss.on('connection', (ws, req) => {
       // Personal choice always wins; otherwise Dutch defaults to Mare
       // (if configured), otherwise the app's own default voice.
       tomteVoiceId = settings.voice_id || (tomteLanguage === 'nl' && MARE_VOICE_ID ? MARE_VOICE_ID : VOICE_ID);
+      console.log(`[tomte] settings resolved OK — language=${tomteLanguage}, voice=${tomteVoiceId}`);
     }
-  } catch(e) { /* not logged in, or a bad/expired cookie — just use the defaults */ }
+  } catch(e) {
+    console.error('[tomte] error resolving settings for this connection (falling back to defaults):', e.message);
+  }
 
   function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
@@ -2009,6 +2024,7 @@ tomteWss.on('connection', (ws, req) => {
   ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+    console.log(`[tomte] message received: ${msg.type}`);
     switch (msg.type) {
       case 'context':
         currentPage = msg.page || currentPage;
@@ -2048,7 +2064,10 @@ tomteWss.on('connection', (ws, req) => {
         break;
     }
   });
-  ws.on('close', () => { if (dgWs) dgWs.close(); });
+  ws.on('close', (code, reason) => {
+    console.log(`[tomte] connection closed (${ip}) — code=${code} reason=${reason ? reason.toString() : ''}`);
+    if (dgWs) dgWs.close();
+  });
 });
 
 // ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
