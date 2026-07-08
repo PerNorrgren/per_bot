@@ -38,6 +38,9 @@
     #tomte-header .tomte-sub { font-size: 10px; color: rgba(255,255,255,0.35); }
     #tomte-close { background: none; border: none; color: rgba(255,255,255,0.4); font-size: 18px; cursor: pointer; padding: 4px 8px; }
     #tomte-close:hover { color: rgba(255,255,255,0.8); }
+    #tomte-voice-toggle { background: none; border: none; color: rgba(255,255,255,0.4); font-size: 15px; cursor: pointer; padding: 4px 6px; }
+    #tomte-voice-toggle:hover { color: rgba(255,255,255,0.75); }
+    #tomte-voice-toggle.tomte-voice-on { color: rgba(180,230,200,0.9); }
     #tomte-messages { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 80px; }
     .tomte-msg { max-width: 88%; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
     .tomte-msg.tomte-bot { background: rgba(180,230,200,0.1); border: 1px solid rgba(180,230,200,0.2); color: rgba(220,255,235,0.9); align-self: flex-start; }
@@ -89,6 +92,7 @@
           <div class="tomte-title">Tomte</div>
           <div class="tomte-sub">Ask me how this app works</div>
         </div>
+        <button id="tomte-voice-toggle" title="Turn on spoken replies">🔇</button>
         <button id="tomte-close" aria-label="Close">×</button>
       </div>
       <div id="tomte-messages"><div class="tomte-empty">Ask me anything about this page — what a button does, where to find something, how a field works.</div></div>
@@ -141,6 +145,7 @@
     const micStatusText = document.getElementById('tomte-mic-status-text');
     const micSendBtn = document.getElementById('tomte-mic-send-btn');
     const closeBtn = document.getElementById('tomte-close');
+    const voiceToggleBtn = document.getElementById('tomte-voice-toggle');
 
     let ws = null;
     let wsReady = false;
@@ -150,6 +155,10 @@
     let mediaStream = null;
     let mediaRecorder = null;
     let defaultImageUrl = '/assets/tomte.png';
+    // Per Bot 9: spoken replies are opt-in — off by default, remembered per
+    // browser (not per account) so it doesn't need a round-trip to the
+    // server just to know whether to show the speaker as on or off.
+    let voiceEnabled = localStorage.getItem('tomte_voice_enabled') === 'true';
 
     function pageName() {
       return window.TOMTE_PAGE || document.title || location.pathname;
@@ -212,6 +221,7 @@
         console.log('[tomte] connection opened');
         wsReady = true;
         sendContext();
+        ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
       };
       ws.onclose = (e) => {
         console.log(`[tomte] connection closed — code=${e.code} reason="${e.reason}" wasClean=${e.wasClean}`);
@@ -304,6 +314,19 @@
       if (panel.classList.contains('tomte-open')) closePanel(); else openPanel();
     });
     closeBtn.addEventListener('click', closePanel);
+
+    function updateVoiceToggleUI() {
+      voiceToggleBtn.textContent = voiceEnabled ? '🔊' : '🔇';
+      voiceToggleBtn.title = voiceEnabled ? 'Turn off spoken replies' : 'Turn on spoken replies';
+      voiceToggleBtn.classList.toggle('tomte-voice-on', voiceEnabled);
+    }
+    updateVoiceToggleUI();
+    voiceToggleBtn.addEventListener('click', () => {
+      voiceEnabled = !voiceEnabled;
+      localStorage.setItem('tomte_voice_enabled', voiceEnabled ? 'true' : 'false');
+      updateVoiceToggleUI();
+      if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
+    });
 
     function sendText() {
       const text = inputEl.value.trim();

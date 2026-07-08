@@ -41,13 +41,13 @@ const VOICE_ID           = process.env.VOICE_ID;
 // it works well this just stays as-is, no further change needed since
 // it's already a proper env var rather than anything hardcoded.
 const MARE_VOICE_ID      = process.env.MARE_VOICE_ID;
-// Per Bot 9: Tomte is text-only for now. He can appear on the same page as
-// Talk (the main practice conversation), and if Talk is speaking at the
-// same time, Tomte's own voice would overlap and mix with it — confusing
-// to listen to. Flip this back to true once there's a way to only let
-// Tomte speak when nothing else is playing audio (e.g. checking Talk's own
-// state before calling speak()).
-const TOMTE_VOICE_ENABLED = false;
+// Per Bot 9: Tomte's voice is opt-in per person now, defaulting to off —
+// each connection tracks its own preference (see `voiceRequested` in the
+// tomteWss connection handler below), sent by the widget's speaker toggle.
+// This flag stays as a global kill-switch in case voice needs disabling
+// app-wide again for any reason (e.g. overlap with Talk audio turns out to
+// be a bigger problem than expected) — leave it true for normal operation.
+const TOMTE_VOICE_ENABLED = true;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
@@ -1983,6 +1983,10 @@ tomteWss.on('connection', (ws, req) => {
   // respond(). Tracking the latest interim transcript here means a manual
   // stop can fall back to "whatever we've got" instead of losing it.
   let lastTranscript = '';
+  // Per Bot 9: opt-in voice replies — off by default each connection,
+  // turned on only if the person flips the widget's speaker toggle. Set via
+  // the 'set_voice' message below.
+  let voiceRequested = false;
 
   // Per Bot 9 debug: a WebSocket with no 'error' listener attached can, in
   // some Node/ws versions, throw on an unhandled internal error and take
@@ -2034,7 +2038,7 @@ tomteWss.on('connection', (ws, req) => {
       send({ type: 'action', action, imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, action) });
     }
     send({ type: 'response_text', text });
-    if (!TOMTE_VOICE_ENABLED) return;
+    if (!TOMTE_VOICE_ENABLED || !voiceRequested) return;
     try {
       const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${tomteVoiceId}?output_format=mp3_44100_192`, {
         method: 'POST',
@@ -2115,6 +2119,9 @@ tomteWss.on('connection', (ws, req) => {
       case 'context':
         currentPage = msg.page || currentPage;
         currentFocus = msg.focus || '';
+        break;
+      case 'set_voice':
+        voiceRequested = !!msg.enabled;
         break;
       case 'greet':
         currentPage = msg.page || currentPage;
