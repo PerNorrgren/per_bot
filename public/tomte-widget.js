@@ -54,6 +54,18 @@
     }
     .tomte-icon-btn.tomte-mic-on { border-color: rgba(255,120,100,0.7); background: rgba(255,120,100,0.18); color: rgba(255,150,130,0.95); animation: tomte-pulse 1.2s ease-in-out infinite; }
     .tomte-icon-btn.tomte-primary { border-color: rgba(180,230,200,0.35); color: rgba(180,230,200,0.85); }
+    #tomte-mic-status {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin: 0 10px 8px 10px; padding: 8px 12px; border-radius: 8px;
+      background: rgba(255,140,120,0.1); border: 1px solid rgba(255,140,120,0.35);
+      font-size: 13px; color: rgba(255,190,175,0.95);
+    }
+    #tomte-mic-status.tomte-mic-ready { background: rgba(180,230,200,0.1); border-color: rgba(180,230,200,0.35); color: rgba(200,235,215,0.95); }
+    #tomte-mic-send-btn {
+      background: rgba(180,230,200,0.18); border: 1px solid rgba(180,230,200,0.45);
+      color: rgba(200,235,215,0.95); border-radius: 6px; padding: 4px 14px;
+      font-size: 12px; cursor: pointer; flex-shrink: 0;
+    }
   `;
 
   function injectStyle() {
@@ -80,6 +92,10 @@
         <button id="tomte-close" aria-label="Close">×</button>
       </div>
       <div id="tomte-messages"><div class="tomte-empty">Ask me anything about this page — what a button does, where to find something, how a field works.</div></div>
+      <div id="tomte-mic-status" style="display:none">
+        <span id="tomte-mic-status-text">Mic loading…</span>
+        <button id="tomte-mic-send-btn">Send</button>
+      </div>
       <div id="tomte-input-row">
         <input type="text" id="tomte-input" placeholder="Ask Tomte…"/>
         <button class="tomte-icon-btn" id="tomte-mic-btn" title="Ask by voice">🎙️</button>
@@ -121,6 +137,9 @@
     const inputEl = document.getElementById('tomte-input');
     const micBtn = document.getElementById('tomte-mic-btn');
     const sendBtn = document.getElementById('tomte-send-btn');
+    const micStatusEl = document.getElementById('tomte-mic-status');
+    const micStatusText = document.getElementById('tomte-mic-status-text');
+    const micSendBtn = document.getElementById('tomte-mic-send-btn');
     const closeBtn = document.getElementById('tomte-close');
 
     let ws = null;
@@ -300,13 +319,23 @@
     async function startListening() {
       if (isListening) return;
       console.log('[tomte] mic: requesting access');
+      micStatusEl.style.display = 'flex';
+      micStatusEl.classList.remove('tomte-mic-ready');
+      micStatusText.textContent = 'Mic loading…';
       try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-      catch(e) { console.error('[tomte] mic: getUserMedia failed', e); addMessage('bot', "I couldn't access your microphone — check your browser's permission settings."); return; }
+      catch(e) {
+        console.error('[tomte] mic: getUserMedia failed', e);
+        micStatusEl.style.display = 'none';
+        addMessage('bot', "I couldn't access your microphone — check your browser's permission settings.");
+        return;
+      }
       console.log('[tomte] mic: got stream, starting recorder');
       isListening = true;
       fab.classList.add('tomte-listening');
       micBtn.classList.add('tomte-mic-on');
       inputEl.placeholder = 'Listening…';
+      micStatusEl.classList.add('tomte-mic-ready');
+      micStatusText.textContent = 'Please speak…';
       connect();
       whenReady(() => ws.send(JSON.stringify({ type: 'start_listening' })));
       mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
@@ -330,11 +359,13 @@
       fab.classList.remove('tomte-listening');
       micBtn.classList.remove('tomte-mic-on');
       inputEl.placeholder = 'Ask Tomte…';
+      micStatusEl.style.display = 'none';
       if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
       if (wsReady) ws.send(JSON.stringify({ type: 'stop_listening' }));
     }
     micBtn.addEventListener('click', () => { isListening ? stopListening() : startListening(); });
+    micSendBtn.addEventListener('click', stopListening);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
