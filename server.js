@@ -1977,6 +1977,12 @@ tomteWss.on('connection', (ws, req) => {
   // a clean close). Buffering anything that arrives before dgWs is OPEN,
   // then flushing it in order the moment it opens, closes that gap.
   let pendingAudioChunks = [];
+  // Per Bot 9: tapping "stop" mid-sentence (rather than pausing long enough
+  // for Deepgram's own endpointing to fire speech_final) was silently
+  // discarding whatever had been transcribed so far — nothing ever reached
+  // respond(). Tracking the latest interim transcript here means a manual
+  // stop can fall back to "whatever we've got" instead of losing it.
+  let lastTranscript = '';
 
   // Per Bot 9 debug: a WebSocket with no 'error' listener attached can, in
   // some Node/ws versions, throw on an unhandled internal error and take
@@ -2151,7 +2157,9 @@ tomteWss.on('connection', (ws, req) => {
             const parsed = JSON.parse(data.toString('utf8'));
             console.log('[tomte] deepgram message:', JSON.stringify(parsed).slice(0, 300));
             const transcript = parsed?.channel?.alternatives?.[0]?.transcript;
+            if (transcript && transcript.trim()) lastTranscript = transcript.trim();
             if (transcript && transcript.trim() && parsed.speech_final) {
+              lastTranscript = '';
               send({ type: 'final_transcript', text: transcript });
               await respond(transcript);
             }
@@ -2177,6 +2185,12 @@ tomteWss.on('connection', (ws, req) => {
         break;
       case 'stop_listening':
         if (dgWs) { dgWs.close(); dgWs = null; }
+        if (lastTranscript) {
+          const t = lastTranscript;
+          lastTranscript = '';
+          send({ type: 'final_transcript', text: t });
+          await respond(t);
+        }
         break;
     }
   });
@@ -3324,6 +3338,10 @@ facilitatorWss.on('connection', (ws, ctx) => {
   // arrive before dgWs is OPEN (especially the crucial first, header-
   // bearing WebM chunk) instead of silently dropping them.
   let pendingAudioChunks = [];
+  // Per Bot 9: same fix as Tomte's bridge — track the latest interim
+  // transcript so a manual stop (rather than a natural pause) doesn't
+  // silently discard whatever's been said so far.
+  let lastTranscript = '';
 
   function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
@@ -3405,7 +3423,9 @@ facilitatorWss.on('connection', (ws, ctx) => {
           try {
             const parsed = JSON.parse(data.toString('utf8'));
             const transcript = parsed?.channel?.alternatives?.[0]?.transcript;
+            if (transcript && transcript.trim()) lastTranscript = transcript.trim();
             if (transcript && transcript.trim() && parsed.speech_final) {
+              lastTranscript = '';
               send({ type: 'final_transcript', text: transcript });
               await respond(transcript, { explain: false });
             }
@@ -3429,6 +3449,12 @@ facilitatorWss.on('connection', (ws, ctx) => {
       case 'stop_listening':
         send({ type: 'listening_stopped' });
         if (dgWs) { try { dgWs.close(); } catch {} dgWs = null; }
+        if (lastTranscript) {
+          const t = lastTranscript;
+          lastTranscript = '';
+          send({ type: 'final_transcript', text: t });
+          await respond(t, { explain: false });
+        }
         break;
 
       case 'update_arc':
