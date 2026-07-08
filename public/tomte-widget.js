@@ -209,7 +209,7 @@
         if (msg.type === 'final_transcript') addMessage('user', msg.text);
         if (msg.type === 'audio') playAudio(msg.data);
         if (msg.type === 'action') applyAction(msg.imageUrl);
-        if (msg.type === 'listening_started') { /* no-op, UI already shows mic state */ }
+        if (msg.type === 'listening_started') { console.log('[tomte] mic: server confirmed listening'); }
       };
     }
 
@@ -299,19 +299,26 @@
 
     async function startListening() {
       if (isListening) return;
+      console.log('[tomte] mic: requesting access');
       try { mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-      catch(e) { addMessage('bot', "I couldn't access your microphone — check your browser's permission settings."); return; }
+      catch(e) { console.error('[tomte] mic: getUserMedia failed', e); addMessage('bot', "I couldn't access your microphone — check your browser's permission settings."); return; }
+      console.log('[tomte] mic: got stream, starting recorder');
       isListening = true;
       fab.classList.add('tomte-listening');
       micBtn.classList.add('tomte-mic-on');
       connect();
       whenReady(() => ws.send(JSON.stringify({ type: 'start_listening' })));
       mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm;codecs=opus' });
+      let chunkCount = 0;
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0 && wsReady) {
+          chunkCount++;
+          if (chunkCount === 1 || chunkCount % 10 === 0) console.log(`[tomte] mic: sent chunk #${chunkCount} (${e.data.size} bytes)`);
           const r = new FileReader();
           r.onload = () => ws.send(JSON.stringify({ type: 'audio_chunk', data: r.result.split(',')[1] }));
           r.readAsDataURL(e.data);
+        } else if (e.data.size > 0) {
+          console.log('[tomte] mic: chunk ready but socket not open yet — dropped');
         }
       };
       mediaRecorder.start(200);

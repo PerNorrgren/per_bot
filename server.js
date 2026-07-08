@@ -2113,21 +2113,28 @@ tomteWss.on('connection', (ws, req) => {
           'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=false',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
+        dgWs.on('open', () => console.log('[tomte] deepgram connected'));
         dgWs.on('message', async (data) => {
           try {
             const parsed = JSON.parse(data.toString('utf8'));
+            console.log('[tomte] deepgram message:', JSON.stringify(parsed).slice(0, 300));
             const transcript = parsed?.channel?.alternatives?.[0]?.transcript;
             if (transcript && transcript.trim() && parsed.speech_final) {
               send({ type: 'final_transcript', text: transcript });
               await respond(transcript);
             }
-          } catch { /* non-JSON or partial frame — ignore */ }
+          } catch(e) { console.error('[tomte] deepgram message parse error:', e.message); }
         });
-        dgWs.on('error', (e) => console.error('tomte deepgram error:', e.message));
+        dgWs.on('error', (e) => console.error('[tomte] deepgram error:', e.message));
+        dgWs.on('close', (code, reason) => console.log(`[tomte] deepgram closed — code=${code} reason=${reason ? reason.toString() : ''}`));
         break;
       }
       case 'audio_chunk':
-        if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) dgWs.send(Buffer.from(msg.data, 'base64'));
+        if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) {
+          dgWs.send(Buffer.from(msg.data, 'base64'));
+        } else {
+          console.log(`[tomte] audio_chunk dropped — dgWs state: ${dgWs ? dgWs.readyState : 'null (not created yet)'}`);
+        }
         break;
       case 'stop_listening':
         if (dgWs) { dgWs.close(); dgWs = null; }
