@@ -41,6 +41,13 @@ const VOICE_ID           = process.env.VOICE_ID;
 // it works well this just stays as-is, no further change needed since
 // it's already a proper env var rather than anything hardcoded.
 const MARE_VOICE_ID      = process.env.MARE_VOICE_ID;
+// Per Bot 9: Tomte is text-only for now. He can appear on the same page as
+// Talk (the main practice conversation), and if Talk is speaking at the
+// same time, Tomte's own voice would overlap and mix with it — confusing
+// to listen to. Flip this back to true once there's a way to only let
+// Tomte speak when nothing else is playing audio (e.g. checking Talk's own
+// state before calling speak()).
+const TOMTE_VOICE_ENABLED = false;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
@@ -2011,6 +2018,7 @@ tomteWss.on('connection', (ws, req) => {
       send({ type: 'action', action, imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, action) });
     }
     send({ type: 'response_text', text });
+    if (!TOMTE_VOICE_ENABLED) return;
     try {
       const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${tomteVoiceId}?output_format=mp3_44100_192`, {
         method: 'POST',
