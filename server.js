@@ -1930,7 +1930,19 @@ app.get('/ws-test', (req, res) => {
 </script>
 </body></html>`);
 });
-const wsTestServer = new WebSocket.Server({ server, path: '/ws-test-socket', perMessageDeflate: false });
+// Per Bot 9 fix: every ws server bound via {server, path} attaches its OWN
+// 'upgrade' listener to the same shared http.Server — and Node fires ALL
+// of them for every single upgrade request, regardless of path. Each one's
+// internal handleUpgrade() checks its own path and calls abortHandshake(400)
+// if it doesn't match, which either kills a request meant for a DIFFERENT
+// path before that server's own listener gets a turn, or — worse — writes
+// a raw 400 response into a socket a DIFFERENT server already successfully
+// upgraded moments earlier, corrupting the live WebSocket stream (surfacing
+// to the browser as "Invalid frame header"). All four sockets in this app
+// now use noServer:true and are routed explicitly by the single consolidated
+// server.on('upgrade', ...) handler near the bottom of this section, the
+// same pattern already used correctly for the facilitator socket.
+const wsTestServer = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 wsTestServer.on('connection', (ws) => {
   console.log('[ws-test] connection opened');
   ws.on('message', (raw) => {
@@ -1940,7 +1952,7 @@ wsTestServer.on('connection', (ws) => {
   ws.on('close', (code, reason) => console.log(`[ws-test] closed — code=${code} reason=${reason ? reason.toString() : ''}`));
   ws.on('error', (e) => console.error('[ws-test] error:', e.message));
 });
-const tomteWss = new WebSocket.Server({ server, path: '/tomte', perMessageDeflate: false });
+const tomteWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 tomteWss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
   console.log(`[tomte] connection opened from ${ip}`);
@@ -3159,7 +3171,7 @@ app.post('/api/speak', async (req, res) => { // public — used by guest and cli
 });
 
 // ── /listen — Deepgram STT proxy (Mare Bot architecture) ──
-const listenWss = new WebSocket.Server({ server, path: '/listen', perMessageDeflate: false });
+const listenWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
 listenWss.on('connection', (clientWs) => {
   const dgWs = new WebSocket(
@@ -3192,9 +3204,34 @@ function parseCookies(header) {
 
 const facilitatorWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
+// ── Single consolidated upgrade router (Per Bot 9) ──
+// Every WebSocket path in the app funnels through here now, dispatched
+// explicitly by pathname to exactly one server's handleUpgrade(). See the
+// comment above wsTestServer for why this replaced four independent
+// {server, path}-bound listeners.
 server.on('upgrade', (req, socket, head) => {
   const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host}`);
-  if (pathname !== '/' || searchParams.get('type') !== 'facilitator') return; // not our route — let ws's own /listen handler take it
+
+  if (pathname === '/ws-test-socket') {
+    wsTestServer.handleUpgrade(req, socket, head, (ws) => wsTestServer.emit('connection', ws, req));
+    return;
+  }
+
+  if (pathname === '/tomte') {
+    tomteWss.handleUpgrade(req, socket, head, (ws) => tomteWss.emit('connection', ws, req));
+    return;
+  }
+
+  if (pathname === '/listen') {
+    listenWss.handleUpgrade(req, socket, head, (ws) => listenWss.emit('connection', ws, req));
+    return;
+  }
+
+  if (pathname !== '/' || searchParams.get('type') !== 'facilitator') {
+    // Not a WebSocket path this app knows about at all.
+    socket.destroy();
+    return;
+  }
 
   const cookies = parseCookies(req.headers.cookie);
   const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
