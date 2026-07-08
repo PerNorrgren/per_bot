@@ -1967,6 +1967,16 @@ tomteWss.on('connection', (ws, req) => {
   let currentPage = '';
   let currentFocus = '';
   let dgWs = null;
+  // Per Bot 9 fix: MediaRecorder puts the crucial WebM container header
+  // (the ONLY chunk that tells Deepgram how to parse everything after it)
+  // in the very first chunk emitted. Establishing our own outbound
+  // connection to Deepgram takes a real network round-trip, and that first
+  // chunk can easily arrive before it's open — silently dropping it left
+  // Deepgram receiving only headerless continuation data it could never
+  // make sense of (hence a Metadata reply with duration:0, channels:0, then
+  // a clean close). Buffering anything that arrives before dgWs is OPEN,
+  // then flushing it in order the moment it opens, closes that gap.
+  let pendingAudioChunks = [];
 
   // Per Bot 9 debug: a WebSocket with no 'error' listener attached can, in
   // some Node/ws versions, throw on an unhandled internal error and take
@@ -2109,6 +2119,7 @@ tomteWss.on('connection', (ws, req) => {
         break;
       case 'start_listening': {
         send({ type: 'listening_started' });
+        pendingAudioChunks = [];
         dgWs = new WebSocket(
           // Per Bot 9 fix: this stream is WebM (from MediaRecorder), a
           // containerized format that already declares its own codec and
@@ -2122,7 +2133,14 @@ tomteWss.on('connection', (ws, req) => {
           'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
-        dgWs.on('open', () => console.log('[tomte] deepgram connected'));
+        dgWs.on('open', () => {
+          console.log('[tomte] deepgram connected');
+          if (pendingAudioChunks.length) {
+            console.log(`[tomte] flushing ${pendingAudioChunks.length} chunk(s) buffered while connecting`);
+            pendingAudioChunks.forEach(buf => dgWs.send(buf));
+            pendingAudioChunks = [];
+          }
+        });
         dgWs.on('unexpected-response', (req, res) => {
           let body = '';
           res.on('data', (chunk) => { body += chunk; });
@@ -2144,12 +2162,17 @@ tomteWss.on('connection', (ws, req) => {
         break;
       }
       case 'audio_chunk':
-        if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) {
+        if (msg.data) {
           const buf = Buffer.from(msg.data, 'base64');
-          console.log(`[tomte] forwarding chunk: ${buf.length} bytes, starts with ${buf.subarray(0, 8).toString('hex')}`);
-          dgWs.send(buf);
-        } else {
-          console.log(`[tomte] audio_chunk dropped — dgWs state: ${dgWs ? dgWs.readyState : 'null (not created yet)'}`);
+          if (dgWs && dgWs.readyState === WebSocket.OPEN) {
+            console.log(`[tomte] forwarding chunk: ${buf.length} bytes, starts with ${buf.subarray(0, 8).toString('hex')}`);
+            dgWs.send(buf);
+          } else if (dgWs && dgWs.readyState === WebSocket.CONNECTING) {
+            console.log(`[tomte] buffering chunk (still connecting): ${buf.length} bytes`);
+            pendingAudioChunks.push(buf);
+          } else {
+            console.log(`[tomte] audio_chunk dropped — dgWs state: ${dgWs ? dgWs.readyState : 'null (not created yet)'}`);
+          }
         }
         break;
       case 'stop_listening':
@@ -3297,6 +3320,10 @@ facilitatorWss.on('connection', (ws, ctx) => {
 
   // Deepgram connection for this facilitator's voice input — opened lazily on start_listening
   let dgWs = null;
+  // Per Bot 9 fix — same reasoning as Tomte's bridge: buffer chunks that
+  // arrive before dgWs is OPEN (especially the crucial first, header-
+  // bearing WebM chunk) instead of silently dropping them.
+  let pendingAudioChunks = [];
 
   function send(obj) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
 
@@ -3353,6 +3380,7 @@ facilitatorWss.on('connection', (ws, ctx) => {
 
       case 'start_listening': {
         send({ type: 'listening_started' });
+        pendingAudioChunks = [];
         dgWs = new WebSocket(
           // Per Bot 9 fix: same as Tomte's bridge — this is WebM (from
           // MediaRecorder), a containerized format. Explicit encoding params
@@ -3362,6 +3390,12 @@ facilitatorWss.on('connection', (ws, ctx) => {
           'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
+        dgWs.on('open', () => {
+          if (pendingAudioChunks.length) {
+            pendingAudioChunks.forEach(buf => dgWs.send(buf));
+            pendingAudioChunks = [];
+          }
+        });
         dgWs.on('unexpected-response', (req, res) => {
           let body = '';
           res.on('data', (chunk) => { body += chunk; });
@@ -3382,8 +3416,13 @@ facilitatorWss.on('connection', (ws, ctx) => {
       }
 
       case 'audio_chunk':
-        if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) {
-          dgWs.send(Buffer.from(msg.data, 'base64'));
+        if (msg.data) {
+          const buf = Buffer.from(msg.data, 'base64');
+          if (dgWs && dgWs.readyState === WebSocket.OPEN) {
+            dgWs.send(buf);
+          } else if (dgWs && dgWs.readyState === WebSocket.CONNECTING) {
+            pendingAudioChunks.push(buf);
+          }
         }
         break;
 
