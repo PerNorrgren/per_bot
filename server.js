@@ -2110,7 +2110,16 @@ tomteWss.on('connection', (ws, req) => {
       case 'start_listening': {
         send({ type: 'listening_started' });
         dgWs = new WebSocket(
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
+          // Per Bot 9 fix: this stream is WebM (from MediaRecorder), a
+          // containerized format that already declares its own codec and
+          // sample rate. Explicitly setting encoding/sample_rate/channels
+          // here was telling Deepgram to instead treat it as RAW, headerless
+          // Opus — the two don't reconcile, so Deepgram accepted every audio
+          // chunk without ever erroring, but never returned a transcript
+          // either (per Deepgram's own docs: "if you're streaming
+          // containerized audio... you should not set the encoding and
+          // sample rate"). Let it auto-detect the container instead.
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('open', () => console.log('[tomte] deepgram connected'));
@@ -3343,7 +3352,12 @@ facilitatorWss.on('connection', (ws, ctx) => {
       case 'start_listening': {
         send({ type: 'listening_started' });
         dgWs = new WebSocket(
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
+          // Per Bot 9 fix: same as Tomte's bridge — this is WebM (from
+          // MediaRecorder), a containerized format. Explicit encoding params
+          // were making Deepgram treat it as raw, headerless Opus instead,
+          // which it silently couldn't reconcile — accepted every chunk,
+          // never returned a transcript. Let it auto-detect the container.
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('unexpected-response', (req, res) => {
