@@ -37,6 +37,34 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── 1:1 video/audio calls (Per Bot 12) ──
+  // One row per call attempt between a facilitator and a client. Recording
+  // is genuinely optional per call (consent asked fresh each time, not a
+  // blanket setting) and defaults to facilitator-only visibility —
+  // shared_with_client only flips on when the facilitator explicitly
+  // shares that specific recording, at which point it shows up in the
+  // client's own account. recording_key/transcript stay NULL until the
+  // facilitator's browser (the one that composites and uploads the
+  // recording — see server.js) finishes uploading and Deepgram finishes
+  // transcribing, both of which happen after the call itself has ended.
+  db.run(`CREATE TABLE IF NOT EXISTS calls (
+    id TEXT PRIMARY KEY,
+    facilitator_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ringing',
+    recording_consent TEXT,
+    recording_key TEXT,
+    recording_duration_seconds INTEGER,
+    transcript TEXT,
+    transcript_status TEXT,
+    shared_with_client INTEGER NOT NULL DEFAULT 0,
+    shared_at TEXT,
+    started_at TEXT DEFAULT (datetime('now')),
+    answered_at TEXT,
+    ended_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Facilitators ──
   db.run(`CREATE TABLE IF NOT EXISTS facilitators (
     id TEXT PRIMARY KEY,
@@ -396,6 +424,23 @@ async function getDb() {
     subcategory_id TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (category_id) REFERENCES categories(id)
+  )`);
+
+  // ── Client <-> facilitator relationships (Per Bot 13) ──
+  // A client can have more than one facilitator now — this table is what
+  // makes that real, alongside (not replacing) the legacy users.facilitator_id
+  // single column, which stays exactly as-is for backward compatibility
+  // (existing queries that assume one facilitator keep working unchanged).
+  // "Talk" itself is treated as facilitator #1 for every client but is
+  // NEVER a row in here or in the facilitators table — it's a synthetic
+  // id ('talk') the API layer adds to every client's list, since it isn't
+  // a real login-capable account and doesn't need one.
+  db.run(`CREATE TABLE IF NOT EXISTS client_facilitators (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    facilitator_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(client_id, facilitator_id)
   )`);
 
   // ── Invitations ──
@@ -914,6 +959,19 @@ async function getDb() {
     db.run(`UPDATE users SET pref_sms_motd=1 WHERE pref_sms=1 AND (pref_sms_motd IS NULL OR pref_sms_motd=0)`);
   } catch(e) { /* ignore */ }
 
+  // ── Backfill: existing single facilitator_id assignments become the
+  // first row in client_facilitators (Per Bot 13) ──
+  // The legacy column stays authoritative for anything not yet updated to
+  // use the new many-to-many table (see client_facilitators above) — this
+  // just makes sure every client's existing relationship also shows up in
+  // the new "list of my facilitators" view from day one, rather than
+  // looking empty until someone's explicitly assigned a second one.
+  // INSERT OR IGNORE makes this naturally safe to run on every boot.
+  try {
+    db.run(`INSERT OR IGNORE INTO client_facilitators (id, client_id, facilitator_id)
+      SELECT lower(hex(randomblob(16))), id, facilitator_id FROM users WHERE facilitator_id IS NOT NULL`);
+  } catch(e) { /* ignore */ }
+
   // ── clients → users table migration ──
   // If the old 'clients' table still exists and 'users' does not yet have any rows
   // (i.e., this is the first boot after upgrading), copy all rows across and drop
@@ -1153,6 +1211,25 @@ function createFacilitator(id, name, email, passwordHash, role = 'facilitator') 
 }
 function getFacilitatorByEmail(email) { return queryOne('SELECT * FROM facilitators WHERE email=?', [email.toLowerCase()]); }
 function getFacilitatorById(id) { return queryOne('SELECT * FROM facilitators WHERE id=?', [id]); }
+
+// ── Client <-> facilitator relationships (Per Bot 13) ──
+// "Talk" is deliberately never in this table — it's a synthetic id the
+// API layer adds on top (see /api/client/facilitators in server.js),
+// always present for every client regardless of what's in here.
+function getFacilitatorsForClient(clientId) {
+  return queryAll(`SELECT f.* FROM client_facilitators cf JOIN facilitators f ON cf.facilitator_id=f.id WHERE cf.client_id=? ORDER BY cf.created_at ASC`, [clientId]);
+}
+function isFacilitatorAssignedToClient(clientId, facilitatorId) {
+  return !!queryOne(`SELECT 1 FROM client_facilitators WHERE client_id=? AND facilitator_id=?`, [clientId, facilitatorId]);
+}
+function addClientFacilitator(clientId, facilitatorId) {
+  getDbSync().run(`INSERT OR IGNORE INTO client_facilitators (id, client_id, facilitator_id) VALUES (?, ?, ?)`, [crypto.randomUUID(), clientId, facilitatorId]);
+  save();
+}
+function removeClientFacilitator(clientId, facilitatorId) {
+  getDbSync().run(`DELETE FROM client_facilitators WHERE client_id=? AND facilitator_id=?`, [clientId, facilitatorId]);
+  save();
+}
 function updateFacilitatorPassword(id, hash) {
   getDbSync().run('UPDATE facilitators SET password_hash=?,must_change_password=0 WHERE id=?', [hash, id]); save();
 }
@@ -2600,6 +2677,61 @@ function clearEmailLogForNewsletter(newsletterId) {
   getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
 }
 
+// ── 1:1 video/audio calls (Per Bot 12) ──
+function createCall(id, facilitatorId, clientId) {
+  getDbSync().run(
+    `INSERT INTO calls (id, facilitator_id, client_id, status, started_at) VALUES (?, ?, ?, 'ringing', datetime('now'))`,
+    [id, facilitatorId, clientId]
+  );
+  save();
+  return getCall(id);
+}
+function getCall(id) { return queryOne('SELECT * FROM calls WHERE id=?', [id]); }
+// A client only ever has one call worth surfacing at a time — the most
+// recent one still in 'ringing' state addressed to them. Ordered so a
+// stale ring (e.g. the facilitator hung up before it was answered, but
+// the row is still technically 'ringing' for a beat) can't shadow a
+// genuinely new one.
+function getRingingCallForClient(clientId) {
+  return queryOne(`SELECT * FROM calls WHERE client_id=? AND status='ringing' ORDER BY started_at DESC LIMIT 1`, [clientId]);
+}
+function updateCallStatus(id, status, extraFields) {
+  const fields = { status, ...(extraFields || {}) };
+  const keys = Object.keys(fields);
+  getDbSync().run(`UPDATE calls SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+function setCallConsent(id, consent) {
+  getDbSync().run(`UPDATE calls SET recording_consent=? WHERE id=?`, [consent, id]); save();
+}
+function setCallRecording(id, key, durationSeconds) {
+  getDbSync().run(`UPDATE calls SET recording_key=?, recording_duration_seconds=?, transcript_status='pending' WHERE id=?`, [key, durationSeconds || null, id]);
+  save();
+}
+function setCallTranscript(id, transcript, status) {
+  getDbSync().run(`UPDATE calls SET transcript=?, transcript_status=? WHERE id=?`, [transcript || null, status, id]);
+  save();
+}
+function setCallShared(id, shared) {
+  getDbSync().run(`UPDATE calls SET shared_with_client=?, shared_at=? WHERE id=?`, [shared ? 1 : 0, shared ? new Date().toISOString() : null, id]);
+  save();
+}
+// Facilitator's own view of a client's call history — everything,
+// regardless of share status, since it's their recording to manage.
+function getCallsForFacilitatorClient(facilitatorId, clientId) {
+  return queryAll(`SELECT * FROM calls WHERE facilitator_id=? AND client_id=? ORDER BY started_at DESC`, [facilitatorId, clientId]);
+}
+// Admin equivalent — same shape, but every call for that client regardless
+// of which facilitator ran it, matching the admin-sees-everything pattern
+// used elsewhere (e.g. canAccessSession in server.js).
+function getAllCallsForClient(clientId) {
+  return queryAll(`SELECT * FROM calls WHERE client_id=? ORDER BY started_at DESC`, [clientId]);
+}
+// Client's own view — only calls the facilitator has explicitly shared.
+function getSharedCallsForClient(clientId) {
+  return queryAll(`SELECT * FROM calls WHERE client_id=? AND shared_with_client=1 ORDER BY started_at DESC`, [clientId]);
+}
+
 // ── Tomte personalization (Per Bot 8) — one pair of functions covering
 // both account tables, since Tomte shows up for clients, facilitators,
 // and admins alike and each personalizes independently.
@@ -3086,6 +3218,7 @@ module.exports = {
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
+  getFacilitatorsForClient, isFacilitatorAssignedToClient, addClientFacilitator, removeClientFacilitator,
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,
@@ -3176,6 +3309,8 @@ module.exports = {
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
+  createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
+  setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
   // Reminders
   getInactiveUsers,

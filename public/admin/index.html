@@ -407,6 +407,18 @@
           </select>
         </div>
       </div>
+      <!-- Additional facilitators (Per Bot 13) — a client's legacy single
+           facilitator (set via the field elsewhere in this form) always
+           counts as one; this manages any EXTRA ones on top, e.g. a group
+           programme facilitator alongside their individual one. -->
+      <div style="margin-top:14px">
+        <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Additional facilitators</label>
+        <div id="udExtraFacilitators" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px"></div>
+        <div style="display:flex; gap:8px">
+          <select id="udAddFacilitatorSelect" style="flex:1;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px"></select>
+          <button class="action-btn" onclick="addExtraFacilitator()">+ Add</button>
+        </div>
+      </div>
       <div class="modal-err" id="udErr"></div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('userDetailsModal')">Cancel</button>
@@ -1532,8 +1544,68 @@
     document.getElementById('udErr').textContent = '';
     _udSelectedImageFilename = null; // no new gallery pick yet this session — keep whatever's already set
     renderUdImageGallery(u.tomte_image_filename || null);
+    loadExtraFacilitators(id, u.facilitator_id);
     openModal('userDetailsModal');
   }
+
+  // ── Additional facilitators (Per Bot 13) — everything beyond the
+  // client's legacy single facilitator_id (shown elsewhere in this same
+  // form). Kept as its own small self-contained load/render/add/remove
+  // set rather than folding into the bigger save-on-submit flow below —
+  // each add/remove takes effect immediately, same as the Tomte photo
+  // gallery picks above.
+  let _udAllFacilitators = [];
+  async function loadExtraFacilitators(clientId, legacyFacilitatorId) {
+    try {
+      if (!_udAllFacilitators.length) {
+        const allRes = await fetch('/api/admin/facilitators');
+        _udAllFacilitators = await allRes.json();
+      }
+    } catch(e) { /* keep whatever we had, options list just won't grow this time */ }
+    let mine = [];
+    try {
+      const res = await fetch(`/api/admin/users/${clientId}/facilitators`);
+      mine = await res.json();
+    } catch(e) { mine = []; }
+    renderExtraFacilitators(clientId, mine, legacyFacilitatorId);
+  }
+  function renderExtraFacilitators(clientId, mine, legacyFacilitatorId) {
+    const listEl = document.getElementById('udExtraFacilitators');
+    if (!mine.length) {
+      listEl.innerHTML = '<span style="font-size:11px;color:rgba(255,255,255,0.25);font-style:italic">None yet</span>';
+    } else {
+      listEl.innerHTML = mine.map(f => `
+        <span style="display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:4px 6px 4px 12px; font-size:12px; color:rgba(255,255,255,0.7)">
+          ${f.name}
+          <button onclick="removeExtraFacilitator('${clientId}','${f.id}')" style="background:none;border:none;color:rgba(255,120,100,0.7);cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button>
+        </span>
+      `).join('');
+    }
+    const select = document.getElementById('udAddFacilitatorSelect');
+    const mineIds = new Set(mine.map(f => f.id));
+    const options = _udAllFacilitators.filter(f => f.id !== legacyFacilitatorId && !mineIds.has(f.id));
+    select.innerHTML = options.length
+      ? options.map(f => `<option value="${f.id}">${f.name}</option>`).join('')
+      : '<option value="">No other facilitators available</option>';
+    select.dataset.clientId = clientId;
+    select.dataset.legacyFacilitatorId = legacyFacilitatorId || '';
+  }
+  async function addExtraFacilitator() {
+    const select = document.getElementById('udAddFacilitatorSelect');
+    const facilitatorId = select.value;
+    if (!facilitatorId) return;
+    const clientId = select.dataset.clientId;
+    await fetch(`/api/admin/users/${clientId}/facilitators`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ facilitatorId }),
+    });
+    loadExtraFacilitators(clientId, select.dataset.legacyFacilitatorId);
+  }
+  async function removeExtraFacilitator(clientId, facilitatorId) {
+    await fetch(`/api/admin/users/${clientId}/facilitators/${facilitatorId}`, { method: 'DELETE' });
+    const legacyFacilitatorId = document.getElementById('udAddFacilitatorSelect').dataset.legacyFacilitatorId;
+    loadExtraFacilitators(clientId, legacyFacilitatorId);
+  }
+
   async function saveUserDetails() {
     const id = document.getElementById('udUserId').value;
     const errEl = document.getElementById('udErr');

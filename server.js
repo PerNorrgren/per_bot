@@ -51,6 +51,20 @@ const TOMTE_VOICE_ENABLED = true;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
 const PORT               = process.env.PORT || 3000;
+// ── 1:1 calling (Per Bot 12) — TURN relay ──
+// A public STUN server (Google's) is enough for most direct browser-to-
+// browser connections, but roughly 15-20% of real-world calls sit behind
+// a NAT/firewall strict enough that direct connection fails outright —
+// those need a TURN server to relay media instead. TURN needs real UDP
+// ports open, which isn't something this Railway app itself can provide
+// (Railway's networking model is built around HTTP/WS, not arbitrary UDP
+// relay) — it wants its own small VPS running Coturn, configured here via
+// env vars once that's set up. Calls still work without these set (STUN-
+// only), just with that same 15-20% failure rate for anyone whose network
+// can't connect directly.
+const TURN_URL           = process.env.TURN_URL || null;       // e.g. turn:your-vps-ip:3478
+const TURN_USERNAME      = process.env.TURN_USERNAME || null;
+const TURN_CREDENTIAL    = process.env.TURN_CREDENTIAL || null;
 
 // ── Voice picker (Per Bot 7) ── Backs the My Account voice picker: rather
 // than hand-maintain a curated list of voice_ids in code (which drifts the
@@ -1690,6 +1704,50 @@ function tomteImageUrl(stored) {
   if (!stored) return null;
   return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
 }
+
+// ── Call recordings (Per Bot 12) — uploaded the same way Tomte's images
+// are (same underlying PutObjectCommand — media.js's "public" vs
+// "private" distinction is about which SERVING route the app exposes
+// afterward, not the upload itself) but NEVER given an authless serving
+// route. Always read back through a short-lived presigned GET
+// (media.getPlaybackUrl), issued only after checking who's asking —
+// facilitator always, client only once that specific recording has been
+// explicitly shared. See the /api/calls/:id/recording-url route below.
+async function uploadCallRecordingToR2(buffer, mimeType) {
+  if (!media.isConfigured()) throw new Error('R2 is not configured — call recording needs it.');
+  const ext = mimeType && mimeType.includes('mp4') ? '.mp4' : '.webm';
+  const key = `call-recordings/${uuidv4()}${ext}`;
+  await media.uploadPublicObject(key, buffer, mimeType || 'video/webm');
+  return key;
+}
+
+// Deepgram's prerecorded (batch) endpoint — a single POST with the whole
+// recording's bytes, not the streaming/live endpoint everything else
+// here uses. Takes the buffer directly (already in hand from the upload
+// that just happened) rather than re-fetching the file back from R2.
+// Runs fully async from the caller's point of view — updates the calls
+// row itself when done, success or failure, rather than making anyone
+// wait on a live request for however long transcription takes.
+async function transcribeCallRecording(callId, buffer, mimeType) {
+  try {
+    if (!DEEPGRAM_API_KEY) { db.setCallTranscript(callId, null, 'failed'); return; }
+    const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&punctuate=true', {
+      method: 'POST',
+      headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, 'Content-Type': mimeType || 'video/webm' },
+      body: buffer,
+    });
+    const data = await res.json();
+    const transcript = data && data.results && data.results.channels && data.results.channels[0]
+      && data.results.channels[0].alternatives && data.results.channels[0].alternatives[0]
+      ? data.results.channels[0].alternatives[0].transcript
+      : '';
+    db.setCallTranscript(callId, transcript || null, transcript ? 'done' : 'failed');
+    console.log(`[calls] transcription ${transcript ? 'done' : 'came back empty'} for call ${callId}`);
+  } catch(e) {
+    console.error(`[calls] transcription error for ${callId}:`, e.message);
+    db.setCallTranscript(callId, null, 'failed');
+  }
+}
 // Uploads req.file (multer's local temp copy) to R2 and returns the stored
 // key to save in the DB, or null with the local filename as a fallback if
 // R2 isn't configured — same "R2 preferred, disk as legacy fallback"
@@ -1948,6 +2006,142 @@ app.post('/api/my/tomte-image', auth.requireAuthApi(), upload.single('file'), as
   } catch (e) {
     console.error('my tomte-image upload error:', e.message);
     res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
+});
+
+// ── 1:1 video/audio calls (Per Bot 12) ──
+// Signaling itself lives on the WebSocket router near the bottom of this
+// file (same consolidated-upgrade pattern as Tomte/listen/facilitator
+// co-pilot); everything here is the REST side — starting a call, the
+// client noticing and responding to it, consent, ending, and the
+// recording/transcript/share lifecycle afterward.
+
+// Every browser needs the same ICE server list to attempt a WebRTC
+// connection: a public STUN server always, plus a TURN relay if one's
+// configured (see TURN_URL etc. near the top of this file) for the
+// calls a direct connection can't reach. No auth needed — this is
+// standard practice; the servers themselves don't grant access to
+// anything, they're just how two already-authenticated peers find each
+// other's media.
+app.get('/api/ice-servers', (req, res) => {
+  const servers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  if (TURN_URL) {
+    servers.push({ urls: TURN_URL, username: TURN_USERNAME || undefined, credential: TURN_CREDENTIAL || undefined });
+  }
+  res.json({ iceServers: servers });
+});
+
+// Facilitator starts a call — creates the 'ringing' row the client's
+// poll below will pick up. One ringing call per client at a time is the
+// practical assumption; nothing here enforces that strictly since a
+// facilitator only ever has one client detail view open at once anyway.
+app.post('/api/facilitator/calls', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
+  const client = db.getUser(req.body.clientId);
+  if (!client) return res.status(404).json({ error: 'Client not found.' });
+  const call = db.createCall(uuidv4(), req.user.id, client.id);
+  res.json(call);
+});
+// Facilitator polls this while waiting for the client to answer.
+app.get('/api/facilitator/calls/:id', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || (req.user.role !== 'admin' && call.facilitator_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
+  res.json(call);
+});
+// Client polls this quietly while the app is open — the only way an
+// incoming call surfaces right now (see the parked note in chat about
+// true push notifications for someone not currently in the app).
+app.get('/api/client/calls/incoming', auth.requireAuthApi(['client']), (req, res) => {
+  const call = db.getRingingCallForClient(req.user.id);
+  if (!call) return res.json({ call: null });
+  const facilitator = db.getFacilitatorById(call.facilitator_id);
+  res.json({ call: { ...call, facilitatorName: (facilitator && facilitator.name) || 'Your facilitator' } });
+});
+app.patch('/api/calls/:id/respond', auth.requireAuthApi(['client']), (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || call.client_id !== req.user.id) return res.status(404).json({ error: 'Call not found.' });
+  if (call.status !== 'ringing') return res.status(400).json({ error: 'This call is no longer ringing.' });
+  if (req.body.accept) {
+    db.updateCallStatus(call.id, 'active', { answered_at: new Date().toISOString() });
+  } else {
+    db.updateCallStatus(call.id, 'declined');
+  }
+  res.json(db.getCall(call.id));
+});
+// Recording consent — asked fresh at the start of every call (never a
+// blanket setting), always answered by the client, since they're the
+// one being recorded. The call itself proceeds either way; a decline
+// just means the facilitator's browser won't start MediaRecorder.
+app.patch('/api/calls/:id/consent', auth.requireAuthApi(['client']), (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || call.client_id !== req.user.id) return res.status(404).json({ error: 'Call not found.' });
+  db.setCallConsent(call.id, req.body.granted ? 'granted' : 'declined');
+  res.json(db.getCall(call.id));
+});
+app.patch('/api/calls/:id/end', auth.requireAuthApi(['client', 'facilitator', 'admin']), (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || (call.facilitator_id !== req.user.id && call.client_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
+  if (!['ended', 'declined', 'missed'].includes(call.status)) {
+    db.updateCallStatus(call.id, 'ended', { ended_at: new Date().toISOString() });
+  }
+  res.json(db.getCall(call.id));
+});
+// The facilitator's browser is the one that composites and uploads the
+// recording (see the design note in chat — client-side MediaRecorder,
+// not a server-side media relay), so this is facilitator-only. Kicks off
+// transcription in the background rather than making the upload request
+// wait for it.
+app.post('/api/calls/:id/recording', auth.requireAuthApi(['facilitator', 'admin']), upload.single('file'), async (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || (req.user.role !== 'admin' && call.facilitator_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No recording received.' });
+  if (call.recording_consent !== 'granted') return res.status(400).json({ error: 'This call was not consented to for recording.' });
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    const stored = await uploadCallRecordingToR2(buffer, req.file.mimetype);
+    const durationSeconds = parseInt(req.body.durationSeconds, 10) || null;
+    db.setCallRecording(call.id, stored, durationSeconds);
+    fs.unlink(req.file.path, () => {});
+    transcribeCallRecording(call.id, buffer, req.file.mimetype); // fire-and-forget
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('call recording upload error:', e.message);
+    res.status(500).json({ error: 'Could not save the recording right now.' });
+  }
+});
+// Facilitator's own history for a client — everything, regardless of
+// share status, since it's their recording to manage until shared.
+app.get('/api/facilitator/clients/:id/calls', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
+  const calls = req.user.role === 'admin'
+    ? db.getAllCallsForClient(req.params.id)
+    : db.getCallsForFacilitatorClient(req.user.id, req.params.id);
+  res.json(calls);
+});
+app.patch('/api/calls/:id/share', auth.requireAuthApi(['facilitator', 'admin']), (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || (req.user.role !== 'admin' && call.facilitator_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
+  if (!call.recording_key) return res.status(400).json({ error: 'There is no recording on this call yet.' });
+  db.setCallShared(call.id, !!req.body.shared);
+  res.json(db.getCall(call.id));
+});
+// Client's own view — only ever the calls the facilitator has explicitly
+// shared with them, nothing else.
+app.get('/api/client/calls', auth.requireAuthApi(['client']), (req, res) => {
+  res.json(db.getSharedCallsForClient(req.user.id));
+});
+// Presigned playback URL — the same short-lived, checked-access-first
+// pattern the content library already uses. Facilitator can always play
+// their own recordings back; a client only once shared_with_client is set.
+app.get('/api/calls/:id/recording-url', auth.requireAuthApi(['client', 'facilitator', 'admin']), async (req, res) => {
+  const call = db.getCall(req.params.id);
+  if (!call || !call.recording_key) return res.status(404).json({ error: 'No recording found.' });
+  const isFacilitator = req.user.role === 'admin' || call.facilitator_id === req.user.id;
+  const isSharedClient = call.client_id === req.user.id && !!call.shared_with_client;
+  if (!isFacilitator && !isSharedClient) return res.status(403).json({ error: 'Not authorised to view this recording.' });
+  try {
+    const url = await media.getPlaybackUrl(call.recording_key);
+    res.json({ url });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not generate a playback link right now.' });
   }
 });
 
@@ -2455,37 +2649,98 @@ app.get('/api/clients/:id/messages/unread-count', auth.requireAuthApi(['admin','
 });
 
 // Client side — "my facilitator" is implicit from the logged-in client's own record
+// ── Multiple facilitators per client (Per Bot 13) ──
+// "Talk" is always first, synthetic (never a real facilitators row —
+// nothing to log in as, no auth of its own), and always present even for
+// a client with zero real facilitators assigned. Real facilitators come
+// from the new client_facilitators join table, which also gets the
+// client's legacy single facilitator_id folded in automatically via a
+// boot-time backfill (see db.js) so nothing looks empty for existing
+// clients on day one.
+app.get('/api/client/facilitators', auth.requireAuthApi(['client']), (req, res) => {
+  const real = db.getFacilitatorsForClient(req.user.id);
+  const list = [{ id: 'talk', name: 'Talk', isTalk: true }]
+    .concat(real.map(f => ({ id: f.id, name: f.name, isTalk: false })));
+  res.json(list);
+});
+// The Arc is deliberately ONE shared field (users.arc) regardless of how
+// many facilitators — human or Talk — read and add to it; nothing here
+// splits it per relationship. Returned as plain text; the client renders
+// it as a bullet list (it's already written in a bullet-friendly style by
+// the same GENERATE_ARC_UPDATE prompt every facilitator/Talk session uses).
+app.get('/api/client/arc', auth.requireAuthApi(['client']), (req, res) => {
+  const me = db.getUser(req.user.id);
+  res.json({ arc: (me && me.arc) || '' });
+});
+// Admin-managed for now (Per Bot 13) — assigning/removing an additional
+// facilitator relationship. A facilitator-initiated version of this (e.g.
+// a facilitator adding themselves, or a client requesting one) is a
+// reasonable next step but isn't built yet; for now this covers the
+// actual need (Per assigning a second facilitator to a client by hand).
+app.post('/api/admin/users/:id/facilitators', auth.requireAuthApi(['admin']), (req, res) => {
+  const facilitator = db.getFacilitatorById(req.body.facilitatorId);
+  if (!facilitator) return res.status(404).json({ error: 'Facilitator not found.' });
+  db.addClientFacilitator(req.params.id, req.body.facilitatorId);
+  res.json({ ok: true });
+});
+app.get('/api/admin/users/:id/facilitators', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getFacilitatorsForClient(req.params.id));
+});
+app.delete('/api/admin/users/:id/facilitators/:facilitatorId', auth.requireAuthApi(['admin']), (req, res) => {
+  db.removeClientFacilitator(req.params.id, req.params.facilitatorId);
+  res.json({ ok: true });
+});
+
+// ── Resolving WHICH facilitator relationship a client-side messages call
+// is about (Per Bot 13) ── Defaults to the legacy single facilitator_id
+// when no facilitatorId is passed at all, so every existing call site
+// that hasn't been updated yet keeps working exactly as before. When one
+// IS passed, it must actually be a relationship this client has (legacy
+// facilitator_id OR a client_facilitators row) — never trust the value
+// from the request alone.
+function resolveClientFacilitatorId(me, requestedId) {
+  if (!requestedId) return me.facilitator_id || null;
+  if (requestedId === me.facilitator_id) return requestedId;
+  if (db.isFacilitatorAssignedToClient(me.id, requestedId)) return requestedId;
+  return null;
+}
+
 app.get('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
   const me = db.getUser(req.user.id);
-  if (!me.facilitator_id) return res.json([]);
-  res.json(db.getMessageThread(req.user.id, me.facilitator_id, req.query.sessionId || null));
+  const facilitatorId = resolveClientFacilitatorId(me, req.query.facilitatorId);
+  if (!facilitatorId) return res.json([]);
+  res.json(db.getMessageThread(req.user.id, facilitatorId, req.query.sessionId || null));
 });
 app.get('/api/my/messages/session-threads', auth.requireAuthApi(['client']), (req, res) => {
   const me = db.getUser(req.user.id);
-  if (!me.facilitator_id) return res.json([]);
-  res.json(db.getSessionThreadsForClient(req.user.id, me.facilitator_id));
+  const facilitatorId = resolveClientFacilitatorId(me, req.query.facilitatorId);
+  if (!facilitatorId) return res.json([]);
+  res.json(db.getSessionThreadsForClient(req.user.id, facilitatorId));
 });
 app.post('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
   const me = db.getUser(req.user.id);
-  if (!me.facilitator_id) return res.status(400).json({ error: 'No facilitator assigned yet.' });
+  const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
+  if (!facilitatorId) return res.status(400).json({ error: 'No facilitator assigned yet.' });
   const { session_id, content } = req.body;
   if (!content || !content.trim()) return res.status(400).json({ error: 'Message is empty.' });
-  const msg = db.addMessage(uuidv4(), req.user.id, me.facilitator_id, session_id || null, 'client', req.user.id, 'text', content.trim(), '', '');
+  const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id, 'text', content.trim(), '', '');
   res.json(msg);
 });
 app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.single('file'), (req, res) => {
   const me = db.getUser(req.user.id);
-  if (!me.facilitator_id) return res.status(400).json({ error: 'No facilitator assigned yet.' });
+  const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
+  if (!facilitatorId) return res.status(400).json({ error: 'No facilitator assigned yet.' });
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
-  const msg = db.addMessage(uuidv4(), req.user.id, me.facilitator_id, session_id || null, 'client', req.user.id,
+  const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id,
     content_type || 'attachment', content || '', req.file.filename, req.file.originalname);
   res.json(msg);
 });
 app.patch('/api/my/messages/read', auth.requireAuthApi(['client']), (req, res) => {
   const me = db.getUser(req.user.id);
-  if (!me.facilitator_id) return res.json({ ok: true });
-  db.markThreadRead(req.user.id, me.facilitator_id, req.body.session_id || null, 'client');
+  const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
+  if (!facilitatorId) return res.json({ ok: true });
+  db.markThreadRead(req.user.id, facilitatorId, req.body.session_id || null, 'client');
   res.json({ ok: true });
 });
 app.get('/api/my/messages/unread-count', auth.requireAuthApi(['client']), (req, res) => {
@@ -3332,6 +3587,46 @@ function parseCookies(header) {
 
 const facilitatorWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
+// ── /call — WebRTC signaling relay for 1:1 video/audio calls (Per Bot 12) ──
+// This socket carries NO media itself — media flows directly between the
+// two browsers (or via the TURN relay) once connected. All this does is
+// forward the SDP offer/answer and ICE candidates each side generates,
+// verbatim, to the other participant in the same call — the same "dumb
+// relay" role a signaling channel always plays in WebRTC. Each callId
+// gets at most one facilitator socket and one client socket; whichever
+// arrives is stored, and a message from either is forwarded to the other
+// if it's currently connected (if not yet connected, the message is just
+// dropped — the sender's own retry/renegotiation logic handles that, same
+// as any WebRTC app).
+const callRooms = new Map(); // callId -> { facilitator: ws|null, client: ws|null }
+function getCallRoom(callId) {
+  if (!callRooms.has(callId)) callRooms.set(callId, { facilitator: null, client: null });
+  return callRooms.get(callId);
+}
+function cleanupCallRoom(callId) {
+  const room = callRooms.get(callId);
+  if (room && !room.facilitator && !room.client) callRooms.delete(callId);
+}
+const callWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
+callWss.on('connection', (ws, ctx) => {
+  const { callId, role } = ctx;
+  const room = getCallRoom(callId);
+  room[role] = ws;
+  console.log(`[call] ${role} joined room ${callId}`);
+
+  ws.on('message', (raw) => {
+    const other = room[role === 'facilitator' ? 'client' : 'facilitator'];
+    if (other && other.readyState === WebSocket.OPEN) other.send(raw.toString());
+  });
+  ws.on('close', () => {
+    room[role] = null;
+    cleanupCallRoom(callId);
+    const other = room[role === 'facilitator' ? 'client' : 'facilitator'];
+    if (other && other.readyState === WebSocket.OPEN) other.send(JSON.stringify({ type: 'peer-left' }));
+  });
+  ws.on('error', (e) => console.error(`[call] ws error (${role}, room ${callId}):`, e.message));
+});
+
 // ── Single consolidated upgrade router (Per Bot 9) ──
 // Every WebSocket path in the app funnels through here now, dispatched
 // explicitly by pathname to exactly one server's handleUpgrade(). Multiple
@@ -3350,6 +3645,26 @@ server.on('upgrade', (req, socket, head) => {
 
   if (pathname === '/listen') {
     listenWss.handleUpgrade(req, socket, head, (ws) => listenWss.emit('connection', ws, req));
+    return;
+  }
+
+  if (pathname === '/call') {
+    const callId = searchParams.get('callId');
+    const call = callId ? db.getCall(callId) : null;
+    if (!call) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
+    const cookies = parseCookies(req.headers.cookie);
+    const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
+    if (!payload) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+    let role;
+    if (payload.id === call.facilitator_id) role = 'facilitator';
+    else if (payload.id === call.client_id) role = 'client';
+    else { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
+    // 'ringing' is allowed too — the caller connects and waits before the
+    // other side has answered yet, same as a phone ringing before pickup.
+    if (!['ringing', 'active'].includes(call.status)) {
+      socket.write('HTTP/1.1 410 Gone\r\n\r\n'); socket.destroy(); return;
+    }
+    callWss.handleUpgrade(req, socket, head, (ws) => callWss.emit('connection', ws, { callId, role }));
     return;
   }
 
