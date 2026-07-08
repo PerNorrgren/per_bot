@@ -2114,6 +2114,11 @@ tomteWss.on('connection', (ws, req) => {
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('open', () => console.log('[tomte] deepgram connected'));
+        dgWs.on('unexpected-response', (req, res) => {
+          let body = '';
+          res.on('data', (chunk) => { body += chunk; });
+          res.on('end', () => console.error(`[tomte] deepgram rejected connection — status=${res.statusCode} body=${body}`));
+        });
         dgWs.on('message', async (data) => {
           try {
             const parsed = JSON.parse(data.toString('utf8'));
@@ -3194,6 +3199,11 @@ listenWss.on('connection', (clientWs) => {
     { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
   );
   dgWs.on('open',    () => console.log('Deepgram connected'));
+  dgWs.on('unexpected-response', (req, res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => console.error(`[listen] deepgram rejected connection — status=${res.statusCode} body=${body}`));
+  });
   dgWs.on('message', (data) => { if (clientWs.readyState === WebSocket.OPEN) clientWs.send(typeof data === 'string' ? data : data.toString('utf8')); });
   dgWs.on('error',   (e) => console.error('Deepgram error:', e.message));
   dgWs.on('close',   () => console.log('Deepgram closed'));
@@ -3336,6 +3346,11 @@ facilitatorWss.on('connection', (ws, ctx) => {
           'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=opus&sample_rate=48000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=false',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
+        dgWs.on('unexpected-response', (req, res) => {
+          let body = '';
+          res.on('data', (chunk) => { body += chunk; });
+          res.on('end', () => console.error(`[facilitator] deepgram rejected connection — status=${res.statusCode} body=${body}`));
+        });
         dgWs.on('message', async (data) => {
           try {
             const parsed = JSON.parse(data.toString('utf8'));
