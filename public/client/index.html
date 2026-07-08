@@ -34,10 +34,37 @@
     .tab { flex:1; padding:11px; text-align:center; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.35); cursor:pointer; background:none; border:none; font-family:'Georgia',serif; transition:all 0.2s; }
     .tab.active { color:rgba(255,255,255,0.85); border-bottom:1.5px solid rgba(180,230,200,0.6); }
 
+    /* Per Bot 9: adaptive sizing for tablets and larger phones. The base
+       values above are tuned for a typical ~375–430px-wide phone; rather
+       than rewrite every internal measurement in this file (a large
+       undertaking that's hard to verify without live visual testing across
+       many screens), these breakpoints scale up the outer card and its
+       most visible chrome — header, tabs, bottom nav — so the interface
+       feels intentionally sized for a bigger device instead of just a
+       stretched phone layout. First pass: individual list rows and modals
+       further inside may still read a bit phone-proportioned even inside
+       the larger card — worth another look once this lands if so. */
+    @media (min-width: 700px) {
+      .glass { max-width: 760px; }
+      .header { padding: 24px 32px 18px; }
+      .wordmark { font-size: 13px; }
+      .tab { font-size: 14px; padding: 15px; }
+      .bnav-btn { font-size: 17px; padding: 18px 4px 15px; gap: 6px; }
+      .bnav-icon { font-size: 40px; }
+    }
+    @media (min-width: 1000px) {
+      .glass { max-width: 920px; max-height: 85vh; }
+      .header { padding: 28px 40px 20px; }
+      .wordmark { font-size: 14px; }
+      .tab { font-size: 15px; padding: 17px; }
+      .bnav-btn { font-size: 18px; padding: 20px 4px 17px; gap: 7px; }
+      .bnav-icon { font-size: 44px; }
+    }
+
     /* Bottom nav (Per Bot 8) — replaces the old 9-across top tab row */
     .bottom-nav { display:flex; border-top:1px solid rgba(255,255,255,0.08); flex-shrink:0; background:rgba(0,0,0,0.12); }
-    .bnav-btn { flex:1; padding:10px 4px 9px; display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:10px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
-    .bnav-icon { font-size:18px; line-height:1; opacity:0.75; }
+    .bnav-btn { flex:1; padding:14px 4px 12px; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:15px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
+    .bnav-icon { font-size:34px; line-height:1; opacity:0.75; }
     .bnav-btn.active { color:rgba(180,230,200,0.9); }
     .bnav-btn.active .bnav-icon { opacity:1; }
 
