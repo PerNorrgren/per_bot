@@ -2145,7 +2145,9 @@ tomteWss.on('connection', (ws, req) => {
       }
       case 'audio_chunk':
         if (dgWs && dgWs.readyState === WebSocket.OPEN && msg.data) {
-          dgWs.send(Buffer.from(msg.data, 'base64'));
+          const buf = Buffer.from(msg.data, 'base64');
+          console.log(`[tomte] forwarding chunk: ${buf.length} bytes, starts with ${buf.subarray(0, 8).toString('hex')}`);
+          dgWs.send(buf);
         } else {
           console.log(`[tomte] audio_chunk dropped — dgWs state: ${dgWs ? dgWs.readyState : 'null (not created yet)'}`);
         }
