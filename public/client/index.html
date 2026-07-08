@@ -100,6 +100,7 @@
     .cmsg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 12px; color:rgba(255,255,255,0.85); font-size:13.5px; font-family:inherit; }
     .cmsg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 9px; cursor:pointer; font-size:15px; line-height:1; }
     .cmsg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
+    .cmsg-icon-btn.pending { border-color:rgba(220,200,120,0.5); background:rgba(220,200,120,0.08); opacity:0.7; cursor:wait; }
     .cmsg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin:0 5px 8px; background:rgba(255,255,255,0.04); border-radius:10px; }
 
     /* Talk */
@@ -1031,12 +1032,34 @@
 
   document.getElementById('cmsgVoiceBtn').addEventListener('click', () => toggleCmsgRecording('voice'));
   document.getElementById('cmsgVideoBtn').addEventListener('click', () => toggleCmsgRecording('video'));
+  // Per Bot 9: same fix as the facilitator side — nothing previously stopped
+  // a second click from starting a second, overlapping getUserMedia()/
+  // MediaRecorder setup while the first was still waiting on the browser's
+  // permission prompt. With no visual feedback during that wait, clicking
+  // again was the natural thing to do, and that overlap is what corrupted
+  // the recording. _cmsgRecordingPending closes that window.
+  let _cmsgRecordingPending = false;
   async function toggleCmsgRecording(kind) {
     if (_cmsgRecorder && _cmsgRecorder.state === 'recording') { _cmsgRecorder.stop(); return; }
+    if (_cmsgRecordingPending) return;
+    const voiceBtn = document.getElementById('cmsgVoiceBtn');
+    const videoBtn = document.getElementById('cmsgVideoBtn');
+    _cmsgRecordingPending = true;
+    [voiceBtn, videoBtn].forEach(b => { b.disabled = true; b.classList.add('pending'); });
+    let stream;
     try {
       const constraints = kind === 'video' ? { audio: true, video: { width: 320, height: 240 } } : { audio: true };
-      _cmsgRecordStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch(e) { alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.'); return; }
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch(e) {
+      _cmsgRecordingPending = false;
+      [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+      alert('Could not access ' + (kind === 'video' ? 'camera/microphone' : 'microphone') + '. Check browser permissions.');
+      return;
+    }
+    _cmsgRecordStream = stream;
+    _cmsgRecordingPending = false;
+    [voiceBtn, videoBtn].forEach(b => { b.disabled = false; b.classList.remove('pending'); });
+
     _cmsgRecordingKind = kind;
     const chunks = [];
     _cmsgRecorder = new MediaRecorder(_cmsgRecordStream);
