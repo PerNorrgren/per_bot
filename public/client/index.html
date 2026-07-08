@@ -558,6 +558,16 @@
           <div class="resume-card-title" id="resumeCardTitle"></div>
           <div class="resume-card-sub" id="resumeCardSub"></div>
         </div>
+        <!-- Talk's own past summaries (Per Bot 18) — same self-guided
+             session summaries that already existed (gated behind Keep
+             History), just now viewable on their own rather than only
+             ever surfacing mixed into the general Library. Talk is a
+             facilitator like any other here, so it gets the same
+             "Practices" concept a real facilitator's detail pane has. -->
+        <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer">📄 Past summaries</button>
+        <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
+          <div class="practices-scroll" id="talkSummariesList"></div>
+        </div>
         <div class="transcript-area">
           <p class="transcript-text" id="transcript">—</p>
         </div>
@@ -594,6 +604,7 @@
           <div class="lib-subnav" style="margin-bottom:0">
             <button class="lib-subnav-btn active" id="facDetailSubMessages" onclick="switchFacDetailSub('messages')">Messages<span id="youMsgBadge"></span></button>
             <button class="lib-subnav-btn" id="facDetailSubSessions" onclick="switchFacDetailSub('sessions')">Video sessions</button>
+            <button class="lib-subnav-btn" id="facDetailSubPractices" onclick="switchFacDetailSub('practices')">Practices</button>
           </div>
         </div>
 
@@ -619,6 +630,14 @@
 
         <div class="lib-sub-panel" id="facSessionsPanel">
           <div class="history-scroll" id="sessionsList"><div class="no-history">Loading…</div></div>
+        </div>
+
+        <!-- Practices/session-summaries scoped to whichever facilitator is
+             selected above (Per Bot 18) — distinct from the general Library
+             > Practices tab, which stays the unfiltered "everything I've
+             collected" personal view on purpose. -->
+        <div class="lib-sub-panel" id="facPracticesPanel">
+          <div class="practices-scroll" id="facPracticesList"><div class="no-practices">Loading…</div></div>
         </div>
       </div>
     </div>
@@ -2976,10 +2995,55 @@
     _currentFacDetailSub = sub;
     document.getElementById('facDetailSubMessages').classList.toggle('active', sub === 'messages');
     document.getElementById('facDetailSubSessions').classList.toggle('active', sub === 'sessions');
+    document.getElementById('facDetailSubPractices').classList.toggle('active', sub === 'practices');
     document.getElementById('facMessagesPanel').classList.toggle('visible', sub === 'messages');
     document.getElementById('facSessionsPanel').classList.toggle('visible', sub === 'sessions');
+    document.getElementById('facPracticesPanel').classList.toggle('visible', sub === 'practices');
     if (sub === 'messages') loadCmsgMessages();
     if (sub === 'sessions') loadSharedSessions();
+    if (sub === 'practices') loadFacPractices();
+  }
+
+  // ── Practices/session-summaries scoped to the selected facilitator
+  // (Per Bot 18) — Talk included, since it's a facilitator too here; its
+  // own self-guided session summaries (already existed, gated behind
+  // Keep History) just weren't selectable on their own before this.
+  let _facPracticesData = [];
+  async function loadFacPractices(targetElId) {
+    const el = document.getElementById(targetElId || 'facPracticesList');
+    el.innerHTML = '<div class="no-practices">Loading…</div>';
+    try {
+      const res = await fetch(`/api/client/practices?facilitatorId=${encodeURIComponent(_activeFacilitatorId)}`);
+      const list = await res.json();
+      _facPracticesData = Array.isArray(list) ? list : [];
+      renderFacPracticesList(_facPracticesData, el);
+    } catch(e) {
+      el.innerHTML = '<div class="no-practices">Could not load right now — please try again.</div>';
+    }
+  }
+  function renderFacPracticesList(list, el) {
+    if (!list.length) { el.innerHTML = '<div class="no-practices">Nothing here yet — this fills in as you have sessions or are given practices.</div>'; return; }
+    el.innerHTML = list.map(p => `
+      <div class="history-item" style="flex-direction:column; align-items:stretch; gap:6px; cursor:pointer" onclick="openFacPracticeById('${p.id}')">
+        <div class="history-title">${(p.title || '').replace(/</g,'&lt;')}</div>
+        <div class="history-meta">${(p.created_at||'').slice(0,10)}${p.subcategory_name ? ' · ' + p.subcategory_name : ''}</div>
+      </div>
+    `).join('');
+  }
+  // Looks up from the scoped list just loaded, same reasoning as
+  // openPracticeById for the general Library view — never inline raw
+  // content (which can contain real HTML/quotes from Quill) into an
+  // onclick attribute directly.
+  function openFacPracticeById(id) {
+    const p = _facPracticesData.find(x => x.id === id);
+    if (p) openPractice(p.id, p.title, p.type, p.content, p.filename);
+  }
+  let _talkSummariesOpen = false;
+  function toggleTalkSummaries() {
+    _talkSummariesOpen = !_talkSummariesOpen;
+    document.getElementById('talkSummariesPanel').style.display = _talkSummariesOpen ? 'block' : 'none';
+    document.getElementById('talkSummariesToggleBtn').textContent = _talkSummariesOpen ? '📄 Hide summaries' : '📄 Past summaries';
+    if (_talkSummariesOpen) loadFacPractices('talkSummariesList');
   }
 
   // ── Video/audio call sessions your facilitator has shared (Per Bot 12) ──

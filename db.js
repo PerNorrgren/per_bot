@@ -2304,19 +2304,37 @@ function addPractice(id, clientId, title, type, content, filename, sourceType, c
 // Defaulted to FELT·FIBRE > Facilitation for Area grouping since that's
 // where delivered-session material belongs until a facilitator can tag
 // something more specific (not yet built).
-function getPracticesForClient(clientId) {
+//
+// facilitatorId (Per Bot 18, optional) — omitted entirely, this returns
+// EVERYTHING for the client exactly as before (the general Library
+// personal-collection view, and the facilitator/admin client-detail
+// views, all still want the unfiltered picture). Passed, it scopes to
+// just that one relationship: 'talk' means Talk's own self-guided
+// sessions specifically (facilitator_id IS NULL — Talk is never a real
+// row anywhere, so NULL is how its sessions/practices are told apart
+// from a real facilitator's), any other id means that real facilitator's
+// own sessions/practices only. Talk is a facilitator like any other here
+// — its self-guided session summaries already existed (see
+// finalizeChatSession in server.js), this just makes them selectable the
+// same way a real facilitator's are.
+function getPracticesForClient(clientId, facilitatorId) {
+  const scoped = facilitatorId !== undefined;
+  const isTalk = facilitatorId === 'talk';
+  const facFilter = !scoped ? '' : (isTalk ? 'IS NULL' : '=?');
+  const facParams = (!scoped || isTalk) ? [] : [facilitatorId];
+
   const own = queryAll(`SELECT p.*, c.name as category_name, s.name as subcategory_name
     FROM practices p
     LEFT JOIN categories c ON p.category_id=c.id
     LEFT JOIN categories s ON p.subcategory_id=s.id
-    WHERE p.client_id=?`, [clientId]);
+    WHERE p.client_id=? ${scoped ? `AND p.facilitator_id ${facFilter}` : ''}`, [clientId, ...facParams]);
   const sessionRows = queryAll(`SELECT sess.id, sess.client_id, sess.client_summary, sess.created_at, sess.facilitator_id, f.name as facilitator_name
     FROM sessions sess LEFT JOIN facilitators f ON sess.facilitator_id=f.id
-    WHERE sess.client_id=? AND sess.client_summary!=''`, [clientId]);
+    WHERE sess.client_id=? AND sess.client_summary!='' ${scoped ? `AND sess.facilitator_id ${facFilter}` : ''}`, [clientId, ...facParams]);
   const sessionAsPractices = sessionRows.map(s => ({
     id: s.id,
     client_id: s.client_id,
-    title: `Session with ${s.facilitator_name || 'your facilitator'} · ${(s.created_at||'').slice(0,10)}`,
+    title: `Session with ${s.facilitator_name || 'Talk'} · ${(s.created_at||'').slice(0,10)}`,
     type: 'text',
     content: s.client_summary,
     filename: '',

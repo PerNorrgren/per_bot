@@ -2716,6 +2716,22 @@ function resolveClientFacilitatorId(me, requestedId) {
   return null;
 }
 
+// Scoped practices/session-summaries for the Facilitator Hub (Per Bot 18)
+// — distinct from /api/clients/:id/practices (via /api/my/profile), which
+// stays the unfiltered "everything I've collected" personal library view.
+// No facilitatorId at all here means the same unfiltered view; 'talk'
+// means specifically Talk's own self-guided sessions; anything else must
+// be a real relationship this client actually has.
+app.get('/api/client/practices', auth.requireAuthApi(['client']), (req, res) => {
+  const requested = req.query.facilitatorId;
+  if (!requested) return res.json(db.getPracticesForClient(req.user.id));
+  if (requested === 'talk') return res.json(db.getPracticesForClient(req.user.id, 'talk'));
+  const me = db.getUser(req.user.id);
+  const facilitatorId = resolveClientFacilitatorId(me, requested);
+  if (!facilitatorId) return res.json([]);
+  res.json(db.getPracticesForClient(req.user.id, facilitatorId));
+});
+
 app.get('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
   const me = db.getUser(req.user.id);
   const facilitatorId = resolveClientFacilitatorId(me, req.query.facilitatorId);
