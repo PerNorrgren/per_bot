@@ -4,6 +4,9 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Set up your deployment</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px 80px; }
@@ -72,6 +75,23 @@
       <div class="field">
         <label>Tagline</label>
         <input type="text" id="tagline" placeholder="A short line shown under your name"/>
+      </div>
+      <div class="field">
+        <label>App name</label>
+        <input type="text" id="appName" placeholder="Leave blank to just use the organisation name above"/>
+        <div class="field-note">The short name shown in places the browser controls directly, not your own pages — dialog boxes, the browser tab, and a bookmark/home-screen icon label. Falls back to the organisation name above if left blank.</div>
+      </div>
+      <div class="field">
+        <label>Favicon / app icon</label>
+        <div style="display:flex;align-items:center;gap:12px">
+          <img id="faviconPreview" src="/assets/tomte.png" style="width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid rgba(255,255,255,0.15)"/>
+          <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block">
+            Upload image
+            <input type="file" id="faviconInput" accept="image/*" style="display:none" onchange="uploadFavicon()"/>
+          </label>
+          <span id="faviconMsg" style="font-size:12px;color:rgba(255,255,255,0.4)"></span>
+        </div>
+        <div class="field-note">A square image works best — this becomes the browser tab icon, bookmark icon, and home-screen icon everywhere the app is added or bookmarked. Uploads immediately; there's nothing else to save for this one.</div>
       </div>
       <div class="row">
         <div class="field">
@@ -158,6 +178,8 @@
       const cfg  = await res.json();
       if (cfg.brand_name)         document.getElementById('brandName').value = cfg.brand_name === 'Deeper Mindfulness' ? '' : cfg.brand_name;
       if (cfg.tagline)            document.getElementById('tagline').value = cfg.tagline;
+      if (cfg.app_name)           document.getElementById('appName').value = cfg.app_name;
+      if (cfg.favicon_url)        document.getElementById('faviconPreview').src = cfg.favicon_url;
       if (cfg.primary_color)      { document.getElementById('primaryColor').value = cfg.primary_color; document.getElementById('primaryColorHex').value = cfg.primary_color; }
       if (cfg.currency)           document.getElementById('currency').value = cfg.currency;
       if (cfg.legal_entity_name && cfg.legal_entity_name !== 'Per Norrgren trading as Deeper Mindfulness') document.getElementById('legalEntityName').value = cfg.legal_entity_name;
@@ -168,12 +190,38 @@
     } catch(e) { /* fine — just start from blank defaults */ }
   }
 
+  async function uploadFavicon() {
+    const input = document.getElementById('faviconInput');
+    const msg = document.getElementById('faviconMsg');
+    const file = input.files[0];
+    if (!file) return;
+    msg.textContent = 'Uploading…';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/favicon', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById('faviconPreview').src = data.url;
+        msg.textContent = 'Saved.';
+        setTimeout(() => { msg.textContent = ''; }, 2500);
+      } else {
+        msg.textContent = data.error || 'Could not upload.';
+      }
+    } catch(e) {
+      msg.textContent = 'Network error — could not upload.';
+    } finally {
+      input.value = '';
+    }
+  }
+
   async function submitSetup() {
     const err = document.getElementById('setupErr');
     const btn = document.getElementById('setupBtn');
     const body = {
       brandName: document.getElementById('brandName').value.trim(),
       tagline: document.getElementById('tagline').value.trim(),
+      appName: document.getElementById('appName').value.trim(),
       primaryColor: document.getElementById('primaryColorHex').value.trim(),
       currency: document.getElementById('currency').value,
       legalEntityName: document.getElementById('legalEntityName').value.trim(),

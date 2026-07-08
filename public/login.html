@@ -4,7 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
   <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; align-items:center; justify-content:center; }
@@ -219,7 +223,7 @@
         const r    = await fetch('/api/switch-to-client', { method: 'POST' });
         const data = await r.json();
         if (data.redirect) { window.location.href = data.redirect; return; }
-        if (data.error)    { alert(data.error); return; }
+        if (data.error)    { appAlert(data.error); return; }
       }
       const map = { facilitator: '/facilitator/', admin: '/admin/' };
       window.location.href = map[role] || '/login';

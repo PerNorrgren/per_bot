@@ -4,7 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Communications — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
   <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/quill-image-resize-module@3.0.0/image-resize.min.js"></script>
@@ -749,12 +753,12 @@
         motdSel.clear();
         loadMotd();
       } else {
-        alert(data.error || 'Could not approve the selected messages.');
+        appAlert(data.error || 'Could not approve the selected messages.');
         btn.textContent = `Approve selected (${motdSel.size})`;
       }
     } catch(e) {
       btn.disabled = false;
-      alert('Could not approve the selected messages. Please try again.');
+      appAlert('Could not approve the selected messages. Please try again.');
     }
   }
 
@@ -934,13 +938,13 @@
   }
 
   async function deleteMotd(id) {
-    if (!confirm('Delete this message?')) return;
+    if (!(await appConfirm('Delete this message?'))) return;
     await fetch(`/api/admin/motd/${id}`, { method:'DELETE' });
     loadMotd();
   }
 
   async function sendTodayMotd() {
-    if (!confirm('Send today\'s message to all opted-in members now?')) return;
+    if (!(await appConfirm('Send today\'s message to all opted-in members now?'))) return;
     const btn = document.getElementById('sendMotdBtn');
     btn.disabled = true; btn.textContent = 'Sending…';
     const res  = await fetch('/api/admin/motd/send-daily', { method:'POST' });
@@ -948,14 +952,14 @@
     btn.disabled = false; btn.textContent = 'Send today\'s message';
     if (data.ok) {
       loadMotd();
-      alert(`Sent to ${data.sent} recipient${data.sent===1?'':'s'}. ${data.remaining} messages remaining in queue.`);
+      appAlert(`Sent to ${data.sent} recipient${data.sent===1?'':'s'}. ${data.remaining} messages remaining in queue.`);
     } else {
-      alert(data.error || 'Something went wrong.');
+      appAlert(data.error || 'Something went wrong.');
     }
   }
 
   async function generateMotdBatch() {
-    if (!confirm('Generate a new batch of message-of-the-day drafts? They\'ll be added to Drafts for you to review, edit, and approve — nothing sends automatically.')) return;
+    if (!(await appConfirm('Generate a new batch of message-of-the-day drafts? They\'ll be added to Drafts for you to review, edit, and approve — nothing sends automatically.'))) return;
     const btn = document.getElementById('generateMotdBtn');
     btn.disabled = true; btn.textContent = 'Generating…';
     try {
@@ -966,12 +970,12 @@
       const data = await res.json();
       if (data.ok) {
         loadMotd();
-        alert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'} to the queue. Review them under Drafts.`);
+        appAlert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'} to the queue. Review them under Drafts.`);
       } else {
-        alert(data.error || 'Could not generate messages. Please try again.');
+        appAlert(data.error || 'Could not generate messages. Please try again.');
       }
     } catch(e) {
-      alert('Could not generate messages. Please try again.');
+      appAlert('Could not generate messages. Please try again.');
     }
     btn.disabled = false; btn.textContent = '✨ Generate batch';
   }
@@ -1218,12 +1222,12 @@
               }
               getQuill().format('align', value);
             },
-            // Plain prompt() for both cases now, rather than Quill's own
-            // Snow-theme tooltip — that tooltip only has room for a few
-            // characters of the URL and doesn't work inside a cell at all
-            // (same root cause as everything else here); a prompt() is a
-            // little less polished but works identically everywhere.
-            link: () => {
+            // appPrompt() (an in-app modal, not native prompt()) for both
+            // cases now, rather than Quill's own Snow-theme tooltip — that
+            // tooltip only has room for a few characters of the URL and
+            // doesn't work inside a cell at all (same root cause as
+            // everything else here).
+            link: async () => {
               if (inCell()) {
                 restoreCellSelection();
                 const sel = lastCellSelection.browserSel;
@@ -1231,7 +1235,7 @@
                   ? sel.anchorNode.closest('a')
                   : sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a');
                 if (anchor) { document.execCommand('unlink'); return; }
-                const url = prompt('Link this text to:');
+                const url = await appPrompt('Link this text to:');
                 if (!url || !url.trim()) return;
                 restoreCellSelection();
                 document.execCommand('createLink', false, url.trim());
@@ -1242,7 +1246,7 @@
               if (!range) return;
               const current = quill.getFormat(range).link;
               if (current) { quill.format('link', false); return; }
-              const url = prompt('Link this text to:');
+              const url = await appPrompt('Link this text to:');
               if (url && url.trim()) quill.format('link', url.trim());
             },
             clean: () => {
@@ -1381,7 +1385,7 @@
   // quick "make this better" nudge.
   async function runAiPolish(quill, btn) {
     if (!btn) return;
-    if (!quill.getText().trim()) { alert('Write something first.'); return; }
+    if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
     const orig = btn.textContent;
     btn.disabled = true;
     btn.textContent = '…';
@@ -1392,9 +1396,9 @@
       });
       const data = await res.json();
       if (data.html) quill.root.innerHTML = data.html;
-      else alert(data.error || 'Could not get a suggestion right now.');
+      else appAlert(data.error || 'Could not get a suggestion right now.');
     } catch(e) {
-      alert('Something went wrong — please try again.');
+      appAlert('Something went wrong — please try again.');
     } finally {
       btn.disabled = false;
       btn.textContent = orig;
@@ -1418,9 +1422,9 @@
   // quillInstance, so it exists before getQuill's click listener closes
   // over it.)
 
-  function linkSelectedImage() {
+  async function linkSelectedImage() {
     if (lastClickedImage && document.contains(lastClickedImage)) {
-      const url = prompt('Link this image to:');
+      const url = await appPrompt('Link this image to:');
       if (!url || !url.trim()) return;
       const a = document.createElement('a');
       a.href = url.trim();
@@ -1430,18 +1434,18 @@
     }
     const quill = getQuill();
     const range = quill.getSelection();
-    if (!range || range.length === 0) { alert('Click directly on an image to select it first, then click this button.'); return; }
+    if (!range || range.length === 0) { appAlert('Click directly on an image to select it first, then click this button.'); return; }
     const [leaf] = quill.getLeaf(range.index);
-    if (!leaf || !leaf.domNode || leaf.domNode.tagName !== 'IMG') { alert('That selection isn\'t an image — click directly on an image first.'); return; }
-    const url = prompt('Link this image to:');
+    if (!leaf || !leaf.domNode || leaf.domNode.tagName !== 'IMG') { appAlert('That selection isn\'t an image — click directly on an image first.'); return; }
+    const url = await appPrompt('Link this image to:');
     if (!url || !url.trim()) return;
     quill.formatText(range.index, 1, 'link', url.trim());
   }
 
-  function insertNewsletterButton() {
-    const text = prompt('Button text:');
+  async function insertNewsletterButton() {
+    const text = await appPrompt('Button text:');
     if (!text || !text.trim()) return;
-    const url = prompt('Button link (https://...):');
+    const url = await appPrompt('Button link (https://...):');
     if (!url || !url.trim()) return;
     const label = text.trim();
     const linkUrl = url.trim();
@@ -1504,8 +1508,8 @@
   // clients (Gmail/Outlook strip it) — the actual working pattern everyone
   // uses is a clickable "watch" link/button pointing at YouTube/Vimeo/etc.,
   // so that's what this inserts rather than attempting a true embed.
-  function insertVideoLink() {
-    const url = prompt('Paste the video link (YouTube, Vimeo, or any URL):');
+  async function insertVideoLink() {
+    const url = await appPrompt('Paste the video link (YouTube, Vimeo, or any URL):');
     if (!url || !url.trim()) return;
     const target = getInsertionTarget();
     const label = '▶ Watch the video';
@@ -1590,10 +1594,10 @@
       let videoUrl;
       try {
         videoUrl = await uploadFileGetUrl('/api/admin/newsletter-videos', videoFile);
-      } catch(e) { alert(e.message || 'Could not upload video.'); return; }
+      } catch(e) { appAlert(e.message || 'Could not upload video.'); return; }
 
       let posterUrl = '';
-      if (confirm('Add a thumbnail image for the video? Recommended — without one, inboxes that can\'t play it inline just show a plain "Watch the video" box instead of a picture.')) {
+      if (await appConfirm('Add a thumbnail image for the video? Recommended — without one, inboxes that can\'t play it inline just show a plain "Watch the video" box instead of a picture.')) {
         const imgInput = document.createElement('input');
         imgInput.type = 'file';
         imgInput.accept = 'image/*';
@@ -1602,7 +1606,7 @@
             const imgFile = imgInput.files[0];
             if (!imgFile) { resolve(''); return; }
             try { resolve(await uploadFileGetUrl('/api/admin/newsletter-images', imgFile)); }
-            catch(e) { alert('Could not upload thumbnail — inserting without one.'); resolve(''); }
+            catch(e) { appAlert('Could not upload thumbnail — inserting without one.'); resolve(''); }
           };
           imgInput.click();
         });
@@ -1631,7 +1635,7 @@
 
         if (!data.url) {
           if (!target.inCell) quill.deleteText(target.quillRange.index, 'Uploading image…'.length);
-          alert(data.error || 'Could not upload image.');
+          appAlert(data.error || 'Could not upload image.');
           return;
         }
 
@@ -1656,7 +1660,7 @@
         }
       } catch(e) {
         if (!target.inCell) getQuill().deleteText(target.quillRange.index, 'Uploading image…'.length);
-        alert('Network error — could not upload image.');
+        appAlert('Network error — could not upload image.');
       }
     };
     input.click();
@@ -1694,7 +1698,7 @@
     openModal('newsletterModal');
   }
 
-  function viewSentNewsletter(id) {
+  async function viewSentNewsletter(id) {
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
     if (n.format === 'rich') {
@@ -1702,7 +1706,7 @@
       w.document.write(`<title>${n.subject}</title><body style="font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 20px">${n.body}
 </body>`);
     } else {
-      alert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
+      appAlert(`${n.subject}\nSent to: ${audienceSummary(n.audience)}\n\n${n.body}`);
     }
   }
 
@@ -1811,7 +1815,7 @@
       if (typeof cData.count === 'number') countMsg = `${cData.count} recipient${cData.count === 1 ? '' : 's'} (${audienceSummary(n.audience)})`;
     } catch(e) { /* fall back to audience label alone */ }
 
-    if (!confirm(`Send "${n.subject}" now to ${countMsg}? This cannot be undone.`)) return;
+    if (!(await appConfirm(`Send "${n.subject}" now to ${countMsg}? This cannot be undone.`))) return;
 
     const btn = event?.target;
     setBtnLoading(btn, true, 'Starting…');
@@ -1824,36 +1828,36 @@
       // afterward how far it actually got. This just confirms it started;
       // loadNewsletters() below shows it as "Sending…" with a live progress
       // count instead.
-      if (data.ok) { alert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
-      else alert(data.error || 'Could not send.');
+      if (data.ok) { appAlert(`Started — sending to ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now.`); loadNewsletters(); }
+      else appAlert(data.error || 'Could not send.');
     } finally { setBtnLoading(btn, false); }
   }
 
   async function retryNewsletter(id) {
-    if (!confirm('Retry sending to everyone not yet successfully sent for this newsletter?')) return;
+    if (!(await appConfirm('Retry sending to everyone not yet successfully sent for this newsletter?'))) return;
     const btn = event?.target;
     setBtnLoading(btn, true, 'Retrying…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/retry`, { method: 'POST' });
       const data = await res.json();
-      if (data.ok && data.started) alert(`Retrying ${data.recipientCount} outstanding recipient${data.recipientCount === 1 ? '' : 's'}.`);
-      else if (data.ok) alert(data.message || 'Nothing outstanding.');
-      else alert(data.error || 'Could not retry.');
+      if (data.ok && data.started) appAlert(`Retrying ${data.recipientCount} outstanding recipient${data.recipientCount === 1 ? '' : 's'}.`);
+      else if (data.ok) appAlert(data.message || 'Nothing outstanding.');
+      else appAlert(data.error || 'Could not retry.');
       loadNewsletters();
     } finally { setBtnLoading(btn, false); }
   }
 
   async function reconcileNewsletter(id) {
-    if (!confirm('Ask Scaleway what actually happened to this send, and reconcile our records against it? Use this for a send from before per-recipient tracking existed.')) return;
+    if (!(await appConfirm('Ask Scaleway what actually happened to this send, and reconcile our records against it? Use this for a send from before per-recipient tracking existed.'))) return;
     const btn = event?.target;
     setBtnLoading(btn, true, 'Checking…');
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/reconcile`, { method: 'POST' });
       const data = await res.json();
       if (data.ok) {
-        alert(`Scaleway had ${data.scalewayRecordsFound} matching records.\n\nOf your ${data.audienceSize} recipients: ${data.alreadyReached} already reached, ${data.missing} missing.\n\nUse "Retry" now to send to just the ${data.missing} missing.`);
+        appAlert(`Scaleway had ${data.scalewayRecordsFound} matching records.\n\nOf your ${data.audienceSize} recipients: ${data.alreadyReached} already reached, ${data.missing} missing.\n\nUse "Retry" now to send to just the ${data.missing} missing.`);
         loadNewsletters();
-      } else alert(data.error || 'Could not reconcile.');
+      } else appAlert(data.error || 'Could not reconcile.');
     } finally { setBtnLoading(btn, false); }
   }
 
@@ -1861,12 +1865,12 @@
     try {
       const res  = await fetch(`/api/admin/newsletters/${id}/progress`);
       const data = await res.json();
-      alert(`Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`);
-    } catch(e) { alert('Could not load progress.'); }
+      appAlert(`Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`);
+    } catch(e) { appAlert('Could not load progress.'); }
   }
 
   async function deleteNewsletterRow(id) {
-    if (!confirm('Delete this draft? This cannot be undone.')) return;
+    if (!(await appConfirm('Delete this draft? This cannot be undone.'))) return;
     await fetch(`/api/admin/newsletters/${id}`, { method: 'DELETE' });
     loadNewsletters();
   }
@@ -1961,7 +1965,7 @@
   }
 
   async function publishLegal(id) {
-    if (!confirm('Publish this document? It will be visible to all users immediately.')) return;
+    if (!(await appConfirm('Publish this document? It will be visible to all users immediately.'))) return;
     await fetch(`/api/admin/legal/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'publish' }) });
     loadLegal();
   }
@@ -2020,7 +2024,7 @@
     const btn      = document.getElementById('translateBtn');
     const fb       = document.getElementById('translateFeedback');
 
-    if (languageOverride && !confirm(`Regenerate the ${LANGUAGE_LABELS[language] || language} draft? This replaces the current draft with a fresh AI translation.`)) return;
+    if (languageOverride && !(await appConfirm(`Regenerate the ${LANGUAGE_LABELS[language] || language} draft? This replaces the current draft with a fresh AI translation.`))) return;
 
     btn.disabled = true; fb.textContent = ''; fb.className = 'feedback';
     try {
@@ -2065,7 +2069,7 @@
   }
 
   async function publishTranslationRow(id) {
-    if (!confirm('Publish this translation? It becomes visible to anyone viewing the document in this language.')) return;
+    if (!(await appConfirm('Publish this translation? It becomes visible to anyone viewing the document in this language.'))) return;
     await fetch(`/api/admin/legal/translations/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:'publish' }) });
     loadTranslations();
   }
@@ -2076,7 +2080,7 @@
   }
 
   async function deleteTranslationRow(id) {
-    if (!confirm('Delete this translation draft? This cannot be undone.')) return;
+    if (!(await appConfirm('Delete this translation draft? This cannot be undone.'))) return;
     await fetch(`/api/admin/legal/translations/${id}`, { method:'DELETE' });
     loadTranslations();
   }

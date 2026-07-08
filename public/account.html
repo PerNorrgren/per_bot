@@ -4,6 +4,10 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>My Account — Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/js/dialogs.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; align-items:flex-start; justify-content:center; padding:20px 16px 40px; }
@@ -1036,7 +1040,7 @@
       a.href = url; a.download = 'my-deeper-mindfulness-data.json';
       a.click(); URL.revokeObjectURL(url);
     } catch(e) {
-      alert('Could not download data. Please try again.');
+      appAlert('Could not download data. Please try again.');
     }
   }
 
@@ -1052,11 +1056,11 @@
         await fetch('/api/logout', { method:'POST' });
         window.location.href = '/login';
       } else {
-        alert(data.error || 'Could not delete account. Please contact us.');
+        appAlert(data.error || 'Could not delete account. Please contact us.');
         hideDeleteModal();
       }
     } catch(e) {
-      alert('Something went wrong. Please try again or contact us.');
+      appAlert('Something went wrong. Please try again or contact us.');
       hideDeleteModal();
     }
   }

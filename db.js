@@ -865,6 +865,22 @@ async function getDb() {
     // already reads from either table depending on role.
     "ALTER TABLE users ADD COLUMN tomte_language TEXT",
     "ALTER TABLE facilitators ADD COLUMN tomte_language TEXT",
+    // Tomte voice-output preference, per account (Per Bot 11) — replaces the
+    // old per-browser localStorage toggle. NULL means "not set yet" (widget
+    // treats this as off, matching the previous default), so this doubles
+    // as a nullable admin override on top of a person's own self-service
+    // toggle, same NULL-means-unset convention as tomte_language above.
+    "ALTER TABLE users ADD COLUMN tomte_voice_enabled INTEGER",
+    "ALTER TABLE facilitators ADD COLUMN tomte_voice_enabled INTEGER",
+    // App identity beyond the marketing brand name (Per Bot 11): appName is
+    // the short name shown in native browser chrome — dialog titles,
+    // bookmark/home-screen labels, the PWA manifest — anywhere the browser
+    // would otherwise fall back to showing the raw Railway URL or a
+    // generic default. Falls back to brand_name if never set. favicon_url
+    // is the small square image behind that, same R2-hosted-image pattern
+    // as logo_url.
+    "ALTER TABLE app_config ADD COLUMN app_name TEXT",
+    "ALTER TABLE app_config ADD COLUMN favicon_url TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2595,9 +2611,17 @@ function setTomteImage(role, id, filename) {
   const table = role === 'client' ? 'users' : 'facilitators';
   getDbSync().run(`UPDATE ${table} SET tomte_image_filename=? WHERE id=?`, [filename || null, id]); save();
 }
+// Voice-output preference (Per Bot 11) — self-service, any logged-in role,
+// same pattern as setTomteName/setTomteImage above. NULL (never set) reads
+// as off; true/false once someone's actually touched the toggle at least
+// once, from either themselves or an admin override.
+function setTomteVoiceEnabled(role, id, enabled) {
+  const table = role === 'client' ? 'users' : 'facilitators';
+  getDbSync().run(`UPDATE ${table} SET tomte_voice_enabled=? WHERE id=?`, [enabled ? 1 : 0, id]); save();
+}
 function getTomteSettings(role, id) {
   const table = role === 'client' ? 'users' : 'facilitators';
-  return queryOne(`SELECT tomte_name, tomte_image_filename, language, tomte_language, voice_id FROM ${table} WHERE id=?`, [id]) || {};
+  return queryOne(`SELECT tomte_name, tomte_image_filename, language, tomte_language, voice_id, tomte_voice_enabled FROM ${table} WHERE id=?`, [id]) || {};
 }
 
 // ── Admin editing a user's own profile fields directly (Per Bot 8) —
@@ -2649,7 +2673,7 @@ function deleteTomteLanguageDefault(language, action) {
 }
 
 function updateUserAdminDetails(id, fields) {
-  const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id', 'tomte_image_filename'];
+  const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id', 'tomte_image_filename', 'tomte_voice_enabled'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   getDbSync().run(`UPDATE users SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
@@ -2805,7 +2829,7 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -3151,7 +3175,7 @@ module.exports = {
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
-  setTomteName, setTomteImage, getTomteSettings, updateUserAdminDetails,
+  setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
   // Reminders
   getInactiveUsers,

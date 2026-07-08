@@ -1714,6 +1714,80 @@ app.get('/tomte-images/:key', async (req, res) => {
   }
 });
 
+// ── App icon / favicon (Per Bot 11) ──
+// Same R2-backed pattern as Tomte photos above — a small admin-uploaded
+// image used for the browser tab icon, bookmarks, and the home-screen/PWA
+// icon. Stored as an R2 key (favicon/<uuid><ext>) so it survives Railway
+// volume flakiness the same way everything else here does.
+async function uploadFaviconToR2(file) {
+  if (!media.isConfigured()) return file.filename; // legacy disk fallback, unchanged behaviour
+  const buffer = fs.readFileSync(file.path);
+  const ext = path.extname(file.originalname) || path.extname(file.filename) || '';
+  const key = `favicon/${uuidv4()}${ext}`;
+  await media.uploadPublicObject(key, buffer, file.mimetype);
+  fs.unlink(file.path, () => {});
+  return key;
+}
+function faviconUrl(stored) {
+  if (!stored) return null;
+  return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
+}
+app.get('/favicon-asset/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`favicon/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
+app.post('/api/admin/favicon', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadFaviconToR2(req.file);
+    db.updateAppConfig({ favicon_url: faviconUrl(stored) });
+    res.json({ ok: true, url: faviconUrl(stored) });
+  } catch (e) {
+    console.error('favicon upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload favicon right now — please try again.' });
+  }
+});
+// Single stable URL every page's <link rel="icon"> can point to — resolves
+// to whatever's actually configured right now (a 302, not a static file),
+// so an admin's favicon change takes effect on next load everywhere
+// without editing a single HTML file. Falls back to Tomte's own image
+// rather than a browser-generated default (a plain coloured square with an
+// initial letter) when nothing's been uploaded yet.
+app.get('/favicon-dynamic', (req, res) => {
+  const cfg = db.getAppConfig() || {};
+  res.redirect(302, cfg.favicon_url || '/assets/tomte.png');
+});
+// show the app's own configured name and icon instead of a browser-
+// generated fallback (which is where the black-square default icon and
+// stray placeholder name were coming from — there was no manifest at all
+// before this). Regenerated on every request from live config rather than
+// a static file, so an admin's name/icon change takes effect immediately
+// without a redeploy.
+app.get('/site.webmanifest', (req, res) => {
+  const cfg = db.getAppConfig() || {};
+  const name = cfg.app_name || cfg.brand_name || 'Deeper Mindfulness';
+  const icon = cfg.favicon_url || '/assets/tomte.png';
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.json({
+    name: name,
+    short_name: name.length > 12 ? name.slice(0, 12) : name,
+    start_url: '/',
+    display: 'standalone',
+    background_color: '#0d1210',
+    theme_color: cfg.primary_color || '#B4E6C8',
+    icons: [
+      { src: icon, sizes: '192x192', type: 'image/png' },
+      { src: icon, sizes: '512x512', type: 'image/png' },
+    ],
+  });
+});
+
 app.get('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), (req, res) => {
   const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: tomteImageUrl(r.image_filename) }));
   res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES });
@@ -1792,6 +1866,14 @@ app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async 
     }
   }
 
+  // Voice-output override (Per Bot 11) — admin can force a person's Tomte
+  // voice replies on/off, same nullable-override convention as everything
+  // else here. '' means "leave unset" (person's own self-service toggle
+  // decides), not "off" — those are different states.
+  if (req.body.tomte_voice_enabled !== undefined) {
+    fields.tomte_voice_enabled = req.body.tomte_voice_enabled === '' ? null : (req.body.tomte_voice_enabled ? 1 : 0);
+  }
+
   db.updateUserAdminDetails(req.params.id, fields);
   res.json({ ok: true });
 });
@@ -1841,7 +1923,17 @@ function resolveTomteImage(personalImageFilename, language, action) {
 app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const s = db.getTomteSettings(req.user.role, req.user.id);
   const imageUrl = resolveTomteImage(s.tomte_image_filename, s.tomte_language || s.language, 'default');
-  res.json({ name: s.tomte_name || null, imageUrl });
+  res.json({ name: s.tomte_name || null, imageUrl, voiceEnabled: !!s.tomte_voice_enabled });
+});
+// Self-service voice-output toggle (Per Bot 11) — replaces the old
+// per-browser localStorage flag. Any logged-in role can flip their own
+// preference here; an admin can also set the same field from the user
+// details panel (e.g. turning it on for someone who wouldn't think to look
+// for the toggle themselves) — same single shared column either side can
+// write to, same convention as tomte_language/tomte_image_filename above.
+app.patch('/api/my/tomte-voice', auth.requireAuthApi(), (req, res) => {
+  db.setTomteVoiceEnabled(req.user.role, req.user.id, !!req.body.enabled);
+  res.json({ ok: true });
 });
 app.patch('/api/my/tomte-name', auth.requireAuthApi(), (req, res) => {
   db.setTomteName(req.user.role, req.user.id, (req.body.name || '').trim().slice(0, 30));
@@ -1903,40 +1995,6 @@ Start every reply with exactly one tag on its own, chosen from: [[ACTION:default
 // don't pass that negotiation through cleanly) — the two sides end up
 // disagreeing about whether frames are compressed, corrupting every one.
 // Disabling it removes that whole failure mode.
-// ── TEMPORARY diagnostic (Per Bot 9) — minimal WebSocket echo test ──
-// Deliberately as simple as a WebSocket can be: no auth, no audio, no
-// compression, plain text in and an echo straight back. Exists purely to
-// tell us whether the "Invalid frame header" issue is something specific
-// to the Tomte connection, or affects every WebSocket this app opens
-// regardless of complexity. Safe to delete once that's answered.
-app.get('/ws-test', (req, res) => {
-  res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#111;color:#eee;padding:20px">
-<h3>WebSocket echo test — plain text only, no auth, no audio</h3>
-<div id="log" style="border:1px solid #444;padding:10px;height:320px;overflow-y:auto;margin-bottom:10px;white-space:pre-wrap;font-family:monospace;font-size:13px"></div>
-<input id="msg" placeholder="Type a message, press Enter" style="width:70%;padding:8px;font-size:14px"/>
-<button onclick="sendMsg()" style="padding:8px 16px">Send</button>
-<script>
-  const log = document.getElementById('log');
-  function addLog(line) { log.textContent += line + "\\n"; log.scrollTop = log.scrollHeight; }
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = proto + '//' + location.host + '/ws-test-socket';
-  addLog('Connecting to ' + url + ' ...');
-  const ws = new WebSocket(url);
-  ws.onopen  = () => addLog('OPENED');
-  ws.onmessage = (e) => addLog('RECEIVED: ' + e.data);
-  ws.onerror = () => addLog('ERROR — see browser console for detail');
-  ws.onclose = (e) => addLog('CLOSED code=' + e.code + ' reason="' + e.reason + '" wasClean=' + e.wasClean);
-  function sendMsg() {
-    const input = document.getElementById('msg');
-    if (!input.value) return;
-    addLog('SENT: ' + input.value);
-    ws.send(input.value);
-    input.value = '';
-  }
-  document.getElementById('msg').addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
-</script>
-</body></html>`);
-});
 // Per Bot 9 fix: every ws server bound via {server, path} attaches its OWN
 // 'upgrade' listener to the same shared http.Server — and Node fires ALL
 // of them for every single upgrade request, regardless of path. Each one's
@@ -1949,16 +2007,6 @@ app.get('/ws-test', (req, res) => {
 // now use noServer:true and are routed explicitly by the single consolidated
 // server.on('upgrade', ...) handler near the bottom of this section, the
 // same pattern already used correctly for the facilitator socket.
-const wsTestServer = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
-wsTestServer.on('connection', (ws) => {
-  console.log('[ws-test] connection opened');
-  ws.on('message', (raw) => {
-    console.log('[ws-test] received:', raw.toString());
-    ws.send(`Echo: ${raw.toString()}`);
-  });
-  ws.on('close', (code, reason) => console.log(`[ws-test] closed — code=${code} reason=${reason ? reason.toString() : ''}`));
-  ws.on('error', (e) => console.error('[ws-test] error:', e.message));
-});
 const tomteWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 tomteWss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
@@ -3286,16 +3334,14 @@ const facilitatorWss = new WebSocket.Server({ noServer: true, perMessageDeflate:
 
 // ── Single consolidated upgrade router (Per Bot 9) ──
 // Every WebSocket path in the app funnels through here now, dispatched
-// explicitly by pathname to exactly one server's handleUpgrade(). See the
-// comment above wsTestServer for why this replaced four independent
-// {server, path}-bound listeners.
+// explicitly by pathname to exactly one server's handleUpgrade(). Multiple
+// {server, path}-bound WebSocket.Server instances used to each attach
+// their own 'upgrade' listener to this same shared http.Server, and Node
+// fires every one of them on every upgrade request regardless of path —
+// see the fuller explanation on tomteWss above. This single dispatcher
+// replaced all of that.
 server.on('upgrade', (req, socket, head) => {
   const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host}`);
-
-  if (pathname === '/ws-test-socket') {
-    wsTestServer.handleUpgrade(req, socket, head, (ws) => wsTestServer.emit('connection', ws, req));
-    return;
-  }
 
   if (pathname === '/tomte') {
     tomteWss.handleUpgrade(req, socket, head, (ws) => tomteWss.emit('connection', ws, req));
@@ -4523,7 +4569,7 @@ app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
 
 app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled } = req.body;
+    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName } = req.body;
     if (!brandName || !brandName.trim()) return res.status(400).json({ error: 'Organisation name is required.' });
     if (!legalEntityName || !legalEntityName.trim()) return res.status(400).json({ error: 'Legal entity name is required — it appears in your Privacy Policy and Terms.' });
     if (!contactEmail || !contactEmail.includes('@')) return res.status(400).json({ error: 'A valid contact email is required.' });
@@ -4537,6 +4583,7 @@ app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       legal_entity_name: legalEntityName.trim(),
       legal_jurisdiction: (legalJurisdiction || '').trim() || 'United Kingdom',
       payments_enabled: paymentsEnabled ? 1 : 0,
+      app_name: (appName || '').trim() || null,
       setup_completed: 1,
     });
 
@@ -4561,6 +4608,7 @@ app.patch('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       paymentsEnabled: 'payments_enabled',
       reminderDays: 'reminder_days', reminderSubject: 'reminder_subject',
       newsletterFooter: 'newsletter_footer',
+      appName: 'app_name',
     };
     const fields = {};
     Object.keys(fieldMap).forEach(k => {
@@ -4582,9 +4630,11 @@ app.get('/api/config', (req, res) => {
     const cfg = db.getAppConfig() || {};
     res.json({
       brandName: cfg.brand_name,
+      appName: cfg.app_name || cfg.brand_name,
       tagline: cfg.tagline,
       primaryColor: cfg.primary_color,
       logoUrl: cfg.logo_url,
+      faviconUrl: cfg.favicon_url || null,
       paymentsEnabled: !!cfg.payments_enabled,
       currency: cfg.currency,
       legalEntityName: cfg.legal_entity_name,

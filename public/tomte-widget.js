@@ -155,10 +155,17 @@
     let mediaStream = null;
     let mediaRecorder = null;
     let defaultImageUrl = '/assets/tomte.png';
-    // Per Bot 9: spoken replies are opt-in — off by default, remembered per
-    // browser (not per account) so it doesn't need a round-trip to the
-    // server just to know whether to show the speaker as on or off.
-    let voiceEnabled = localStorage.getItem('tomte_voice_enabled') === 'true';
+    // Per Bot 11: spoken replies are opt-in, persisted per ACCOUNT now
+    // (via /api/my/tomte-settings + PATCH /api/my/tomte-voice) rather than
+    // per browser in localStorage — the same toggle now follows someone
+    // across devices, and an admin can also set it on someone's behalf
+    // from the user details panel. Logged-out visitors have no account to
+    // persist to, so their toggle just lives in memory for the session and
+    // resets to off on refresh — acceptable, since there's no account to
+    // read from either way. Starts false and gets corrected by
+    // applyPersonalization() below as soon as that response comes back, to
+    // avoid a flash of the wrong icon for a logged-in person.
+    let voiceEnabled = false;
 
     function pageName() {
       return window.TOMTE_PAGE || document.title || location.pathname;
@@ -192,6 +199,9 @@
           defaultImageUrl = data.imageUrl;
           document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, data.imageUrl));
         }
+        voiceEnabled = !!data.voiceEnabled;
+        updateVoiceToggleUI();
+        if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
       } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
     })();
 
@@ -323,9 +333,15 @@
     updateVoiceToggleUI();
     voiceToggleBtn.addEventListener('click', () => {
       voiceEnabled = !voiceEnabled;
-      localStorage.setItem('tomte_voice_enabled', voiceEnabled ? 'true' : 'false');
       updateVoiceToggleUI();
       if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
+      // Best-effort — if there's no account (logged-out visitor) or the
+      // request fails, the toggle still works for the rest of this
+      // session; it just won't be remembered next time.
+      fetch('/api/my/tomte-voice', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: voiceEnabled })
+      }).catch(() => {});
     });
 
     function sendText() {

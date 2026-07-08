@@ -5,7 +5,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Admin — Deeper Mindfulness · v5</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
   <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
@@ -391,6 +395,14 @@
           <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Tomte voice</label>
           <select id="udTomteVoice" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box">
             <option value="">Default (based on language)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Tomte voice replies (spoken, not just text)</label>
+          <select id="udTomteVoiceEnabled" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;box-sizing:border-box">
+            <option value="">Leave as they've set it themselves</option>
+            <option value="1">On</option>
+            <option value="0">Off</option>
           </select>
         </div>
       </div>
@@ -789,7 +801,7 @@
   }
 
   async function deleteTomteDefault(language, action) {
-    if (!confirm(`Remove the ${action} image for this language?`)) return;
+    if (!(await appConfirm(`Remove the ${action} image for this language?`))) return;
     await fetch(`/api/admin/tomte-defaults/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
     loadTomteDefaults();
   }
@@ -1515,6 +1527,7 @@
     document.getElementById('udTomteImgPreview').src = tomteImgSrc(u.tomte_image_filename);
     document.getElementById('udTomteLanguage').value = u.tomte_language || '';
     document.getElementById('udTomteVoice').value = u.voice_id || '';
+    document.getElementById('udTomteVoiceEnabled').value = u.tomte_voice_enabled === null || u.tomte_voice_enabled === undefined ? '' : (u.tomte_voice_enabled ? '1' : '0');
     document.getElementById('udErr').textContent = '';
     _udSelectedImageFilename = null; // no new gallery pick yet this session — keep whatever's already set
     renderUdImageGallery(u.tomte_image_filename || null);
@@ -1533,6 +1546,7 @@
         language: document.getElementById('udLanguage').value.trim(),
         tomte_language: document.getElementById('udTomteLanguage').value,
         voice_id: document.getElementById('udTomteVoice').value,
+        tomte_voice_enabled: document.getElementById('udTomteVoiceEnabled').value,
       };
       // Only send a photo change if the admin actually picked one from the
       // gallery this session — otherwise leave whatever's already set alone
@@ -1591,7 +1605,7 @@
           const name = _memberData.find(x => x.id === id)?.name || id;
           return `${name}: ${data.tempPassword || 'error — ' + (data.error || 'unknown')}`;
         }));
-        alert('Password reset — temporary password below (also emailed):\n\n' + results.join('\n'));
+        appAlert('Password reset — temporary password below (also emailed):\n\n' + results.join('\n'));
         memberSel.clear(); loadMembers();
       });
   }
@@ -1895,7 +1909,7 @@
     loadUsers(); // approving changes a user's tier — refresh the Explorers/Members views too
     loadMembers();
     if (data.failed && data.failed.length) {
-      alert(data.failed.map(f => f.error).join('\n'));
+      appAlert(data.failed.map(f => f.error).join('\n'));
     }
   }
 
@@ -1949,7 +1963,7 @@
       `Delete ${ids.length} lead${ids.length>1?'s':''}? Cannot be undone.`,
       async()=>{ await Promise.all(ids.map(id=>fetch(`/api/admin/guest-leads/${id}`,{method:'DELETE'}))); loadLeads(); });
   }
-  function syncLeads() { alert('Brevo sync coming soon — '+leadSel.sel.size+' lead(s) selected.'); }
+  function syncLeads() { appAlert('Brevo sync coming soon — '+leadSel.sel.size+' lead(s) selected.'); }
 
   // Keyboard shortcuts
   document.getElementById('facName').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('facEmail').focus(); });
