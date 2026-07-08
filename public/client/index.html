@@ -535,54 +535,91 @@
 <div class="slideshow" id="slideshow"></div>
 <div class="veil"></div>
 
-<!-- Facilitator Hub (Per Bot 13) — lists Talk plus any real facilitators
-     assigned to this client, shows the one shared Arc (read by and added
-     to by every one of them, Talk included), and for a real facilitator
-     hands off to the existing Messages/Video sessions panels under You
-     rather than duplicating them here. -->
-<div id="facHubOverlay" style="display:none; position:fixed; inset:0; z-index:100030; background:#0a0f0d; font-family:Georgia,serif; flex-direction:column">
-  <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.08)">
-    <div style="font-size:15px; color:rgba(255,255,255,0.8)">Your facilitators</div>
-    <button onclick="closeFacilitatorHub()" style="background:none; border:none; color:rgba(255,255,255,0.5); font-size:22px; cursor:pointer; line-height:1">&times;</button>
-  </div>
-  <div style="display:flex; gap:8px; padding:14px 20px; overflow-x:auto; border-bottom:1px solid rgba(255,255,255,0.06)" id="facHubList"></div>
-  <div style="flex:1; overflow-y:auto; padding:20px" id="facHubDetail"></div>
-</div>
-
 <div class="panel">
   <div class="glass" style="position:relative">
 
     <div class="header">
       <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
-      <button type="button" id="facHubBtn" onclick="openFacilitatorHub()" title="Your facilitators" style="position:absolute; right:16px; top:16px; background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:12px; cursor:pointer">👥 Facilitators</button>
     </div>
 
     <!-- Talk -->
     <div class="talk-view" id="talkView">
-      <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
-      <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
-        <div class="resume-card-label">Continue</div>
-        <div class="resume-card-title" id="resumeCardTitle"></div>
-        <div class="resume-card-sub" id="resumeCardSub"></div>
+      <!-- Facilitator strip (Per Bot 15) — Talk is always first and is the
+           default selection (preserves exactly today's landing experience
+           for anyone with no real facilitator); a second pill appears per
+           assigned facilitator. Hidden entirely when there's only Talk —
+           no point cluttering the screen with a single unclickable pill. -->
+      <div id="facStrip" style="display:none; gap:8px; padding:10px 16px 0; overflow-x:auto"></div>
+
+      <div id="talkChatContent" style="display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
+        <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
+        <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
+          <div class="resume-card-label">Continue</div>
+          <div class="resume-card-title" id="resumeCardTitle"></div>
+          <div class="resume-card-sub" id="resumeCardSub"></div>
+        </div>
+        <div class="transcript-area">
+          <p class="transcript-text" id="transcript">—</p>
+        </div>
+        <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
+        <div class="indicators">
+          <div class="wave" id="wave"><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="dots" id="dots"><span></span><span></span><span></span></div>
+        </div>
+        <div class="mic-wrap">
+          <div class="tap-hint" id="tapHint">Tap to speak</div>
+          <button class="mic-btn" id="micBtn">
+            <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
+          </button>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="thinking" id="thinking">
+          <div class="thinking-dots"><span></span><span></span><span></span></div>
+          <div class="thinking-text">Getting ready…</div>
+        </div>
       </div>
-      <div class="transcript-area">
-        <p class="transcript-text" id="transcript">—</p>
-      </div>
-      <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
-      <div class="indicators">
-        <div class="wave" id="wave"><span></span><span></span><span></span><span></span><span></span></div>
-        <div class="dots" id="dots"><span></span><span></span><span></span></div>
-      </div>
-      <div class="mic-wrap">
-        <div class="tap-hint" id="tapHint">Tap to speak</div>
-        <button class="mic-btn" id="micBtn">
-          <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
-        </button>
-      </div>
-      <div class="status" id="status"></div>
-      <div class="thinking" id="thinking">
-        <div class="thinking-dots"><span></span><span></span><span></span></div>
-        <div class="thinking-text">Getting ready…</div>
+
+      <!-- Facilitator detail pane (Per Bot 15) — shown instead of
+           talkChatContent when a real facilitator is selected in the strip
+           above. Arc first (shared with Talk too, just not shown there
+           since Talk's own view already IS the arc-building activity),
+           then Messages, then Video sessions — the two panels physically
+           moved here from You (not duplicated) since a client now reaches
+           them by selecting the facilitator they're about, same mental
+           model as the facilitator app selecting a client. -->
+      <div id="facDetailPane" style="display:none; flex-direction:column; overflow-y:auto; flex:1; width:100%; min-height:0;">
+        <div style="padding:16px 16px 0">
+          <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:8px">Your arc</div>
+          <div id="facArcDisplay" style="margin-bottom:18px"></div>
+          <div class="lib-subnav" style="margin-bottom:0">
+            <button class="lib-subnav-btn active" id="facDetailSubMessages" onclick="switchFacDetailSub('messages')">Messages<span id="youMsgBadge"></span></button>
+            <button class="lib-subnav-btn" id="facDetailSubSessions" onclick="switchFacDetailSub('sessions')">Video sessions</button>
+          </div>
+        </div>
+
+        <div class="lib-sub-panel visible" id="facMessagesPanel" style="flex-direction:column">
+          <div class="cmsg-thread-tabs" id="cmsgThreadTabs">
+            <button class="cmsg-thread-tab active" onclick="switchCmsgThread('')">General</button>
+          </div>
+          <div class="cmsg-list" id="cmsgList"></div>
+          <div class="cmsg-recording-preview" id="cmsgRecordingPreview" style="display:none"></div>
+          <div class="msg-record-status" id="cmsgRecordStatus" style="display:none">
+            <span class="msg-record-status-dot"></span>
+            <span id="cmsgRecordStatusText">Loading…</span>
+          </div>
+          <div class="cmsg-composer">
+            <div id="cmsgInput_rich" class="cmsg-rich-container"></div>
+            <button class="cmsg-icon-btn" id="cmsgAttachBtn" title="Attach file">📎</button>
+            <button class="cmsg-icon-btn" id="cmsgVoiceBtn" title="Record voice note">🎙️</button>
+            <button class="cmsg-icon-btn" id="cmsgVideoBtn" title="Record video note">🎥</button>
+            <button class="btn-primary" id="cmsgSendBtn">Send</button>
+          </div>
+          <input type="file" id="cmsgFileInput" style="display:none"/>
+        </div>
+
+        <div class="lib-sub-panel" id="facSessionsPanel">
+          <div class="history-scroll" id="sessionsList"><div class="no-history">Loading…</div></div>
+        </div>
       </div>
     </div>
 
@@ -635,38 +672,15 @@
     <div class="library-view" id="youView">
       <div class="lib-subnav">
         <button class="lib-subnav-btn active" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
-        <button class="lib-subnav-btn" id="youSubMessages" onclick="switchYouSub('messages')">Messages<span id="youMsgBadge"></span></button>
         <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
         <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
         <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
-        <button class="lib-subnav-btn" id="youSubSessions" onclick="switchYouSub('sessions')">Video sessions</button>
         <button class="lib-subnav-btn lib-subnav-btn-danger" id="youLogoutBtn" onclick="logoutUser()">Log Out</button>
       </div>
 
       <!-- Account region -->
       <div class="lib-sub-panel visible" id="youAccountPanel">
         <div class="practices-scroll" id="youAccountSummary"><div class="no-practices">Loading…</div></div>
-      </div>
-
-      <!-- Messages region -->
-      <div class="lib-sub-panel" id="youMessagesPanel" style="flex-direction:column">
-        <div class="cmsg-thread-tabs" id="cmsgThreadTabs">
-          <button class="cmsg-thread-tab active" onclick="switchCmsgThread('')">General</button>
-        </div>
-        <div class="cmsg-list" id="cmsgList"></div>
-        <div class="cmsg-recording-preview" id="cmsgRecordingPreview" style="display:none"></div>
-        <div class="msg-record-status" id="cmsgRecordStatus" style="display:none">
-          <span class="msg-record-status-dot"></span>
-          <span id="cmsgRecordStatusText">Loading…</span>
-        </div>
-        <div class="cmsg-composer">
-          <div id="cmsgInput_rich" class="cmsg-rich-container"></div>
-          <button class="cmsg-icon-btn" id="cmsgAttachBtn" title="Attach file">📎</button>
-          <button class="cmsg-icon-btn" id="cmsgVoiceBtn" title="Record voice note">🎙️</button>
-          <button class="cmsg-icon-btn" id="cmsgVideoBtn" title="Record video note">🎥</button>
-          <button class="btn-primary" id="cmsgSendBtn">Send</button>
-        </div>
-        <input type="file" id="cmsgFileInput" style="display:none"/>
       </div>
 
       <!-- Journal region -->
@@ -701,14 +715,6 @@
       <!-- History region — the client's own activity log -->
       <div class="lib-sub-panel" id="youHistoryPanel">
         <div class="history-scroll" id="historyList"><div class="no-history">No history yet.</div></div>
-      </div>
-
-      <!-- Video sessions region — recordings/transcripts your facilitator
-           has chosen to share with you from a video/audio call (Per Bot 12).
-           Nothing shows here unless your facilitator has explicitly shared
-           it; it's their recording to manage until then. -->
-      <div class="lib-sub-panel" id="youSessionsPanel">
-        <div class="history-scroll" id="sessionsList"><div class="no-history">Loading…</div></div>
       </div>
     </div>
 
@@ -1019,21 +1025,17 @@
   let _currentYouSub = 'account';
   function switchYouSub(sub) {
     _currentYouSub = sub;
-    ['account','messages','journal','poems','history','sessions'].forEach(s => {
+    ['account','journal','poems','history'].forEach(s => {
       document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
     });
     document.getElementById('youAccountPanel').classList.toggle('visible', sub === 'account');
-    document.getElementById('youMessagesPanel').classList.toggle('visible', sub === 'messages');
     document.getElementById('youJournalPanel').classList.toggle('visible', sub === 'journal');
     document.getElementById('youPoemsPanel').classList.toggle('visible', sub === 'poems');
     document.getElementById('youHistoryPanel').classList.toggle('visible', sub === 'history');
-    document.getElementById('youSessionsPanel').classList.toggle('visible', sub === 'sessions');
     if (sub === 'account')  loadYouAccountSummary();
-    if (sub === 'messages') loadCmsgMessages();
     if (sub === 'journal') loadJournal();
     if (sub === 'poems')   loadPoems();
     if (sub === 'history') loadHistory();
-    if (sub === 'sessions') loadSharedSessions();
   }
 
   async function logoutUser() {
@@ -1073,15 +1075,16 @@
   async function loadCmsgMessages() {
     ensureCmsgEditor();
     try {
+      const fid = encodeURIComponent(_activeFacilitatorId);
       const [threadsRes, msgsRes] = await Promise.all([
-        fetch('/api/my/messages/session-threads'),
-        fetch('/api/my/messages' + (_cmsgSessionId ? '?sessionId=' + _cmsgSessionId : ''))
+        fetch(`/api/my/messages/session-threads?facilitatorId=${fid}`),
+        fetch(`/api/my/messages?facilitatorId=${fid}` + (_cmsgSessionId ? '&sessionId=' + _cmsgSessionId : ''))
       ]);
       renderCmsgThreadTabs(await threadsRes.json());
       renderCmsgList(await msgsRes.json());
       fetch('/api/my/messages/read', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: _cmsgSessionId || null })
+        body: JSON.stringify({ session_id: _cmsgSessionId || null, facilitatorId: _activeFacilitatorId })
       });
       refreshYouMsgBadge();
     } catch(e) { console.error('loadCmsgMessages error:', e); }
@@ -1157,7 +1160,7 @@
     try {
       const res = await fetch('/api/my/messages', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: _cmsgSessionId || null, content })
+        body: JSON.stringify({ session_id: _cmsgSessionId || null, content, facilitatorId: _activeFacilitatorId })
       });
       if (res.ok) { quill.setText(''); await loadCmsgMessages(); }
       else { const d = await res.json().catch(()=>({})); appAlert(d.error || 'Could not send message.'); }
@@ -1175,6 +1178,7 @@
       fd.append('session_id', _cmsgSessionId || '');
       fd.append('content_type', 'attachment');
       fd.append('file', file);
+      fd.append('facilitatorId', _activeFacilitatorId);
       await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
       await loadCmsgMessages();
     } finally { setBtnLoading(btn, false); e.target.value = ''; }
@@ -1253,6 +1257,7 @@
     fd.append('session_id', _cmsgSessionId || '');
     fd.append('content_type', _cmsgRecordingKind);
     fd.append('file', _cmsgRecordedBlob, `${_cmsgRecordingKind}-note.webm`);
+    fd.append('facilitatorId', _activeFacilitatorId);
     discardCmsgRecordedNote();
     await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
     await loadCmsgMessages();
@@ -2916,70 +2921,65 @@
     `).join('');
   }
 
-  // ── Facilitator Hub (Per Bot 13) ──
+  // ── Facilitator strip (Per Bot 15) ──
   // Talk is always first and synthetic — never a real row anywhere, just
-  // always present. Selecting a real facilitator hands off to the
-  // existing Messages/Video sessions panels (under You) rather than
-  // rebuilding them here; this view's job for now is the list itself plus
-  // the one shared Arc, not re-implementing messaging.
-  let _facHubList = [];
-  let _facHubSelected = null;
+  // always present, and the default selection (so anyone with no real
+  // facilitator sees exactly today's Talk experience, unchanged). Selecting
+  // a real facilitator swaps in the Arc + Messages + Video sessions pane
+  // that used to live under You — moved here, not duplicated, so a client
+  // reaches them by choosing who they're about, same as the facilitator
+  // app choosing a client.
+  let _facList = [{ id: 'talk', name: 'Talk', isTalk: true }];
+  let _activeFacilitatorId = 'talk';
 
-  async function openFacilitatorHub() {
-    document.getElementById('facHubOverlay').style.display = 'flex';
-    document.getElementById('facHubDetail').innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
+  async function initFacStrip() {
     try {
       const res = await fetch('/api/client/facilitators');
-      _facHubList = await res.json();
-    } catch(e) { _facHubList = [{ id: 'talk', name: 'Talk', isTalk: true }]; }
-    renderFacHubList();
-    selectFacHubEntry(_facHubList[0].id);
+      const list = await res.json();
+      if (Array.isArray(list) && list.length) _facList = list;
+    } catch(e) { /* keep the Talk-only default */ }
+    renderFacStrip();
+    selectFacilitator('talk');
   }
-  function closeFacilitatorHub() {
-    document.getElementById('facHubOverlay').style.display = 'none';
-  }
-  function renderFacHubList() {
-    const el = document.getElementById('facHubList');
-    el.innerHTML = _facHubList.map(f => `
-      <button onclick="selectFacHubEntry('${f.id}')" id="facHubPill_${f.id}" style="flex-shrink:0; padding:9px 16px; border-radius:20px; border:1px solid rgba(255,255,255,0.15); background:${f.id === _facHubSelected ? 'rgba(180,230,200,0.15)' : 'none'}; color:${f.id === _facHubSelected ? 'rgba(190,235,210,0.95)' : 'rgba(255,255,255,0.6)'}; font-family:Georgia,serif; font-size:13px; cursor:pointer; white-space:nowrap">
+  function renderFacStrip() {
+    const el = document.getElementById('facStrip');
+    el.style.display = _facList.length > 1 ? 'flex' : 'none';
+    el.innerHTML = _facList.map(f => `
+      <button onclick="selectFacilitator('${f.id}')" style="flex-shrink:0; padding:8px 15px; border-radius:20px; border:1px solid rgba(255,255,255,0.15); background:${f.id === _activeFacilitatorId ? 'rgba(180,230,200,0.15)' : 'none'}; color:${f.id === _activeFacilitatorId ? 'rgba(190,235,210,0.95)' : 'rgba(255,255,255,0.6)'}; font-family:Georgia,serif; font-size:12.5px; cursor:pointer; white-space:nowrap; margin-bottom:10px">
         ${f.isTalk ? '💬' : '🧑'} ${f.name}
       </button>
     `).join('');
   }
-  async function selectFacHubEntry(id) {
-    _facHubSelected = id;
-    renderFacHubList();
-    const entry = _facHubList.find(f => f.id === id);
-    const detail = document.getElementById('facHubDetail');
-    detail.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
+  async function selectFacilitator(id) {
+    _activeFacilitatorId = id;
+    renderFacStrip();
+    const entry = _facList.find(f => f.id === id);
+    const isTalk = !entry || entry.isTalk;
+    document.getElementById('talkChatContent').style.display = isTalk ? '' : 'none';
+    document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
+    if (isTalk) return;
 
-    let arcHtml = '<div style="color:rgba(255,255,255,0.3);font-size:13px;font-style:italic">Nothing here yet — this fills in as you have sessions.</div>';
+    document.getElementById('facArcDisplay').innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
     try {
       const res = await fetch('/api/client/arc');
       const data = await res.json();
       const lines = (data.arc || '').split('\n').map(l => l.replace(/^[-•\s]+/, '').trim()).filter(Boolean);
-      if (lines.length) arcHtml = '<ul style="margin:0; padding-left:18px; color:rgba(255,255,255,0.75); font-size:13.5px; line-height:1.8">' + lines.map(l => `<li>${l.replace(/</g,'&lt;')}</li>`).join('') + '</ul>';
+      document.getElementById('facArcDisplay').innerHTML = lines.length
+        ? '<ul style="margin:0; padding-left:18px; color:rgba(255,255,255,0.75); font-size:13.5px; line-height:1.8">' + lines.map(l => `<li>${l.replace(/</g,'&lt;')}</li>`).join('') + '</ul>'
+        : '<div style="color:rgba(255,255,255,0.3);font-size:13px;font-style:italic">Nothing here yet — this fills in as you have sessions.</div>';
     } catch(e) {}
 
-    if (entry && entry.isTalk) {
-      detail.innerHTML = `
-        <div style="font-size:14px; color:rgba(255,255,255,0.85); margin-bottom:6px">Talk</div>
-        <div style="font-size:12.5px; color:rgba(255,255,255,0.4); margin-bottom:18px">Your own ongoing conversation — always here, whether or not you also have a facilitator.</div>
-        <button onclick="closeFacilitatorHub(); switchTab('talk')" class="btn sm" style="margin-bottom:22px">Continue in Talk →</button>
-        <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:10px">Your arc</div>
-        ${arcHtml}
-      `;
-    } else {
-      detail.innerHTML = `
-        <div style="font-size:14px; color:rgba(255,255,255,0.85); margin-bottom:6px">${entry ? entry.name : 'Facilitator'}</div>
-        <div style="display:flex; gap:8px; margin-bottom:22px; flex-wrap:wrap">
-          <button onclick="closeFacilitatorHub(); switchTab('you'); switchYouSub('messages')" class="btn sm">Messages →</button>
-          <button onclick="closeFacilitatorHub(); switchTab('you'); switchYouSub('sessions')" class="btn sm">Video sessions →</button>
-        </div>
-        <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:10px">Your arc</div>
-        ${arcHtml}
-      `;
-    }
+    switchFacDetailSub(_currentFacDetailSub);
+  }
+  let _currentFacDetailSub = 'messages';
+  function switchFacDetailSub(sub) {
+    _currentFacDetailSub = sub;
+    document.getElementById('facDetailSubMessages').classList.toggle('active', sub === 'messages');
+    document.getElementById('facDetailSubSessions').classList.toggle('active', sub === 'sessions');
+    document.getElementById('facMessagesPanel').classList.toggle('visible', sub === 'messages');
+    document.getElementById('facSessionsPanel').classList.toggle('visible', sub === 'sessions');
+    if (sub === 'messages') loadCmsgMessages();
+    if (sub === 'sessions') loadSharedSessions();
   }
 
   // ── Video/audio call sessions your facilitator has shared (Per Bot 12) ──
@@ -2990,7 +2990,11 @@
     try {
       const res = await fetch('/api/client/calls');
       const list = await res.json();
-      renderSharedSessions(Array.isArray(list) ? list : []);
+      // Scoped to whichever facilitator is currently selected in the strip
+      // above — the endpoint itself returns everything shared across all
+      // of a client's facilitators, filtered here to just this one.
+      const scoped = (Array.isArray(list) ? list : []).filter(c => c.facilitator_id === _activeFacilitatorId);
+      renderSharedSessions(scoped);
     } catch(e) {
       el.innerHTML = '<div class="no-history">Could not load right now — please try again.</div>';
     }
@@ -3255,6 +3259,10 @@
   // client's facilitator, independent of whichever tab is active — same
   // "run once, regardless of tab" reasoning as the two calls above.
   if (window.PerBotCall) window.PerBotCall.watchForIncomingCalls();
+  // Per Bot 15: builds the facilitator strip at the top of Talk and
+  // defaults to Talk selected — this IS the landing experience now, not
+  // a separate screen to navigate to.
+  initFacStrip();
 </script>
 <!-- Onboarding stepper (Per Bot 7) — one short question at a time, always
      skippable, shown once for a new account. Notification style has no
