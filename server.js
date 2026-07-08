@@ -949,6 +949,17 @@ app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'pub
 app.get('/brand-inject.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'brand-inject.js')));
 app.get('/tomte-widget.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')));
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
+// Per Bot 17 fix: these two were missing entirely. This app has no
+// express.static() mount by design (see comment above) — every file
+// genuinely needs its own explicit route, and dialogs.js/call.js never
+// got one when they were added in Per Bot 11/12. Both script tags were
+// silently 404ing since then, which meant window.appAlert/appConfirm/
+// appPrompt and window.PerBotCall were undefined everywhere they were
+// used — every delete/confirm dialog across the whole app, and the
+// entire video/audio calling feature, back to the sessions that
+// introduced them.
+app.get('/js/dialogs.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'dialogs.js')));
+app.get('/js/call.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'call.js')));
 app.get('/',                (req, res) => res.redirect('/login'));
 
 function roleRouter(allowedRoles, file) {
