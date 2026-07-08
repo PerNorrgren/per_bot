@@ -1896,6 +1896,50 @@ Start every reply with exactly one tag on its own, chosen from: [[ACTION:default
 // don't pass that negotiation through cleanly) — the two sides end up
 // disagreeing about whether frames are compressed, corrupting every one.
 // Disabling it removes that whole failure mode.
+// ── TEMPORARY diagnostic (Per Bot 9) — minimal WebSocket echo test ──
+// Deliberately as simple as a WebSocket can be: no auth, no audio, no
+// compression, plain text in and an echo straight back. Exists purely to
+// tell us whether the "Invalid frame header" issue is something specific
+// to the Tomte connection, or affects every WebSocket this app opens
+// regardless of complexity. Safe to delete once that's answered.
+app.get('/ws-test', (req, res) => {
+  res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#111;color:#eee;padding:20px">
+<h3>WebSocket echo test — plain text only, no auth, no audio</h3>
+<div id="log" style="border:1px solid #444;padding:10px;height:320px;overflow-y:auto;margin-bottom:10px;white-space:pre-wrap;font-family:monospace;font-size:13px"></div>
+<input id="msg" placeholder="Type a message, press Enter" style="width:70%;padding:8px;font-size:14px"/>
+<button onclick="sendMsg()" style="padding:8px 16px">Send</button>
+<script>
+  const log = document.getElementById('log');
+  function addLog(line) { log.textContent += line + "\\n"; log.scrollTop = log.scrollHeight; }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = proto + '//' + location.host + '/ws-test-socket';
+  addLog('Connecting to ' + url + ' ...');
+  const ws = new WebSocket(url);
+  ws.onopen  = () => addLog('OPENED');
+  ws.onmessage = (e) => addLog('RECEIVED: ' + e.data);
+  ws.onerror = () => addLog('ERROR — see browser console for detail');
+  ws.onclose = (e) => addLog('CLOSED code=' + e.code + ' reason="' + e.reason + '" wasClean=' + e.wasClean);
+  function sendMsg() {
+    const input = document.getElementById('msg');
+    if (!input.value) return;
+    addLog('SENT: ' + input.value);
+    ws.send(input.value);
+    input.value = '';
+  }
+  document.getElementById('msg').addEventListener('keydown', e => { if (e.key === 'Enter') sendMsg(); });
+</script>
+</body></html>`);
+});
+const wsTestServer = new WebSocket.Server({ server, path: '/ws-test-socket', perMessageDeflate: false });
+wsTestServer.on('connection', (ws) => {
+  console.log('[ws-test] connection opened');
+  ws.on('message', (raw) => {
+    console.log('[ws-test] received:', raw.toString());
+    ws.send(`Echo: ${raw.toString()}`);
+  });
+  ws.on('close', (code, reason) => console.log(`[ws-test] closed — code=${code} reason=${reason ? reason.toString() : ''}`));
+  ws.on('error', (e) => console.error('[ws-test] error:', e.message));
+});
 const tomteWss = new WebSocket.Server({ server, path: '/tomte', perMessageDeflate: false });
 tomteWss.on('connection', (ws, req) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
