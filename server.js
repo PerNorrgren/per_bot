@@ -909,6 +909,14 @@ function emailFacilitatorRequestDeferred(request) {
 
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
+// Multi-skin branding (Per Bot 20) — same files, same everything, just a
+// slug in the URL for the page's own JS to notice and brand itself
+// against (see skin-inject.js). The slug isn't validated here — an
+// unknown one just means skin-inject.js's fetch to /api/skins/:slug
+// comes back empty and the page quietly falls back to standard branding,
+// same as no slug at all.
+app.get('/login/:skinSlug',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/register/:skinSlug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 app.get('/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'reset-password.html')));
 app.get('/join/:token', (req, res) => res.sendFile(path.join(__dirname, 'public', 'join.html')));
 
@@ -1096,7 +1104,7 @@ app.patch('/api/admin/facilitators/:id/reset-password', auth.requireAuthApi(['ad
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
-    const { name, email, password, language } = req.body;
+    const { name, email, password, language, skinSlug } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email.' });
@@ -1119,13 +1127,23 @@ app.post('/api/register', async (req, res) => {
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;
+    let invitationSkin = null;
     if (inviteToken) {
       const inv = db.getInvitationByToken(inviteToken);
       if (inv && !inv.accepted_at && new Date(inv.expires_at) > new Date() && inv.email === emailLower) {
         db.markAsClient(id, inv.facilitator_id);
         db.acceptInvitation(inviteToken, new Date().toISOString());
+        invitationSkin = inv.skin_id;
       }
     }
+    // Skin assignment is permanent from here — set once at account
+    // creation, then persists regardless of which URL someone later logs
+    // in from (see the skins table comment in db.js). An invitation's own
+    // skin wins over the plain URL slug, since that reflects a deliberate
+    // choice by whoever sent it, not just whichever link happened to be
+    // clicked.
+    const resolvedSkin = invitationSkin || (skinSlug && db.getSkin(skinSlug) ? skinSlug : null);
+    if (resolvedSkin) db.setUserSkin(id, resolvedSkin);
 
     // Log them in immediately
     const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
@@ -1807,6 +1825,102 @@ function faviconUrl(stored) {
   if (!stored) return null;
   return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
 }
+// ── Skins (Per Bot 20) — multi-brand foundation, see db.js for the full
+// reasoning. Same R2-backed asset pattern as the favicon above, just
+// parameterized by which skin and which asset (logo/favicon/background)
+// it belongs to.
+async function uploadSkinAssetToR2(file, kind) {
+  if (!media.isConfigured()) return file.filename;
+  const buffer = fs.readFileSync(file.path);
+  const ext = path.extname(file.originalname) || path.extname(file.filename) || '';
+  const key = `skin-assets/${kind}/${uuidv4()}${ext}`;
+  await media.uploadPublicObject(key, buffer, file.mimetype);
+  fs.unlink(file.path, () => {});
+  return key;
+}
+function slugify(s) {
+  return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Public — the pre-login page needs this before anyone's authenticated.
+// Only ever the branding fields, nothing else about a skin is sensitive,
+// so no auth gate.
+app.get('/api/skins/:slug', (req, res) => {
+  const skin = db.getSkin(req.params.slug);
+  if (!skin) return res.status(404).json({ error: 'Unknown skin.' });
+  res.json({
+    id: skin.id, name: skin.name, logoUrl: faviconUrl(skin.logo_url), faviconUrl: faviconUrl(skin.favicon_url),
+    primaryColor: skin.primary_color, contactName: skin.contact_name, contactEmail: skin.contact_email,
+    backgroundImages: skin.background_images,
+  });
+});
+app.get('/api/admin/skins', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getAllSkins());
+});
+app.post('/api/admin/skins', auth.requireAuthApi(['admin']), (req, res) => {
+  const name = (req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Name is required.' });
+  const slug = slugify(req.body.slug || name);
+  if (!slug) return res.status(400).json({ error: 'Could not derive a valid URL slug from that name — try setting one directly.' });
+  if (db.getSkin(slug)) return res.status(400).json({ error: `A skin with the slug "${slug}" already exists.` });
+  const skin = db.createSkin(slug, {
+    name, primary_color: req.body.primaryColor, contact_name: req.body.contactName, contact_email: req.body.contactEmail,
+  });
+  res.json(skin);
+});
+app.patch('/api/admin/skins/:slug', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!db.getSkin(req.params.slug)) return res.status(404).json({ error: 'Skin not found.' });
+  const fields = {};
+  if (req.body.name !== undefined) fields.name = req.body.name.trim();
+  if (req.body.primaryColor !== undefined) fields.primary_color = req.body.primaryColor;
+  if (req.body.contactName !== undefined) fields.contact_name = req.body.contactName;
+  if (req.body.contactEmail !== undefined) fields.contact_email = req.body.contactEmail;
+  res.json(db.updateSkin(req.params.slug, fields));
+});
+app.delete('/api/admin/skins/:slug', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteSkin(req.params.slug);
+  res.json({ ok: true });
+});
+app.post('/api/admin/skins/:slug/logo', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!db.getSkin(req.params.slug)) return res.status(404).json({ error: 'Skin not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadSkinAssetToR2(req.file, 'logo');
+    const skin = db.updateSkin(req.params.slug, { logo_url: stored });
+    res.json({ ok: true, url: faviconUrl(skin.logo_url) });
+  } catch (e) { res.status(500).json({ error: 'Could not upload logo right now.' }); }
+});
+app.post('/api/admin/skins/:slug/favicon', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!db.getSkin(req.params.slug)) return res.status(404).json({ error: 'Skin not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadSkinAssetToR2(req.file, 'favicon');
+    const skin = db.updateSkin(req.params.slug, { favicon_url: stored });
+    res.json({ ok: true, url: faviconUrl(skin.favicon_url) });
+  } catch (e) { res.status(500).json({ error: 'Could not upload favicon right now.' }); }
+});
+// Backgrounds are a list, not a single field — this adds one image to the
+// list rather than replacing it, so the admin can build up a slideshow
+// with repeat uploads.
+app.post('/api/admin/skins/:slug/background', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  const skin = db.getSkin(req.params.slug);
+  if (!skin) return res.status(404).json({ error: 'Skin not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadSkinAssetToR2(req.file, 'background');
+    const images = [...skin.background_images, faviconUrl(stored)];
+    const updated = db.updateSkin(req.params.slug, { background_images: images });
+    res.json({ ok: true, backgroundImages: updated.background_images });
+  } catch (e) { res.status(500).json({ error: 'Could not upload image right now.' }); }
+});
+app.delete('/api/admin/skins/:slug/background', auth.requireAuthApi(['admin']), (req, res) => {
+  const skin = db.getSkin(req.params.slug);
+  if (!skin) return res.status(404).json({ error: 'Skin not found.' });
+  const images = skin.background_images.filter(url => url !== req.body.url);
+  const updated = db.updateSkin(req.params.slug, { background_images: images });
+  res.json({ ok: true, backgroundImages: updated.background_images });
+});
+
 app.get('/favicon-asset/:key', async (req, res) => {
   try {
     const obj = await media.getPublicObject(`favicon/${req.params.key}`);
@@ -1836,7 +1950,9 @@ app.post('/api/admin/favicon', auth.requireAuthApi(['admin']), upload.single('fi
 // initial letter) when nothing's been uploaded yet.
 app.get('/favicon-dynamic', (req, res) => {
   const cfg = db.getAppConfig() || {};
-  res.redirect(302, cfg.favicon_url || '/assets/tomte.png');
+  const skin = getRequestSkin(req);
+  const skinFavicon = skin && skin.favicon_url ? faviconUrl(skin.favicon_url) : null;
+  res.redirect(302, skinFavicon || cfg.favicon_url || '/assets/tomte.png');
 });
 // show the app's own configured name and icon instead of a browser-
 // generated fallback (which is where the black-square default icon and
@@ -1846,8 +1962,9 @@ app.get('/favicon-dynamic', (req, res) => {
 // without a redeploy.
 app.get('/site.webmanifest', (req, res) => {
   const cfg = db.getAppConfig() || {};
-  const name = cfg.app_name || cfg.brand_name || 'Deeper Mindfulness';
-  const icon = cfg.favicon_url || '/assets/tomte.png';
+  const skin = getRequestSkin(req);
+  const name = (skin && skin.name) || cfg.app_name || cfg.brand_name || 'Deeper Mindfulness';
+  const icon = (skin && skin.favicon_url ? faviconUrl(skin.favicon_url) : null) || cfg.favicon_url || '/assets/tomte.png';
   res.setHeader('Content-Type', 'application/manifest+json');
   res.json({
     name: name,
@@ -1855,7 +1972,7 @@ app.get('/site.webmanifest', (req, res) => {
     start_url: '/',
     display: 'standalone',
     background_color: '#0d1210',
-    theme_color: cfg.primary_color || '#B4E6C8',
+    theme_color: (skin && skin.primary_color) || cfg.primary_color || '#B4E6C8',
     icons: [
       { src: icon, sizes: '192x192', type: 'image/png' },
       { src: icon, sizes: '512x512', type: 'image/png' },
@@ -3247,8 +3364,9 @@ app.delete('/api/clients/:id', auth.requireAuthApi(['admin']), (req, res) => {
 // Send invitation — facilitator invites a user by email
 app.post('/api/invitations', auth.requireAuthApi(['facilitator','admin']), async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, skinSlug } = req.body;
     if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required.' });
+    if (skinSlug && !db.getSkin(skinSlug)) return res.status(400).json({ error: 'Unknown skin.' });
 
     const fac      = db.getFacilitatorById(req.user.id);
     if (!fac) return res.status(404).json({ error: 'Facilitator not found.' });
@@ -3258,7 +3376,7 @@ app.post('/api/invitations', auth.requireAuthApi(['facilitator','admin']), async
     const id         = uuidv4();
     const expiresAt  = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
-    db.createInvitation(id, token, req.user.id, emailLower, expiresAt);
+    db.createInvitation(id, token, req.user.id, emailLower, expiresAt, skinSlug || null);
 
     const inviteUrl = `${APP_URL}/invite/${token}`;
     const existing  = db.getUserByEmail(emailLower);
@@ -4982,19 +5100,39 @@ app.patch('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
 
 // Public — the safe subset of config any page's frontend can read to render
 // brand name/color without exposing anything sensitive.
+// Resolves which skin (if any) applies to the current request — based on
+// the logged-in user's own account, NOT the URL they're currently on.
+// That's deliberate: a skin is set once at registration and follows the
+// person from then on (see setUserSkin in db.js), so it shows up
+// correctly everywhere in the app, not just immediately after using a
+// skin-specific login link.
+function getRequestSkin(req) {
+  try {
+    const token = req.cookies?.[auth.COOKIE_NAME];
+    const payload = token ? auth.verifyToken(token) : null;
+    if (!payload || payload.role !== 'client') return null;
+    const user = db.getUser(payload.id);
+    if (!user || !user.skin_id) return null;
+    return db.getSkin(user.skin_id);
+  } catch (e) { return null; }
+}
 app.get('/api/config', (req, res) => {
   try {
     const cfg = db.getAppConfig() || {};
+    const skin = getRequestSkin(req);
     res.json({
-      brandName: cfg.brand_name,
-      appName: cfg.app_name || cfg.brand_name,
+      brandName: (skin && skin.name) || cfg.brand_name,
+      appName: (skin && skin.name) || cfg.app_name || cfg.brand_name,
       tagline: cfg.tagline,
-      primaryColor: cfg.primary_color,
-      logoUrl: cfg.logo_url,
-      faviconUrl: cfg.favicon_url || null,
+      primaryColor: (skin && skin.primary_color) || cfg.primary_color,
+      logoUrl: (skin && faviconUrl(skin.logo_url)) || cfg.logo_url,
+      faviconUrl: (skin && faviconUrl(skin.favicon_url)) || cfg.favicon_url || null,
       paymentsEnabled: !!cfg.payments_enabled,
       currency: cfg.currency,
       legalEntityName: cfg.legal_entity_name,
+      backgroundImages: (skin && skin.background_images.length) ? skin.background_images : undefined,
+      skinContactName: (skin && skin.contact_name) || undefined,
+      skinContactEmail: (skin && skin.contact_email) || undefined,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

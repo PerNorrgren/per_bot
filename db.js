@@ -47,6 +47,28 @@ async function getDb() {
   // facilitator's browser (the one that composites and uploads the
   // recording — see server.js) finishes uploading and Deepgram finishes
   // transcribing, both of which happen after the call itself has ended.
+  // ── Skins (Per Bot 20) — multi-brand foundation ──
+  // Deliberately branding-only: a skin controls how the app LOOKS to
+  // whoever's tagged with it (login page, favicon, name, colour,
+  // background images, contact person) — it does NOT control which
+  // content/courses they can see. That's a real, separate decision
+  // (content-per-skin) intentionally left for later, once an actual
+  // second organisation's needs are known rather than guessed at now.
+  // id is the slug itself (used directly in URLs like /login/rotterdam),
+  // not a generated uuid — there's never a reason to reference a skin by
+  // anything other than its own short name.
+  db.run(`CREATE TABLE IF NOT EXISTS skins (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    logo_url TEXT,
+    favicon_url TEXT,
+    primary_color TEXT,
+    contact_name TEXT,
+    contact_email TEXT,
+    background_images TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS calls (
     id TEXT PRIMARY KEY,
     facilitator_id TEXT NOT NULL,
@@ -931,6 +953,13 @@ async function getDb() {
     // production before this, so the CREATE TABLE IF NOT EXISTS above
     // (which already lists call_type) won't retrofit it there; this does.
     "ALTER TABLE calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'video'",
+    // Multi-skin branding foundation (Per Bot 20) — see the skins table
+    // above for the full reasoning. Both nullable; NULL means "standard
+    // Deeper Mindfulness branding", which is every existing account and
+    // stays the default for anyone who doesn't arrive through a
+    // skin-specific login/invite link.
+    "ALTER TABLE users ADD COLUMN skin_id TEXT",
+    "ALTER TABLE invitations ADD COLUMN skin_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2449,10 +2478,10 @@ function renameUserPlaylist(id, name) {
 }
 
 // ── Invitations ──
-function createInvitation(id, token, facilitatorId, email, expiresAt) {
+function createInvitation(id, token, facilitatorId, email, expiresAt, skinSlug) {
   getDbSync().run(
-    'INSERT INTO invitations (id,token,facilitator_id,email,expires_at) VALUES (?,?,?,?,?)',
-    [id, token, facilitatorId, email.toLowerCase(), expiresAt]
+    'INSERT INTO invitations (id,token,facilitator_id,email,expires_at,skin_id) VALUES (?,?,?,?,?,?)',
+    [id, token, facilitatorId, email.toLowerCase(), expiresAt, skinSlug || null]
   );
   save();
 }
@@ -2997,6 +3026,58 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 // ── App config (Path A: one deployment per facilitator/org) ──
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
+// ── Skins (Per Bot 20) ──
+// slug is validated at the API layer (server.js) before it ever reaches
+// here — lowercase, hyphenated, URL-safe, since it's used directly in
+// paths like /login/:slug. background_images is stored as a JSON array
+// (SQLite has no native array type); parsed back out here so callers
+// always get a real JS array, never a raw string to remember to parse.
+function getSkin(slug) {
+  const row = queryOne('SELECT * FROM skins WHERE id=?', [slug]);
+  if (!row) return null;
+  let images = [];
+  try { images = JSON.parse(row.background_images || '[]'); } catch(e) {}
+  return { ...row, background_images: images };
+}
+function getAllSkins() {
+  return queryAll('SELECT * FROM skins ORDER BY created_at DESC').map(row => {
+    let images = [];
+    try { images = JSON.parse(row.background_images || '[]'); } catch(e) {}
+    return { ...row, background_images: images };
+  });
+}
+function createSkin(slug, fields) {
+  getDbSync().run(
+    `INSERT INTO skins (id, name, logo_url, favicon_url, primary_color, contact_name, contact_email, background_images) VALUES (?,?,?,?,?,?,?,?)`,
+    [slug, fields.name || slug, fields.logo_url || null, fields.favicon_url || null, fields.primary_color || null,
+     fields.contact_name || null, fields.contact_email || null, JSON.stringify(fields.background_images || [])]
+  );
+  save();
+  return getSkin(slug);
+}
+function updateSkin(slug, fields) {
+  const allowed = ['name','logo_url','favicon_url','primary_color','contact_name','contact_email'];
+  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const params = sets.map(k => fields[k]);
+  if (fields.background_images !== undefined) { sets.push('background_images'); params.push(JSON.stringify(fields.background_images)); }
+  if (!sets.length) return getSkin(slug);
+  getDbSync().run(`UPDATE skins SET ${sets.map(k=>`${k}=?`).join(',')} WHERE id=?`, [...params, slug]);
+  save();
+  return getSkin(slug);
+}
+function deleteSkin(slug) {
+  // Never cascades into accounts already tagged with this skin — they
+  // simply fall back to standard branding (skin_id pointing at a row that
+  // no longer exists behaves exactly like skin_id being NULL, since every
+  // lookup already handles "not found" as "use the default").
+  getDbSync().run('DELETE FROM skins WHERE id=?', [slug]);
+  save();
+}
+function setUserSkin(userId, skinSlug) {
+  getDbSync().run('UPDATE users SET skin_id=? WHERE id=?', [skinSlug || null, userId]);
+  save();
+}
+
 function updateAppConfig(fields) {
   const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
@@ -3256,6 +3337,7 @@ module.exports = {
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
   getFacilitatorsForClient, isFacilitatorAssignedToClient, addClientFacilitator, removeClientFacilitator,
+  getSkin, getAllSkins, createSkin, updateSkin, deleteSkin, setUserSkin,
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,

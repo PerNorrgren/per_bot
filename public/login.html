@@ -134,26 +134,32 @@
   </div>
 
   <script>
-    const slides = [
+    const defaultSlides = [
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
       'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
       'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
       'https://images.unsplash.com/photo-1448375240586-882707db888b?w=1600&q=80',
       'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=1600&q=80',
     ];
-    const ss = document.getElementById('slideshow');
-    const slideEls = slides.map((url, i) => {
-      const d = document.createElement('div');
-      d.className = 'slide' + (i === 0 ? ' active' : '');
-      d.style.backgroundImage = `url('${url}')`;
-      ss.appendChild(d); return d;
+    // Per Bot 20: waits for brandReady so a skin's own background images
+    // (if this is a /login/:slug visit) are known before building the
+    // slideshow — falls back to the standard set otherwise, same as always.
+    window.brandReady.then(() => {
+      const slides = (window.__skinBackgroundImages && window.__skinBackgroundImages.length) ? window.__skinBackgroundImages : defaultSlides;
+      const ss = document.getElementById('slideshow');
+      const slideEls = slides.map((url, i) => {
+        const d = document.createElement('div');
+        d.className = 'slide' + (i === 0 ? ' active' : '');
+        d.style.backgroundImage = `url('${url}')`;
+        ss.appendChild(d); return d;
+      });
+      let cur = 0;
+      setInterval(() => {
+        slideEls[cur].classList.remove('active');
+        cur = (cur + 1) % slideEls.length;
+        slideEls[cur].classList.add('active');
+      }, 9000);
     });
-    let cur = 0;
-    setInterval(() => {
-      slideEls[cur].classList.remove('active');
-      cur = (cur + 1) % slideEls.length;
-      slideEls[cur].classList.add('active');
-    }, 9000);
 
     // Check for error/message in URL
     const params = new URLSearchParams(location.search);

@@ -7,6 +7,7 @@
   <link rel="icon" href="/favicon-dynamic"/>
   <link rel="apple-touch-icon" href="/favicon-dynamic"/>
   <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/js/dialogs.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px 80px; }
@@ -156,6 +157,92 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header"><div class="card-title">Skins</div></div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:16px">A lighter-weight brand layer for a specific group within this same deployment — e.g. a university cohort with their own login page, logo, and colour, while everything else (accounts, content, features) stays exactly the same app. Someone who registers through a skin's login link keeps that look everywhere in the app from then on. This is branding only — it doesn't change which content or courses anyone can see.</div>
+      <div id="skinsList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px"></div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <input type="text" id="newSkinName" placeholder="e.g. Rotterdam University" style="flex:1"/>
+        <button class="btn-primary" style="padding:9px 18px; font-size:12px; white-space:nowrap" onclick="createSkin()">+ Add skin</button>
+      </div>
+      <div class="msg err" id="skinsErr" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- Skin editor — appears when a skin from the list above is opened.
+       Kept as one panel that swaps its target skin, rather than a modal,
+       since editing here is meant to feel like part of the same settings
+       page, not a separate popup. -->
+  <div class="card" id="skinEditorCard" style="display:none">
+    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between">
+      <div class="card-title" id="skinEditorTitle">Edit skin</div>
+      <button onclick="closeSkinEditor()" style="background:none; border:none; color:rgba(255,255,255,0.4); font-size:20px; cursor:pointer; line-height:1">&times;</button>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label>Login link for this skin</label>
+        <input type="text" id="skinLoginUrl" readonly style="opacity:0.7; cursor:text"/>
+        <div class="field-note">Give this link directly to the group — anyone who registers through it keeps this look from then on.</div>
+      </div>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="skinName"/>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Accent colour</label>
+          <div class="color-row">
+            <input type="color" id="skinColor" value="#B4E6C8"/>
+            <input type="text" id="skinColorHex" style="flex:1"/>
+          </div>
+          <div class="field-note">Applied on the skin's own login/register pages. Doesn't yet re-colour the rest of the app after login — that's a bigger piece, left for if it's ever actually needed.</div>
+        </div>
+        <div class="field">
+          <label>Contact person</label>
+          <input type="text" id="skinContactName" placeholder="Name"/>
+        </div>
+      </div>
+      <div class="field">
+        <label>Contact email</label>
+        <input type="email" id="skinContactEmail"/>
+      </div>
+      <div class="field">
+        <label>Logo</label>
+        <div style="display:flex; align-items:center; gap:12px">
+          <img id="skinLogoPreview" src="/assets/tomte.png" style="width:40px;height:40px;border-radius:8px;object-fit:cover;border:1px solid rgba(255,255,255,0.15)"/>
+          <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block">
+            Upload image
+            <input type="file" id="skinLogoInput" accept="image/*" style="display:none" onchange="uploadSkinAsset('logo')"/>
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Favicon</label>
+        <div style="display:flex; align-items:center; gap:12px">
+          <img id="skinFaviconPreview" src="/assets/tomte.png" style="width:32px;height:32px;border-radius:6px;object-fit:cover;border:1px solid rgba(255,255,255,0.15)"/>
+          <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block">
+            Upload image
+            <input type="file" id="skinFaviconInput" accept="image/*" style="display:none" onchange="uploadSkinAsset('favicon')"/>
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Background images (playing on the login page)</label>
+        <div id="skinBackgroundGallery" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px"></div>
+        <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block; width:fit-content">
+          + Add image
+          <input type="file" id="skinBackgroundInput" accept="image/*" style="display:none" onchange="uploadSkinAsset('background')"/>
+        </label>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.06)">
+        <button onclick="deleteSkinFromEditor()" style="background:none; border:1px solid rgba(255,120,100,0.3); color:rgba(255,140,120,0.8); border-radius:8px; padding:9px 16px; font-size:12px; cursor:pointer">Delete this skin</button>
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveSkinDetails()">Save</button>
+      </div>
+      <div class="msg err" id="skinEditorErr"></div>
+    </div>
+  </div>
+
   <div class="msg err" id="setupErr"></div>
   <button class="btn-primary" id="setupBtn" onclick="submitSetup()">Save and continue</button>
 </div>
@@ -266,7 +353,136 @@
     }
   }
 
+  // ── Skins (Per Bot 20) ──
+  let _skinsData = [];
+  let _editingSkinId = null;
+  async function loadSkins() {
+    try {
+      const res = await fetch('/api/admin/skins');
+      _skinsData = await res.json();
+      renderSkinsList();
+    } catch(e) { /* quiet — secondary panel */ }
+  }
+  function renderSkinsList() {
+    const el = document.getElementById('skinsList');
+    if (!_skinsData.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No skins yet — the app looks the same for everyone.</div>'; return; }
+    el.innerHTML = _skinsData.map(s => `
+      <div style="display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 14px">
+        <img src="${s.logo_url ? (s.logo_url.startsWith('http') ? s.logo_url : (s.logo_url.includes('/') ? '/'+s.logo_url : '/uploads/'+s.logo_url)) : '/assets/tomte.png'}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;flex-shrink:0"/>
+        <div style="flex:1">
+          <div style="font-size:13.5px;color:rgba(255,255,255,0.85)">${s.name}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.35)">/login/${s.id}</div>
+        </div>
+        <button class="btn-primary" style="padding:7px 14px;font-size:11px" onclick="openSkinEditor('${s.id}')">Manage</button>
+      </div>
+    `).join('');
+  }
+  async function createSkin() {
+    const nameEl = document.getElementById('newSkinName');
+    const errEl = document.getElementById('skinsErr');
+    const name = nameEl.value.trim();
+    if (!name) { errEl.textContent = 'Enter a name first.'; return; }
+    errEl.textContent = '';
+    try {
+      const res = await fetch('/api/admin/skins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Could not create skin.'; return; }
+      nameEl.value = '';
+      await loadSkins();
+      openSkinEditor(data.id);
+    } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  }
+  function openSkinEditor(id) {
+    const s = _skinsData.find(x => x.id === id);
+    if (!s) return;
+    _editingSkinId = id;
+    document.getElementById('skinEditorTitle').textContent = s.name;
+    document.getElementById('skinLoginUrl').value = window.location.origin + '/login/' + s.id;
+    document.getElementById('skinName').value = s.name || '';
+    document.getElementById('skinColor').value = s.primary_color || '#B4E6C8';
+    document.getElementById('skinColorHex').value = s.primary_color || '#B4E6C8';
+    document.getElementById('skinContactName').value = s.contact_name || '';
+    document.getElementById('skinContactEmail').value = s.contact_email || '';
+    document.getElementById('skinLogoPreview').src = assetUrl(s.logo_url);
+    document.getElementById('skinFaviconPreview').src = assetUrl(s.favicon_url);
+    renderSkinBackgroundGallery(s.background_images || []);
+    document.getElementById('skinEditorErr').textContent = '';
+    document.getElementById('skinEditorCard').style.display = '';
+    document.getElementById('skinEditorCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function closeSkinEditor() {
+    _editingSkinId = null;
+    document.getElementById('skinEditorCard').style.display = 'none';
+  }
+  function assetUrl(stored) {
+    if (!stored) return '/assets/tomte.png';
+    return stored.startsWith('http') ? stored : (stored.includes('/') ? '/' + stored : '/uploads/' + stored);
+  }
+  function renderSkinBackgroundGallery(images) {
+    const el = document.getElementById('skinBackgroundGallery');
+    if (!images.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No images yet — falls back to the standard set until at least one is added.</div>'; return; }
+    el.innerHTML = images.map(url => `
+      <div style="position:relative">
+        <img src="${url}" style="width:72px;height:54px;border-radius:6px;object-fit:cover;border:1px solid rgba(255,255,255,0.15)"/>
+        <button onclick="removeSkinBackground('${url.replace(/'/g,"\\'")}')" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:rgba(255,90,80,0.9);border:none;color:#fff;font-size:11px;line-height:1;cursor:pointer">&times;</button>
+      </div>
+    `).join('');
+  }
+  document.getElementById('skinColor').addEventListener('input', function() { document.getElementById('skinColorHex').value = this.value; });
+  document.getElementById('skinColorHex').addEventListener('input', function() { if (/^#[0-9a-fA-F]{6}$/.test(this.value)) document.getElementById('skinColor').value = this.value; });
+  async function saveSkinDetails() {
+    if (!_editingSkinId) return;
+    const errEl = document.getElementById('skinEditorErr');
+    try {
+      const res = await fetch(`/api/admin/skins/${_editingSkinId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: document.getElementById('skinName').value.trim(),
+          primaryColor: document.getElementById('skinColorHex').value.trim(),
+          contactName: document.getElementById('skinContactName').value.trim(),
+          contactEmail: document.getElementById('skinContactEmail').value.trim(),
+        }),
+      });
+      if (!res.ok) { const d = await res.json(); errEl.textContent = d.error || 'Could not save.'; return; }
+      errEl.textContent = '';
+      await loadSkins();
+      openSkinEditor(_editingSkinId);
+    } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  }
+  async function uploadSkinAsset(kind) {
+    if (!_editingSkinId) return;
+    const input = document.getElementById(kind === 'logo' ? 'skinLogoInput' : kind === 'favicon' ? 'skinFaviconInput' : 'skinBackgroundInput');
+    const file = input.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`/api/admin/skins/${_editingSkinId}/${kind}`, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('skinEditorErr').textContent = data.error || 'Could not upload.'; return; }
+      await loadSkins();
+      openSkinEditor(_editingSkinId);
+    } catch(e) { document.getElementById('skinEditorErr').textContent = 'Network error — could not upload.'; }
+    finally { input.value = ''; }
+  }
+  async function removeSkinBackground(url) {
+    if (!_editingSkinId) return;
+    await fetch(`/api/admin/skins/${_editingSkinId}/background`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+    });
+    await loadSkins();
+    openSkinEditor(_editingSkinId);
+  }
+  async function deleteSkinFromEditor() {
+    if (!_editingSkinId) return;
+    if (!(await appConfirm(`Delete the "${document.getElementById('skinEditorTitle').textContent}" skin? Accounts already using it just fall back to standard branding — nothing about their access changes.`))) return;
+    await fetch(`/api/admin/skins/${_editingSkinId}`, { method: 'DELETE' });
+    closeSkinEditor();
+    await loadSkins();
+  }
+
   loadCurrentConfig();
+  loadSkins();
 </script>
 
 <script>window.TOMTE_PAGE = 'Setup';</script>
