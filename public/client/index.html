@@ -471,6 +471,14 @@
     .player-overlay.video-mode { position:fixed; inset:0; border-radius:0; z-index:500; padding:24px; }
     .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
     .player-overlay.video-mode .player-media video { max-height:80vh; }
+    /* Per Bot 21: a second, fixed-position close button specifically for
+       video mode — the row-based one below can end up pushed out of the
+       visible area on a small/short viewport once a large video takes up
+       most of the space. This one is pinned to a corner regardless of
+       video size, so there's always something reachable without relying
+       on scrolling, fullscreen quirks, or the browser's own back button. */
+    .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; }
+    .player-overlay.video-mode .player-close-floating { display:flex; }
     .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
@@ -819,6 +827,7 @@
 
     <!-- Player -->
     <div class="player-overlay" id="playerOverlay">
+      <button class="player-close-floating" onclick="closePlayerOverlay()" title="Close" aria-label="Close">&times;</button>
       <div class="player-title" id="playerTitle"></div>
       <div class="player-text" id="playerText"></div>
       <div class="player-media" id="playerMedia"></div>
@@ -2490,6 +2499,7 @@
     const type = f.file_type?.startsWith('video') ? 'video' : 'document';
     logHistory(type, f.id);
 
+    pushPlayerHistoryState();
     document.getElementById('playerTitle').textContent = f.title;
     document.getElementById('playerText').innerHTML  = f.description || '';
     const mediaEl = document.getElementById('playerMedia');
@@ -2529,6 +2539,34 @@
     }
   }
 
+  // Per Bot 21 fix: "stuck in a full-screen video with no way back" — the
+  // app's own Full screen button was already correct (fullscreens the
+  // whole overlay, so Close stays reachable), but the VIDEO ELEMENT'S OWN
+  // native browser controls have a separate fullscreen button that
+  // bypasses the app's overlay entirely, fullscreening just the raw
+  // <video> tag with nothing else — at that point Close is literally
+  // unreachable, not just hidden, since native fullscreen only renders
+  // the fullscreened element itself. Pressing the browser's Back button
+  // was the natural thing to try, but with no history entry for "the
+  // player is open," back navigated the whole page away instead.
+  // Fix: push a history entry the moment the overlay opens, and treat
+  // popstate (back button, or the OS-level back gesture on mobile) as
+  // "close the overlay," not "leave the app." This works regardless of
+  // which fullscreen mode triggered it, since browsers already exit
+  // fullscreen on their own before back-navigation takes effect.
+  let _playerHistoryPushed = false;
+  let _closingPlayerViaPopstate = false;
+  function pushPlayerHistoryState() {
+    if (!_playerHistoryPushed) { history.pushState({ appOverlay: 'player' }, ''); _playerHistoryPushed = true; }
+  }
+  window.addEventListener('popstate', () => {
+    const overlayEl = document.getElementById('playerOverlay');
+    if (_playerHistoryPushed && overlayEl && overlayEl.classList.contains('visible')) {
+      _playerHistoryPushed = false;
+      _closingPlayerViaPopstate = true;
+      closePlayerOverlay();
+    }
+  });
   function closePlayerOverlay() {
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.remove('visible');
@@ -2542,6 +2580,16 @@
     const video = mediaEl.querySelector('video');
     if (video) { video.pause(); video.src = ''; }
     mediaEl.innerHTML = '';
+    // Closed via the Close button (not the back button) — consume the
+    // history entry we pushed so it doesn't linger as a stray "back"
+    // someone has to click through later. This itself triggers another
+    // popstate, but _playerHistoryPushed is already false by then so the
+    // listener above won't re-fire this function.
+    if (_playerHistoryPushed && !_closingPlayerViaPopstate) {
+      _playerHistoryPushed = false;
+      history.back();
+    }
+    _closingPlayerViaPopstate = false;
   }
 
   // Uses the browser's native Fullscreen API — proper OS-level fullscreen (hides browser
@@ -2657,6 +2705,7 @@
   }
   async function toggleFav(id) { await fetch(`/api/practices/${id}/favourite`,{method:'PATCH'}); loadPractices(); }
   function openPractice(id, title, type, content, filename) {
+    pushPlayerHistoryState();
     document.getElementById('playerTitle').textContent = title;
     if (type==='text') {
       document.getElementById('playerText').innerHTML = content || '';
