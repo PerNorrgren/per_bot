@@ -209,7 +209,7 @@
     .cmsg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin:0 5px 8px; background:rgba(255,255,255,0.04); border-radius:10px; }
 
     /* Talk */
-    .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; }
+    .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; min-height:0; overflow-y:auto; }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
     .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
     .save-talk-btn:active { background:rgba(180,230,200,0.18); }
@@ -562,8 +562,10 @@
            on, talkChatContent takes over exactly as before. -->
       <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
         <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
+        <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <button type="button" id="calmMainBtn" onclick="startCalmMoment('2 minutes of calm')" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:14px; line-height:1.5; cursor:pointer;">Listen to<br/>2 minutes<br/>of Calm</button>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
+        <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
           <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">For a busy mind</div>
           <div style="display:flex; gap:8px; justify-content:center;">
@@ -572,7 +574,7 @@
             <button type="button" onclick="startCalmMoment('I don\'t need to talk — just walk me through a few breaths.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Just breathe</button>
           </div>
         </div>
-        <button type="button" id="calmSoundsBtn" onclick="toggleCalmingSounds()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Calming sounds</button>
+        <button type="button" id="calmSoundsBtn" onclick="toggleCalmingSounds()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
       </div>
 
       <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
