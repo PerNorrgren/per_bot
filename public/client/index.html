@@ -3301,7 +3301,7 @@
     if (_calmingSoundsPlaying) toggleCalmingSounds();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
-    document.getElementById('talkChatContent').style.display = '';
+    document.getElementById('talkChatContent').style.display = 'flex';
     unlockAudioPlayback();
     setState('processing');
     await startListening();
@@ -3385,8 +3385,8 @@
     const entry = _facList.find(f => f.id === id);
     const isTalk = !entry || entry.isTalk;
     document.getElementById('navTalkLabel').textContent = entry ? entry.name : 'Per';
-    document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? '' : 'none';
-    document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? '' : 'none';
+    document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? 'flex' : 'none';
+    document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? 'flex' : 'none';
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
     if (isTalk) return;
 
