@@ -217,10 +217,10 @@
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
     .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
     .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.4); }
-    .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
+    .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; text-align:center; }
     .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
     .save-talk-btn:active { background:rgba(180,230,200,0.18); }
-    .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.88); font-style:italic; transition:opacity 0.3s; }
+    .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.88); font-style:italic; transition:opacity 0.3s; margin:auto 0; padding:4px 0; }
     .transcript-text.dim  { opacity:0.4; }
     .transcript-text.user { font-style:normal; color:rgba(255,255,255,0.5); font-size:14px; }
 
@@ -625,7 +625,7 @@
           <div class="dots" id="dots"><span></span><span></span><span></span></div>
         </div>
         <div class="mic-wrap">
-          <div class="tap-hint" id="tapHint">Tap to speak</div>
+          <div class="tap-hint" id="tapHint">Tap to Talk</div>
           <button class="mic-btn" id="micBtn">
             <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
           </button>
@@ -1072,10 +1072,12 @@
     if (tab !== 'talk') {
       sendFinalizeBeacon();
       // The finalize beacon above only tells the server the conversation
-      // turn is done — it never touched client-side playback, so Talk's
-      // reply kept speaking right through a tab switch. Stopping it here.
+      // turn is done — it never touched client-side playback or the open
+      // mic itself, so both kept running right through a tab switch.
+      // Stopping both here (Per Bot 33c).
       const tts = document.getElementById('ttsPlayer');
       if (tts) tts.pause();
+      stopMic();
     }
     // Per Bot 24: 'timer' is still a valid tab (reached via the Per/
     // facilitators menu now, not its own bottom-nav button), so this only
@@ -2123,16 +2125,24 @@
   }
 
   // ── Mic button — toggle ──
+  // stopMic() is the real teardown — tears down the WebSocket, audio
+  // context, and media stream tracks. Pulled out on its own (Per Bot 33c)
+  // so switchTab() can also call it: previously navigating away from Talk
+  // only paused TTS playback and left the mic itself — and the open
+  // Deepgram connection with it — running in the background.
+  function stopMic() {
+    if (!micActive) return;
+    processor?.disconnect(); processor = null;
+    audioContext?.close(); audioContext = null;
+    mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
+    deepgramWs?.close(); deepgramWs = null;
+    clearTimeout(listenReconnectTimer); listenReconnectTimer = null;
+    micActive = false;
+    setState('idle');
+  }
   micBtn.addEventListener('click', () => {
     if (micActive) {
-      // Stop mic
-      processor?.disconnect(); processor = null;
-      audioContext?.close(); audioContext = null;
-      mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
-      deepgramWs?.close(); deepgramWs = null;
-      clearTimeout(listenReconnectTimer); listenReconnectTimer = null;
-      micActive = false;
-      setState('');
+      stopMic();
     } else {
       // Hide immediately, synchronously, on the tap itself — waiting for
       // startListening()'s async mic setup to finish before hiding it
