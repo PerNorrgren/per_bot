@@ -95,4 +95,100 @@
   window.appPrompt = function (message, defaultValue, title) {
     return buildDialog(message, { title: title, showCancel: true, showInput: true, defaultValue: defaultValue, okText: 'OK', cancelText: 'Cancel' });
   };
+
+  // ── appShareSheet (Per Bot 23) ──
+  // A consistent, custom "who to share with" popup — used everywhere
+  // instead of the browser's native navigator.share(), which sounds like
+  // the obvious choice but doesn't actually work on most desktop
+  // browsers at all (silently falls back to nothing), giving a
+  // completely different experience on desktop vs mobile for the exact
+  // same button. This is the same everywhere, always.
+  //
+  // text: the message body (used by WhatsApp/SMS/Email, which accept
+  //   free text). url: the link (used by Facebook/Messenger, which only
+  //   ever accept a URL to share, not arbitrary text — a real platform
+  //   limitation, not a choice made here). title: used as the email
+  //   subject line. Copy always copies `text` (already includes the link
+  //   at the end, wherever this is called from).
+  var SHARE_STYLE = `
+    .app-share-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100000; display:flex; align-items:flex-end; justify-content:center; }
+    @media (min-width: 640px) { .app-share-overlay { align-items:center; } }
+    .app-share-sheet { background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:16px 16px 0 0; max-width:420px; width:100%; box-shadow:0 -10px 40px rgba(0,0,0,0.5); font-family:Georgia,serif; overflow:hidden; }
+    @media (min-width: 640px) { .app-share-sheet { border-radius:16px; margin-bottom:10vh; } }
+    .app-share-title { padding:18px 20px 4px; font-size:14px; color:rgba(255,255,255,0.75); }
+    .app-share-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; padding:12px 12px 8px; }
+    .app-share-opt { display:flex; flex-direction:column; align-items:center; gap:6px; background:none; border:none; color:rgba(255,255,255,0.7); font-family:Georgia,serif; font-size:11.5px; padding:12px 6px; border-radius:10px; cursor:pointer; }
+    .app-share-opt:hover { background:rgba(255,255,255,0.06); }
+    .app-share-opt-icon { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:20px; background:rgba(255,255,255,0.08); }
+    .app-share-cancel { display:block; width:calc(100% - 24px); margin:6px 12px 16px; padding:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background:none; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer; }
+  `;
+  var shareStyleInjected = false;
+  function injectShareStyle() {
+    if (shareStyleInjected) return;
+    shareStyleInjected = true;
+    var s = document.createElement('style');
+    s.textContent = SHARE_STYLE;
+    document.head.appendChild(s);
+  }
+
+  window.appShareSheet = function (text, url, title) {
+    return new Promise(function (resolve) {
+      injectShareStyle();
+      var shareUrl = url || '';
+      var fullText = text || '';
+      var encText = encodeURIComponent(fullText);
+      var encUrl = encodeURIComponent(shareUrl);
+      var encSubject = encodeURIComponent(title || '');
+
+      // Facebook and Messenger only ever accept a URL parameter, never
+      // free text — that's a platform restriction, not something this
+      // code can work around. WhatsApp/SMS/Email get the full text
+      // (which already has the link at the end, wherever this was
+      // called from).
+      var options = [
+        { label: 'WhatsApp', icon: '💬', href: 'https://wa.me/?text=' + encText },
+        { label: 'Text message', icon: '✉️', href: 'sms:?body=' + encText },
+        { label: 'Email', icon: '📧', href: 'mailto:?subject=' + encSubject + '&body=' + encText },
+        { label: 'Facebook', icon: '📘', href: 'https://www.facebook.com/sharer/sharer.php?u=' + encUrl },
+        { label: 'Messenger', icon: '💌', href: 'fb-messenger://share/?link=' + encUrl },
+        { label: 'Copy', icon: '📋', copy: true },
+      ];
+
+      var overlay = document.createElement('div');
+      overlay.className = 'app-share-overlay';
+      overlay.innerHTML =
+        '<div class="app-share-sheet" role="dialog" aria-modal="true">' +
+          '<div class="app-share-title"></div>' +
+          '<div class="app-share-grid"></div>' +
+          '<button class="app-share-cancel">Cancel</button>' +
+        '</div>';
+      overlay.querySelector('.app-share-title').textContent = title || 'Share';
+      var grid = overlay.querySelector('.app-share-grid');
+      options.forEach(function (opt) {
+        var btn = document.createElement('button');
+        btn.className = 'app-share-opt';
+        btn.innerHTML = '<span class="app-share-opt-icon">' + opt.icon + '</span><span>' + opt.label + '</span>';
+        btn.addEventListener('click', function () {
+          if (opt.copy) {
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(fullText).then(function () {
+                btn.querySelector('span:last-child').textContent = 'Copied ✓';
+                setTimeout(function () { close(true); }, 700);
+              });
+              return;
+            }
+          } else {
+            window.open(opt.href, '_blank');
+          }
+          close(true);
+        });
+        grid.appendChild(btn);
+      });
+      document.body.appendChild(overlay);
+
+      function close(result) { overlay.remove(); resolve(result); }
+      overlay.querySelector('.app-share-cancel').addEventListener('click', function () { close(false); });
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(false); });
+    });
+  };
 })();

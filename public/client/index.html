@@ -1126,7 +1126,7 @@
         <div style="font-size:12px; color:rgba(255,255,255,0.5); line-height:1.6; margin-bottom:12px">Share your link. When a friend you invited becomes a paying member, you get a free month too — no limit on how many.</div>
         <div style="display:flex; gap:8px; margin-bottom:${d.events.length ? '12px' : '0'}">
           <input type="text" readonly value="${d.referralLink}" onclick="this.select()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.7); font-size:11.5px; font-family:Georgia,serif"/>
-          <button class="btn sm" onclick="copyReferralLink()">Copy</button>
+          <button class="btn sm" onclick="sendReferralLink()">Send</button>
         </div>
         ${d.events.length ? `
           <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-bottom:6px">${d.monthsEarned} free month${d.monthsEarned === 1 ? '' : 's'} earned so far</div>
@@ -1146,9 +1146,12 @@
       }).catch(() => {});
     }
   }
-  function copyReferralLink() {
+  async function sendReferralLink() {
     if (!_referralData) return;
-    navigator.clipboard.writeText(_referralData.referralLink).then(() => appAlert('Link copied.'));
+    const cfg = await window.brandReady.catch(() => ({}));
+    const brandName = cfg.appName || 'Deeper Mindfulness';
+    const text = `I've been using ${brandName} and thought of you — here's your first month, on me: ${_referralData.referralLink}`;
+    appShareSheet(text, _referralData.referralLink, brandName);
   }
 
   // ══════════════════════════════════════════
@@ -1829,27 +1832,22 @@
   // title here would interrupt a voice-first flow with a text-entry step
   // that doesn't belong in it. Reuses the exact same practices table the
   // Practices tab already reads from, so it just appears there.
-  // ── Sharing a moment (Per Bot 22) ──
-  // Deliberately just text + a link for now, via the OS's own native
-  // share sheet where available — not the fuller "designed quote card
-  // image" version discussed but not yet built; this gets the actual
-  // value (a real moment, carrying a referral link, reaching someone
-  // outside the app) without that extra rendering work. The referral
-  // link rides along automatically — every share is a quiet invitation,
-  // not a separate ask.
+  // ── Sharing a moment (Per Bot 22/23) ──
+  // Deliberately just text + a link for now, not the fuller "designed
+  // quote card image" version discussed but not yet built; this gets the
+  // actual value (a real moment, carrying a referral link, reaching
+  // someone outside the app) without that extra rendering work. The
+  // referral link rides along automatically — every share is a quiet
+  // invitation, not a separate ask. Uses the same appShareSheet popup
+  // everywhere (see dialogs.js) rather than the browser's native share,
+  // which doesn't work consistently — or at all — on desktop.
   async function shareMoment(text, title) {
     if (!text) return;
     const cfg = await window.brandReady.catch(() => ({}));
     const brandName = cfg.appName || 'Deeper Mindfulness';
     const link = (_referralData && _referralData.referralLink) || (await fetch('/api/my/referrals').then(r => r.json()).then(d => d.referralLink).catch(() => null));
     const shareText = `${text}\n\n— via ${brandName}${link ? '\n' + link : ''}`;
-    if (navigator.share) {
-      try { await navigator.share({ text: shareText, title: title || brandName }); return; } catch(e) { /* user cancelled — fine, no fallback needed */ return; }
-    }
-    try {
-      await navigator.clipboard.writeText(shareText);
-      appAlert('Copied — paste it wherever you\'d like to share it.');
-    } catch(e) { /* clipboard unavailable — nothing more we can do here */ }
+    appShareSheet(shareText, link || window.location.origin, brandName);
   }
 
   async function saveTalkAsPractice() {
