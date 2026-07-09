@@ -1741,6 +1741,8 @@
   let processor    = null;
   let deepgramWs   = null;
   let listenReconnectTimer = null; // Per Bot 9 — guards against overlapping reconnect attempts
+  let silenceTimer = null; // Per Bot 33d — auto-cancels the mic if nothing is heard within a few seconds
+  let intentionalStop = false; // Per Bot 33d — set right before we close deepgramWs ourselves, so onclose knows not to auto-reconnect
   let accumulated  = '';
 
   function setStatus(t) { statusEl.textContent = t; }
@@ -1878,12 +1880,12 @@
     }
 
     isSpeaking = false;
-    setState('');
-    setTimeout(() => {
-      setStatus('listening');
-      statusEl.classList.add('on');
-      if (!micActive) startListening();
-    }, 600);
+    // Per Bot 33d: this used to auto-reopen the mic 600ms after Talk
+    // finished speaking (continuous open-mic conversation). Per asked for
+    // push-to-talk instead — Tap to Talk shown, mic off, until the person
+    // actually taps it — so this now just settles back to idle rather
+    // than silently starting to listen again.
+    setState('idle');
   }
 
   // ── Save a Talk reply into the person's own Practices list (Per Bot 7) ──
@@ -2007,6 +2009,13 @@
         micActive = true;
         setState('listening');
 
+        // Per Bot 33d — if nobody actually says anything within a few
+        // seconds of the mic opening, switch it back off rather than
+        // leaving it sitting there listening with no way to tell whether
+        // it's stuck or just waiting.
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => { stopMic(); }, 3000);
+
         processor = audioContext.createScriptProcessor(4096, 1, 1);
         source.connect(processor);
         processor.connect(audioContext.destination);
@@ -2027,6 +2036,10 @@
         try {
           const data = JSON.parse(event.data);
           const txt  = data?.channel?.alternatives?.[0]?.transcript?.trim();
+
+          // Any actual speech at all — even a mid-word interim result —
+          // means the silence watchdog above no longer applies this turn.
+          if (txt && silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
 
           if (data.is_final && txt) {
             accumulated = (accumulated + ' ' + txt).trim();
@@ -2069,21 +2082,17 @@
       deepgramWs.onclose = (e) => {
         console.log(`[listen] connection closed — code=${e.code} reason="${e.reason}" wasClean=${e.wasClean}`);
         micActive = false;
+        if (intentionalStop) { intentionalStop = false; return; }
         if (!isSpeaking && !listenReconnectTimer) {
           listenReconnectTimer = setTimeout(() => { listenReconnectTimer = null; startListening(); }, 1000);
         }
       };
 
     } catch(e) {
-      // getUserMedia() called without a direct tap (this is the auto-restart
-      // path, after the bot finishes speaking) is subject to each browser's
-      // own — inconsistent, and seemingly getting stricter over time —
-      // policy on reusing mic permission without a fresh gesture. When it's
-      // refused, the old behaviour left status text nobody would notice and
-      // no clear next step. Falling back to 'idle' surfaces the same
-      // pulsing "Tap to speak" hint used everywhere else the mic is
-      // genuinely waiting, so a blocked auto-restart looks and behaves
-      // exactly like "your turn to tap," rather than a silent dead end.
+      // getUserMedia() can still fail or be refused — a permission prompt
+      // dismissed too slowly, a device with no mic, etc. Falling back to
+      // 'idle' surfaces the same pulsing "Tap to Talk" hint used everywhere
+      // else the mic is genuinely waiting, rather than a silent dead end.
       setState('idle');
     }
   }
@@ -2120,7 +2129,6 @@
     document.getElementById('start').style.display = 'none';
     unlockAudioPlayback();
     setState('processing');
-    await startListening();
     await sendToBot('[START]');
   }
 
@@ -2132,11 +2140,13 @@
   // Deepgram connection with it — running in the background.
   function stopMic() {
     if (!micActive) return;
+    intentionalStop = true;
     processor?.disconnect(); processor = null;
     audioContext?.close(); audioContext = null;
     mediaStream?.getTracks().forEach(t => t.stop()); mediaStream = null;
     deepgramWs?.close(); deepgramWs = null;
     clearTimeout(listenReconnectTimer); listenReconnectTimer = null;
+    clearTimeout(silenceTimer); silenceTimer = null;
     micActive = false;
     setState('idle');
   }
@@ -3336,7 +3346,6 @@
     document.getElementById('shareTalkBtn').style.display = 'none';
     unlockAudioPlayback();
     setState('processing');
-    await startListening();
     await sendToBot('[START]');
   }
 
@@ -3351,7 +3360,6 @@
     unlockAudioPlayback();
     busy = true;
     setState('processing');
-    await startListening();
 
     transcriptEl.textContent = GROUNDING_SCRIPT.split('[[PAUSE]]').join(' ').replace(/\s+/g, ' ').trim();
     transcriptEl.className = 'transcript-text';
@@ -3370,7 +3378,6 @@
     document.getElementById('talkChatContent').style.display = 'flex';
     unlockAudioPlayback();
     setState('processing');
-    await startListening();
     await sendToBot(prompt);
   }
   async function initFacStrip() {
