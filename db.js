@@ -995,6 +995,13 @@ async function getDb() {
     // the same event, can't double-credit.
     "ALTER TABLE users ADD COLUMN referred_by TEXT",
     "ALTER TABLE users ADD COLUMN referral_rewarded INTEGER DEFAULT 0",
+    // Curated "featured" shelves on the calm landing screen (Per Bot 28)
+    // — deliberately manual, not automatic-by-recency, so what shows up
+    // is always something actually chosen, not just whatever was
+    // uploaded most recently (which could easily be an unfinished draft
+    // or test file).
+    "ALTER TABLE courses ADD COLUMN featured INTEGER DEFAULT 0",
+    "ALTER TABLE library_files ADD COLUMN featured INTEGER DEFAULT 0",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1389,7 +1396,7 @@ function getLibraryFiles(filters = {}) {
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
@@ -1400,6 +1407,16 @@ function renameLibraryFile(id, filename) {
 }
 function archiveLibraryFile(id, archived) {
   getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]); save();
+}
+// Curated content shelves on the calm landing screen (Per Bot 28) — same
+// "explicitly marked, not automatic" reasoning as getFeaturedCourses.
+// Grouped by content_type client-side (meditation/practice/etc.) into
+// separate rows, so this just returns everything featured and lets the
+// caller decide how to bucket it.
+function getFeaturedLibraryFiles() {
+  return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    WHERE f.featured=1 AND f.archived=0 ORDER BY f.title`);
 }
 function deleteLibraryFile(id) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE file_id=?', [id]);
@@ -1437,6 +1454,27 @@ function getAllCourses(filters = {}) {
   if (filters.subcategoryId) { sql += ' AND c.subcategory_id=?'; params.push(filters.subcategoryId); }
   sql += ' ORDER BY cat.sort_order, c.sort_order, c.title';
   return queryAll(sql, params);
+}
+function setCourseFeatured(id, featured) {
+  getDbSync().run('UPDATE courses SET featured=? WHERE id=?', [featured ? 1 : 0, id]);
+  save();
+}
+// Curated courses shelf on the calm landing screen (Per Bot 28) — only
+// ever what's explicitly marked, ordered the same way the course list
+// itself is (category/sort_order/title) rather than by when it was
+// featured, so the shelf doesn't reorder itself unexpectedly each time
+// something new gets flagged. Joined through to an actual OPEN instance
+// (what a client can actually enrol in — courses themselves are just the
+// template) since a featured course with nothing currently open isn't
+// something a client could do anything with if it showed up.
+function getFeaturedCourses() {
+  return queryAll(`SELECT c.*, cat.name as category_name, ci.id as instance_id
+    FROM courses c
+    LEFT JOIN categories cat ON c.category_id=cat.id
+    JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open'
+    WHERE c.featured=1
+    GROUP BY c.id
+    ORDER BY cat.sort_order, c.sort_order, c.title`);
 }
 function deleteCourse(id) {
   const lessons = queryAll('SELECT id FROM lessons WHERE course_id=?', [id]);
@@ -3416,7 +3454,7 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   // Lesson file refs

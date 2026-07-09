@@ -782,6 +782,7 @@ function renderLibCards(files){
         </div>
       </div>
       <div class="file-card-footer">
+        <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★ Unfeature':'☆ Feature'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
@@ -823,6 +824,7 @@ function renderLibList(files){
       </span>
       <span class="flr-vis">${kbadge(f.content_type)}${onebadge(f)}</span>
       <span class="flr-actions">
+        <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
@@ -1300,6 +1302,10 @@ async function delFile(id){
   await fetch(`/api/content/library/${id}`,{method:'DELETE'});
   loadAll();
 }
+async function toggleFileFeatured(id,featured){
+  await fetch(`/api/content/library/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});
+  loadAll();
+}
 
 // ── File picker ──
 function renderPicker(pickerId,selIds=[]){
@@ -1514,7 +1520,7 @@ function renderCourses(courses){
   el.innerHTML=courses.map(c=>`
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}</div>
         <div class="item-row-meta">${c.description||''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
@@ -1522,6 +1528,7 @@ function renderCourses(courses){
         </div>
       </div>
       <div class="item-row-actions">
+        <button class="btn sm" onclick="toggleCourseFeatured('${c.id}',${c.featured?'false':'true'})">${c.featured?'Unfeature':'★ Feature'}</button>
         <button class="btn sm" onclick="editCourse('${c.id}')">Edit</button>
         <button class="btn sm" onclick="openCourseDetail('${c.id}')">Lessons</button>
         <button class="btn sm danger" onclick="delCourse('${c.id}')">Delete</button>
@@ -1705,6 +1712,7 @@ async function rmLessonFile(refId){
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
 async function delCourse(id){if(!(await appConfirm('Delete course and all lessons?')))return;await fetch(`/api/content/courses/${id}`,{method:'DELETE'});loadAll();}
+async function toggleCourseFeatured(id,featured){await fetch(`/api/content/courses/${id}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});loadAll();}
 
 // ── Quiz builder (Per Bot 5 follow-on) ──
 // Full-refresh pattern throughout, same as openCourseDetail above — re-fetch

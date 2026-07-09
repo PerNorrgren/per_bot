@@ -1533,6 +1533,19 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 // Browse — every open instance, flagged with the current user's enrolment
 // status (and % complete, if already enrolled) so the UI can show
 // "Enrol" vs "Continue" without a second round trip.
+// Curated shelves for the calm landing screen (Per Bot 28) — courses and
+// library content grouped separately, content further grouped by its own
+// content_type client-side into one row per type (meditations, practices,
+// etc.) rather than this endpoint hardcoding which types exist.
+app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    res.json({
+      courses: db.getFeaturedCourses(),
+      content: db.getFeaturedLibraryFiles(),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const instances = db.getAllCourseInstances({ status: 'open' });
@@ -4589,6 +4602,14 @@ app.patch('/api/content/courses/:id', auth.requireAuthApi(['admin']), (req, res)
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/content/courses/:id', auth.requireAuthApi(['admin']), (req, res) => { db.deleteCourse(req.params.id); res.json({ ok: true }); });
+// Curated courses shelf on the calm landing screen (Per Bot 28) — a small
+// dedicated toggle rather than routing through the main course-update
+// endpoint above, which requires a full title/description payload and
+// would be awkward to call for a single-field flip.
+app.patch('/api/content/courses/:id/featured', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setCourseFeatured(req.params.id, !!req.body.featured);
+  res.json({ ok: true });
+});
 
 app.get('/api/content/courses/:id/lessons', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getLessonsForCourse(req.params.id)));
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {

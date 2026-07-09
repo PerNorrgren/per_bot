@@ -210,6 +210,13 @@
 
     /* Talk */
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; min-height:0; overflow-y:auto; }
+    /* Per Bot 28 — curated shelves: horizontally-scrollable rows of
+       larger tappable cards, one row per featured category. */
+    .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
+    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 6px; scroll-snap-type:x proximity; }
+    .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
+    .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
+    .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.4); }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; align-items:center; justify-content:center; text-align:center; }
     .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
     .save-talk-btn:active { background:rgba(180,230,200,0.18); }
@@ -575,6 +582,14 @@
           </div>
         </div>
         <button type="button" id="calmSoundsBtn" onclick="toggleCalmingSounds()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
+
+        <!-- Curated shelves (Per Bot 28) — horizontally-scrollable rows,
+             one per featured category, only ever showing what's been
+             explicitly marked "Featured" in admin (Content library /
+             Courses), never automatic-by-recency. Populated by
+             loadFeaturedShelves(); empty entirely (not even the
+             container) if nothing's been curated yet. -->
+        <div id="featuredShelves" style="width:100%; display:flex; flex-direction:column; gap:22px; margin-top:8px;"></div>
       </div>
 
       <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
@@ -3176,6 +3191,65 @@
   // of the day doubles as the greeting text, per design) and "Welcome
   // {name}" line. Reuses the same /api/motd/archive the poems archive
   // already calls — the newest entry is today's.
+  // Per Bot 28 — curated shelves: fetches whatever's been explicitly
+  // marked Featured (courses and/or content library items, admin-side)
+  // and groups content by its own content_type into separate rows,
+  // rather than this being hardcoded to specific categories — however
+  // many distinct featured content types exist, that's how many rows
+  // show up. Renders nothing at all (not even an empty shelf) if
+  // nothing's been curated yet, so an unused deployment doesn't show a
+  // half-built-looking section.
+  let _featuredContentData = [];
+  async function loadFeaturedShelves() {
+    try {
+      const res = await fetch('/api/client/featured');
+      const data = await res.json();
+      renderFeaturedShelves(Array.isArray(data.courses) ? data.courses : [], Array.isArray(data.content) ? data.content : []);
+    } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
+  }
+  function shelfLabelForType(type) {
+    const map = { meditation: 'Meditations', practice: 'Practices', video: 'Videos', document: 'Read & watch', audio: 'Audio' };
+    return map[type] || (type.charAt(0).toUpperCase() + type.slice(1) + 's');
+  }
+  function renderFeaturedShelves(courses, content) {
+    _featuredContentData = content;
+    const el = document.getElementById('featuredShelves');
+    const shelves = [];
+    if (courses.length) {
+      shelves.push({ label: 'Courses', html: courses.map(c => `
+        <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}')">
+          <div class="shelf-card-title">${c.title}</div>
+          <div class="shelf-card-meta">${c.category_name || 'Course'}</div>
+        </div>
+      `).join('') });
+    }
+    const byType = {};
+    content.forEach(f => { (byType[f.content_type] = byType[f.content_type] || []).push(f); });
+    Object.keys(byType).forEach(type => {
+      shelves.push({ label: shelfLabelForType(type), html: byType[type].map(f => `
+        <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
+          <div class="shelf-card-title">${f.title}</div>
+          <div class="shelf-card-meta">${f.category_name || ''}</div>
+        </div>
+      `).join('') });
+    });
+    el.innerHTML = shelves.map(s => `
+      <div>
+        <div class="shelf-label">${s.label}</div>
+        <div class="shelf-row">${s.html}</div>
+      </div>
+    `).join('');
+  }
+  function openFeaturedCourse(instanceId) {
+    switchTab('courses');
+    openCourseDetail(instanceId);
+  }
+  function openFeaturedContentById(id) {
+    const f = _featuredContentData.find(x => x.id === id);
+    if (!f) return;
+    openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '' });
+  }
+
   async function loadCalmLandingContent() {
     try {
       const account = await getFullAccount();
@@ -3252,6 +3326,7 @@
     if (_useCalmLanding) {
       document.getElementById('start').style.display = 'none';
       loadCalmLandingContent();
+      loadFeaturedShelves();
     }
     try {
       const res = await fetch('/api/client/facilitators');
