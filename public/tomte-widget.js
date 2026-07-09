@@ -14,6 +14,8 @@
       box-shadow: 0 4px 18px rgba(0,0,0,0.35); transition: transform 0.2s;
     }
     #tomte-fab:hover { transform: scale(1.06); }
+    #tomte-fab { touch-action: none; }
+    #tomte-fab.tomte-dragging { transition: none; }
     #tomte-fab img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; }
     #tomte-fab .tomte-badge {
       position: absolute; top: -3px; right: -3px; width: 14px; height: 14px; border-radius: 50%;
@@ -308,6 +310,7 @@
 
     function openPanel() {
       panel.classList.add('tomte-open');
+      positionPanel();
       connect();
       inputEl.focus();
       // First contact (Per Bot 8) — greets once per browser session, not
@@ -320,8 +323,101 @@
     }
     function closePanel() { panel.classList.remove('tomte-open'); }
 
-    fab.addEventListener('click', () => {
-      if (panel.classList.contains('tomte-open')) closePanel(); else openPanel();
+    // ── Movable fab (mobile fix) — the fab defaults to its original
+    // bottom-right CSS spot, but on small screens that can sit right on
+    // top of a page's own bottom-corner button. Dragging it remembers the
+    // new spot per-browser (localStorage) so it stays out of the way from
+    // then on; a plain tap (no meaningful movement) still opens/closes the
+    // panel exactly as before. Uses Pointer Events so mouse, touch, and
+    // pen all go through the same code path.
+    const FAB_MARGIN = 8;
+    function clampNum(v, min, max) { return Math.min(Math.max(v, min), max); }
+    function loadFabPos() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('tomte_fab_pos') || 'null');
+        if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') return saved;
+      } catch (e) {}
+      return null;
+    }
+    function saveFabPos(pos) {
+      try { localStorage.setItem('tomte_fab_pos', JSON.stringify(pos)); } catch (e) {}
+    }
+    function applyFabPos(pos) {
+      fab.style.right = 'auto';
+      fab.style.bottom = 'auto';
+      fab.style.left = pos.x + 'px';
+      fab.style.top = pos.y + 'px';
+    }
+    function restoreFabPos() {
+      const saved = loadFabPos();
+      if (!saved) return; // leave default CSS right/bottom spot untouched
+      const x = clampNum(saved.x, FAB_MARGIN, window.innerWidth - fab.offsetWidth - FAB_MARGIN);
+      const y = clampNum(saved.y, FAB_MARGIN, window.innerHeight - fab.offsetHeight - FAB_MARGIN);
+      applyFabPos({ x, y });
+    }
+    // Wherever the fab ends up, the panel opens near it — above if there's
+    // room, below otherwise; same idea horizontally — rather than staying
+    // pinned to the original bottom-right corner regardless of where the
+    // fab was dragged to.
+    function positionPanel() {
+      const r = fab.getBoundingClientRect();
+      const pw = panel.offsetWidth || 320;
+      const ph = panel.offsetHeight || 400;
+      let left = r.right - pw;
+      if (left < FAB_MARGIN) left = r.left;
+      left = clampNum(left, FAB_MARGIN, window.innerWidth - pw - FAB_MARGIN);
+      let top = r.top - ph - 8;
+      if (top < FAB_MARGIN) top = r.bottom + 8;
+      top = clampNum(top, FAB_MARGIN, window.innerHeight - ph - FAB_MARGIN);
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      panel.style.left = left + 'px';
+      panel.style.top = top + 'px';
+    }
+    restoreFabPos();
+    window.addEventListener('resize', restoreFabPos);
+
+    let fabDragging = false, fabDragMoved = false;
+    let dragStartX = 0, dragStartY = 0, fabStartX = 0, fabStartY = 0;
+    const DRAG_THRESHOLD = 6; // px — below this, treat it as a tap, not a drag
+
+    fab.addEventListener('pointerdown', (e) => {
+      fabDragging = true;
+      fabDragMoved = false;
+      dragStartX = e.clientX; dragStartY = e.clientY;
+      const r = fab.getBoundingClientRect();
+      fabStartX = r.left; fabStartY = r.top;
+      fab.setPointerCapture(e.pointerId);
+    });
+    fab.addEventListener('pointermove', (e) => {
+      if (!fabDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (!fabDragMoved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        fabDragMoved = true;
+        fab.classList.add('tomte-dragging');
+      }
+      if (!fabDragMoved) return;
+      const x = clampNum(fabStartX + dx, FAB_MARGIN, window.innerWidth - fab.offsetWidth - FAB_MARGIN);
+      const y = clampNum(fabStartY + dy, FAB_MARGIN, window.innerHeight - fab.offsetHeight - FAB_MARGIN);
+      applyFabPos({ x, y });
+    });
+    fab.addEventListener('pointerup', (e) => {
+      if (!fabDragging) return;
+      fabDragging = false;
+      fab.classList.remove('tomte-dragging');
+      try { fab.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (fabDragMoved) {
+        const r = fab.getBoundingClientRect();
+        saveFabPos({ x: r.left, y: r.top });
+        if (panel.classList.contains('tomte-open')) positionPanel();
+      } else {
+        if (panel.classList.contains('tomte-open')) closePanel(); else openPanel();
+      }
+    });
+    fab.addEventListener('pointercancel', () => {
+      fabDragging = false;
+      fab.classList.remove('tomte-dragging');
     });
     closeBtn.addEventListener('click', closePanel);
 
