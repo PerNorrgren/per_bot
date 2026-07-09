@@ -256,6 +256,12 @@
           <button class="btn primary" onclick="openNewCat()">+ Add category</button>
         </div>
         <div class="cat-tree" id="catTree"></div>
+
+        <div class="toolbar" style="margin-top:32px">
+          <div class="toolbar-title">Content types</div>
+          <button class="btn primary" onclick="openNewKind()">+ Add content type</button>
+        </div>
+        <div class="cat-tree" id="kindTree"></div>
       </div>
 
     </div>
@@ -556,6 +562,20 @@
   </div>
 </div>
 
+<!-- Content Type Modal -->
+<div class="modal-overlay" id="kindModal">
+  <div class="modal">
+    <h3 id="kindModalTitle">Content type</h3>
+    <input type="hidden" id="kindId"/>
+    <div><label>Label</label><input type="text" id="kindLabel"/></div>
+    <div class="modal-err" id="kindErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('kindModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveKind()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let allCats=[],allFiles=[],allCourses=[],allPlaylists=[],allInstances=[];
 let upQueue=[];
@@ -700,20 +720,28 @@ function populateSub(catSelId,subSelId,selectedId=''){
 }
 
 async function loadAll(){
-  const [cats,files,courses,pls,instances]=await Promise.all([
+  const [cats,files,courses,pls,instances,kinds]=await Promise.all([
     fetch('/api/content/categories').then(r=>r.json()),
     fetch('/api/content/library').then(r=>r.json()),
     fetch('/api/content/courses').then(r=>r.json()),
     fetch('/api/content/playlists').then(r=>r.json()),
     fetch('/api/admin/course-instances').then(r=>r.json()),
+    fetch('/api/content/kinds').then(r=>r.json()),
   ]);
   allCats=cats;allFiles=files;allCourses=courses;allPlaylists=pls;allInstances=instances;
+  CONTENT_KINDS=[{value:'',label:'Not set'}, ...kinds.map(k=>({value:k.value,label:k.label}))];
   populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF');
   populateInstanceCourseSels();
-  if (!document.getElementById('libKind').options.length) {
-    document.getElementById('libKind').innerHTML = '<option value="">All types</option>' + contentKindOptions('').replace('<option value="">Not set</option>','');
-  }
-  renderLib(files);renderCourses(courses);renderPlaylists(pls);renderCats(cats);renderInstances();
+  // Not gated behind "only if empty" any more — content kinds can change
+  // at runtime now (added/renamed/deleted from the Categories tab), so
+  // this needs to re-render every load, not just populate once. Preserves
+  // whatever the person had filtered by, same as populateCatSels does for
+  // the category filters.
+  const libKindSel = document.getElementById('libKind');
+  const prevKindVal = libKindSel.value;
+  libKindSel.innerHTML = '<option value="">All types</option>' + contentKindOptions('').replace('<option value="">Not set</option>','');
+  libKindSel.value = prevKindVal;
+  renderLib(files);renderCourses(courses);renderPlaylists(pls);renderCats(cats);renderKinds(kinds);renderInstances();
 }
 
 function populateInstanceCourseSels(){
@@ -982,23 +1010,16 @@ const SUB_KEYWORDS = {
   'sub-therapy-inflammatory': ['inflammatory'],
   'sub-therapy-facilitation': ['therapyfacilitation'],
 };
-// Content type (Per Bot 7) — the new library taxonomy, separate from
-// file_type (audio/video/document, inferred from the actual file) and from
-// visibility (who can see it). Deliberately just a plain list here, not a
-// DB-enforced enum — add a line here to introduce a new type, no migration
-// needed since content_type is a free-text column.
-const CONTENT_KINDS = [
-  { value: '',            label: 'Not set' },
-  { value: 'meditation',  label: 'Practice / meditation' },
-  { value: 'course_intro',label: 'Course intro video' },
-  { value: 'blog',        label: 'Blog post' },
-  { value: 'video_blog',  label: 'Video blog' },
-  { value: 'poem',        label: 'Poem' },
-  { value: 'whitepaper',  label: 'Whitepaper' },
-  { value: 'book',        label: 'Book (excerpt or full)' },
-  { value: 'timer_bell',  label: 'Timer — bell sound' },
-  { value: 'timer_music', label: 'Timer — background sound (loops)' },
-  { value: 'other',       label: 'Other' },
+// Content type (Per Bot 7) — the library taxonomy, separate from file_type
+// (audio/video/document, inferred from the actual file) and from visibility
+// (who can see it). Used to be a hardcoded array here; as of Per Bot 33e
+// it's DB-backed (content_kinds table) and editable from the Categories
+// tab, same rename/delete pattern as categories. CONTENT_KINDS is now
+// populated by loadAll() below rather than declared as a fixed list —
+// starts with just 'Not set' so contentKindOptions() never breaks if
+// called before the first load completes.
+let CONTENT_KINDS = [
+  { value: '', label: 'Not set' },
 ];
 function contentKindOptions(selected) {
   return CONTENT_KINDS.map(k => `<option value="${k.value}"${selected===k.value?' selected':''}>${k.label}</option>`).join('');
@@ -1997,6 +2018,53 @@ async function saveCat(){
 async function delCat(id){
   if(!(await appConfirm('Delete this category?')))return;
   await fetch(`/api/content/categories/${id}`,{method:'DELETE'});loadAll();
+}
+
+// ── Content types ──
+function renderKinds(kinds){
+  document.getElementById('kindTree').innerHTML=kinds.map(k=>`
+    <div class="cat-sub-row">
+      <div class="cat-sub-name">${k.label}</div>
+      <button class="btn sm" onclick="openRenameKind('${k.id}','${k.label.replace(/'/g,"\\'")}')">Rename</button>
+      <button class="btn sm danger" onclick="delKind('${k.id}')">Delete</button>
+    </div>`).join('');
+}
+
+function openNewKind(){
+  document.getElementById('kindModalTitle').textContent='New content type';
+  document.getElementById('kindId').value='';document.getElementById('kindLabel').value='';
+  document.getElementById('kindErr').textContent='';
+  openModal('kindModal');
+}
+
+function openRenameKind(id,label){
+  document.getElementById('kindModalTitle').textContent='Rename content type';
+  document.getElementById('kindId').value=id;document.getElementById('kindLabel').value=label;
+  document.getElementById('kindErr').textContent='';
+  openModal('kindModal');
+}
+
+async function saveKind(){
+  const id=document.getElementById('kindId').value;
+  const label=document.getElementById('kindLabel').value.trim();
+  const err=document.getElementById('kindErr');
+  if(!label){err.textContent='Label required.';return;}
+  if(id){
+    await fetch(`/api/content/kinds/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});
+  }else{
+    await fetch('/api/content/kinds',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});
+  }
+  closeModal('kindModal');loadAll();
+}
+
+async function delKind(id){
+  // Deleting a kind that's still in use on existing files leaves those
+  // files' content_type pointing at a value with no matching row — same
+  // as deleting a category still assigned to files. They just show
+  // unlabelled rather than breaking; re-editing that file lets you pick
+  // a different type.
+  if(!(await appConfirm('Delete this content type? Any content already using it will show as unlabelled.')))return;
+  await fetch(`/api/content/kinds/${id}`,{method:'DELETE'});loadAll();
 }
 
 loadAll();

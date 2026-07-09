@@ -4206,6 +4206,20 @@ app.patch('/api/content/categories/:id', auth.requireAuthApi(['admin']), (req, r
 });
 app.delete('/api/content/categories/:id', auth.requireAuthApi(['admin']), (req, res) => { db.deleteCategory(req.params.id); res.json({ ok: true }); });
 
+app.get('/api/content/kinds', auth.requireAuthApi(['admin','facilitator','client']), (req, res) => res.json(db.getAllContentKinds()));
+app.post('/api/content/kinds', auth.requireAuthApi(['admin']), (req, res) => {
+  const { label } = req.body;
+  if (!label) return res.status(400).json({ error: 'Label required.' });
+  const value = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') + '_' + Date.now();
+  db.createContentKind(uuidv4(), value, label.trim(), 0);
+  res.json({ ok: true });
+});
+app.patch('/api/content/kinds/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!req.body.label) return res.status(400).json({ error: 'Label required.' });
+  db.renameContentKind(req.params.id, req.body.label.trim()); res.json({ ok: true });
+});
+app.delete('/api/content/kinds/:id', auth.requireAuthApi(['admin']), (req, res) => { db.deleteContentKind(req.params.id); res.json({ ok: true }); });
+
 app.get('/api/content/library', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getLibraryFiles(req.query)));
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -127,6 +127,20 @@ async function getDb() {
     FOREIGN KEY (parent_id) REFERENCES categories(id)
   )`);
 
+  // ── Content kinds (Per Bot 33e) — was a hardcoded CONTENT_KINDS array in
+  // admin/content.html; moved to the DB so it's editable from the same
+  // Categories tab as categories/subcategories, same rename/delete pattern.
+  // `value` is the stable slug stored on library_files.content_type — kept
+  // separate from `label` so renaming a kind never touches existing files'
+  // records, exactly like a category rename doesn't touch its id.
+  db.run(`CREATE TABLE IF NOT EXISTS content_kinds (
+    id TEXT PRIMARY KEY,
+    value TEXT UNIQUE NOT NULL,
+    label TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── FILE LIBRARY (single source of truth) ──
   db.run(`CREATE TABLE IF NOT EXISTS library_files (
     id TEXT PRIMARY KEY,
@@ -1128,6 +1142,12 @@ async function getDb() {
   const existing = queryAll('SELECT id FROM categories LIMIT 1');
   if (!existing.length) seedCategories();
 
+  // Seed content kinds if empty — same values that used to live in the
+  // hardcoded CONTENT_KINDS array, so existing library_files.content_type
+  // values still resolve to a real row and nothing appears unlabelled.
+  const existingKinds = queryAll('SELECT id FROM content_kinds LIMIT 1');
+  if (!existingKinds.length) seedContentKinds();
+
   // App Files category (Per Bot 7) — a home for bell/background-sound
   // uploads that don't belong in any real content category, so the
   // (otherwise mandatory) category field on upload doesn't block them.
@@ -1207,6 +1227,25 @@ function seedCategories() {
   cats.forEach(c => {
     db.run('INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES (?,?,?,?,?)',
       [c.id, c.name, c.slug, c.parent_id, c.sort_order]);
+  });
+}
+
+function seedContentKinds() {
+  const kinds = [
+    { id:'kind-meditation',   value:'meditation',   label:'Practice / meditation',              sort_order:1 },
+    { id:'kind-course-intro', value:'course_intro', label:'Course intro video',                  sort_order:2 },
+    { id:'kind-blog',         value:'blog',         label:'Blog post',                           sort_order:3 },
+    { id:'kind-video-blog',   value:'video_blog',   label:'Video blog',                          sort_order:4 },
+    { id:'kind-poem',         value:'poem',         label:'Poem',                                sort_order:5 },
+    { id:'kind-whitepaper',   value:'whitepaper',   label:'Whitepaper',                          sort_order:6 },
+    { id:'kind-book',         value:'book',         label:'Book (excerpt or full)',              sort_order:7 },
+    { id:'kind-timer-bell',   value:'timer_bell',   label:'Timer — bell sound',                  sort_order:8 },
+    { id:'kind-timer-music',  value:'timer_music',  label:'Timer — background sound (loops)',    sort_order:9 },
+    { id:'kind-other',        value:'other',        label:'Other',                               sort_order:10 },
+  ];
+  kinds.forEach(k => {
+    db.run('INSERT OR IGNORE INTO content_kinds (id,value,label,sort_order) VALUES (?,?,?,?)',
+      [k.id, k.value, k.label, k.sort_order]);
   });
 }
 
@@ -1397,6 +1436,20 @@ function renameCategory(id, name) {
   getDbSync().run('UPDATE categories SET name=? WHERE id=?', [name, id]); save();
 }
 function deleteCategory(id) { getDbSync().run('DELETE FROM categories WHERE id=?', [id]); save(); }
+
+// ── Content kinds ──
+function getAllContentKinds() { return queryAll('SELECT * FROM content_kinds ORDER BY sort_order ASC, label ASC'); }
+function createContentKind(id, value, label, sortOrder) {
+  getDbSync().run('INSERT INTO content_kinds (id,value,label,sort_order) VALUES (?,?,?,?)',
+    [id, value, label, sortOrder || 0]); save();
+}
+// Renames the label only — value is the slug stored on every existing
+// library_files.content_type row, so it stays fixed for the life of the
+// kind, same reasoning as a category's slug never changing on rename.
+function renameContentKind(id, label) {
+  getDbSync().run('UPDATE content_kinds SET label=? WHERE id=?', [label, id]); save();
+}
+function deleteContentKind(id) { getDbSync().run('DELETE FROM content_kinds WHERE id=?', [id]); save(); }
 
 // ── Library files ──
 function addLibraryFile(id, title, description, filename, originalName, fileType, fileSize, categoryId, subcategoryId, visibility, storageType, facilitatorResource, contentType, externalLink, assignedClientId) {
@@ -3512,6 +3565,7 @@ module.exports = {
   // Categories
   getAllCategories, getTopCategories, getSubcategories,
   createCategory, renameCategory, deleteCategory,
+  getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
