@@ -570,7 +570,7 @@
       <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
         <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
-        <button type="button" id="calmMainBtn" onclick="startCalmMoment('2 minutes of calm')" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:14px; line-height:1.5; cursor:pointer;">Listen to<br/>2 minutes<br/>of Calm</button>
+        <button type="button" id="calmMainBtn" onclick="startGroundingPractice()" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:14px; line-height:1.5; cursor:pointer;">Listen to<br/>2 minutes<br/>of Calm</button>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
@@ -3297,6 +3297,39 @@
       btn.textContent = '♪ Calming sounds';
     }
   }
+  // Per Bot 30 — a real scripted grounding practice, not an AI
+  // conversation. Deliberately never touches /api/chat: a fixed script
+  // means it's the same, precise sequence every single time (heels,
+  // hands on thighs, the double-breath reset, micro-smile on the out
+  // breath) rather than something an AI could subtly vary or drift on.
+  // Reuses speak()'s existing [[PAUSE]] pacing — the same mechanism
+  // Talk's own guided moments already use — so this gets proper timed
+  // gaps between steps for free.
+  const GROUNDING_SCRIPT = "Feel your heels. [[PAUSE]] Press them into the floor. Not hard — just enough to notice them there. [[PAUSE]] Now rest your hands on your thighs. Let them press down, gently. [[PAUSE]] Breathe in through your nose. Then take a second breath, right on top of it. [[PAUSE]] And let it go — long and slow, out through your mouth. [[PAUSE]] As you breathe out, let the corners of your mouth lift. Just a little. A small smile, nothing more. [[PAUSE]] Let's do that again. Heels down. Hands pressing. [[PAUSE]] In. In again. And out — with the smile. [[PAUSE]] One more time. Heels. Hands. [[PAUSE]] In. In again. Out. And smile. [[PAUSE]] Stay there for a moment. Heels down. Hands resting. [[PAUSE]] That's it. You're here.";
+
+  async function startGroundingPractice() {
+    if (busy) return;
+    if (_calmingSoundsPlaying) toggleCalmingSounds();
+    _talkEngaged = true;
+    document.getElementById('calmLanding').style.display = 'none';
+    document.getElementById('talkChatContent').style.display = 'flex';
+    document.getElementById('saveTalkBtn').style.display = 'none';
+    document.getElementById('shareTalkBtn').style.display = 'none';
+    unlockAudioPlayback();
+    busy = true;
+    setState('processing');
+    await startListening();
+
+    transcriptEl.textContent = GROUNDING_SCRIPT.split('[[PAUSE]]').join(' ').replace(/\s+/g, ' ').trim();
+    transcriptEl.className = 'transcript-text';
+    busy = false;
+    await speak(GROUNDING_SCRIPT);
+    lastBotReply = transcriptEl.textContent;
+    document.getElementById('saveTalkBtn').style.display = '';
+    document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
+    document.getElementById('shareTalkBtn').style.display = '';
+  }
+
   async function startCalmMoment(prompt) {
     if (_calmingSoundsPlaying) toggleCalmingSounds();
     _talkEngaged = true;
