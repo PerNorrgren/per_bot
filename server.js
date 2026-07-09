@@ -33,6 +33,15 @@ const sms        = require('./sms');
 
 // ── Config ──
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY;
+// Per Bot 33f — was hardcoded to claude-opus-4-6 below in anthropicFetch().
+// Switched to Sonnet 5 by default (currently $2/$10 per MTok introductory
+// pricing through Aug 31 2026, vs Opus's $5/$25) to stretch API credits
+// further — this one call is shared by every Claude request the app makes
+// (Talk conversations, Tomte, legal doc translation, MOTD generation), so
+// this single line controls all of it. Override with an env var on
+// Railway if quality on a specific workload ever needs Opus back, with no
+// code change or redeploy required.
+const ANTHROPIC_MODEL     = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5';
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID           = process.env.VOICE_ID;
 // Tomte-specific default (Per Bot 8) — used when a person's language is
@@ -3094,7 +3103,7 @@ async function anthropicFetch(systemPrompt, messages, maxTokens) {
       'Content-Type': 'application/json',
       'Connection': 'close',
     },
-    body: JSON.stringify({ model: 'claude-opus-4-6', max_tokens: maxTokens, system: systemPrompt, messages }),
+    body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages }),
     signal: AbortSignal.timeout(25000),
   });
   const data = await response.json();
