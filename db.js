@@ -1812,11 +1812,25 @@ function getUserByEmail(email) {
 }
 const getClientByEmail = getUserByEmail; // alias
 
+// Per Bot 19 fix: only ever matched the legacy single facilitator_id
+// column — a facilitator whose ONLY relationship to a client is via the
+// newer client_facilitators table (see Per Bot 13) never saw them in
+// their own client list at all, even after the access-control gap on
+// /api/clients/:id and the messaging middleware got fixed alongside this.
+// UNION rather than a JOIN so a client with both relationships (their
+// legacy facilitator_id AND also explicitly added via the join table,
+// which shouldn't normally happen but isn't actively prevented either)
+// still only appears once.
 function getAllUsers(facilitatorId, includeArchived = false) {
-  const sql = includeArchived
-    ? 'SELECT * FROM users WHERE facilitator_id=? ORDER BY name ASC'
-    : 'SELECT * FROM users WHERE facilitator_id=? AND archived=0 ORDER BY name ASC';
-  return queryAll(sql, [facilitatorId]);
+  const archivedClause = includeArchived ? '' : 'AND archived=0';
+  return queryAll(
+    `SELECT * FROM users WHERE facilitator_id=? ${archivedClause}
+     UNION
+     SELECT u.* FROM users u JOIN client_facilitators cf ON cf.client_id=u.id
+     WHERE cf.facilitator_id=? ${archivedClause}
+     ORDER BY name ASC`,
+    [facilitatorId, facilitatorId]
+  );
 }
 const getAllClients = getAllUsers; // alias
 

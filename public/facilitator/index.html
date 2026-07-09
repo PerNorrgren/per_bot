@@ -888,7 +888,7 @@
           </div>
           ${isRealRow ? `<button onclick="deleteFacPractice('${p.id}','${(p.title||'').replace(/'/g,"\\'")}')" style="background:none;border:none;color:rgba(255,120,100,0.6);cursor:pointer;font-size:13px;padding:4px 6px;flex-shrink:0">Delete</button>` : ''}
         </div>
-        ${isRealRow && p.type === 'audio' && p.filename ? `<audio controls preload="none" src="/uploads/${p.filename}" style="width:100%; height:32px;"></audio>` : ''}
+        ${isRealRow && p.type === 'audio' && p.filename ? `<audio controls preload="metadata" src="/uploads/${p.filename}" style="width:100%; height:32px;"></audio>` : ''}
       </div>
     `;
     }).join('');
@@ -956,8 +956,10 @@
 
   function msgBubbleContent(m) {
     if (m.deleted_at) return `<span class="msg-deleted">Message deleted</span>`;
-    if (m.content_type === 'voice')  return `<audio controls preload="none" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
-    if (m.content_type === 'video')  return `<video controls preload="none" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
+    // Per Bot 19: same fix as the client side — preload="metadata" instead
+    // of "none" so duration shows correctly before anyone presses play.
+    if (m.content_type === 'voice')  return `<audio controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
+    if (m.content_type === 'video')  return `<video controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
     if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
     return m.content || '';
   }
@@ -1108,10 +1110,20 @@
 
     _msgRecordingKind = kind;
     const chunks = [];
-    _msgRecorder = new MediaRecorder(_msgRecordStream);
+    // Per Bot 19 fix: same issue as the client side's toggleCmsgRecording —
+    // this hardcoded the Blob's type as video/webm or audio/webm regardless
+    // of what MediaRecorder actually produced, which is silently wrong on
+    // Safari/iOS (no WebM support — it really records MP4). Asking
+    // isTypeSupported() first and reading the recorder's own .mimeType back
+    // keeps the label honest.
+    const preferredType = kind === 'video'
+      ? (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : (MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : ''))
+      : (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''));
+    _msgRecorder = new MediaRecorder(_msgRecordStream, preferredType ? { mimeType: preferredType } : undefined);
     _msgRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     _msgRecorder.onstop = () => {
-      _msgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
+      const actualType = _msgRecorder.mimeType || (kind === 'video' ? 'video/webm' : 'audio/webm');
+      _msgRecordedBlob = new Blob(chunks, { type: actualType });
       _msgRecordStream.getTracks().forEach(t => t.stop());
       document.getElementById(kind === 'video' ? 'msgVideoBtn' : 'msgVoiceBtn').classList.remove('recording');
       statusEl.style.display = 'none';
@@ -1137,11 +1149,14 @@
   }
   async function sendRecordedNote() {
     if (!_msgRecordedBlob || !currentClientId) return;
+    // Extension needs to match the blob's actual type now that it's no
+    // longer hardcoded to webm — see the fix note on toggleRecording above.
+    const ext = _msgRecordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
     const fd = new FormData();
     fd.append('client_id', currentClientId);
     fd.append('session_id', _msgSessionId || '');
     fd.append('content_type', _msgRecordingKind);
-    fd.append('file', _msgRecordedBlob, `${_msgRecordingKind}-note.webm`);
+    fd.append('file', _msgRecordedBlob, `${_msgRecordingKind}-note.${ext}`);
     discardRecordedNote();
     await fetch(`/api/clients/${currentClientId}/messages/upload`, { method: 'POST', body: fd });
     await loadMessages();

@@ -1125,8 +1125,13 @@
 
   function cmsgBubbleContent(m) {
     if (m.deleted_at) return `<span class="cmsg-deleted">Message deleted</span>`;
-    if (m.content_type === 'voice')  return `<audio controls preload="none" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
-    if (m.content_type === 'video')  return `<video controls preload="none" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
+    // Per Bot 19: preload="none" was contributing to the "shows 0:00 / 0:00
+    // until you press play" look reported for these — "metadata" still
+    // avoids downloading the whole file upfront, just enough to know the
+    // actual duration so the player doesn't look broken before anyone's
+    // touched it.
+    if (m.content_type === 'voice')  return `<audio controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
+    if (m.content_type === 'video')  return `<video controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
     if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
     return m.content || '';
   }
@@ -1243,10 +1248,23 @@
 
     _cmsgRecordingKind = kind;
     const chunks = [];
-    _cmsgRecorder = new MediaRecorder(_cmsgRecordStream);
+    // Per Bot 19 fix: this used to hardcode the Blob's type as video/webm or
+    // audio/webm regardless of what the browser's MediaRecorder actually
+    // produced. That's silently wrong on Safari/iOS, which doesn't support
+    // WebM at all — MediaRecorder there records real MP4 data, but the
+    // Blob (and later the uploaded file) claimed to be webm anyway, so
+    // playback broke everywhere the mislabeled file was later opened.
+    // Asking isTypeSupported() first and then reading back the recorder's
+    // own .mimeType keeps the label honest on whatever browser is actually
+    // being used.
+    const preferredType = kind === 'video'
+      ? (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : (MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : ''))
+      : (MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''));
+    _cmsgRecorder = new MediaRecorder(_cmsgRecordStream, preferredType ? { mimeType: preferredType } : undefined);
     _cmsgRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     _cmsgRecorder.onstop = () => {
-      _cmsgRecordedBlob = new Blob(chunks, { type: kind === 'video' ? 'video/webm' : 'audio/webm' });
+      const actualType = _cmsgRecorder.mimeType || (kind === 'video' ? 'video/webm' : 'audio/webm');
+      _cmsgRecordedBlob = new Blob(chunks, { type: actualType });
       _cmsgRecordStream.getTracks().forEach(t => t.stop());
       document.getElementById(kind === 'video' ? 'cmsgVideoBtn' : 'cmsgVoiceBtn').classList.remove('recording');
       statusEl.style.display = 'none';
@@ -1272,10 +1290,16 @@
   }
   async function sendCmsgRecordedNote() {
     if (!_cmsgRecordedBlob) return;
+    // Extension has to match the blob's actual type now that it's no
+    // longer hardcoded to webm — an mp4 blob served back with a .webm
+    // name would have the server (which infers Content-Type from the
+    // file extension) hand it back mislabeled, right back to the same
+    // broken-playback problem this was fixing.
+    const ext = _cmsgRecordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
     const fd = new FormData();
     fd.append('session_id', _cmsgSessionId || '');
     fd.append('content_type', _cmsgRecordingKind);
-    fd.append('file', _cmsgRecordedBlob, `${_cmsgRecordingKind}-note.webm`);
+    fd.append('file', _cmsgRecordedBlob, `${_cmsgRecordingKind}-note.${ext}`);
     fd.append('facilitatorId', _activeFacilitatorId);
     discardCmsgRecordedNote();
     await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
@@ -2910,7 +2934,8 @@
     if ((await getUserTier()) < 1) { renderUpgradePrompt('historyList', 'History'); return; }
     const res  = await fetch('/api/client/history');
     const list = await res.json();
-    renderHistory(Array.isArray(list) ? list : []);
+    _historyData = Array.isArray(list) ? list : [];
+    renderHistory(_historyData);
   }
   function historyIcon(item) {
     if (item.content_type === 'audio') return '🎵';
@@ -2926,11 +2951,26 @@
     const time = d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
     return sameDay ? `Today, ${time}` : d.toLocaleDateString(undefined, { day:'numeric', month:'short' }) + `, ${time}`;
   }
+  // Per Bot 19: History previously just displayed rows with no way to
+  // reopen anything — clicking did nothing. content_id here points at the
+  // same library_files entry the content library itself plays, so this
+  // just calls the exact same players (mpPlay for audio, openContentFile
+  // for video/documents) already used everywhere else, rather than
+  // building a third way to open content. If the underlying file was
+  // since deleted (content_id null, or the file itself removed), the
+  // click quietly does nothing rather than erroring.
+  let _historyData = [];
+  function openHistoryItemById(id) {
+    const item = _historyData.find(x => x.id === id);
+    if (!item || !item.content_id) return;
+    if (item.content_type === 'audio') { mpPlay({ id: item.content_id, title: item.title || 'Untitled' }); return; }
+    openContentFile({ id: item.content_id, title: item.title || 'Untitled', file_type: item.file_type, description: '' });
+  }
   function renderHistory(list) {
     const el = document.getElementById('historyList');
     if (!list.length) { el.innerHTML = '<div class="no-history">Nothing here yet — what you listen to, watch, or read will appear here.</div>'; return; }
     el.innerHTML = list.map(item => `
-      <div class="history-item">
+      <div class="history-item" style="${item.content_id ? 'cursor:pointer' : ''}" ${item.content_id ? `onclick="openHistoryItemById('${item.id}')"` : ''}>
         <div class="history-icon">${historyIcon(item)}</div>
         <div class="history-body">
           <div class="history-title">${item.title || 'Untitled'}</div>

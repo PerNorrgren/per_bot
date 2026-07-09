@@ -1009,7 +1009,7 @@
           <span class="badge ${n.status === 'sent' ? '' : 'badge-draft'}" style="margin-left:6px">${n.status}</span>
         </div>
         <div class="doc-consent">
-          ${n.status === 'sent' ? `${n.recipient_count || 0} recipients · ${fmtDate(n.sent_at)}` : n.status === 'sending' ? `Sending now — started ${fmtDate(n.created_at)}` : `Created ${fmtDate(n.created_at)}`}
+          ${n.status === 'sent' ? `${n.live_sent_count ?? n.recipient_count ?? 0} recipients · ${fmtDate(n.sent_at)}` : n.status === 'sending' ? `Sending now — started ${fmtDate(n.created_at)}` : `Created ${fmtDate(n.created_at)}`}
           · ${audienceSummary(n.audience)}
         </div>
         <div class="doc-actions">

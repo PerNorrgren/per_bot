@@ -1431,7 +1431,13 @@ app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (re
 app.get('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   const user = db.getUser(req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && user.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+  // Per Bot 19 fix: this only ever checked the legacy single facilitator_id
+  // column, so a facilitator assigned to this client ONLY as an additional
+  // facilitator (via the newer client_facilitators table — see Per Bot 13)
+  // was wrongly blocked from opening them at all. Either relationship now
+  // grants access, same as the messaging/practices endpoints already do.
+  const isAssigned = user.facilitator_id === req.user.id || db.isFacilitatorAssignedToClient(user.id, req.user.id);
+  if (req.user.role !== 'admin' && !isAssigned) return res.status(403).json({ error: 'Access denied' });
   res.json({ ...user, sessions: db.getSessionsForClient(req.params.id), practices: db.getPracticesForClient(req.params.id), journalEntries: db.getSharedJournalEntriesForFacilitator(req.params.id) });
 });
 app.patch('/api/clients/:id/arc', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
@@ -2620,7 +2626,11 @@ async function notifyClientOfMessage(client, message) {
 function requireClientOwnedByFacilitator(req, res, next) {
   const client = db.getUser(req.params.id);
   if (!client) return res.status(404).json({ error: 'Client not found.' });
-  if (req.user.role !== 'admin' && client.facilitator_id !== req.user.id) return res.status(403).json({ error: 'Access denied.' });
+  // Per Bot 19 fix: same gap as /api/clients/:id — only checked the legacy
+  // single facilitator_id, wrongly blocking a facilitator assigned to this
+  // client only via the newer client_facilitators table.
+  const isAssigned = client.facilitator_id === req.user.id || db.isFacilitatorAssignedToClient(client.id, req.user.id);
+  if (req.user.role !== 'admin' && !isAssigned) return res.status(403).json({ error: 'Access denied.' });
   req.messageClient = client;
   next();
 }
@@ -5674,8 +5684,25 @@ app.post('/api/admin/birthday/test-sms', auth.requireAuthApi(['admin']), async (
 // test) → Send. No queue, no auto-schedule — content differs every time, so
 // this is a deliberate, manual "hit send when it's ready" tool rather than
 // something cron-driven like the MOTD.
+// Per Bot 19 fix: recipient_count on the newsletters row itself is only
+// ever a snapshot taken the moment runNewsletterSend finishes — and that
+// same function is reused for both the original send (the full audience)
+// AND a later retry (just the outstanding subset), so a retry silently
+// overwrites it with a smaller number rather than the real running total.
+// email_log is the one place that's always accurate (every recipient is a
+// row, retries just update existing rows rather than duplicating them),
+// so the list now reports a live count from there instead of trusting the
+// stored snapshot — same source Progress already uses, just surfaced here
+// too instead of only on demand.
 app.get('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => {
-  try { res.json(db.getAllNewsletters()); }
+  try {
+    const list = db.getAllNewsletters().map(n => {
+      if (n.status === 'draft') return n;
+      const counts = db.getEmailLogCountsForNewsletter(n.id);
+      return { ...n, live_sent_count: counts.sent, live_total_count: counts.pending + counts.sent + counts.failed };
+    });
+    res.json(list);
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
