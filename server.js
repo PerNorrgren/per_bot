@@ -2603,7 +2603,7 @@ tomteWss.on('connection', (ws, req) => {
       const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName, tomteLanguage);
       history.push({ role: 'user', content: userText });
       if (history.length > 12) history = history.slice(-12); // keep it light — Tomte doesn't need deep memory
-      const rawReply = await callClaude(systemPrompt, history, 300);
+      const rawReply = await callClaude(systemPrompt, history, 1500);
       // Strip the leading [[ACTION:x]] tag Claude was asked to include —
       // this never reaches the person as text or speech, it just decides
       // which image accompanies the reply.
@@ -2635,7 +2635,7 @@ tomteWss.on('connection', (ws, req) => {
         text = await callClaude(
           `Translate this greeting naturally into ${languageDisplayName}, keeping the same warm, casual tone. Respond with ONLY the translated sentence, nothing else — no quotes, no preamble.`,
           [{ role: 'user', content: text }],
-          150
+          800
         );
       } catch(e) { /* fall back to the English version if translation fails */ }
     }
@@ -2793,7 +2793,7 @@ app.post('/api/sessions/:id/regenerate', auth.requireAuthApi(['admin','facilitat
     const newDraft = await callClaude(
       'You are rewriting a clinical summary into a short, warm note for the client to read themselves.',
       [{ role: 'user', content: prompts.GENERATE_CLIENT_SUMMARY(session.summary) }],
-      300
+      1000
     );
     db.updateSessionDraft(req.params.id, null, newDraft);
     res.json({ ok: true, client_summary_draft: newDraft });
@@ -3108,10 +3108,27 @@ async function anthropicFetch(systemPrompt, messages, maxTokens) {
   });
   const data = await response.json();
   if (!data.content) throw new Error(JSON.stringify(data));
-  return data.content[0].text;
+  // Per Bot 33h — models with adaptive thinking on by default (Sonnet 5
+  // and later) can return a 'thinking' content block ahead of the actual
+  // 'text' block, so content[0] is no longer reliably the reply. Find the
+  // text block explicitly rather than assuming position. If thinking used
+  // up the whole max_tokens budget before any text was written at all,
+  // there may be no text block — surface that clearly instead of silently
+  // returning undefined (which would otherwise crash stripMarkdown()
+  // further down the line and just look like "nothing happened").
+  const textBlock = data.content.find(b => b.type === 'text');
+  if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+  return textBlock.text;
 }
 
-async function callClaude(systemPrompt, messages, maxTokens = 400) {
+// maxTokens defaults raised from 400 → 1500 (Per Bot 33h). On models with
+// adaptive thinking on by default, thinking tokens are drawn from the same
+// max_tokens budget as the visible reply — 400 was tight enough on Opus
+// (no default thinking) but could let thinking alone consume the entire
+// budget on Sonnet 5, leaving zero room for the actual reply text. Raising
+// the ceiling doesn't cost more by itself — actual usage still bills only
+// for tokens genuinely generated — it just stops silent truncation.
+async function callClaude(systemPrompt, messages, maxTokens = 1500) {
   return stripMarkdown(await anthropicFetch(systemPrompt, messages, maxTokens));
 }
 
@@ -3119,7 +3136,7 @@ async function callClaude(systemPrompt, messages, maxTokens = 400) {
 // itself is meant to contain literal Markdown syntax (e.g. translating a
 // legal document that uses # headers, **bold**, - lists). Running that
 // through stripMarkdown would silently mangle the formatting.
-async function callClaudeRaw(systemPrompt, messages, maxTokens = 400) {
+async function callClaudeRaw(systemPrompt, messages, maxTokens = 1500) {
   return anthropicFetch(systemPrompt, messages, maxTokens);
 }
 
@@ -3235,7 +3252,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       ? session.history
       : [{ role: 'user', content: 'begin' }];
 
-    const reply = await callClaude(session.systemPrompt, messages, 400);
+    const reply = await callClaude(session.systemPrompt, messages, 1500);
     session.history.push({ role: 'assistant', content: reply });
     session.transcript.push(`BOT: ${reply}`);
 
@@ -3278,17 +3295,17 @@ async function finalizeChatSession(sessionId) {
     const clinicalSummary = await callClaude(
       'You are generating a session summary for a self-guided practice conversation.',
       [{ role: 'user', content: prompts.GENERATE_SESSION_SUMMARY(transcript, client.arc, 'self') }],
-      500
+      1000
     );
     const clientSummary = await callClaude(
       'You are rewriting a session summary into a short, warm note for the person to read themselves.',
       [{ role: 'user', content: prompts.GENERATE_CLIENT_SUMMARY(clinicalSummary) }],
-      300
+      1000
     );
     const arcUpdate = await callClaude(
       'You are updating a person\'s ongoing developmental arc based on a recent self-guided session summary.',
       [{ role: 'user', content: prompts.GENERATE_ARC_UPDATE(client.arc, clinicalSummary) }],
-      300
+      1000
     );
 
     db.updateArc(client.id, arcUpdate.trim());
@@ -3712,7 +3729,7 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
     const isStart = !message || message === 'begin';
     if (!isStart) session.history.push({ role: 'user', content: message });
     const messages = session.history.length ? session.history : [{ role: 'user', content: 'begin' }];
-    const reply = await callClaude(session.systemPrompt, messages, 400);
+    const reply = await callClaude(session.systemPrompt, messages, 1500);
     session.history.push({ role: 'assistant', content: reply });
     res.json({ reply });
   } catch(e) {
@@ -4031,7 +4048,7 @@ facilitatorWss.on('connection', (ws, ctx) => {
         ? `Explain to me: ${userText || 'what is happening clinically right now, based on what I have described so far.'}`
         : userText;
       history.push({ role: 'user', content: promptText });
-      const reply = await callClaude(systemPrompt, history, 500);
+      const reply = await callClaude(systemPrompt, history, 1500);
       history.push({ role: 'assistant', content: reply });
       send({ type: explain ? 'explanation' : 'response_text', text: reply });
 
@@ -4158,19 +4175,19 @@ facilitatorWss.on('connection', (ws, ctx) => {
           const clinicalSummary = await callClaude(
             'You are generating a clinical session summary. Be precise and factual.',
             [{ role: 'user', content: prompts.GENERATE_SESSION_SUMMARY(transcript, client.arc, 'facilitator') }],
-            500
+            1000
           );
 
           const clientSummary = await callClaude(
             'You are rewriting a clinical summary into a short, warm note for the client to read themselves.',
             [{ role: 'user', content: prompts.GENERATE_CLIENT_SUMMARY(clinicalSummary) }],
-            300
+            1000
           );
 
           const arcUpdate = await callClaude(
             'You are updating a clinical arc/development plan based on session notes.',
             [{ role: 'user', content: prompts.GENERATE_ARC_UPDATE(client.arc, clinicalSummary) }],
-            300
+            1000
           );
 
           // Save now as the private clinical record. clientSummary lands as a DRAFT —
