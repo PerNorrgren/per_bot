@@ -1998,12 +1998,29 @@
   async function startListening() {
     if (micActive) return;
     try {
-      mediaStream  = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // Explicit constraints rather than bare `{audio:true}` — on some
+      // devices/browsers the default input picks up an unexpected device
+      // or applies aggressive processing; being explicit here is cheap
+      // insurance against silent-mic issues that are otherwise very hard
+      // to diagnose remotely.
+      mediaStream  = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      });
       audioContext = new AudioContext({ sampleRate: 16000 });
       const source = audioContext.createMediaStreamSource(mediaStream);
 
       const listenWsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/listen';
       deepgramWs = new WebSocket(listenWsUrl);
+
+      // Per Bot 33g — tracks whether any real audio energy was ever seen
+      // this listening session, independent of whether Deepgram returned
+      // a transcript. Lets the silence-timeout tell "you genuinely didn't
+      // say anything" apart from "the mic captured nothing at all" — the
+      // second one is a device/permissions problem, not a pacing one, and
+      // needs a different message so it doesn't look identical to normal
+      // silence.
+      let sawAudioSignal = false;
 
       deepgramWs.onopen = () => {
         micActive = true;
@@ -2014,7 +2031,12 @@
         // leaving it sitting there listening with no way to tell whether
         // it's stuck or just waiting.
         clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => { stopMic(); }, 3000);
+        silenceTimer = setTimeout(() => {
+          if (!sawAudioSignal) {
+            console.warn('[listen] mic produced no audible signal for 3s straight — likely a muted mic, wrong input device, or blocked mic permission at the OS level, not just silence.');
+          }
+          stopMic();
+        }, 3000);
 
         processor = audioContext.createScriptProcessor(4096, 1, 1);
         source.connect(processor);
@@ -2024,9 +2046,15 @@
           if (isSpeaking || !deepgramWs || deepgramWs.readyState !== WebSocket.OPEN) return;
           const input = e.inputBuffer.getChannelData(0);
           const pcm16 = new Int16Array(input.length);
+          let peak = 0;
           for (let i = 0; i < input.length; i++) {
-            pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+            const s = input[i];
+            if (Math.abs(s) > peak) peak = Math.abs(s);
+            pcm16[i] = Math.max(-32768, Math.min(32767, s * 32768));
           }
+          // A real voice, even quiet, reliably peaks well above this —
+          // silence and pure electrical noise floor sit far below it.
+          if (peak > 0.01) sawAudioSignal = true;
           deepgramWs.send(pcm16.buffer);
         };
       };
