@@ -124,6 +124,7 @@
     // Pick up invite token and email from URL if coming via invitation link
     const urlParams = new URLSearchParams(location.search);
     const inviteToken = urlParams.get('invite') || '';
+    const refCode = urlParams.get('ref') || '';
     const inviteEmail = urlParams.get('email') || '';
     if (inviteEmail) {
       document.getElementById('email').value = inviteEmail;
@@ -195,7 +196,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined })
       });
       const data = await res.json();
 

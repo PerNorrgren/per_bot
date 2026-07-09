@@ -579,7 +579,10 @@
         <div class="transcript-area">
           <p class="transcript-text" id="transcript">—</p>
         </div>
-        <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
+        <div style="display:flex; gap:8px; justify-content:center">
+          <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
+          <button type="button" id="shareTalkBtn" class="save-talk-btn" style="display:none" onclick="shareMoment(lastBotReply)">Share</button>
+        </div>
         <div class="indicators">
           <div class="wave" id="wave"><span></span><span></span><span></span><span></span><span></span></div>
           <div class="dots" id="dots"><span></span><span></span><span></span></div>
@@ -1088,10 +1091,64 @@
           <div style="font-size:16px;color:rgba(255,255,255,0.85);margin-bottom:4px">${a.name || 'Your account'}</div>
           <div style="font-size:12px;color:rgba(255,255,255,0.35)">${a.email || ''}</div>
         </div>
+        <div id="referralCard"></div>
         <a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>`;
+      loadReferralCard();
     } catch(e) {
       el.innerHTML = '<a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>';
     }
+  }
+
+  // ── Referrals (Per Bot 22) ──
+  // Give a friend their first month; once they've actually paid for it
+  // (not just signed up), you get a free month too — no cap, stacks with
+  // however many friends refer. Rendered inline in Account rather than a
+  // separate tab, since this is meant to be seen without going looking
+  // for it, not buried behind another click.
+  let _referralData = null;
+  async function loadReferralCard() {
+    const el = document.getElementById('referralCard');
+    if (!el) return;
+    try {
+      const res = await fetch('/api/my/referrals');
+      _referralData = await res.json();
+      renderReferralCard();
+    } catch(e) { el.innerHTML = ''; }
+  }
+  function renderReferralCard() {
+    const el = document.getElementById('referralCard');
+    if (!el || !_referralData) return;
+    const d = _referralData;
+    const badge = d.unseenCount > 0 ? `<span style="display:inline-block;min-width:16px;padding:0 5px;margin-left:6px;border-radius:8px;background:rgba(255,140,120,0.85);color:#1a1a1a;font-size:10.5px;line-height:16px;text-align:center;vertical-align:middle">${d.unseenCount}</span>` : '';
+    el.innerHTML = `
+      <div style="border:1px solid rgba(180,230,200,0.25); background:rgba(180,230,200,0.06); border-radius:12px; padding:16px; margin-bottom:14px">
+        <div style="font-size:13.5px; color:rgba(200,235,215,0.95); margin-bottom:4px">Give a friend their first month ${badge}</div>
+        <div style="font-size:12px; color:rgba(255,255,255,0.5); line-height:1.6; margin-bottom:12px">Share your link. When a friend you invited becomes a paying member, you get a free month too — no limit on how many.</div>
+        <div style="display:flex; gap:8px; margin-bottom:${d.events.length ? '12px' : '0'}">
+          <input type="text" readonly value="${d.referralLink}" onclick="this.select()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.7); font-size:11.5px; font-family:Georgia,serif"/>
+          <button class="btn sm" onclick="copyReferralLink()">Copy</button>
+        </div>
+        ${d.events.length ? `
+          <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-bottom:6px">${d.monthsEarned} free month${d.monthsEarned === 1 ? '' : 's'} earned so far</div>
+          <div style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto">
+            ${d.events.map(e => `
+              <div style="font-size:12px; color:${e.seen ? 'rgba(255,255,255,0.45)' : 'rgba(200,235,215,0.9)'}; display:flex; justify-content:space-between; gap:8px">
+                <span>${e.seen ? '' : '🎉 '}${(e.referredName || 'A friend').split(' ')[0]} joined — +${e.daysCredited} days</span>
+                <span style="color:rgba(255,255,255,0.3); flex-shrink:0">${(e.createdAt||'').slice(0,10)}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>`;
+    if (d.unseenCount > 0) {
+      fetch('/api/my/referrals/seen', { method: 'PATCH' }).then(() => {
+        if (_referralData) { _referralData.unseenCount = 0; _referralData.events.forEach(e => e.seen = true); }
+      }).catch(() => {});
+    }
+  }
+  function copyReferralLink() {
+    if (!_referralData) return;
+    navigator.clipboard.writeText(_referralData.referralLink).then(() => appAlert('Link copied.'));
   }
 
   // ══════════════════════════════════════════
@@ -1400,12 +1457,17 @@
               <div class="poem-date">${fmtPoemDate(p.sent_at)}</div>
             </div>
             <button class="poem-play-btn" id="poemBtn-${p.id}" onclick="playPoem('${p.id}')">▶</button>
+            <button class="poem-play-btn" onclick="sharePoemById('${p.id}')" title="Share">↗</button>
           </div>
         `).join('') : ''}
       `;
     }).join('');
   }
 
+  function sharePoemById(id) {
+    const poem = poemsData.find(p => p.id === id);
+    if (poem) shareMoment(poem.body);
+  }
   async function playPoem(id) {
     const poem = poemsData.find(p => p.id === id);
     if (!poem) return;
@@ -1767,6 +1829,29 @@
   // title here would interrupt a voice-first flow with a text-entry step
   // that doesn't belong in it. Reuses the exact same practices table the
   // Practices tab already reads from, so it just appears there.
+  // ── Sharing a moment (Per Bot 22) ──
+  // Deliberately just text + a link for now, via the OS's own native
+  // share sheet where available — not the fuller "designed quote card
+  // image" version discussed but not yet built; this gets the actual
+  // value (a real moment, carrying a referral link, reaching someone
+  // outside the app) without that extra rendering work. The referral
+  // link rides along automatically — every share is a quiet invitation,
+  // not a separate ask.
+  async function shareMoment(text, title) {
+    if (!text) return;
+    const cfg = await window.brandReady.catch(() => ({}));
+    const brandName = cfg.appName || 'Deeper Mindfulness';
+    const link = (_referralData && _referralData.referralLink) || (await fetch('/api/my/referrals').then(r => r.json()).then(d => d.referralLink).catch(() => null));
+    const shareText = `${text}\n\n— via ${brandName}${link ? '\n' + link : ''}`;
+    if (navigator.share) {
+      try { await navigator.share({ text: shareText, title: title || brandName }); return; } catch(e) { /* user cancelled — fine, no fallback needed */ return; }
+    }
+    try {
+      await navigator.clipboard.writeText(shareText);
+      appAlert('Copied — paste it wherever you\'d like to share it.');
+    } catch(e) { /* clipboard unavailable — nothing more we can do here */ }
+  }
+
   async function saveTalkAsPractice() {
     if (!lastBotReply) return;
     const btn = document.getElementById('saveTalkBtn');
@@ -1796,6 +1881,7 @@
     if (busy) return;
     busy = true;
     document.getElementById('saveTalkBtn').style.display = 'none';
+    document.getElementById('shareTalkBtn').style.display = 'none';
     setThinkingText(userMsg === '[START]' ? 'Getting ready…' : 'Thinking…');
     setState('processing');
 
@@ -1818,6 +1904,7 @@
         transcriptEl.className = 'transcript-text';
         busy = false;
         document.getElementById('saveTalkBtn').style.display = 'none';
+        document.getElementById('shareTalkBtn').style.display = 'none';
         await speak(reply);
         // Save button only makes sense for a real exchange, not the
         // opening greeting — and only once they can actually see/hear
@@ -1826,6 +1913,7 @@
           lastBotReply = transcriptEl.textContent;
           document.getElementById('saveTalkBtn').style.display = '';
           document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
+          document.getElementById('shareTalkBtn').style.display = '';
         }
         // The opening greeting ('[[START]]') is the first thing anyone
         // actually hears spoken aloud — the earliest moment choosing a

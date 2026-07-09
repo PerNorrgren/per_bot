@@ -57,6 +57,23 @@ async function getDb() {
   // id is the slug itself (used directly in URLs like /login/rotterdam),
   // not a generated uuid — there's never a reason to reference a skin by
   // anything other than its own short name.
+  // ── Referral events (Per Bot 22) ──
+  // One row per successful referral credit — doubles as the audit trail
+  // and as the content for the referrer's own small "someone joined!"
+  // feed (see /api/my/referrals). Only ever written once per referred
+  // user (guarded by users.referral_rewarded above), on their first
+  // successful payment — not on registration, and not on any later
+  // renewal, per the "must actually pay, once" design.
+  db.run(`CREATE TABLE IF NOT EXISTS referral_events (
+    id TEXT PRIMARY KEY,
+    referrer_id TEXT NOT NULL,
+    referred_user_id TEXT NOT NULL,
+    referred_name TEXT,
+    days_credited INTEGER NOT NULL DEFAULT 30,
+    seen_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS skins (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -960,6 +977,15 @@ async function getDb() {
     // skin-specific login/invite link.
     "ALTER TABLE users ADD COLUMN skin_id TEXT",
     "ALTER TABLE invitations ADD COLUMN skin_id TEXT",
+    // Referrals (Per Bot 22) — see referral_events table below for the
+    // fuller reasoning. referred_by is set once, at registration, from
+    // whichever ?ref= link/code was used (or none). referral_rewarded is
+    // the idempotency guard — flips to 1 the one time this account's
+    // first-ever payment credits its referrer, and never again, so a
+    // resubscribe after cancelling, or a Stripe webhook firing twice for
+    // the same event, can't double-credit.
+    "ALTER TABLE users ADD COLUMN referred_by TEXT",
+    "ALTER TABLE users ADD COLUMN referral_rewarded INTEGER DEFAULT 0",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2048,6 +2074,34 @@ function checkTrialExpiry(userId) {
     return getUser(userId);
   }
   return user;
+}
+
+// ── Referrals (Per Bot 22) ──
+function setReferredBy(userId, referrerId) {
+  getDbSync().run('UPDATE users SET referred_by=? WHERE id=?', [referrerId || null, userId]);
+  save();
+}
+function markReferralRewarded(userId) {
+  getDbSync().run('UPDATE users SET referral_rewarded=1 WHERE id=?', [userId]);
+  save();
+}
+function createReferralEvent(id, referrerId, referredUserId, referredName, daysCredited) {
+  getDbSync().run(
+    'INSERT INTO referral_events (id, referrer_id, referred_user_id, referred_name, days_credited) VALUES (?,?,?,?,?)',
+    [id, referrerId, referredUserId, referredName || null, daysCredited || 30]
+  );
+  save();
+}
+function getReferralEventsForReferrer(referrerId) {
+  return queryAll('SELECT * FROM referral_events WHERE referrer_id=? ORDER BY created_at DESC', [referrerId]);
+}
+function getUnseenReferralCount(referrerId) {
+  const row = queryOne('SELECT COUNT(*) as c FROM referral_events WHERE referrer_id=? AND seen_at IS NULL', [referrerId]);
+  return row ? row.c : 0;
+}
+function markReferralEventsSeen(referrerId) {
+  getDbSync().run(`UPDATE referral_events SET seen_at=datetime('now') WHERE referrer_id=? AND seen_at IS NULL`, [referrerId]);
+  save();
 }
 
 // ── Membership ──
@@ -3338,6 +3392,8 @@ module.exports = {
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
   getFacilitatorsForClient, isFacilitatorAssignedToClient, addClientFacilitator, removeClientFacilitator,
   getSkin, getAllSkins, createSkin, updateSkin, deleteSkin, setUserSkin,
+  setReferredBy, markReferralRewarded, createReferralEvent, getReferralEventsForReferrer,
+  getUnseenReferralCount, markReferralEventsSeen,
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,

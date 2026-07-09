@@ -194,6 +194,36 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
         const subId = session.subscription || null;
         db.setMemberTier(userId, tier, expiresAt, null, session.customer, subId);
 
+        // Referral reward (Per Bot 22) — this is genuinely this person's
+        // FIRST payment turning into a real membership (not a renewal;
+        // those go through invoice.payment_succeeded below, which doesn't
+        // touch referrals at all), so it's the one moment a referral
+        // reward can fire. referral_rewarded is the idempotency guard —
+        // sending this webhook twice for the same event (which Stripe
+        // does do) or the person later cancelling and resubscribing both
+        // hit this same code path, but only the very first time actually
+        // credits anyone.
+        try {
+          const referredUser = db.getUser(userId);
+          if (referredUser && referredUser.referred_by && !referredUser.referral_rewarded) {
+            const referrer = db.getUser(referredUser.referred_by);
+            if (referrer) {
+              const base = referrer.member_expires_at && new Date(referrer.member_expires_at) > new Date()
+                ? new Date(referrer.member_expires_at) : new Date();
+              base.setDate(base.getDate() + 30);
+              // setMemberTier, not setMemberExpiry — a referrer who's
+              // never paid (tier 0) needs an actual tier granted, not
+              // just a date with nothing behind it; Math.max keeps an
+              // already-paying referrer at whatever tier they're on
+              // rather than downgrading them to the base tier.
+              db.setMemberTier(referrer.id, Math.max(referrer.member_tier || 0, 1), base.toISOString(), referrer.trial_ends_at, null, null);
+              db.markReferralRewarded(userId);
+              db.createReferralEvent(uuidv4(), referrer.id, userId, referredUser.name, 30);
+              console.log(`[referral] ${referrer.id} credited 30 days — referred ${userId} just paid for the first time`);
+            }
+          }
+        } catch (e) { console.error('[referral] reward error:', e.message); }
+
         // Send welcome email
         const user = db.getUser(userId);
         if (user?.email) {
@@ -1145,6 +1175,16 @@ app.post('/api/register', async (req, res) => {
     const resolvedSkin = invitationSkin || (skinSlug && db.getSkin(skinSlug) ? skinSlug : null);
     if (resolvedSkin) db.setUserSkin(id, resolvedSkin);
 
+    // Referral (Per Bot 22) — captured once, here, same as the skin above.
+    // ref is just another client's own user id; a self-referral or a
+    // reference to a non-existent/non-client account is silently dropped
+    // rather than erroring the whole registration over it.
+    const { ref } = req.body;
+    if (ref && ref !== id) {
+      const referrer = db.getUser(ref);
+      if (referrer) db.setReferredBy(id, ref);
+    }
+
     // Log them in immediately
     const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
@@ -1466,6 +1506,24 @@ app.patch('/api/clients/:id/archive', auth.requireAuthApi(['admin','facilitator'
 });
 app.get('/api/my/profile', auth.requireAuthApi(['client']), (req, res) => {
   res.json({ ...db.getUser(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
+});
+
+// ── Referrals (Per Bot 22) — give someone their first month, get a free
+// month yourself once they actually pay for it (not on registration —
+// see the checkout.session.completed webhook handler for where the
+// actual reward happens). No cap on how many; each one stacks.
+app.get('/api/my/referrals', auth.requireAuthApi(['client']), (req, res) => {
+  const events = db.getReferralEventsForReferrer(req.user.id);
+  res.json({
+    referralLink: `${APP_URL}/register?ref=${req.user.id}`,
+    monthsEarned: events.length,
+    events: events.map(e => ({ referredName: e.referred_name, daysCredited: e.days_credited, createdAt: e.created_at, seen: !!e.seen_at })),
+    unseenCount: db.getUnseenReferralCount(req.user.id),
+  });
+});
+app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) => {
+  db.markReferralEventsSeen(req.user.id);
+  res.json({ ok: true });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
