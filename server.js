@@ -2072,6 +2072,45 @@ app.get('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), (req, res) 
   const rows = db.getTomteLanguageDefaults().map(r => ({ ...r, imageUrl: tomteImageUrl(r.image_filename) }));
   res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES });
 });
+// Per Bot 31 — the actual image library: upload here just adds a photo to
+// the pool, nothing else. Assigning a library photo to a language+action
+// (or removing one) is a separate step below — see /assign and DELETE.
+app.get('/api/admin/tomte-library', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getTomteImageLibrary().map(r => ({ ...r, url: tomteImageUrl(r.filename) })));
+});
+app.post('/api/admin/tomte-library', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    const id = uuidv4();
+    db.addTomteImageToLibrary(id, stored, (req.body.label || '').trim() || null);
+    res.json({ ok: true, id, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('tomte-library upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload image right now — please try again.' });
+  }
+});
+app.patch('/api/admin/tomte-library/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.updateTomteImageLabel(req.params.id, (req.body.label || '').trim());
+  res.json({ ok: true });
+});
+app.delete('/api/admin/tomte-library/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteTomteImageFromLibrary(req.params.id);
+  res.json({ ok: true });
+});
+// Assigns an EXISTING library photo to a language+action, no upload
+// involved — this is what makes a photo able to just sit in the library
+// without being forced to be something the moment it's added.
+app.post('/api/admin/tomte-defaults/assign', auth.requireAuthApi(['admin']), (req, res) => {
+  const language = (req.body.language || '').trim();
+  const action = (req.body.action || 'default').trim();
+  const filename = (req.body.filename || '').trim();
+  if (!language) return res.status(400).json({ error: 'Choose a language.' });
+  if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
+  if (!filename) return res.status(400).json({ error: 'Choose an image from the library.' });
+  db.setTomteLanguageDefaultImage(language, action, filename);
+  res.json({ ok: true, url: tomteImageUrl(filename) });
+});
 // Every distinct Tomte photo already uploaded anywhere in the app — lets an
 // admin pick an existing one instead of always uploading a fresh file
 // (Per Bot 9).
@@ -2086,6 +2125,11 @@ app.post('/api/admin/tomte-defaults', auth.requireAuthApi(['admin']), upload.sin
   if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
   try {
     const stored = await uploadTomteImageToR2(req.file);
+    // Per Bot 31 — this quick "upload straight into a slot" path still
+    // exists, but the photo now also lands in the library like any other
+    // upload, rather than only ever being reachable through this one
+    // language+action pair.
+    db.addTomteImageToLibrary(uuidv4(), stored, null);
     db.setTomteLanguageDefaultImage(language, action, stored);
     res.json({ ok: true, url: tomteImageUrl(stored) });
   } catch (e) {

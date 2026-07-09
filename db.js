@@ -628,6 +628,25 @@ async function getDb() {
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Tomte image library (Per Bot 31) ──
+  // Previously, a Tomte photo only ever existed as a side-effect of being
+  // uploaded straight into a specific slot (a language+action pair, a
+  // facilitator's own override, a client's own override) — there was no
+  // way to have a photo just sit in a pool, unassigned, ready to be used
+  // later. getAllTomteImages() used to fake a "library" by scanning
+  // wherever a filename happened to already be in use, which is why
+  // every upload had to immediately BE something.
+  // This table is the real thing: upload adds a row here, nothing else.
+  // Assigning it to a language+action (tomte_language_defaults below) or
+  // a specific person is now a separate step that references this table
+  // rather than triggering a fresh upload every time.
+  db.run(`CREATE TABLE IF NOT EXISTS tomte_image_library (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL UNIQUE,
+    label TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Tomte language + action image defaults (Per Bot 8) ── One row per
   // (language, action) pair — e.g. Dutch+shrug, Dutch+smile — each with its
   // own image. 'default' is the plain neutral pose and also the fallback
@@ -1014,6 +1033,23 @@ async function getDb() {
   // above — invite_token doesn't exist until the migration above adds it.
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_invite_token ON users(invite_token)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_unsubscribe_token ON users(unsubscribe_token)`);
+
+  // ── Backfill: every Tomte photo already in use anywhere becomes a real
+  // library entry (Per Bot 31) ── Before this table existed, a photo only
+  // ever existed as a side-effect of being assigned somewhere — this
+  // retroactively gives every one of those a proper standalone row, so
+  // nothing already uploaded disappears from the new library view.
+  // INSERT OR IGNORE against the UNIQUE filename constraint makes each of
+  // these safe to run on every boot, not just the first one after this
+  // shipped — same pattern as the client_facilitators backfill below.
+  try {
+    db.run(`INSERT OR IGNORE INTO tomte_image_library (id, filename)
+      SELECT DISTINCT lower(hex(randomblob(16))), tomte_image_filename FROM users WHERE tomte_image_filename IS NOT NULL`);
+    db.run(`INSERT OR IGNORE INTO tomte_image_library (id, filename)
+      SELECT DISTINCT lower(hex(randomblob(16))), tomte_image_filename FROM facilitators WHERE tomte_image_filename IS NOT NULL`);
+    db.run(`INSERT OR IGNORE INTO tomte_image_library (id, filename)
+      SELECT DISTINCT lower(hex(randomblob(16))), image_filename FROM tomte_language_defaults WHERE image_filename IS NOT NULL`);
+  } catch(e) { /* ignore */ }
 
   // ── Backfill: existing notification-opted-in users get a default timezone ──
   // Timezone is now required for anyone receiving MOTD email/SMS (see
@@ -2936,8 +2972,34 @@ function getTomteLanguageDefaults() {
 // facilitators) and language-default photos — lets an admin pick an
 // existing image (e.g. reuse a photo already set for someone else) instead
 // of always having to upload a fresh file (Per Bot 9).
+// Tomte image library (Per Bot 31) — the actual pool of photos, each one
+// able to exist without being assigned to anything. filename is the R2
+// key (or legacy bare filename), same convention as everywhere else
+// Tomte images are stored.
+function getTomteImageLibrary() {
+  return queryAll('SELECT * FROM tomte_image_library ORDER BY created_at DESC');
+}
+function addTomteImageToLibrary(id, filename, label) {
+  getDbSync().run('INSERT OR IGNORE INTO tomte_image_library (id, filename, label) VALUES (?,?,?)', [id, filename, label || null]);
+  save();
+}
+function updateTomteImageLabel(id, label) {
+  getDbSync().run('UPDATE tomte_image_library SET label=? WHERE id=?', [label || null, id]);
+  save();
+}
+// Only removes the library entry itself — never touches any
+// language/action or per-person assignment that happens to reference the
+// same filename. Same "graceful, non-cascading" reasoning as deleting a
+// skin: an assignment pointing at a since-removed library entry just
+// keeps working off the filename it already has; it only loses the
+// ability to be re-picked from the library gallery going forward.
+function deleteTomteImageFromLibrary(id) {
+  getDbSync().run('DELETE FROM tomte_image_library WHERE id=?', [id]);
+  save();
+}
 function getAllTomteImages() {
   const rows = [
+    ...queryAll(`SELECT filename FROM tomte_image_library`),
     ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM users WHERE tomte_image_filename IS NOT NULL`),
     ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM facilitators WHERE tomte_image_filename IS NOT NULL`),
     ...queryAll(`SELECT DISTINCT image_filename AS filename FROM tomte_language_defaults WHERE image_filename IS NOT NULL`),
@@ -3534,6 +3596,7 @@ module.exports = {
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
+  getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
   // Reminders
   getInactiveUsers,
   markReminderSent,

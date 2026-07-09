@@ -192,6 +192,31 @@
     </div>
 
 
+    <!-- Tomte image library (Per Bot 31) — the actual pool: a photo can
+         just sit here without being assigned to anything. Language +
+         expression assignment (card below) picks from this instead of
+         always requiring a fresh upload. -->
+    <div>
+      <div class="section-label">Tomte image library</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Photos</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Upload as many photos as you like — nothing here needs to be assigned to a language or expression yet. Give one a label to make it easier to find later, then assign it below whenever you're ready.
+          </div>
+          <div id="tomteLibraryGrid" style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+          <div id="tlDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag an image here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Just adds it to the library — assign it to something whenever you like</div>
+          </div>
+          <input type="file" id="tlFileInput" accept="image/*" style="display:none"/>
+          <div class="msg" id="tlMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tomte language + action image defaults (Per Bot 8) -->
     <div>
       <div class="section-label">Tomte defaults</div>
@@ -217,9 +242,13 @@
             </div>
           </div>
 
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px">Pick from the library</div>
+          <div id="tdLibraryPicker" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;"></div>
+
+          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin:2px 0 6px">— or upload a new photo straight into this slot —</div>
           <div id="tdDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
             <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag an image here, or click to browse</div>
-            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Uploads for the language + expression selected above</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Uploads for the language + expression selected above, and adds it to the library too</div>
           </div>
           <input type="file" id="tdFileInput" accept="image/*" style="display:none"/>
           <div class="msg" id="tdMsg" style="margin-top:8px"></div>
@@ -843,6 +872,87 @@
       msg.style.color = 'rgba(255,140,120,0.85)';
     }
   }
+
+  // ── Tomte image library (Per Bot 31) ──
+  let _tomteLibrary = [];
+  async function loadTomteLibrary() {
+    try {
+      const res = await fetch('/api/admin/tomte-library');
+      _tomteLibrary = await res.json();
+      if (!Array.isArray(_tomteLibrary)) _tomteLibrary = [];
+    } catch(e) { _tomteLibrary = []; }
+    renderTomteLibraryGrid();
+    renderTdLibraryPicker();
+  }
+  function renderTomteLibraryGrid() {
+    const el = document.getElementById('tomteLibraryGrid');
+    if (!_tomteLibrary.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No photos yet — add one below.</div>'; return; }
+    el.innerHTML = _tomteLibrary.map(img => `
+      <div style="width:110px; display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <img src="${img.url}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+        <input type="text" value="${(img.label || '').replace(/"/g,'&quot;')}" placeholder="Label (optional)" onchange="updateTomteLibraryLabel('${img.id}', this.value)" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:5px 6px; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:11px; text-align:center;"/>
+        <button class="btn sm danger" style="font-size:10.5px; padding:4px 8px" onclick="deleteTomteLibraryImage('${img.id}')">Remove</button>
+      </div>
+    `).join('');
+  }
+  // The picker inside the language+expression card — same photos, click
+  // to assign directly (no upload involved).
+  function renderTdLibraryPicker() {
+    const el = document.getElementById('tdLibraryPicker');
+    if (!el) return;
+    if (!_tomteLibrary.length) { el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3);font-style:italic">Nothing in the library yet.</div>'; return; }
+    el.innerHTML = _tomteLibrary.map(img => `
+      <img src="${img.url}" title="${(img.label || '').replace(/"/g,'&quot;')}" onclick="assignTomteLibraryImage('${img.filename.replace(/'/g,"\\'")}')"
+        style="width:40px;height:40px;border-radius:50%;object-fit:cover;object-position:50% 15%;cursor:pointer;border:2px solid rgba(255,255,255,0.12)"/>
+    `).join('');
+  }
+  async function assignTomteLibraryImage(filename) {
+    const msg = document.getElementById('tdMsg');
+    const language = document.getElementById('tdNewLanguage').value;
+    const action = document.getElementById('tdNewAction').value;
+    try {
+      const res = await fetch('/api/admin/tomte-defaults/assign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language, action, filename }),
+      });
+      const data = await res.json();
+      if (data.ok) { msg.textContent = 'Saved.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTomteDefaults(); }
+      else { msg.textContent = data.error || 'Could not assign.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+    } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+  }
+  async function uploadTomteLibraryImage(file) {
+    const msg = document.getElementById('tlMsg');
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.4)';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/tomte-library', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) { msg.textContent = 'Added.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTomteLibrary(); }
+      else { msg.textContent = data.error || 'Could not upload.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+    } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+  }
+  async function updateTomteLibraryLabel(id, label) {
+    await fetch(`/api/admin/tomte-library/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) });
+  }
+  async function deleteTomteLibraryImage(id) {
+    if (!(await appConfirm('Remove this photo from the library? Anywhere it\'s already assigned keeps working — this just removes it from the library gallery.'))) return;
+    await fetch(`/api/admin/tomte-library/${id}`, { method: 'DELETE' });
+    loadTomteLibrary();
+  }
+  const tlDropZone = document.getElementById('tlDropZone');
+  const tlFileInput = document.getElementById('tlFileInput');
+  tlDropZone.addEventListener('click', () => tlFileInput.click());
+  tlFileInput.addEventListener('change', () => { if (tlFileInput.files[0]) uploadTomteLibraryImage(tlFileInput.files[0]); tlFileInput.value = ''; });
+  tlDropZone.addEventListener('dragover', e => { e.preventDefault(); tlDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; tlDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  tlDropZone.addEventListener('dragleave', () => { tlDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tlDropZone.style.background = 'none'; });
+  tlDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    tlDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tlDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+    if (file) uploadTomteLibraryImage(file);
+  });
+  loadTomteLibrary();
 
   const tdDropZone = document.getElementById('tdDropZone');
   const tdFileInput = document.getElementById('tdFileInput');
