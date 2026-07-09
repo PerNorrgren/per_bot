@@ -379,6 +379,12 @@
           </label>
         </div>
       </div>
+      <!-- Per Bot 32 — pick from whatever's already in the shared Tomte
+           library, as an alternative to uploading your own. -->
+      <div id="tomteLibraryPickerWrap" style="display:none; margin-bottom:14px;">
+        <div style="font-size:11px; letter-spacing:0.08em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:8px;">Or choose one</div>
+        <div id="tomteLibraryPicker" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+      </div>
       <div class="field">
         <label>Name</label>
         <input type="text" id="tomteNameInput" placeholder="Tomte" maxlength="30"/>
@@ -650,6 +656,46 @@
       document.getElementById('tomteNameInput').value = data.name || '';
       if (data.imageUrl) document.getElementById('tomteImgPreview').src = data.imageUrl;
     } catch(e) { /* leave defaults showing */ }
+    loadTomteLibraryPicker();
+  }
+  // Per Bot 32 — the shared library, offered as an alternative to
+  // uploading a fresh photo. Loaded once, lazily, same idea as the
+  // language/voice lookups elsewhere on this page — no point fetching it
+  // before the person has even opened this card.
+  let _tomteLibraryLoaded = false;
+  async function loadTomteLibraryPicker() {
+    if (_tomteLibraryLoaded) return;
+    _tomteLibraryLoaded = true;
+    try {
+      const res = await fetch('/api/my/tomte-library');
+      const images = await res.json();
+      const wrap = document.getElementById('tomteLibraryPickerWrap');
+      const el = document.getElementById('tomteLibraryPicker');
+      if (!Array.isArray(images) || !images.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = '';
+      el.innerHTML = images.map(img => `
+        <img src="${img.url}" title="${(img.label || '').replace(/"/g,'&quot;')}" onclick="selectTomteLibraryImage('${img.filename.replace(/'/g,"\\'")}')"
+          style="width:44px;height:44px;border-radius:50%;object-fit:cover;object-position:50% 15%;cursor:pointer;border:2px solid rgba(255,255,255,0.12)"/>
+      `).join('');
+    } catch(e) { /* picker just won't show — upload/take photo still work fine */ }
+  }
+  async function selectTomteLibraryImage(filename) {
+    const msg = document.getElementById('tomteMsg');
+    try {
+      const res = await fetch('/api/my/tomte-image/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename }) });
+      const data = await res.json();
+      if (data.url) {
+        document.getElementById('tomteImgPreview').src = data.url;
+        msg.textContent = 'Photo updated.';
+        msg.style.color = 'rgba(180,230,200,0.85)';
+      } else {
+        msg.textContent = data.error || 'Could not update — please try again.';
+        msg.style.color = 'rgba(255,140,120,0.85)';
+      }
+    } catch(e) {
+      msg.textContent = 'Could not update — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    }
   }
   async function saveTomteName() {
     const msg = document.getElementById('tomteMsg');

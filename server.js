@@ -2274,6 +2274,21 @@ app.post('/api/my/tomte-image', auth.requireAuthApi(), upload.single('file'), as
     res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
   }
 });
+// Per Bot 32 — lets anyone pick from whatever Per has already added to
+// the Tomte library, not just upload their own. Read-only, so no reason
+// to gate it to admin the way the library management endpoints are.
+app.get('/api/my/tomte-library', auth.requireAuthApi(), (req, res) => {
+  res.json(db.getTomteImageLibrary().map(r => ({ id: r.id, filename: r.filename, label: r.label, url: tomteImageUrl(r.filename) })));
+});
+app.post('/api/my/tomte-image/select', auth.requireAuthApi(), (req, res) => {
+  const filename = (req.body.filename || '').trim();
+  if (!filename) return res.status(400).json({ error: 'Choose a photo.' });
+  // Confirms it's a real library entry rather than trusting an arbitrary
+  // filename straight from the request body.
+  if (!db.getTomteImageLibrary().some(r => r.filename === filename)) return res.status(400).json({ error: 'That photo is no longer available.' });
+  db.setTomteImage(req.user.role, req.user.id, filename);
+  res.json({ ok: true, url: tomteImageUrl(filename) });
+});
 
 // ── 1:1 video/audio calls (Per Bot 12) ──
 // Signaling itself lives on the WebSocket router near the bottom of this
