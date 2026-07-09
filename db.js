@@ -966,6 +966,15 @@ async function getDb() {
     // as logo_url.
     "ALTER TABLE app_config ADD COLUMN app_name TEXT",
     "ALTER TABLE app_config ADD COLUMN favicon_url TEXT",
+    // Per Bot 24 — calm landing redesign. use_calm_landing is the
+    // explicit rollback switch: flip to 0 and every client instantly
+    // gets the original direct-into-Talk-chat landing back, no redeploy
+    // needed. talk_persona_* rename "Talk" to a real person (Per, by
+    // default) in the facilitator list, with their own photo — Talk
+    // itself doesn't change internally, this is presentation only.
+    "ALTER TABLE app_config ADD COLUMN use_calm_landing INTEGER DEFAULT 1",
+    "ALTER TABLE app_config ADD COLUMN talk_persona_name TEXT",
+    "ALTER TABLE app_config ADD COLUMN talk_persona_photo_url TEXT",
     // Audio-only calling (Per Bot 14) — the calls table already existed in
     // production before this, so the CREATE TABLE IF NOT EXISTS above
     // (which already lists call_type) won't retrofit it there; this does.
@@ -3133,7 +3142,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

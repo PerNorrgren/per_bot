@@ -552,14 +552,30 @@
 
     <!-- Talk -->
     <div class="talk-view" id="talkView">
-      <!-- Facilitator strip (Per Bot 15) — Talk is always first and is the
-           default selection (preserves exactly today's landing experience
-           for anyone with no real facilitator); a second pill appears per
-           assigned facilitator. Hidden entirely when there's only Talk —
-           no point cluttering the screen with a single unclickable pill. -->
-      <div id="facStrip" style="display:none; gap:8px; padding:10px 16px 0; overflow-x:auto"></div>
+      <!-- Calm landing (Per Bot 24) — the new default first screen: a
+           quiet entry point instead of dropping straight into a live
+           conversation. Message-of-the-day doubles as the greeting text
+           (no separate generic line), background is the slow-moving
+           nature slideshow already used elsewhere. Hidden entirely if
+           useCalmLanding is off (App Setup) or once a real conversation
+           has actually started this session (_talkEngaged) — from then
+           on, talkChatContent takes over exactly as before. -->
+      <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
+        <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
+        <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px;">—</div>
+        <button type="button" id="calmMainBtn" onclick="startCalmMoment('2 minutes of calm')" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:15px; line-height:1.5; cursor:pointer;">2 minutes<br/>of calm</button>
+        <div style="width:100%; max-width:420px;">
+          <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px;">For a busy mind</div>
+          <div style="display:flex; gap:8px;">
+            <button type="button" onclick="startCalmMoment('Help me settle my body — I feel keyed up and restless.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer;">Settle the body</button>
+            <button type="button" onclick="startCalmMoment('My mind keeps looping on the same thoughts — help me quiet it.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer;">Quiet the loop</button>
+            <button type="button" onclick="startCalmMoment('I don\'t need to talk — just walk me through a few breaths.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer;">Just breathe</button>
+          </div>
+        </div>
+        <button type="button" onclick="switchTab('library'); switchLibrarySub('meditations')" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Calming sounds</button>
+      </div>
 
-      <div id="talkChatContent" style="display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
+      <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
         <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
         <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
           <div class="resume-card-label">Continue</div>
@@ -840,11 +856,17 @@
       </div>
     </div>
 
+    <!-- Per Bot 24: the facilitator/Per picker, previously a persistent
+         top ribbon (Per Bot 15), now a compact dropdown anchored to the
+         bottom nav instead — same choice, just out of the way until
+         someone actually wants to switch who they're with. Timer lives
+         here too now rather than its own bottom-nav slot. -->
+    <div id="facMenuDropdown" style="display:none; position:absolute; left:12px; right:12px; bottom:78px; background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.4); z-index:60; overflow:hidden; max-height:60vh; overflow-y:auto;"></div>
+
     <div class="bottom-nav">
-      <button class="bnav-btn active" id="navTalk"     onclick="switchTab('talk')"><span class="bnav-icon">🗣️</span>Talk</button>
+      <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">💬</span><span id="navTalkLabel">Per</span></button>
       <button class="bnav-btn"        id="navLibrary"  onclick="switchTab('library')"><span class="bnav-icon">📚</span>Library</button>
       <button class="bnav-btn"        id="navCourses"  onclick="switchTab('courses')"><span class="bnav-icon">🎓</span>Courses</button>
-      <button class="bnav-btn"        id="navTimer"    onclick="switchTab('timer')"><span class="bnav-icon">⏱️</span>Timer</button>
       <button class="bnav-btn"        id="navYou"      onclick="switchTab('you')"><span class="bnav-icon">🧘</span>You</button>
     </div>
 
@@ -978,14 +1000,16 @@
   // ── Slideshow ── (Per Bot 20: skin-aware — see brand-inject.js. A
   // logged-in client's own skin is resolved server-side via /api/config,
   // so this just waits for that instead of needing its own skin lookup.)
+  // Per Bot 24: swapped for a calmer, more specific set — looking up
+  // through tree canopy to open sky, and still water — replacing the
+  // previous more generic/dramatic nature stock set, and slowed the pace
+  // (9s → 16s) to read as still rather than busy.
   const defaultSlides = [
-    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
-    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
-    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
-    'https://images.unsplash.com/photo-1448375240586-882707db888b?w=1600&q=80',
-    'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=1600&q=80',
-    'https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=1600&q=80',
-    'https://images.unsplash.com/photo-1465146344425-f00d5f5c8f07?w=1600&q=80',
+    'https://images.unsplash.com/photo-1764208637252-4cb59a64a674?w=1600&q=80',
+    'https://images.unsplash.com/photo-1758614030740-5a21a50b2654?w=1600&q=80',
+    'https://images.unsplash.com/photo-1753025767553-fafaf0d9043c?w=1600&q=80',
+    'https://images.unsplash.com/photo-1776740973657-df8c24ccf6ed?w=1600&q=80',
+    'https://images.unsplash.com/photo-1721404828471-7f8d8c0a6d6c?w=1600&q=80',
   ];
   window.brandReady.then(() => {
     const slides = (window.__skinBackgroundImages && window.__skinBackgroundImages.length) ? window.__skinBackgroundImages : defaultSlides;
@@ -1001,7 +1025,7 @@
       slideEls[cur].classList.remove('active');
       cur = (cur + 1) % slideEls.length;
       slideEls[cur].classList.add('active');
-    }, 9000);
+    }, 16000);
   });
 
   // ── Tabs ──
@@ -1030,7 +1054,10 @@
       const tts = document.getElementById('ttsPlayer');
       if (tts) tts.pause();
     }
-    ['talk','library','courses','timer','you'].forEach(t => {
+    // Per Bot 24: 'timer' is still a valid tab (reached via the Per/
+    // facilitators menu now, not its own bottom-nav button), so this only
+    // updates the nav buttons that still exist — navTimer was removed.
+    ['talk','library','courses','you'].forEach(t => {
       document.getElementById('nav' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
     });
     document.getElementById('talkView').style.display   = tab === 'talk' ? '' : 'none';
@@ -1675,6 +1702,13 @@
   let isSpeaking = false;
   let busy       = false;
   let lastBotReply = '';
+  // Per Bot 24 — calm landing state. _useCalmLanding is read once from
+  // config (App Setup toggle); _talkEngaged flips true the moment someone
+  // actually starts talking this session, and stays true for the rest of
+  // it — no point showing the calm landing again mid-conversation if they
+  // switch to another tab and back.
+  let _useCalmLanding = true;
+  let _talkEngaged = false;
   let micActive  = false;
   let currentAudio = null;
   let mediaStream  = null;
@@ -3120,41 +3154,114 @@
     `).join('');
   }
 
-  // ── Facilitator strip (Per Bot 15) ──
-  // Talk is always first and synthetic — never a real row anywhere, just
-  // always present, and the default selection (so anyone with no real
-  // facilitator sees exactly today's Talk experience, unchanged). Selecting
-  // a real facilitator swaps in the Arc + Messages + Video sessions pane
-  // that used to live under You — moved here, not duplicated, so a client
-  // reaches them by choosing who they're about, same as the facilitator
-  // app choosing a client.
-  let _facList = [{ id: 'talk', name: 'Talk', isTalk: true }];
+  // ── Facilitator/Per menu (Per Bot 15, redesigned Per Bot 24) ──
+  // "Per" (or whatever name/photo is configured — see talk_persona_name/
+  // talk_persona_photo_url in App Setup) is always first and synthetic —
+  // never a real facilitators row, just always present, and the default
+  // selection so anyone with no real facilitator sees exactly the usual
+  // Talk experience, unchanged. Timer lives in this same list now rather
+  // than its own bottom-nav slot — this whole menu replaced the old
+  // persistent top ribbon with a compact dropdown off the bottom nav,
+  // so the main screen stays clear until someone actually wants to
+  // switch who they're with.
+  let _facList = [{ id: 'talk', name: 'Per', isTalk: true, photoUrl: '/assets/tomte.png' }];
   let _activeFacilitatorId = 'talk';
+  let _facMenuOpen = false;
 
+  // Per Bot 24 — populates the calm landing's greeting (today's message
+  // of the day doubles as the greeting text, per design) and "Welcome
+  // {name}" line. Reuses the same /api/motd/archive the poems archive
+  // already calls — the newest entry is today's.
+  async function loadCalmLandingContent() {
+    try {
+      const account = await getFullAccount();
+      const firstName = (account.name || '').split(' ')[0];
+      document.getElementById('calmWelcome').textContent = firstName ? `Welcome, ${firstName}` : '';
+    } catch(e) {}
+    try {
+      const res = await fetch('/api/motd/archive');
+      const list = await res.json();
+      if (Array.isArray(list) && list.length) document.getElementById('calmMotdText').textContent = list[0].body;
+    } catch(e) {}
+  }
+  async function startCalmMoment(prompt) {
+    _talkEngaged = true;
+    document.getElementById('calmLanding').style.display = 'none';
+    document.getElementById('talkChatContent').style.display = '';
+    unlockAudioPlayback();
+    setState('processing');
+    await startListening();
+    await sendToBot(prompt);
+  }
   async function initFacStrip() {
+    try {
+      const cfg = await window.brandReady;
+      _facList[0].name = cfg.talkPersonaName || 'Per';
+      _facList[0].photoUrl = cfg.talkPersonaPhotoUrl || '/assets/tomte.png';
+      _useCalmLanding = cfg.useCalmLanding !== false;
+    } catch(e) {}
+    // The old #start "tap when you're ready" screen exists purely to
+    // capture a user gesture for the browser's audio-autoplay policy —
+    // with the calm landing on, its own buttons (2 minutes of calm, the
+    // three busy-mind tiles) ARE that gesture, so showing #start first
+    // would just be a redundant second tap-through. Skipped entirely
+    // here; startCalmMoment() below does the same unlockAudioPlayback()
+    // call begin() used to, just triggered by the calm landing's own
+    // first tap instead. With the toggle off, #start is untouched — the
+    // full v1 fallback, exactly as it always worked.
+    if (_useCalmLanding) {
+      document.getElementById('start').style.display = 'none';
+      loadCalmLandingContent();
+    }
     try {
       const res = await fetch('/api/client/facilitators');
       const list = await res.json();
-      if (Array.isArray(list) && list.length) _facList = list;
-    } catch(e) { /* keep the Talk-only default */ }
-    renderFacStrip();
+      if (Array.isArray(list) && list.length) {
+        const talkEntry = _facList[0];
+        _facList = [talkEntry, ...list.filter(f => !f.isTalk)];
+      }
+    } catch(e) { /* keep the Per-only default */ }
+    document.getElementById('navTalkLabel').textContent = _facList[0].name;
+    renderFacMenu();
     selectFacilitator('talk');
   }
-  function renderFacStrip() {
-    const el = document.getElementById('facStrip');
-    el.style.display = _facList.length > 1 ? 'flex' : 'none';
-    el.innerHTML = _facList.map(f => `
-      <button onclick="selectFacilitator('${f.id}')" style="flex-shrink:0; padding:8px 15px; border-radius:20px; border:1px solid rgba(255,255,255,0.15); background:${f.id === _activeFacilitatorId ? 'rgba(180,230,200,0.15)' : 'none'}; color:${f.id === _activeFacilitatorId ? 'rgba(190,235,210,0.95)' : 'rgba(255,255,255,0.6)'}; font-family:Georgia,serif; font-size:12.5px; cursor:pointer; white-space:nowrap; margin-bottom:10px">
-        ${f.isTalk ? '💬' : '🧑'} ${f.name}
+  function toggleFacMenu() {
+    _facMenuOpen = !_facMenuOpen;
+    document.getElementById('facMenuDropdown').style.display = _facMenuOpen ? 'block' : 'none';
+    if (_facMenuOpen) switchTab('talk'); // opening the menu also brings you to this area, same as tapping the old Talk tab did
+  }
+  function closeFacMenu() {
+    _facMenuOpen = false;
+    document.getElementById('facMenuDropdown').style.display = 'none';
+  }
+  function renderFacMenu() {
+    const el = document.getElementById('facMenuDropdown');
+    const rows = _facList.map(f => `
+      <button onclick="chooseFacMenuEntry('${f.id}')" style="display:flex; align-items:center; gap:12px; width:100%; padding:13px 16px; background:${f.id === _activeFacilitatorId ? 'rgba(180,230,200,0.1)' : 'none'}; border:none; border-bottom:1px solid rgba(255,255,255,0.06); color:${f.id === _activeFacilitatorId ? 'rgba(190,235,210,0.95)' : 'rgba(255,255,255,0.75)'}; font-family:Georgia,serif; font-size:14px; text-align:left; cursor:pointer">
+        ${f.isTalk ? `<img src="${f.photoUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0"/>` : '<span style="width:28px;text-align:center;flex-shrink:0">🧑</span>'}
+        ${f.name}
       </button>
     `).join('');
+    const timerRow = `
+      <button onclick="chooseFacMenuEntry('timer')" style="display:flex; align-items:center; gap:12px; width:100%; padding:13px 16px; background:none; border:none; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:14px; text-align:left; cursor:pointer">
+        <span style="width:28px;text-align:center;flex-shrink:0">⏱️</span> Timer
+      </button>`;
+    el.innerHTML = rows + timerRow;
+  }
+  function chooseFacMenuEntry(id) {
+    closeFacMenu();
+    if (id === 'timer') { switchTab('timer'); return; }
+    switchTab('talk');
+    selectFacilitator(id);
   }
   async function selectFacilitator(id) {
     _activeFacilitatorId = id;
-    renderFacStrip();
+    renderFacMenu();
     const entry = _facList.find(f => f.id === id);
     const isTalk = !entry || entry.isTalk;
-    document.getElementById('talkChatContent').style.display = isTalk ? '' : 'none';
+    document.getElementById('navTalkLabel').textContent = entry ? entry.name : 'Per';
+    document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? '' : 'none';
+    document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? '' : 'none';
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
     if (isTalk) return;
 

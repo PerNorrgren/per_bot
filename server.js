@@ -2000,6 +2000,23 @@ app.post('/api/admin/favicon', auth.requireAuthApi(['admin']), upload.single('fi
     res.status(500).json({ error: 'Could not upload favicon right now — please try again.' });
   }
 });
+// Per Bot 24 — Talk's persona photo (Per, by default). Stores the raw R2
+// key, not a pre-resolved path — same convention as the skins assets
+// below, resolved through faviconUrl() only at read time (unlike the
+// plain favicon endpoint just above, which is an older, different
+// convention — applying faviconUrl() twice on an already-resolved path
+// would double up the leading slash).
+app.post('/api/admin/talk-persona-photo', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadFaviconToR2(req.file);
+    db.updateAppConfig({ talk_persona_photo_url: stored });
+    res.json({ ok: true, url: faviconUrl(stored) });
+  } catch (e) {
+    console.error('talk persona photo upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
+});
 // Single stable URL every page's <link rel="icon"> can point to — resolves
 // to whatever's actually configured right now (a 302, not a static file),
 // so an admin's favicon change takes effect on next load everywhere
@@ -5102,7 +5119,7 @@ app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
 
 app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName } = req.body;
+    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName, useCalmLanding, talkPersonaName } = req.body;
     if (!brandName || !brandName.trim()) return res.status(400).json({ error: 'Organisation name is required.' });
     if (!legalEntityName || !legalEntityName.trim()) return res.status(400).json({ error: 'Legal entity name is required — it appears in your Privacy Policy and Terms.' });
     if (!contactEmail || !contactEmail.includes('@')) return res.status(400).json({ error: 'A valid contact email is required.' });
@@ -5117,6 +5134,8 @@ app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       legal_jurisdiction: (legalJurisdiction || '').trim() || 'United Kingdom',
       payments_enabled: paymentsEnabled ? 1 : 0,
       app_name: (appName || '').trim() || null,
+      use_calm_landing: useCalmLanding === undefined ? 1 : (useCalmLanding ? 1 : 0),
+      talk_persona_name: (talkPersonaName || '').trim() || null,
       setup_completed: 1,
     });
 
@@ -5191,6 +5210,9 @@ app.get('/api/config', (req, res) => {
       backgroundImages: (skin && skin.background_images.length) ? skin.background_images : undefined,
       skinContactName: (skin && skin.contact_name) || undefined,
       skinContactEmail: (skin && skin.contact_email) || undefined,
+      useCalmLanding: cfg.use_calm_landing === null || cfg.use_calm_landing === undefined ? true : !!cfg.use_calm_landing,
+      talkPersonaName: cfg.talk_persona_name || 'Per',
+      talkPersonaPhotoUrl: faviconUrl(cfg.talk_persona_photo_url) || '/assets/tomte.png',
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

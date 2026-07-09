@@ -158,6 +158,34 @@
   </div>
 
   <div class="card">
+    <div class="card-header"><div class="card-title">Talk & landing experience</div></div>
+    <div class="card-body">
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
+          <input type="checkbox" id="useCalmLanding" checked/>
+          Use the calm landing screen (recommended)
+        </label>
+        <div class="field-note">A quiet first screen — today's message, a 2-minute-calm option, a few practices for a busy mind — instead of dropping straight into a live conversation. Turn this off to instantly revert to the original direct-into-Talk landing, no redeploy needed.</div>
+      </div>
+      <div class="field">
+        <label>What Talk is called</label>
+        <input type="text" id="talkPersonaName" placeholder="Per"/>
+        <div class="field-note">Shown in place of "Talk" wherever a client picks who they're with — e.g. their own facilitator's name, alongside yours.</div>
+      </div>
+      <div class="field">
+        <label>Photo</label>
+        <div style="display:flex; align-items:center; gap:12px">
+          <img id="talkPersonaPhotoPreview" src="/assets/tomte.png" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15)"/>
+          <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block">
+            Upload image
+            <input type="file" id="talkPersonaPhotoInput" accept="image/*" style="display:none" onchange="uploadTalkPersonaPhoto()"/>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-header"><div class="card-title">Skins</div></div>
     <div class="card-body">
       <div class="field-note" style="margin-bottom:16px">A lighter-weight brand layer for a specific group within this same deployment — e.g. a university cohort with their own login page, logo, and colour, while everything else (accounts, content, features) stays exactly the same app. Someone who registers through a skin's login link keeps that look everywhere in the app from then on. This is branding only — it doesn't change which content or courses anyone can see.</div>
@@ -278,6 +306,9 @@
       if (cfg.tagline)            document.getElementById('tagline').value = cfg.tagline;
       if (cfg.app_name)           document.getElementById('appName').value = cfg.app_name;
       if (cfg.favicon_url)        document.getElementById('faviconPreview').src = cfg.favicon_url;
+      document.getElementById('useCalmLanding').checked = cfg.use_calm_landing === null || cfg.use_calm_landing === undefined ? true : !!cfg.use_calm_landing;
+      document.getElementById('talkPersonaName').value = cfg.talk_persona_name || '';
+      if (cfg.talk_persona_photo_url) document.getElementById('talkPersonaPhotoPreview').src = assetUrl(cfg.talk_persona_photo_url);
       if (cfg.primary_color)      { document.getElementById('primaryColor').value = cfg.primary_color; document.getElementById('primaryColorHex').value = cfg.primary_color; }
       if (cfg.currency)           document.getElementById('currency').value = cfg.currency;
       if (cfg.legal_entity_name && cfg.legal_entity_name !== 'Per Norrgren trading as Deeper Mindfulness') document.getElementById('legalEntityName').value = cfg.legal_entity_name;
@@ -313,6 +344,21 @@
     }
   }
 
+  async function uploadTalkPersonaPhoto() {
+    const input = document.getElementById('talkPersonaPhotoInput');
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/talk-persona-photo', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) document.getElementById('talkPersonaPhotoPreview').src = data.url;
+    } catch(e) { /* preview just won't update — no separate error UI for this small one */ }
+    finally { input.value = ''; }
+  }
+
+
   async function submitSetup() {
     const err = document.getElementById('setupErr');
     const btn = document.getElementById('setupBtn');
@@ -326,6 +372,8 @@
       legalJurisdiction: document.getElementById('legalJurisdiction').value.trim(),
       contactEmail: document.getElementById('contactEmail').value.trim(),
       paymentsEnabled: document.getElementById('paymentsEnabled').checked,
+      useCalmLanding: document.getElementById('useCalmLanding').checked,
+      talkPersonaName: document.getElementById('talkPersonaName').value.trim(),
     };
     if (!body.brandName) { err.textContent = 'Organisation name is required.'; return; }
     if (!body.legalEntityName) { err.textContent = 'Legal entity name is required.'; return; }
