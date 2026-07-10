@@ -9,6 +9,7 @@ const path       = require('path');
 const fs         = require('fs');
 const multer     = require('multer');
 const { parse: csvParse } = require('csv-parse/sync');
+const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
 const fetch      = require('node-fetch');
 const cookieParser = require('cookie-parser');
@@ -996,6 +997,7 @@ app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'pub
 app.get('/brand-inject.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'brand-inject.js')));
 app.get('/tomte-widget.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')));
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
+app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'bulk-import-sample.xlsx')));
 // Per Bot 17 fix: these two were missing entirely. This app has no
 // express.static() mount by design (see comment above) — every file
 // genuinely needs its own explicit route, and dialogs.js/call.js never
@@ -1395,11 +1397,27 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
 
     let rows;
     try {
-      const content = fs.readFileSync(req.file.path, 'utf8');
-      rows = csvParse(content, { columns: true, skip_empty_lines: true, trim: true });
+      const origName = (req.file.originalname || '').toLowerCase();
+      const isExcel = origName.endsWith('.xlsx') || origName.endsWith('.xls');
+      if (isExcel) {
+        // Per Bot 33p — most people doing a bulk import have their contacts
+        // in Excel, not CSV, and were previously stuck manually
+        // re-saving-as-CSV first (or just gave up). SheetJS reads the first
+        // sheet and converts it to the exact same {columns:true}-shaped
+        // array csv-parse produces, so everything below this point (column
+        // matching, row processing) doesn't need to know or care which
+        // format the file actually was.
+        const wb = XLSX.readFile(req.file.path);
+        const firstSheet = wb.SheetNames[0];
+        if (!firstSheet) throw new Error('That spreadsheet has no sheets.');
+        rows = XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { defval: '', raw: false });
+      } else {
+        const content = fs.readFileSync(req.file.path, 'utf8');
+        rows = csvParse(content, { columns: true, skip_empty_lines: true, trim: true });
+      }
     } catch (e) {
       fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: 'Could not read that as a CSV file: ' + e.message });
+      return res.status(400).json({ error: 'Could not read that file: ' + e.message });
     }
 
     // Matches header variants like "Full Name", "email_address", "Subscriber"

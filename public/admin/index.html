@@ -628,11 +628,12 @@
   <div class="modal-overlay" id="bulkImportModal">
     <div class="modal" id="bulkImportForm">
       <h3>Bulk import members</h3>
-      <div class="modal-note" style="margin-bottom:14px">Upload a CSV with name and email columns (most common header names are recognised automatically). Everyone in the file is added at the same level below.</div>
+      <div class="modal-note" style="margin-bottom:14px">Upload a CSV or Excel file with name and email columns (most common header names are recognised automatically). Everyone in the file is added at the same level below.</div>
 
       <div>
-        <label>CSV file</label>
-        <input type="file" id="bulkFile" accept=".csv"/>
+        <label>File</label>
+        <input type="file" id="bulkFile" accept=".csv,.xlsx,.xls"/>
+        <div class="modal-note" style="margin-top:6px"><a href="/assets/bulk-import-sample.xlsx" style="color:rgba(180,230,200,0.75)">Download a sample spreadsheet</a> to see the expected columns — fill it in and upload it straight back, or use it as a template for your own file (CSV or Excel, either works).</div>
       </div>
 
       <div style="margin-top:14px">
