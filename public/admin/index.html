@@ -269,7 +269,7 @@
         <div class="card-header">
           <div class="card-title">Members</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn sm" onclick="openModal('newMemberModal')">Add Member</button>
+            <button class="btn sm" onclick="openNewMemberModal()">Add Member</button>
             <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
             <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
@@ -616,6 +616,10 @@
       <h3>Add member</h3>
       <div><label>Full name</label><input type="text" id="memberName" placeholder="e.g. Anna Lindqvist"/></div>
       <div><label>Email address</label><input type="email" id="memberEmail" placeholder="anna@example.com"/></div>
+      <div><label>Skin</label>
+        <select id="memberSkin"><option value="">No skin — standard branding</option></select>
+        <div class="modal-note" style="margin-top:6px">If set, their welcome email links straight to that skin's own login page instead of the standard one.</div>
+      </div>
       <div class="modal-err" id="memberErr"></div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('newMemberModal')">Cancel</button>
@@ -653,6 +657,12 @@
         <label>Free weeks before it expires</label>
         <input type="number" id="bulkTrialWeeks" value="2" min="0" step="1"/>
         <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry (an admin-granted membership, not a trial). Otherwise it behaves exactly like a normal trial and quietly reverts to Explorer if it lapses with no active subscription.</div>
+      </div>
+
+      <div style="margin-top:14px" id="bulkSkinField">
+        <label>Skin</label>
+        <select id="bulkSkin"><option value="">No skin — standard branding</option></select>
+        <div class="modal-note" style="margin-top:6px">Applies to everyone in this file — their welcome emails link straight to that skin's own login page.</div>
       </div>
 
       <div style="margin-top:16px" class="bulk-check-row" id="bulkWelcomeRow">
@@ -1306,22 +1316,43 @@
   async function createMember() {
     const name  = document.getElementById('memberName').value.trim();
     const email = document.getElementById('memberEmail').value.trim();
+    const skinId = document.getElementById('memberSkin').value;
     const err   = document.getElementById('memberErr');
     if (!name)  { err.textContent = 'Name required.'; return; }
     if (!email) { err.textContent = 'Email required.'; return; }
-    const res  = await fetch('/api/admin/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email})});
+    const res  = await fetch('/api/admin/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,skinId})});
     const data = await res.json();
     if (data.error) { err.textContent = data.error; return; }
     closeModal('newMemberModal');
     document.getElementById('memberName').value = '';
     document.getElementById('memberEmail').value = '';
+    document.getElementById('memberSkin').value = '';
     err.textContent = '';
     document.getElementById('memberTempPassValue').textContent = data.tempPassword || '';
     openModal('memberCreatedModal');
   }
 
   // ── Bulk member import ──
-  function openBulkImportModal() {
+  // ── Skin selector, shared by Add Member and Bulk Import (Per Bot 33r) ──
+  let _skinsForMemberForms = null;
+  async function populateSkinSelect(selectId) {
+    if (!_skinsForMemberForms) {
+      try { _skinsForMemberForms = await (await fetch('/api/admin/skins')).json(); }
+      catch(e) { _skinsForMemberForms = []; }
+    }
+    const el = document.getElementById(selectId);
+    if (!el) return;
+    el.innerHTML = '<option value="">No skin — standard branding</option>'
+      + _skinsForMemberForms.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  }
+
+  async function openNewMemberModal() {
+    document.getElementById('memberErr').textContent = '';
+    await populateSkinSelect('memberSkin');
+    openModal('newMemberModal');
+  }
+
+  async function openBulkImportModal() {
     document.getElementById('bulkFile').value = '';
     document.getElementById('bulkTier').value = 'newsletter_only';
     document.getElementById('bulkTrialWeeks').value = '2';
@@ -1329,6 +1360,7 @@
     document.getElementById('bulkImportErr').textContent = '';
     document.getElementById('bulkImportForm').style.display = '';
     document.getElementById('bulkImportResult').style.display = 'none';
+    await populateSkinSelect('bulkSkin');
     toggleBulkTrialField();
     toggleBulkWelcomeWarning();
     openModal('bulkImportModal');
@@ -1340,6 +1372,7 @@
     const isExplorer = tier === '0';
     document.getElementById('bulkNewsletterOnlyNote').style.display = isNewsletterOnly ? '' : 'none';
     document.getElementById('bulkTrialField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
+    document.getElementById('bulkSkinField').style.display = isNewsletterOnly ? 'none' : '';
     // No password is ever created for newsletter-only contacts, so there's
     // nothing for a welcome email to contain — hide that whole row rather
     // than show a checkbox that can't do anything.
@@ -1371,6 +1404,7 @@
     formData.append('tier', tier);
     formData.append('trialWeeks', trialWeeks);
     formData.append('sendWelcomeEmail', sendWelcomeEmail ? '1' : '0');
+    formData.append('skinId', isNewsletterOnly ? '' : document.getElementById('bulkSkin').value);
 
     try {
       const res  = await fetch('/api/admin/members/bulk-import', { method: 'POST', body: formData });

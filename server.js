@@ -599,8 +599,15 @@ function emailWelcomeFacilitator(name, email, tempPassword) {
   );
 }
 
-function emailWelcomeClient(name, email, tempPassword, language) {
+function emailWelcomeClient(name, email, tempPassword, language, skinId) {
   const b = brand();
+  // Per Bot 33r — a member added directly to a skin (individually or via
+  // bulk import) needs the welcome email pointing at that skin's own
+  // /login/:slug, not the plain login page — otherwise they'd never see
+  // that skin's branding at all until someone manually sent them the
+  // right link separately. Validated against a real skin rather than
+  // trusting the id outright.
+  const loginUrl = (skinId && db.getSkin(skinId)) ? `${APP_URL}/login/${skinId}` : APP_URL;
   return sendLocalizedEmail('welcome_client', language, {
     subject: `Welcome to {{brand}}`,
     html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
@@ -619,7 +626,7 @@ function emailWelcomeClient(name, email, tempPassword, language) {
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <div style="font-size:12px;color:#aaa">{{brand}}</div>
     </div>`
-  }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL }, email);
+  }, { brand: b.name, name, email, tempPassword, appUrl: loginUrl }, email);
 }
 
 // ── Password reset emails (Per Bot 8) ──
@@ -1346,7 +1353,7 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
 // since this mirrors the same consent checkbox shown on self-registration.
 app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, skinId } = req.body;
     if (!name || !email) return res.status(400).json({ error: 'Name and email required.' });
     const emailLower = email.toLowerCase().trim();
 
@@ -1363,8 +1370,9 @@ app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) 
       lawfulBasis:     'consent'
     });
     db.upgradeToMember(id, 'member');
+    if (skinId && db.getSkin(skinId)) db.setUserSkin(id, skinId);
 
-    emailWelcomeClient(name.trim(), emailLower, tempPassword);
+    emailWelcomeClient(name.trim(), emailLower, tempPassword, null, skinId);
     res.json({ id, name: name.trim(), email: emailLower, tempPassword });
   } catch(e) {
     console.error('add member error:', e);
@@ -1402,6 +1410,10 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
 
     const trialWeeks = Math.max(0, parseInt(req.body.trialWeeks, 10) || 0);
     const sendWelcomeEmail = !isNewsletterOnly && (req.body.sendWelcomeEmail === 'true' || req.body.sendWelcomeEmail === '1');
+    // Per Bot 33r — only applies to real accounts (a newsletter-only
+    // contact never logs in at all, so a skin's login link is meaningless
+    // to them). Validated once here rather than per-row.
+    const skinId = (req.body.skinId && db.getSkin(req.body.skinId)) ? req.body.skinId : null;
 
     let rows;
     try {
@@ -1465,6 +1477,7 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
       db.createUser(id, name, null, email, passwordHash, null, null, {
         consentGiven: true, consentVersion: 'admin-bulk-import-v1', lawfulBasis: 'consent'
       });
+      if (skinId) db.setUserSkin(id, skinId);
 
       if (tier > 0) {
         const trialEndsAt = trialWeeks > 0 ? new Date(Date.now() + trialWeeks * 7 * 24 * 60 * 60 * 1000).toISOString() : null;
@@ -1488,7 +1501,7 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
       (async () => {
         let sent = 0;
         for (const u of toEmail) {
-          try { await emailWelcomeClient(u.name, u.email, u.tempPassword); sent++; }
+          try { await emailWelcomeClient(u.name, u.email, u.tempPassword, null, skinId); sent++; }
           catch (e) { console.error('bulk-import welcome email failed for', u.email, e.message); }
         }
         console.log(`[bulk-import] welcome emails sent: ${sent}/${toEmail.length}`);
