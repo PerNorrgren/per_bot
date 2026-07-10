@@ -1955,6 +1955,14 @@ async function uploadFaviconToR2(file) {
 }
 function faviconUrl(stored) {
   if (!stored) return null;
+  // Files uploaded via uploadFaviconToR2() (site favicon, Talk's persona
+  // photo) are stored under the R2 prefix 'favicon/<uuid><ext>', but the
+  // only route listening for them is /favicon-asset/:key — a plain
+  // '/favicon/<uuid><ext>' URL 404s, which is why the Talk persona photo
+  // preview showed as a broken image after upload. Everything else that
+  // reaches this function (skin-assets/..., a bare disk filename) still
+  // matches its own existing route unchanged.
+  if (stored.startsWith('favicon/')) return `/favicon-asset/${stored.slice('favicon/'.length)}`;
   return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
 }
 // ── Skins (Per Bot 20) — multi-brand foundation, see db.js for the full
@@ -3460,10 +3468,41 @@ function languageInstruction(code) {
 // filename directly. An unknown/deleted id, or one pointing at an
 // archived file, strips silently rather than leaving a raw marker in what
 // gets read aloud.
-async function resolveSignalMarkers(text) {
+//
+// Per Bot 33z — 'text' scripts also self-cache. requestVoiceId is the
+// caller's resolved voice (see /api/chat below) — undefined/matching
+// VOICE_ID means "the default voice". Only the default voice is cached:
+// a script's cached_audio_key holds ONE rendition, so caching every
+// custom voice a client might pick would mean serving the wrong voice to
+// everyone else. Someone on a custom voice always gets live, uncached
+// TTS exactly as before — no regression for them, just no cache hit.
+// On the very first play in the default voice, this synthesizes once,
+// right here, uploads the result to R2, and returns it as audioUrl for
+// THIS turn too — so the very first play is never billed twice (once
+// here, once again via the client's own /api/speak call).
+async function synthesizeAndCacheSignalAudio(script) {
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
+    body: JSON.stringify({
+      text: script.script_text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error(`ElevenLabs signal-cache synthesis failed: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const key = `signal-audio/${script.id}-${uuidv4()}.mp3`;
+  await media.uploadPublicObject(key, buffer, 'audio/mpeg');
+  db.setSignalScriptCachedAudio(script.id, key, VOICE_ID);
+  return media.getPlaybackUrl(key);
+}
+async function resolveSignalMarkers(text, requestVoiceId) {
   let audioUrl = null;
   const matches = [...text.matchAll(/\[\[SIGNAL:([a-zA-Z0-9_-]+)\]\]/g)];
   let resolved = text;
+  const usingDefaultVoice = !requestVoiceId || requestVoiceId === VOICE_ID;
   for (const match of matches) {
     const [full, id] = match;
     const script = db.getSignalScript(id);
@@ -3474,7 +3513,21 @@ async function resolveSignalMarkers(text) {
       audioUrl = script.file_storage_type === 'r2'
         ? await media.getPlaybackUrl(script.file_filename)
         : `/uploads/${script.file_filename}`;
+    } else if (script.kind === 'text' && usingDefaultVoice && script.cached_audio_key && script.cached_audio_voice_id === VOICE_ID) {
+      // Cache hit — reuse the audio generated on some earlier play.
+      audioUrl = await media.getPlaybackUrl(script.cached_audio_key);
+    } else if (script.kind === 'text' && usingDefaultVoice) {
+      // Default voice, no valid cache yet (first play ever, or the
+      // deployment's default voice changed since it was last cached) —
+      // generate once now and serve that same result for this turn.
+      try {
+        audioUrl = await synthesizeAndCacheSignalAudio(script);
+      } catch (e) {
+        console.error('[signal] cache synthesis failed, falling back to live TTS:', e.message);
+        replacement = script.script_text || ''; // client's own /api/speak still renders it
+      }
     } else {
+      // Custom voice — always live, uncached, exactly as before.
       replacement = script.script_text || '';
     }
     resolved = resolved.replace(full, replacement);
@@ -3546,7 +3599,12 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
     session.history.push({ role: 'assistant', content: reply });
     session.transcript.push(`BOT: ${reply}`);
 
-    const { text: cleanReply, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply);
+    // Per Bot 33z — session.clientId (not the block-scoped `client` above,
+    // which only exists the one time systemPrompt gets built) is the
+    // source of truth for which voice this reply should be cached
+    // against, checked fresh on every turn.
+    const voiceClient = session.clientId ? db.getUser(session.clientId) : null;
+    const { text: cleanReply, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply, voiceClient?.voice_id);
     res.json({ reply: cleanReply, signalAudioUrl });
   } catch(e) {
     console.error('chat error:', e);

@@ -1138,6 +1138,17 @@ async function getDb() {
     "ALTER TABLE enrolments ADD COLUMN status TEXT DEFAULT 'active'",
     "ALTER TABLE enrolments ADD COLUMN completed_at TEXT",
     "ALTER TABLE playlists ADD COLUMN guest_visible INTEGER DEFAULT 0",
+    // Auto-caching for 'text' signal scripts (Per Bot 33z) — the first
+    // time a text script is spoken in the default voice, the generated
+    // ElevenLabs audio is saved here so every later play of that exact
+    // script reuses it instead of paying for TTS again. Scoped to the
+    // default voice only — see resolveSignalMarkers() in server.js for
+    // why a client on a custom voice_id always gets live, uncached TTS.
+    // cached_audio_voice_id records which voice_id the cache was made
+    // for, so if the deployment's default voice ever changes, the stale
+    // cache is detected and regenerated rather than served silently wrong.
+    "ALTER TABLE talk_signal_scripts ADD COLUMN cached_audio_key TEXT",
+    "ALTER TABLE talk_signal_scripts ADD COLUMN cached_audio_voice_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -3258,6 +3269,18 @@ function getSignalScript(id) {
   return queryOne(`SELECT s.*, f.filename as file_filename, f.storage_type as file_storage_type, f.archived as file_archived
     FROM talk_signal_scripts s LEFT JOIN library_files f ON s.file_id=f.id WHERE s.id=?`, [id]);
 }
+// Per Bot 33z — records the R2 key of a text script's auto-generated
+// audio cache, and which voice_id it was generated for. Called once, the
+// first time that script is spoken in the default voice; every
+// subsequent call for that script checks this instead of hitting
+// ElevenLabs again. See resolveSignalMarkers() in server.js.
+function setSignalScriptCachedAudio(id, cachedAudioKey, voiceId) {
+  getDbSync().run(
+    `UPDATE talk_signal_scripts SET cached_audio_key=?, cached_audio_voice_id=?, updated_at=datetime('now') WHERE id=?`,
+    [cachedAudioKey, voiceId, id]
+  );
+  save();
+}
 function createSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, sortOrder) {
   getDbSync().run(
     `INSERT INTO talk_signal_scripts (id,topic,situation,skin_id,kind,script_text,file_id,sort_order) VALUES (?,?,?,?,?,?,?,?)`,
@@ -3869,7 +3892,7 @@ module.exports = {
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
   getTomteSkinDefaults, getTomteSkinDefaultImage, setTomteSkinDefaultImage, deleteTomteSkinDefault,
-  getAllSignalScripts, getSignalScriptMenu, getSignalScript, createSignalScript, updateSignalScript, deleteSignalScript,
+  getAllSignalScripts, getSignalScriptMenu, getSignalScript, createSignalScript, updateSignalScript, deleteSignalScript, setSignalScriptCachedAudio,
   getAllContextDocuments, getContextDocumentsForSkin, createContextDocument, deleteContextDocument,
   getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
   // Reminders
