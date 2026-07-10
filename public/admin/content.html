@@ -388,6 +388,9 @@
       <div><label>Category</label><select id="cCat" onchange="populateSub('cCat','cSub')"><option value="">Select…</option></select></div>
       <div><label>Subcategory</label><select id="cSub"><option value="">Select…</option></select></div>
     </div>
+    <div><label>Restrict to</label>
+      <select id="cSkin"><option value="">No restriction — visible to everyone</option></select>
+    </div>
     <div id="lessonBuilderWrap"><label>Lessons (files assigned after saving)</label>
       <div class="lesson-builder">
         <div class="lesson-builder-hdr">Add lessons</div>
@@ -435,7 +438,12 @@
     </div>
     <div id="alPickerWrap"><label>Pick files from library</label>
       <div class="file-picker">
-        <input class="file-picker-search" placeholder="Search library…" oninput="filterPicker(this.value,'alPicker')"/>
+        <div class="file-picker-filters" style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="alPickerCatF" style="flex:1;font-size:11px" onchange="onPickerCatChange('alPicker')"><option value="">All categories</option></select>
+          <select id="alPickerSubF" style="flex:1;font-size:11px" onchange="applyPickerFilters('alPicker')"><option value="">All subcategories</option></select>
+          <select id="alPickerTypeF" style="flex:1;font-size:11px" onchange="applyPickerFilters('alPicker')"><option value="">All types</option></select>
+        </div>
+        <input class="file-picker-search" placeholder="Search library…" oninput="applyPickerFilters('alPicker')"/>
         <div class="file-picker-list" id="alPicker"></div>
       </div>
     </div>
@@ -535,7 +543,12 @@
     <div id="pdTracks" style="margin-bottom:14px"></div>
     <div><label>Add tracks from library</label>
       <div class="file-picker">
-        <input class="file-picker-search" placeholder="Search library…" oninput="filterPicker(this.value,'pdPicker')"/>
+        <div class="file-picker-filters" style="display:flex;gap:6px;margin-bottom:6px">
+          <select id="pdPickerCatF" style="flex:1;font-size:11px" onchange="onPickerCatChange('pdPicker')"><option value="">All categories</option></select>
+          <select id="pdPickerSubF" style="flex:1;font-size:11px" onchange="applyPickerFilters('pdPicker')"><option value="">All subcategories</option></select>
+          <select id="pdPickerTypeF" style="flex:1;font-size:11px" onchange="applyPickerFilters('pdPicker')"><option value="">All types</option></select>
+        </div>
+        <input class="file-picker-search" placeholder="Search library…" oninput="applyPickerFilters('pdPicker')"/>
         <div class="file-picker-list" id="pdPicker"></div>
       </div>
     </div>
@@ -719,18 +732,37 @@ function populateSub(catSelId,subSelId,selectedId=''){
   });
 }
 
+function populateKindSels(...ids){
+  ids.forEach(id=>{
+    const el=document.getElementById(id);if(!el)return;
+    el.innerHTML='<option value="">All types</option>'+contentKindOptions('').replace('<option value="">Not set</option>','');
+  });
+}
+
 async function loadAll(){
-  const [cats,files,courses,pls,instances,kinds]=await Promise.all([
+  const [cats,files,courses,pls,instances,kinds,skins]=await Promise.all([
     fetch('/api/content/categories').then(r=>r.json()),
     fetch('/api/content/library').then(r=>r.json()),
     fetch('/api/content/courses').then(r=>r.json()),
     fetch('/api/content/playlists').then(r=>r.json()),
     fetch('/api/admin/course-instances').then(r=>r.json()),
     fetch('/api/content/kinds').then(r=>r.json()),
+    fetch('/api/admin/skins').then(r=>r.json()),
   ]);
   allCats=cats;allFiles=files;allCourses=courses;allPlaylists=pls;allInstances=instances;
   CONTENT_KINDS=[{value:'',label:'Not set'}, ...kinds.map(k=>({value:k.value,label:k.label}))];
-  populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF');
+  // Per Bot 33l — restricting a course to a skin so only that group's
+  // logins ever see it (e.g. a University cohort). No restriction = the
+  // default, visible to everyone, same "opt-in" pattern as Featured.
+  const skinSel=document.getElementById('cSkin');
+  if(skinSel){
+    const curVal=skinSel.value;
+    skinSel.innerHTML='<option value="">No restriction — visible to everyone</option>'
+      + skins.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+    skinSel.value=curVal;
+  }
+  populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF','alPickerCatF','pdPickerCatF');
+  populateKindSels('alPickerTypeF','pdPickerTypeF');
   populateInstanceCourseSels();
   // Not gated behind "only if empty" any more — content kinds can change
   // at runtime now (added/renamed/deleted from the Categories tab), so
@@ -1338,7 +1370,7 @@ async function toggleFileTalkPractice(id,talk_practice){
 function renderPicker(pickerId,selIds=[]){
   const el=document.getElementById(pickerId);
   el.innerHTML=allFiles.map(f=>`
-    <div class="picker-item${selIds.includes(f.id)?' sel':''}" data-id="${f.id}" onclick="togglePick(this)">
+    <div class="picker-item${selIds.includes(f.id)?' sel':''}" data-id="${f.id}" data-cat="${f.category_id||''}" data-subcat="${f.subcategory_id||''}" data-kind="${f.content_type||''}" onclick="togglePick(this)">
       <input type="checkbox" style="accent-color:#b4e6c8;pointer-events:none" ${selIds.includes(f.id)?'checked':''}/>
       <span style="font-size:16px">${ficon(f.file_type)}</span>
       <div class="picker-item-info">
@@ -1347,6 +1379,14 @@ function renderPicker(pickerId,selIds=[]){
       </div>
     </div>
   `).join('');
+  // Reset filters to "All" each time the picker (re)renders — otherwise a
+  // filter left set from a previous open of this same modal would silently
+  // hide files the person expects to see.
+  ['CatF','SubF','TypeF'].forEach(suf=>{
+    const s=document.getElementById(pickerId+suf); if(s) s.value='';
+  });
+  const searchEl=el.closest('.file-picker')?.querySelector('.file-picker-search');
+  if(searchEl) searchEl.value='';
 }
 
 function togglePick(el){
@@ -1359,6 +1399,35 @@ function filterPicker(q,pickerId){
   document.getElementById(pickerId).querySelectorAll('.picker-item').forEach(el=>{
     const t=el.querySelector('.picker-item-title')?.textContent.toLowerCase()||'';
     el.style.display=(!ql||t.includes(ql))?'':'none';
+  });
+}
+
+// Per Bot 33k — the picker can hold hundreds of files, so text search alone
+// isn't enough to find anything. Category/subcategory/type filters combine
+// with the search text (all must match) rather than replacing it.
+function onPickerCatChange(pickerId){
+  const catId=document.getElementById(pickerId+'CatF').value;
+  const subEl=document.getElementById(pickerId+'SubF');
+  subEl.innerHTML='<option value="">All subcategories</option>';
+  allCats.filter(c=>c.parent_id===catId).forEach(s=>{
+    subEl.innerHTML+=`<option value="${s.id}">${s.name}</option>`;
+  });
+  applyPickerFilters(pickerId);
+}
+
+function applyPickerFilters(pickerId){
+  const wrap=document.getElementById(pickerId).closest('.file-picker');
+  const q=(wrap.querySelector('.file-picker-search')?.value||'').toLowerCase();
+  const catId=document.getElementById(pickerId+'CatF')?.value||'';
+  const subId=document.getElementById(pickerId+'SubF')?.value||'';
+  const kind=document.getElementById(pickerId+'TypeF')?.value||'';
+  document.getElementById(pickerId).querySelectorAll('.picker-item').forEach(el=>{
+    const t=el.querySelector('.picker-item-title')?.textContent.toLowerCase()||'';
+    const matches = (!q||t.includes(q))
+      && (!catId||el.dataset.cat===catId)
+      && (!subId||el.dataset.subcat===subId)
+      && (!kind||el.dataset.kind===kind);
+    el.style.display=matches?'':'none';
   });
 }
 
@@ -1547,7 +1616,7 @@ function renderCourses(courses){
   el.innerHTML=courses.map(c=>`
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
         <div class="item-row-meta">${c.description||''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
@@ -1571,6 +1640,7 @@ function openNewCourse(){
   document.getElementById('lessonBuilderWrap').style.display='';
   document.getElementById('cTitle').value='';mountRichEditor('cDesc');setRichEditorContent('cDesc','');
   document.getElementById('cCat').value='';document.getElementById('cSub').innerHTML='<option value="">Select…</option>';
+  document.getElementById('cSkin').value='';
   document.getElementById('lessonEntries').innerHTML='';document.getElementById('cErr').textContent='';
   addLE();openModal('newCourseModal');
 }
@@ -1590,6 +1660,7 @@ function editCourse(courseId){
   document.getElementById('cCat').value=c.category_id||'';
   populateSub('cCat','cSub');
   document.getElementById('cSub').value=c.subcategory_id||'';
+  document.getElementById('cSkin').value=c.skin_id||'';
   document.getElementById('cErr').textContent='';
   openModal('newCourseModal');
 }
@@ -1604,7 +1675,8 @@ async function saveCourse(){
   if(editId){
     const res=await fetch(`/api/content/courses/${editId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({title,description:document.getElementById('cDesc').value,
-        categoryId:catId,subcategoryId:document.getElementById('cSub').value||null})});
+        categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,
+        skinId:document.getElementById('cSkin').value||null})});
     const d=await res.json();
     if(d.error){err.textContent=d.error;return;}
     closeModal('newCourseModal');loadAll();
@@ -1618,7 +1690,8 @@ async function saveCourse(){
   });
   const res=await fetch('/api/content/courses',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({title,description:document.getElementById('cDesc').value,
-      categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,lessons})});
+      categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,
+      skinId:document.getElementById('cSkin').value||null,lessons})});
   const d=await res.json();
   if(d.error){err.textContent=d.error;return;}
   closeModal('newCourseModal');loadAll();openCourseDetail(d.id);

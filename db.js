@@ -1042,6 +1042,12 @@ async function getDb() {
     // actually approved for that in-conversation moment, never every
     // practice in the library by default.
     "ALTER TABLE library_files ADD COLUMN talk_practice INTEGER DEFAULT 0",
+    // Course audience segmentation (Per Bot 33l) — restricts a course to a
+    // single skin/group (e.g. a University cohort's own login), separate
+    // from category (which is content organization, not access control).
+    // NULL = visible to everyone, the default, same "opt-in restriction"
+    // pattern as assigned_client_id on library files.
+    "ALTER TABLE courses ADD COLUMN skin_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1540,20 +1546,21 @@ function getFileUsage(fileId) {
 }
 
 // ── Courses ──
-function createCourse(id, title, description, categoryId, subcategoryId, guestVisible) {
-  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible) VALUES (?,?,?,?,?,?)',
-    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0]); save();
+function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
+  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id) VALUES (?,?,?,?,?,?,?)',
+    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null]); save();
 }
-function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible) {
-  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=? WHERE id=?',
-    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, id]); save();
+function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
+  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=? WHERE id=?',
+    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, id]); save();
 }
 function getCourse(id) { return queryOne('SELECT * FROM courses WHERE id=?', [id]); }
 function getAllCourses(filters = {}) {
-  let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name
+  let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
-    LEFT JOIN categories sub ON c.subcategory_id=sub.id WHERE 1=1`;
+    LEFT JOIN categories sub ON c.subcategory_id=sub.id
+    LEFT JOIN skins sk ON c.skin_id=sk.id WHERE 1=1`;
   const params = [];
   if (filters.categoryId)    { sql += ' AND c.category_id=?';    params.push(filters.categoryId); }
   if (filters.subcategoryId) { sql += ' AND c.subcategory_id=?'; params.push(filters.subcategoryId); }
@@ -1633,7 +1640,7 @@ function createCourseInstance(id, courseId, mode, title, startDate, endDate, cap
 }
 function getCourseInstance(id) {
   return queryOne(
-    `SELECT ci.*, c.title as course_title
+    `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id
      FROM course_instances ci LEFT JOIN courses c ON ci.course_id=c.id
      WHERE ci.id=?`, [id]
   );
@@ -1642,7 +1649,7 @@ function getInstancesForCourse(courseId) {
   return queryAll('SELECT * FROM course_instances WHERE course_id=? ORDER BY created_at DESC', [courseId]);
 }
 function getAllCourseInstances(filters = {}) {
-  let sql = `SELECT ci.*, c.title as course_title
+  let sql = `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id
     FROM course_instances ci LEFT JOIN courses c ON ci.course_id=c.id WHERE 1=1`;
   const params = [];
   if (filters.status) { sql += ' AND ci.status=?'; params.push(filters.status); }

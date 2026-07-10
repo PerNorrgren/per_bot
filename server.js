@@ -1558,10 +1558,16 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
 app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const instances = db.getAllCourseInstances({ status: 'open' });
+    const user = db.getUser(req.user.id);
+    // Per Bot 33l — a course restricted to a skin (course_skin_id set) only
+    // shows to users belonging to that same skin. Unrestricted courses
+    // (the overwhelming majority — course_skin_id null) show to everyone,
+    // same as before this existed.
+    const visible = instances.filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id);
     const myEnrolments = db.getEnrolmentsForUser(req.user.id);
     const byInstance = {};
     myEnrolments.forEach(e => { byInstance[e.course_instance_id] = e; });
-    res.json(instances.map(i => {
+    res.json(visible.map(i => {
       const enrolment = byInstance[i.id];
       return {
         ...i,
@@ -1608,6 +1614,12 @@ app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) 
     }
 
     const user = db.getUser(req.user.id);
+    // Per Bot 33l — same skin-restriction check as the course list, applied
+    // here too so a restricted course can't be enrolled in by a direct API
+    // call even if it never showed up in that person's list.
+    if (instance.course_skin_id && instance.course_skin_id !== user?.skin_id) {
+      return res.status(403).json({ error: 'This course is not available on your account.' });
+    }
     const isMember = (user.member_tier || 0) >= 1;
 
     // Explorer + priced instance → real payment required. Rather than just
@@ -4678,10 +4690,10 @@ app.post('/api/content/library/bulk-visibility', auth.requireAuthApi(['admin']),
 
 app.get('/api/content/courses', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getAllCourses(req.query)));
 app.post('/api/content/courses', auth.requireAuthApi(['admin']), (req, res) => {
-  const { title, description, categoryId, subcategoryId, lessons } = req.body;
+  const { title, description, categoryId, subcategoryId, lessons, skinId } = req.body;
   if (!title || !categoryId) return res.status(400).json({ error: 'Title and category required.' });
   const courseId = uuidv4();
-  db.createCourse(courseId, title, description, categoryId, subcategoryId, false);
+  db.createCourse(courseId, title, description, categoryId, subcategoryId, false, skinId || null);
   if (lessons?.length) lessons.forEach(l => db.createLesson(uuidv4(), courseId, l.number, l.title, l.description || '', l.visibility || 'client'));
   res.json({ id: courseId });
 });
@@ -4694,9 +4706,9 @@ app.get('/api/content/courses/:id', auth.requireAuthApi(['admin','facilitator'])
 // change a course's title/description/category after the fact.
 app.patch('/api/content/courses/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { title, description, categoryId, subcategoryId, guestVisible } = req.body;
+    const { title, description, categoryId, subcategoryId, guestVisible, skinId } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
-    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible);
+    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible, skinId || null);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -4712,12 +4724,17 @@ app.patch('/api/content/courses/:id/featured', auth.requireAuthApi(['admin']), (
 
 app.get('/api/content/courses/:id/lessons', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getLessonsForCourse(req.params.id)));
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
-  const { courseId, lessonNumber, title, visibility, fileIds } = req.body;
-  if (!courseId || !lessonNumber || !title) return res.status(400).json({ error: 'Missing fields.' });
-  const lessonId = uuidv4();
-  db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client');
-  if (fileIds?.length) fileIds.forEach((fid, i) => db.addLessonFileRef(uuidv4(), lessonId, fid, i));
-  res.json({ id: lessonId });
+  try {
+    const { courseId, lessonNumber, title, visibility, fileIds } = req.body;
+    if (!courseId || !lessonNumber || !title) return res.status(400).json({ error: 'Missing fields.' });
+    const lessonId = uuidv4();
+    db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client');
+    if (fileIds?.length) fileIds.forEach((fid, i) => db.addLessonFileRef(uuidv4(), lessonId, fid, i));
+    res.json({ id: lessonId });
+  } catch (e) {
+    console.error('create lesson error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 app.get('/api/content/lessons/:id/files', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getFilesForLesson(req.params.id)));
 // Edit — same gap as courses: create and delete existed, edit didn't.
@@ -4739,10 +4756,15 @@ app.get('/api/content/lessons/:id/quiz', auth.requireAuthApi(['admin','facilitat
 
 
 app.post('/api/content/lesson-file-refs', auth.requireAuthApi(['admin']), (req, res) => {
-  const { lessonId, fileId } = req.body;
-  if (!lessonId || !fileId) return res.status(400).json({ error: 'Missing fields.' });
-  db.addLessonFileRef(uuidv4(), lessonId, fileId, db.getFilesForLesson(lessonId).length);
-  res.json({ ok: true });
+  try {
+    const { lessonId, fileId } = req.body;
+    if (!lessonId || !fileId) return res.status(400).json({ error: 'Missing fields.' });
+    db.addLessonFileRef(uuidv4(), lessonId, fileId, db.getFilesForLesson(lessonId).length);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('add lesson file ref error:', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 app.delete('/api/content/lesson-file-refs/:id', auth.requireAuthApi(['admin']), (req, res) => { db.removeLessonFileRef(req.params.id); res.json({ ok: true }); });
 
