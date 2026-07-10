@@ -157,6 +157,11 @@
     let mediaStream = null;
     let mediaRecorder = null;
     let defaultImageUrl = '/assets/tomte.png';
+    // Tracks the personalized name (set by applyPersonalization() below)
+    // so anywhere the widget shows "Ask <name>…" — including the input
+    // placeholder, which gets reset every time listening stops — uses the
+    // person's chosen name instead of reverting to the hardcoded default.
+    let helperName = 'Tomte';
     // Per Bot 11: spoken replies are opt-in, persisted per ACCOUNT now
     // (via /api/my/tomte-settings + PATCH /api/my/tomte-voice) rather than
     // per browser in localStorage — the same toggle now follows someone
@@ -194,8 +199,10 @@
         if (!res.ok) return; // not logged in — defaults stay as-is
         const data = await res.json();
         if (data.name) {
+          helperName = data.name;
           document.querySelectorAll('#tomte-header .tomte-title').forEach(el => el.textContent = data.name);
           fab.title = `Ask ${data.name} how this works`;
+          inputEl.placeholder = `Ask ${data.name}…`;
         }
         if (data.imageUrl) {
           defaultImageUrl = data.imageUrl;
@@ -504,7 +511,7 @@
       isListening = false;
       fab.classList.remove('tomte-listening');
       micBtn.classList.remove('tomte-mic-on');
-      inputEl.placeholder = 'Ask Tomte…';
+      inputEl.placeholder = `Ask ${helperName}…`;
       micStatusEl.style.display = 'none';
       if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
