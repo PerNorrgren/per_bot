@@ -1110,6 +1110,34 @@ async function getDb() {
     // NULL = visible to everyone, the default, same "opt-in restriction"
     // pattern as assigned_client_id on library files.
     "ALTER TABLE courses ADD COLUMN skin_id TEXT",
+    // ── Per Bot 33t — full audit of course/lesson/instance/enrolment
+    // tables, prompted by a real bug: lessons.visibility existed in the
+    // CREATE TABLE string but had no migration, so it silently never
+    // reached any database that already existed before that column was
+    // added — CREATE TABLE IF NOT EXISTS only builds a table from
+    // scratch; it does nothing for a table that's already there. Every
+    // entry below is one of these: safe to run whether or not the column
+    // is already present (the try/catch above ignores "duplicate
+    // column"), and closes off this exact failure mode for the rest of
+    // these tables too, not just the one that actually broke.
+    "ALTER TABLE lessons ADD COLUMN visibility TEXT DEFAULT 'client'",
+    "ALTER TABLE lessons ADD COLUMN sort_order INTEGER DEFAULT 0",
+    "ALTER TABLE courses ADD COLUMN guest_visible INTEGER DEFAULT 0",
+    "ALTER TABLE courses ADD COLUMN sort_order INTEGER DEFAULT 0",
+    "ALTER TABLE lesson_file_refs ADD COLUMN sort_order INTEGER DEFAULT 0",
+    "ALTER TABLE course_instances ADD COLUMN mode TEXT DEFAULT 'self_paced'",
+    "ALTER TABLE course_instances ADD COLUMN start_date TEXT",
+    "ALTER TABLE course_instances ADD COLUMN end_date TEXT",
+    "ALTER TABLE course_instances ADD COLUMN capacity INTEGER",
+    "ALTER TABLE course_instances ADD COLUMN price_cents INTEGER DEFAULT 0",
+    "ALTER TABLE course_instances ADD COLUMN stripe_price_id TEXT",
+    "ALTER TABLE course_instances ADD COLUMN status TEXT DEFAULT 'draft'",
+    "ALTER TABLE enrolments ADD COLUMN payment_status TEXT DEFAULT 'free'",
+    "ALTER TABLE enrolments ADD COLUMN amount_paid_cents INTEGER DEFAULT 0",
+    "ALTER TABLE enrolments ADD COLUMN stripe_payment_intent_id TEXT",
+    "ALTER TABLE enrolments ADD COLUMN status TEXT DEFAULT 'active'",
+    "ALTER TABLE enrolments ADD COLUMN completed_at TEXT",
+    "ALTER TABLE playlists ADD COLUMN guest_visible INTEGER DEFAULT 0",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
