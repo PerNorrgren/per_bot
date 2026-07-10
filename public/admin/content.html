@@ -811,6 +811,7 @@ function renderLibCards(files){
       </div>
       <div class="file-card-footer">
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★ Unfeature':'☆ Feature'}</button>
+        <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})">${f.talk_practice?'🗣️ Remove from Talk':'🗣️ Add to Talk'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
@@ -853,6 +854,7 @@ function renderLibList(files){
       <span class="flr-vis">${kbadge(f.content_type)}${onebadge(f)}</span>
       <span class="flr-actions">
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
+        <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
@@ -1325,6 +1327,10 @@ async function delFile(id){
 }
 async function toggleFileFeatured(id,featured){
   await fetch(`/api/content/library/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});
+  loadAll();
+}
+async function toggleFileTalkPractice(id,talk_practice){
+  await fetch(`/api/content/library/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({talk_practice})});
   loadAll();
 }
 

@@ -1035,6 +1035,13 @@ async function getDb() {
     // or test file).
     "ALTER TABLE courses ADD COLUMN featured INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN featured INTEGER DEFAULT 0",
+    // Talk-eligible practices (Per Bot 33j) — separate from featured;
+    // marks which library files Talk is allowed to reach for and play
+    // mid-conversation. Same reasoning as featured: deliberately manual,
+    // not automatic — Talk should only ever offer something Per has
+    // actually approved for that in-conversation moment, never every
+    // practice in the library by default.
+    "ALTER TABLE library_files ADD COLUMN talk_practice INTEGER DEFAULT 0",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1485,7 +1492,7 @@ function getLibraryFiles(filters = {}) {
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
@@ -1506,6 +1513,15 @@ function getFeaturedLibraryFiles() {
   return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     WHERE f.featured=1 AND f.archived=0 ORDER BY f.title`);
+}
+// Practices Talk is allowed to reach for and play mid-conversation (Per Bot
+// 33j) — same "explicitly marked, not automatic" pattern as featured, kept
+// as a fully separate flag since a track can be Featured, Talk-eligible,
+// both, or neither, independently of each other.
+function getTalkPractices() {
+  return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    WHERE f.talk_practice=1 AND f.archived=0 ORDER BY f.title`);
 }
 function deleteLibraryFile(id) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE file_id=?', [id]);
@@ -3570,7 +3586,7 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getTalkPractices,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   // Lesson file refs
