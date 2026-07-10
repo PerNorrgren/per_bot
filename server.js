@@ -2023,6 +2023,23 @@ app.get('/favicon-asset/:key', async (req, res) => {
     res.status(404).send('Not found');
   }
 });
+// Per Bot 33m — every other R2-backed asset type (favicon, Tomte images,
+// newsletter images/video) has a matching GET route to serve it back.
+// Skin logo/favicon/background never did — uploadSkinAssetToR2() stored
+// under 'skin-assets/<kind>/...' and the URL built from that key pointed
+// at this exact path, but nothing was listening on it, so every skin
+// asset upload succeeded and then 404'd forever after. Same pattern as
+// the favicon route above, just parameterized by kind.
+app.get('/skin-assets/:kind/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`skin-assets/${req.params.kind}/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
 app.post('/api/admin/favicon', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   try {

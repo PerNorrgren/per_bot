@@ -260,7 +260,7 @@
         <div id="skinBackgroundGallery" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px"></div>
         <label class="btn-primary" style="padding:9px 16px;font-size:12px;cursor:pointer;display:inline-block; width:fit-content">
           + Add image
-          <input type="file" id="skinBackgroundInput" accept="image/*" style="display:none" onchange="uploadSkinAsset('background')"/>
+          <input type="file" id="skinBackgroundInput" accept="image/*" multiple style="display:none" onchange="uploadSkinAsset('background')"/>
         </label>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.06)">
@@ -500,18 +500,26 @@
   async function uploadSkinAsset(kind) {
     if (!_editingSkinId) return;
     const input = document.getElementById(kind === 'logo' ? 'skinLogoInput' : kind === 'favicon' ? 'skinFaviconInput' : 'skinBackgroundInput');
-    const file = input.files[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res = await fetch(`/api/admin/skins/${_editingSkinId}/${kind}`, { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) { document.getElementById('skinEditorErr').textContent = data.error || 'Could not upload.'; return; }
-      await loadSkins();
-      openSkinEditor(_editingSkinId);
-    } catch(e) { document.getElementById('skinEditorErr').textContent = 'Network error — could not upload.'; }
-    finally { input.value = ''; }
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    const errEl = document.getElementById('skinEditorErr');
+    errEl.textContent = '';
+    // Backgrounds can be multi-selected (Per Bot 33m) — each still needs
+    // its own request since the upload endpoint takes one file at a time,
+    // but the person only has to select-and-wait once instead of
+    // repeating the whole picker flow per image.
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch(`/api/admin/skins/${_editingSkinId}/${kind}`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || 'Could not upload.'; break; }
+      } catch (e) { errEl.textContent = 'Network error — could not upload.'; break; }
+    }
+    await loadSkins();
+    openSkinEditor(_editingSkinId);
+    input.value = '';
   }
   async function removeSkinBackground(url) {
     if (!_editingSkinId) return;
