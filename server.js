@@ -340,6 +340,41 @@ app.use(cookieParser());
 // of tier — Express matches middleware in registration order, so the static middleware served
 // the file before the auth check ever ran. Removed as part of the R2 migration security pass.)
 
+// ── Staging environment marker (Per Bot 34) ──
+// Set APP_ENV=staging in Railway's staging environment (only) and two
+// things happen automatically, with zero effect on production where this
+// var is unset: (1) an unmissable banner on every single HTML page, so
+// nobody testing here mistakes it for the live app — patches
+// res.sendFile once, here, rather than editing every page individually,
+// so it applies everywhere automatically, including pages added later;
+// (2) all cron jobs are skipped entirely (see the startCronJobs() call
+// at the bottom of this file) — no scheduled emails/SMS can ever fire
+// from a staging deployment, even if it were accidentally pointed at
+// real subscriber data.
+const IS_STAGING = (process.env.APP_ENV || '').toLowerCase() === 'staging';
+if (IS_STAGING) {
+  console.log('[staging] APP_ENV=staging — banner injection active, cron jobs disabled');
+  app.use((req, res, next) => {
+    const originalSendFile = res.sendFile.bind(res);
+    res.sendFile = function (filePath, ...args) {
+      if (typeof filePath === 'string' && filePath.endsWith('.html')) {
+        fs.readFile(filePath, 'utf8', (err, html) => {
+          if (err) return originalSendFile(filePath, ...args);
+          const banner = `<div style="position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#c0392b;color:#fff;text-align:center;font-family:sans-serif;font-size:12px;padding:5px 8px;letter-spacing:0.05em;box-shadow:0 1px 6px rgba(0,0,0,0.4)">STAGING — not the live app. Test data only, nothing here is real.</div><div style="height:24px"></div>`;
+          const injected = /<body[^>]*>/i.test(html)
+            ? html.replace(/<body([^>]*)>/i, `<body$1>${banner}`)
+            : banner + html;
+          res.set('Content-Type', 'text/html; charset=UTF-8');
+          res.send(injected);
+        });
+      } else {
+        originalSendFile(filePath, ...args);
+      }
+    };
+    next();
+  });
+}
+
 // ── File upload ──
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -6554,6 +6589,11 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
 
 app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
+    // Defense-in-depth alongside the cron guard above — a genuine bulk
+    // send to real people should never be possible from a staging
+    // deployment, even by an intentional admin click, in case staging
+    // ever ends up pointed at anything resembling real subscriber data.
+    if (IS_STAGING) return res.status(403).json({ error: 'Newsletter sending is disabled on staging.' });
     const newsletter = db.getNewsletter(req.params.id);
     if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
     if (newsletter.status !== 'draft') return res.status(400).json({ error: 'Already sent.' });
@@ -6609,6 +6649,7 @@ app.get('/api/admin/newsletters/:id/recipients', auth.requireAuthApi(['admin']),
 // repeatedly; each retry only ever touches whoever's still outstanding.
 app.post('/api/admin/newsletters/:id/retry', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
+    if (IS_STAGING) return res.status(403).json({ error: 'Newsletter sending is disabled on staging.' });
     const newsletter = db.getNewsletter(req.params.id);
     if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
     const log = db.getEmailLogForNewsletter(req.params.id);
@@ -6727,6 +6768,10 @@ app.use((err, req, res, next) => {
     db.createFacilitator(uuidv4(), adminName, adminEmail, hash, 'admin');
     console.log(`Admin created: ${adminEmail}`);
   }
-  startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
+  if (IS_STAGING) {
+    console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
+  } else {
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
+  }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();
