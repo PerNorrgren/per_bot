@@ -10,6 +10,7 @@ const fs         = require('fs');
 const multer     = require('multer');
 const { parse: csvParse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
+const mammoth = require('mammoth');
 const { v4: uuidv4 } = require('uuid');
 const fetch      = require('node-fetch');
 const cookieParser = require('cookie-parser');
@@ -2259,6 +2260,121 @@ app.delete('/api/admin/tomte-skin-defaults/:skinId/:language/:action', auth.requ
   res.json({ ok: true });
 });
 
+// ── Talk signal scripts (Per Bot 33s) ──
+app.get('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json({ rows: db.getAllSignalScripts(), skins: db.getAllSkins().map(s => ({ id: s.id, name: s.name })) });
+});
+app.post('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { topic, situation, skinId, kind, scriptText, fileId } = req.body;
+    if (!topic || !situation) return res.status(400).json({ error: 'Topic and situation are both required.' });
+    if (kind === 'audio' && !fileId) return res.status(400).json({ error: 'Choose a file from the library for an audio signal.' });
+    if (kind !== 'audio' && !scriptText) return res.status(400).json({ error: 'Write the script text.' });
+    db.createSignalScript(uuidv4(), topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId, 0);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/signal-scripts/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { topic, situation, skinId, kind, scriptText, fileId } = req.body;
+    if (!topic || !situation) return res.status(400).json({ error: 'Topic and situation are both required.' });
+    db.updateSignalScript(req.params.id, topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/signal-scripts/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteSignalScript(req.params.id);
+  res.json({ ok: true });
+});
+// Bulk upload — text scripts only (audio ones still need a real file
+// picked per-row, which doesn't fit a spreadsheet). Columns: topic,
+// situation, script — skin applies to every row in the file, same as
+// bulk member import.
+app.post('/api/admin/signal-scripts/bulk-import', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    const skinId = (req.body.skinId && db.getSkin(req.body.skinId)) ? req.body.skinId : null;
+
+    let rows;
+    try {
+      const origName = (req.file.originalname || '').toLowerCase();
+      if (origName.endsWith('.xlsx') || origName.endsWith('.xls')) {
+        const wb = XLSX.readFile(req.file.path);
+        rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: false });
+      } else {
+        rows = csvParse(fs.readFileSync(req.file.path, 'utf8'), { columns: true, skip_empty_lines: true, trim: true });
+      }
+    } catch (e) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Could not read that file: ' + e.message });
+    }
+
+    const findCol = (row, candidates) => {
+      const keys = Object.keys(row);
+      for (const c of candidates) {
+        const match = keys.find(k => k.toLowerCase().replace(/[^a-z]/g, '') === c);
+        if (match && row[match]) return row[match].trim();
+      }
+      return '';
+    };
+
+    let created = 0, invalid = 0;
+    for (const row of rows) {
+      const topic = findCol(row, ['topic']);
+      const situation = findCol(row, ['situation']);
+      const script = findCol(row, ['script', 'scripttext', 'text']);
+      if (!topic || !situation || !script) { invalid++; continue; }
+      db.createSignalScript(uuidv4(), topic, situation, skinId, 'text', script, null, 0);
+      created++;
+    }
+    fs.unlink(req.file.path, () => {});
+    res.json({ ok: true, created, invalid, totalRows: rows.length });
+  } catch(e) {
+    console.error('signal-scripts bulk import error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+// ── Talk context documents (Per Bot 33s) ──
+app.get('/api/admin/context-documents', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json({ rows: db.getAllContextDocuments(), skins: db.getAllSkins().map(s => ({ id: s.id, name: s.name })) });
+});
+app.post('/api/admin/context-documents', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    const title = (req.body.title || req.file.originalname || 'Untitled').trim();
+    const skinId = (req.body.skinId && db.getSkin(req.body.skinId)) ? req.body.skinId : null;
+    const origName = (req.file.originalname || '').toLowerCase();
+
+    let content;
+    try {
+      if (origName.endsWith('.docx')) {
+        const result = await mammoth.extractRawText({ path: req.file.path });
+        content = result.value;
+      } else {
+        content = fs.readFileSync(req.file.path, 'utf8');
+      }
+    } catch (e) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Could not read that file — only plain text (.txt) and Word (.docx) are supported.' });
+    }
+    fs.unlink(req.file.path, () => {});
+
+    content = content.trim();
+    if (!content) return res.status(400).json({ error: 'That file appears to be empty.' });
+
+    db.createContextDocument(uuidv4(), skinId, title, content, req.file.originalname);
+    res.json({ ok: true, charCount: content.length });
+  } catch(e) {
+    console.error('context-document upload error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+app.delete('/api/admin/context-documents/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteContextDocument(req.params.id);
+  res.json({ ok: true });
+});
+
 // ── Admin editing a user's own details directly (Per Bot 8) ──
 app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async (req, res) => {
   const user = db.getUser(req.params.id);
@@ -3327,6 +3443,42 @@ function languageInstruction(code) {
   return `\n\nRespond in ${name}. The person's preferred language is ${name} — write naturally in it, not as a translation of an English draft.`;
 }
 
+// Per Bot 33s — resolves any [[SIGNAL:id]] marker Talk drops into a reply.
+// 'text' scripts get inlined directly into the reply text, so they just
+// flow through the existing TTS pipeline like anything else Talk says —
+// no client changes needed for that half. 'audio' scripts can't work that
+// way (the client would need to actually play a specific file, not just
+// speak text), so the marker is stripped from the spoken text and the
+// file's URL comes back as a separate field instead, played after the
+// main reply finishes rather than interleaved mid-sentence — simpler, and
+// avoids overlapping TTS with a file. Reuses the exact same R2-vs-disk
+// resolution as /api/content/library/:id/playback-url (signed URL for R2,
+// plain path for legacy disk files) rather than building the URL from the
+// filename directly. An unknown/deleted id, or one pointing at an
+// archived file, strips silently rather than leaving a raw marker in what
+// gets read aloud.
+async function resolveSignalMarkers(text) {
+  let audioUrl = null;
+  const matches = [...text.matchAll(/\[\[SIGNAL:([a-zA-Z0-9_-]+)\]\]/g)];
+  let resolved = text;
+  for (const match of matches) {
+    const [full, id] = match;
+    const script = db.getSignalScript(id);
+    let replacement = '';
+    if (!script) {
+      console.warn('[signal] unknown signal id in reply:', id);
+    } else if (script.kind === 'audio' && script.file_filename && !script.file_archived) {
+      audioUrl = script.file_storage_type === 'r2'
+        ? await media.getPlaybackUrl(script.file_filename)
+        : `/uploads/${script.file_filename}`;
+    } else {
+      replacement = script.script_text || '';
+    }
+    resolved = resolved.replace(full, replacement);
+  }
+  return { text: resolved.replace(/\s{2,}/g, ' ').trim(), audioUrl };
+}
+
 app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { message, sessionId, clientId } = req.body;
@@ -3360,6 +3512,12 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         }
         const journalEntries = db.getJournalEntriesForBot(cId, 5);
         sp += prompts.CLIENT_JOURNAL_CONTEXT(journalEntries);
+        // Per Bot 33s — skin-scoped knowledge and the signal-script menu.
+        // Both use client?.skin_id — null for anyone not on a skin, which
+        // getContextDocumentsForSkin/getSignalScriptMenu already treat as
+        // "universal items only", same as everywhere else skins appear.
+        sp += prompts.CLIENT_CONTEXT_DOCUMENTS(db.getContextDocumentsForSkin(client?.skin_id));
+        sp += prompts.CLIENT_SIGNAL_MENU(db.getSignalScriptMenu(client?.skin_id));
         // Variety rotation applies to everyone, unconditionally — this is
         // about avoiding staleness across sessions, not sensitive clinical
         // context, so it doesn't need any of the gating above.
@@ -3384,7 +3542,8 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
     session.history.push({ role: 'assistant', content: reply });
     session.transcript.push(`BOT: ${reply}`);
 
-    res.json({ reply });
+    const { text: cleanReply, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply);
+    res.json({ reply: cleanReply, signalAudioUrl });
   } catch(e) {
     console.error('chat error:', e);
     res.status(500).json({ error: e.message });

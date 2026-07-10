@@ -262,6 +262,64 @@
       </div>
     </div>
 
+    <!-- Talk signal scripts (Per Bot 33s) -->
+    <div>
+      <div class="section-label">Talk knowledge</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Signal scripts</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Short, pre-written mini-practices (under a minute) Talk can weave into a live conversation when genuinely relevant — either spoken text, or an existing library audio file. Talk only ever sees the topic and situation for each one, never the full text — so this list can grow freely without making every conversation more expensive. Leave skin blank for "every skin, including standard" — set one to scope it to just that skin (e.g. Mare).
+          </div>
+
+          <div id="signalScriptsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button class="btn primary" onclick="openSignalScriptModal()">+ Add signal script</button>
+            <button class="btn" onclick="openSignalBulkImportModal()">Bulk upload (text scripts)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Talk context documents (Per Bot 33s) -->
+    <div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Context documents</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Background knowledge Talk should be aware of — upload a plain text or Word file rather than needing it hand-written into the app. Unlike signal scripts above, this content goes in full on every single turn for that skin, so size matters here — a short, focused document costs little; a full book costs a lot, every message, for everyone on that skin. Character count is shown so this is never a silent surprise.
+          </div>
+
+          <div id="contextDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Title</label>
+              <input type="text" id="cdTitle" placeholder="e.g. Mare — the full book" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"/>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Skin</label>
+              <select id="cdSkin" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+                <option value="">No skin — every skin, including standard</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="cdDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag a .txt or .docx file here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Fill in the title and skin above first</div>
+          </div>
+          <input type="file" id="cdFileInput" accept=".txt,.docx" style="display:none"/>
+          <div class="msg" id="cdMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Members -->
     <div>
       <div class="section-label">Members</div>
@@ -628,6 +686,55 @@
     </div>
   </div>
 
+  <!-- Signal Script Modal -->
+  <div class="modal-overlay" id="signalScriptModal">
+    <div class="modal">
+      <h3 id="ssModalTitle">Add signal script</h3>
+      <input type="hidden" id="ssId"/>
+      <div><label>Topic</label><input type="text" id="ssTopic" placeholder="e.g. Can't sleep"/></div>
+      <div><label>Situation (what Talk sees to judge fit)</label><input type="text" id="ssSituation" placeholder="e.g. Someone describes racing thoughts or trouble falling asleep"/></div>
+      <div><label>Skin</label>
+        <select id="ssSkin"><option value="">No skin — every skin, including standard</option></select>
+      </div>
+      <div><label>Type</label>
+        <select id="ssKind" onchange="toggleSignalKindFields()">
+          <option value="text">Text — Talk speaks these exact words</option>
+          <option value="audio">Audio — plays an existing library file</option>
+        </select>
+      </div>
+      <div id="ssTextField"><label>Script text</label><textarea id="ssScriptText" rows="4" placeholder="The exact words to be spoken — under a minute read aloud."></textarea></div>
+      <div id="ssAudioField" style="display:none">
+        <label>File</label>
+        <div id="ssFilePicked" style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:6px"></div>
+        <input type="text" class="file-picker-search" id="ssFileSearch" placeholder="Search library…" oninput="filterSignalFilePicker(this.value)"/>
+        <div class="file-picker-list" id="ssFilePicker" style="max-height:180px"></div>
+      </div>
+      <div class="modal-err" id="ssErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('signalScriptModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveSignalScript()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signal Script Bulk Import Modal -->
+  <div class="modal-overlay" id="signalBulkImportModal">
+    <div class="modal">
+      <h3>Bulk upload signal scripts</h3>
+      <div class="modal-note" style="margin-bottom:14px">CSV or Excel with topic, situation, and script columns — one row per script. Text scripts only; audio ones still need adding individually so you can pick the actual file.</div>
+      <div><label>File</label><input type="file" id="ssBulkFile" accept=".csv,.xlsx,.xls"/></div>
+      <div><label>Skin</label>
+        <select id="ssBulkSkin"><option value="">No skin — every skin, including standard</option></select>
+        <div class="modal-note" style="margin-top:6px">Applies to every row in this file.</div>
+      </div>
+      <div class="modal-err" id="ssBulkErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('signalBulkImportModal')">Cancel</button>
+        <button class="modal-ok" id="ssBulkBtn" onclick="runSignalBulkImport()">Import</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Bulk Import Modal -->
   <div class="modal-overlay" id="bulkImportModal">
     <div class="modal" id="bulkImportForm">
@@ -891,6 +998,230 @@
     loadTomteDefaults();
   }
 
+  // ══ Talk signal scripts (Per Bot 33s) ══
+  let _signalSkins = [];
+  let _signalLibraryFiles = null; // lazy-loaded, only when the audio picker is actually opened
+  let _ssSelectedFileId = null;
+
+  async function loadSignalScripts() {
+    try {
+      const data = await (await fetch('/api/admin/signal-scripts')).json();
+      _signalSkins = data.skins || [];
+      ['ssSkin', 'ssBulkSkin'].forEach(id => {
+        const el = document.getElementById(id);
+        el.innerHTML = '<option value="">No skin — every skin, including standard</option>'
+          + _signalSkins.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      });
+      renderSignalScriptsTable(data.rows || []);
+    } catch(e) {
+      document.getElementById('signalScriptsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderSignalScriptsTable(rows) {
+    const el = document.getElementById('signalScriptsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
+    el.innerHTML = rows.map(r => {
+      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
+      const kindTag = r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text';
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${r.topic}${skinTag}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${r.situation} · ${kindTag}</div>
+        </div>
+        <button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button>
+        <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteSignalScriptRow(id) {
+    if (!(await appConfirm('Delete this signal script? Talk will no longer be able to offer it.'))) return;
+    await fetch(`/api/admin/signal-scripts/${id}`, { method: 'DELETE' });
+    loadSignalScripts();
+  }
+
+  function toggleSignalKindFields() {
+    const isAudio = document.getElementById('ssKind').value === 'audio';
+    document.getElementById('ssTextField').style.display = isAudio ? 'none' : '';
+    document.getElementById('ssAudioField').style.display = isAudio ? '' : 'none';
+    if (isAudio && !_signalLibraryFiles) loadSignalLibraryFiles();
+  }
+
+  async function loadSignalLibraryFiles() {
+    document.getElementById('ssFilePicker').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      _signalLibraryFiles = await (await fetch('/api/content/library')).json();
+      renderSignalFilePicker(_signalLibraryFiles);
+    } catch(e) {
+      document.getElementById('ssFilePicker').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load library.</div>';
+    }
+  }
+
+  function renderSignalFilePicker(files) {
+    document.getElementById('ssFilePicker').innerHTML = files.map(f => `
+      <div class="picker-item${_ssSelectedFileId===f.id?' sel':''}" data-id="${f.id}" onclick="pickSignalFile('${f.id}','${f.title.replace(/'/g,"\\'")}')">
+        <span style="font-size:16px">${f.file_type?.startsWith('audio')?'🎵':'📄'}</span>
+        <div class="picker-item-info"><div class="picker-item-title">${f.title}</div></div>
+      </div>`).join('');
+  }
+
+  function filterSignalFilePicker(q) {
+    if (!_signalLibraryFiles) return;
+    const ql = q.toLowerCase();
+    renderSignalFilePicker(_signalLibraryFiles.filter(f => f.title.toLowerCase().includes(ql)));
+  }
+
+  function pickSignalFile(id, title) {
+    _ssSelectedFileId = id;
+    document.getElementById('ssFilePicked').textContent = `Selected: ${title}`;
+    renderSignalFilePicker(_signalLibraryFiles);
+  }
+
+  function openSignalScriptModal(id) {
+    document.getElementById('ssErr').textContent = '';
+    document.getElementById('ssId').value = id || '';
+    _ssSelectedFileId = null;
+    document.getElementById('ssFilePicked').textContent = '';
+    if (id) {
+      fetch('/api/admin/signal-scripts').then(r => r.json()).then(data => {
+        const row = (data.rows || []).find(r => r.id === id);
+        if (!row) return;
+        document.getElementById('ssModalTitle').textContent = 'Edit signal script';
+        document.getElementById('ssTopic').value = row.topic;
+        document.getElementById('ssSituation').value = row.situation;
+        document.getElementById('ssSkin').value = row.skin_id || '';
+        document.getElementById('ssKind').value = row.kind;
+        document.getElementById('ssScriptText').value = row.script_text || '';
+        _ssSelectedFileId = row.file_id || null;
+        if (row.file_id) document.getElementById('ssFilePicked').textContent = `Selected: ${row.file_title || row.file_id}`;
+        toggleSignalKindFields();
+      });
+    } else {
+      document.getElementById('ssModalTitle').textContent = 'Add signal script';
+      document.getElementById('ssTopic').value = '';
+      document.getElementById('ssSituation').value = '';
+      document.getElementById('ssSkin').value = '';
+      document.getElementById('ssKind').value = 'text';
+      document.getElementById('ssScriptText').value = '';
+      toggleSignalKindFields();
+    }
+    openModal('signalScriptModal');
+  }
+
+  async function saveSignalScript() {
+    const id = document.getElementById('ssId').value;
+    const topic = document.getElementById('ssTopic').value.trim();
+    const situation = document.getElementById('ssSituation').value.trim();
+    const skinId = document.getElementById('ssSkin').value;
+    const kind = document.getElementById('ssKind').value;
+    const scriptText = document.getElementById('ssScriptText').value.trim();
+    const err = document.getElementById('ssErr');
+    const body = { topic, situation, skinId, kind, scriptText, fileId: _ssSelectedFileId };
+    const res = id
+      ? await fetch(`/api/admin/signal-scripts/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      : await fetch('/api/admin/signal-scripts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('signalScriptModal');
+    loadSignalScripts();
+  }
+
+  function openSignalBulkImportModal() {
+    document.getElementById('ssBulkFile').value = '';
+    document.getElementById('ssBulkErr').textContent = '';
+    document.getElementById('ssBulkBtn').disabled = false;
+    document.getElementById('ssBulkBtn').textContent = 'Import';
+    openModal('signalBulkImportModal');
+  }
+
+  async function runSignalBulkImport() {
+    const fileInput = document.getElementById('ssBulkFile');
+    const err = document.getElementById('ssBulkErr');
+    if (!fileInput.files.length) { err.textContent = 'Choose a file first.'; return; }
+    const btn = document.getElementById('ssBulkBtn');
+    btn.disabled = true; btn.textContent = 'Importing…'; err.textContent = '';
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('skinId', document.getElementById('ssBulkSkin').value);
+    try {
+      const res = await fetch('/api/admin/signal-scripts/bulk-import', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!data.ok) { err.textContent = data.error || 'Import failed.'; btn.disabled = false; btn.textContent = 'Import'; return; }
+      closeModal('signalBulkImportModal');
+      loadSignalScripts();
+    } catch(e) {
+      err.textContent = 'Network error.'; btn.disabled = false; btn.textContent = 'Import';
+    }
+  }
+
+  // ══ Talk context documents (Per Bot 33s) ══
+  async function loadContextDocuments() {
+    try {
+      const data = await (await fetch('/api/admin/context-documents')).json();
+      const skinSel = document.getElementById('cdSkin');
+      skinSel.innerHTML = '<option value="">No skin — every skin, including standard</option>'
+        + (data.skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      renderContextDocsTable(data.rows || []);
+    } catch(e) {
+      document.getElementById('contextDocsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderContextDocsTable(rows) {
+    const el = document.getElementById('contextDocsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — upload one below.</div>'; return; }
+    el.innerHTML = rows.map(d => {
+      const skinTag = d.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${d.skin_name || d.skin_id}</span>` : ' <span style="color:rgba(255,255,255,0.3)">· every skin</span>';
+      // Rough guide, not a hard cutoff — ~4 characters per token is the
+      // usual ballpark, so this is close enough to give a sense of scale
+      // without pretending to be an exact count.
+      const approxTokens = Math.round(d.char_count / 4);
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${d.title}${skinTag}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${d.char_count.toLocaleString()} characters (~${approxTokens.toLocaleString()} tokens, sent on every turn for this skin)</div>
+        </div>
+        <button class="btn sm danger" onclick="deleteContextDocumentRow('${d.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteContextDocumentRow(id) {
+    if (!(await appConfirm('Delete this context document? Talk will lose this knowledge immediately.'))) return;
+    await fetch(`/api/admin/context-documents/${id}`, { method: 'DELETE' });
+    loadContextDocuments();
+  }
+
+  async function uploadContextDocument(file) {
+    const msg = document.getElementById('cdMsg');
+    const title = document.getElementById('cdTitle').value.trim() || file.name;
+    const skinId = document.getElementById('cdSkin').value;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', title);
+    formData.append('skinId', skinId);
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.5)';
+    try {
+      const res = await fetch('/api/admin/context-documents', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.ok) {
+        msg.textContent = `Saved — ${data.charCount.toLocaleString()} characters.`;
+        msg.style.color = 'rgba(180,230,200,0.85)';
+        document.getElementById('cdTitle').value = '';
+        loadContextDocuments();
+      } else {
+        msg.textContent = data.error || 'Could not upload.';
+        msg.style.color = 'rgba(255,140,120,0.85)';
+      }
+    } catch(e) {
+      msg.textContent = 'Could not upload — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    }
+  }
+
   async function uploadTomteDefault(file) {
     const msg = document.getElementById('tdMsg');
     const language = document.getElementById('tdNewLanguage').value;
@@ -1024,6 +1355,23 @@
   });
 
   loadTomteDefaults();
+
+  // ── Talk context documents drop zone (Per Bot 33s) ──
+  const cdDropZone = document.getElementById('cdDropZone');
+  const cdFileInput = document.getElementById('cdFileInput');
+  cdDropZone.addEventListener('click', () => cdFileInput.click());
+  cdFileInput.addEventListener('change', () => { if (cdFileInput.files[0]) uploadContextDocument(cdFileInput.files[0]); cdFileInput.value = ''; });
+  cdDropZone.addEventListener('dragover', e => { e.preventDefault(); cdDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; cdDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  cdDropZone.addEventListener('dragleave', () => { cdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; cdDropZone.style.background = 'none'; });
+  cdDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    cdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; cdDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.name.endsWith('.txt') || f.name.endsWith('.docx'));
+    if (file) uploadContextDocument(file);
+  });
+
+  loadSignalScripts();
+  loadContextDocuments();
 
   // ── Utilities ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }

@@ -1972,6 +1972,19 @@
         document.getElementById('saveTalkBtn').style.display = 'none';
         document.getElementById('shareTalkBtn').style.display = 'none';
         await speak(reply);
+        // Per Bot 33s — a signal script Talk chose to play as an actual
+        // audio file (rather than a spoken text snippet, which is already
+        // just part of `reply` above and needs no special handling) plays
+        // sequentially after the main reply finishes, not layered under
+        // or over it.
+        if (data.signalAudioUrl) {
+          await new Promise((resolveAudio) => {
+            const signalAudio = new Audio(data.signalAudioUrl);
+            signalAudio.onended = resolveAudio;
+            signalAudio.onerror = resolveAudio;
+            signalAudio.play().catch(resolveAudio);
+          });
+        }
         // Save button only makes sense for a real exchange, not the
         // opening greeting — and only once they can actually see/hear
         // something worth saving, i.e. after speak() has finished.

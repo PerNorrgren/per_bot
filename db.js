@@ -700,6 +700,46 @@ async function getDb() {
     PRIMARY KEY (skin_id, language, action)
   )`);
 
+  // ── Talk signal scripts (Per Bot 33s) — short, pre-written "three
+  // signal" mini-practices (max ~1 min) Talk can sprinkle into a live
+  // conversation. skin_id NULL = universal (offered on every skin,
+  // including plain Deeper Mindfulness); set = only offered on that skin.
+  // Deliberately NOT sent to Claude in full on every turn — only
+  // topic+situation (the "menu") go in the system prompt; the actual
+  // script_text or file only gets pulled in once Talk names a specific
+  // one via a [[SIGNAL:id]] marker, same pattern as [[PAUSE]]. See
+  // buildSignalMenu()/resolveSignalMarker() in server.js.
+  db.run(`CREATE TABLE IF NOT EXISTS talk_signal_scripts (
+    id TEXT PRIMARY KEY,
+    topic TEXT NOT NULL,
+    situation TEXT NOT NULL,
+    skin_id TEXT,
+    kind TEXT NOT NULL DEFAULT 'text',
+    script_text TEXT,
+    file_id TEXT,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // ── Talk context documents (Per Bot 33s) — skin-scoped knowledge Talk
+  // should be aware of (e.g. the Mare book), uploaded as a file rather
+  // than hand-pasted into a system prompt string in code. Unlike signal
+  // scripts, this DOES go into the system prompt in full on every turn
+  // for that skin — there's no per-turn "look it up" step for background
+  // knowledge the way there is for a specific practice — so size matters
+  // here in a way it doesn't for the scripts above. skin_id NULL =
+  // universal, same convention as everywhere else skins appear.
+  db.run(`CREATE TABLE IF NOT EXISTS talk_context_documents (
+    id TEXT PRIMARY KEY,
+    skin_id TEXT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    original_filename TEXT,
+    char_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Legal documents ──
   db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
     id TEXT PRIMARY KEY,
@@ -3168,6 +3208,74 @@ function deleteTomteSkinDefault(skinId, language, action) {
   save();
 }
 
+// ── Talk signal scripts ──
+function getAllSignalScripts() {
+  return queryAll(`SELECT s.*, sk.name as skin_name, f.title as file_title FROM talk_signal_scripts s
+    LEFT JOIN skins sk ON s.skin_id=sk.id
+    LEFT JOIN library_files f ON s.file_id=f.id
+    ORDER BY sk.name ASC, s.sort_order ASC, s.topic ASC`);
+}
+// The menu Talk actually sees every turn — topic + situation only, never
+// the script text or file itself. Universal (skin_id NULL) scripts plus
+// whichever skin the person is on.
+function getSignalScriptMenu(skinId) {
+  return queryAll(
+    `SELECT id, topic, situation FROM talk_signal_scripts
+     WHERE skin_id IS NULL ${skinId ? 'OR skin_id=?' : ''}
+     ORDER BY topic ASC`,
+    skinId ? [skinId] : []
+  );
+}
+function getSignalScript(id) {
+  return queryOne(`SELECT s.*, f.filename as file_filename, f.storage_type as file_storage_type, f.archived as file_archived
+    FROM talk_signal_scripts s LEFT JOIN library_files f ON s.file_id=f.id WHERE s.id=?`, [id]);
+}
+function createSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, sortOrder) {
+  getDbSync().run(
+    `INSERT INTO talk_signal_scripts (id,topic,situation,skin_id,kind,script_text,file_id,sort_order) VALUES (?,?,?,?,?,?,?,?)`,
+    [id, topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, sortOrder || 0]
+  );
+  save();
+}
+function updateSignalScript(id, topic, situation, skinId, kind, scriptText, fileId) {
+  getDbSync().run(
+    `UPDATE talk_signal_scripts SET topic=?, situation=?, skin_id=?, kind=?, script_text=?, file_id=?, updated_at=datetime('now') WHERE id=?`,
+    [topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, id]
+  );
+  save();
+}
+function deleteSignalScript(id) {
+  getDbSync().run('DELETE FROM talk_signal_scripts WHERE id=?', [id]);
+  save();
+}
+
+// ── Talk context documents ──
+function getAllContextDocuments() {
+  return queryAll(`SELECT d.id, d.skin_id, d.title, d.original_filename, d.char_count, d.created_at, sk.name as skin_name
+    FROM talk_context_documents d LEFT JOIN skins sk ON d.skin_id=sk.id ORDER BY sk.name ASC, d.title ASC`);
+}
+// Full content, for actually building a system prompt — universal
+// documents plus whichever skin the person is on.
+function getContextDocumentsForSkin(skinId) {
+  return queryAll(
+    `SELECT title, content FROM talk_context_documents
+     WHERE skin_id IS NULL ${skinId ? 'OR skin_id=?' : ''}
+     ORDER BY title ASC`,
+    skinId ? [skinId] : []
+  );
+}
+function createContextDocument(id, skinId, title, content, originalFilename) {
+  getDbSync().run(
+    `INSERT INTO talk_context_documents (id,skin_id,title,content,original_filename,char_count) VALUES (?,?,?,?,?,?)`,
+    [id, skinId || null, title, content, originalFilename || null, content.length]
+  );
+  save();
+}
+function deleteContextDocument(id) {
+  getDbSync().run('DELETE FROM talk_context_documents WHERE id=?', [id]);
+  save();
+}
+
 function updateUserAdminDetails(id, fields) {
   const allowed = ['name', 'email', 'phone', 'language', 'tomte_language', 'voice_id', 'tomte_image_filename', 'tomte_voice_enabled'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
@@ -3733,6 +3841,8 @@ module.exports = {
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
   getTomteSkinDefaults, getTomteSkinDefaultImage, setTomteSkinDefaultImage, deleteTomteSkinDefault,
+  getAllSignalScripts, getSignalScriptMenu, getSignalScript, createSignalScript, updateSignalScript, deleteSignalScript,
+  getAllContextDocuments, getContextDocumentsForSkin, createContextDocument, deleteContextDocument,
   getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
   // Reminders
   getInactiveUsers,

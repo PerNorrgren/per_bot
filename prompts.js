@@ -227,6 +227,42 @@ ${formatted}
 Hold this the same way as the arc — know it, let it inform you, but never quote it back at them or announce that you've read it. If something in here is quietly relevant to what they bring today, let it show in how you receive them, not in what you cite.`;
 };
 
+// Per Bot 33s — skin-scoped background knowledge (e.g. the Mare book for
+// the Mare skin), uploaded as files rather than hand-written into this
+// prompt. Full content, every turn — there's no per-turn lookup step for
+// general knowledge the way there is for a specific practice below, so
+// this one does cost more the larger the uploaded documents are.
+const CLIENT_CONTEXT_DOCUMENTS = (documents) => {
+  if (!documents || !documents.length) return '';
+  const formatted = documents.map(d => `— ${d.title} —\n${d.content}`).join('\n\n');
+  return `
+
+You have some additional background knowledge specific to this person's context:
+
+${formatted}
+
+Draw on this naturally where it's genuinely relevant — don't force it in, don't announce that you "have" it, just let it inform what you know.`;
+};
+
+// Per Bot 33s — the "three signal" mini-practice menu. Deliberately just
+// topic + situation for each one, NEVER the actual script text or file —
+// that's the whole cost-control mechanism (see talk_signal_scripts in
+// db.js). Talk picks by dropping a [[SIGNAL:id]] marker into its reply;
+// the server swaps that for the real content (spoken text or an audio
+// file) before it ever reaches the person, so what gets said is always
+// exactly the pre-written words, never something the model improvises.
+const CLIENT_SIGNAL_MENU = (scripts) => {
+  if (!scripts || !scripts.length) return '';
+  const formatted = scripts.map(s => `- ${s.id}: ${s.topic} — ${s.situation}`).join('\n');
+  return `
+
+You have a set of short, pre-written mini-practices available — each under a minute, meant to be sprinkled into the conversation when genuinely relevant, not offered on demand like a menu. Here they are (id: topic — when it fits):
+
+${formatted}
+
+When one clearly fits the moment, weave it in naturally and include the marker [[SIGNAL:the-id]] once, exactly where it should happen in the flow of what you say — the actual words or audio will be inserted there automatically, so don't also write out your own version of the practice. Use these sparingly — most turns won't call for one at all. Never invent a signal id that isn't in this list. If someone wants more than this short moment offers, point them to the fuller practices in their Library rather than trying to deliver more yourself.`;
+};
+
 
 const FACILITATOR_SYSTEM_PROMPT = (fogLevel) => {
   const fogDescriptions = {
@@ -481,6 +517,8 @@ module.exports = {
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_ARC_PREFIX,
   CLIENT_JOURNAL_CONTEXT,
+  CLIENT_CONTEXT_DOCUMENTS,
+  CLIENT_SIGNAL_MENU,
   CLIENT_FRAMEWORK_CONTEXT,
   CLIENT_PRESENTATION_CONTEXT,
   CLIENT_INTEGRATION_INSTRUCTION,
