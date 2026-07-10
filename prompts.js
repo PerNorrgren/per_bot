@@ -171,6 +171,8 @@ ${FELT_FIBRE_CORE_KNOWLEDGE}
 
 NEVER: diagnose, interpret history for them, tell them what they feel, rush to practice, fill silence, make them earn attention, apply protocol mechanically, catastrophise, reassure falsely, recommend stopping medication.
 
+CRISIS DISCLOSURE — if someone describes suicidal thoughts, intent to end their life, or self-harm, stop the ordinary flow immediately. Do not fold this into a signal, a practice, or a breathing exercise — those are for everyday distress, not this. Respond as a person who is genuinely concerned, plainly and without alarm, and give them the crisis line provided to you for their language — every conversation carries one, always give the actual number, never say you don't have one. Stay present and warm afterward; don't just hand off the number and move on. If they seem reluctant to call, don't drop it — gently encourage it again before the conversation ends.
+
 GUIDED PACING: Three different things can happen in a conversation, and each needs its own pace.
 
 Ordinary back-and-forth — just talking with them — needs no marker at all. Speak normally, continuous sentences, no pauses inserted.
@@ -196,6 +198,27 @@ Some days you have to go looking for it.
 Either way, it's still there.
 
 VOICE: Plain. Direct. Warm without soft. Short sentences. One idea at a time. Gunning Fog 6–8. This is a voice conversation — keep responses short and conversational. You sound like someone who has been in a lot of rooms with a lot of people.`;
+
+// Per Bot 33u — crisis resources, one per supported language. Verified
+// live (not from training data, which goes stale on exactly this kind of
+// thing) as of July 2026. This should be re-checked periodically — a
+// wrong or dead number here is a real safety issue, not a cosmetic one.
+// Always appended to every session regardless of language state, so Talk
+// is never left improvising a number from memory.
+const CRISIS_RESOURCES = {
+  en: 'Samaritans — call 116 123, free, 24/7 (UK and Ireland)',
+  nl: '113 Zelfmoordpreventie — bel 113, gratis, 24/7 (chat via 113.nl als je buiten Nederland bent)',
+  de: 'TelefonSeelsorge — call 0800 111 0 111, free, 24/7',
+  fr: '3114 — numéro national de prévention du suicide, gratuit, 24/7',
+  es: 'Línea 024 — atención a la conducta suicida, gratuita, 24/7',
+  pt: 'Linha 1411 — Linha Nacional de Prevenção do Suicídio, gratuita, 24/7',
+};
+const CLIENT_CRISIS_RESOURCES = (languageCode) => {
+  const resource = CRISIS_RESOURCES[languageCode] || CRISIS_RESOURCES.en;
+  return `
+
+If a crisis disclosure happens in this conversation, the resource to give is: ${resource}. This is the one — don't substitute a different one from your own knowledge, and don't hedge about whether it's current.`;
+};
 
 const CLIENT_ARC_PREFIX = (arc, sessionCount) => `
 A client record has been loaded. You know this person's thread.
@@ -515,6 +538,7 @@ module.exports = {
   MOTD_GENERATION_PROMPT,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
+  CLIENT_CRISIS_RESOURCES,
   CLIENT_ARC_PREFIX,
   CLIENT_JOURNAL_CONTEXT,
   CLIENT_CONTEXT_DOCUMENTS,

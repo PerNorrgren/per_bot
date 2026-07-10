@@ -2692,9 +2692,12 @@ function tomteSystemPrompt(page, focus, name, language) {
   const b = brand();
   const displayName = name || 'Tomte';
   const languageName = (language && LANGUAGE_NAMES[language]) || language || 'English';
+  const resourceLine = prompts.CLIENT_CRISIS_RESOURCES(language || 'en').trim();
   return `You are ${displayName}, a small helper character who lives in the corner of every page of the ${b.name} app. You help with exactly one thing: how the app works — what a page is for, what a button or field does, where to find something, how a feature is used.
 
 You do NOT answer questions about mindfulness practice, the nervous system, FELT·FIBRE content, therapy, or anything personal or clinical the person is going through, even briefly. If asked something like that, warmly redirect them instead: for anything reflective or practice-related, point them to Talk; for anything personal or clinical, suggest they reach out to their facilitator directly. Never attempt the answer yourself.
+
+The one exception: if someone describes suicidal thoughts, intent to end their life, or self-harm, the redirect above is too slow — don't send them elsewhere first. Respond immediately as a person who is genuinely concerned, plainly and without alarm, and give them this: ${resourceLine}
 
 Current page: ${page || 'unknown'}.
 ${focus ? `The person just interacted with: ${focus}. Start there — that's almost certainly what they want explained, not the whole page.` : 'Nothing specific in focus — if asked a general question, explain what this page is for.'}
@@ -3523,6 +3526,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         // context, so it doesn't need any of the gating above.
         sp += prompts.CLIENT_VARIETY_CONTEXT(db.getSignalRotation(cId, prompts.SIGNAL_VARIATIONS));
         sp += languageInstruction(client?.language);
+        sp += prompts.CLIENT_CRISIS_RESOURCES(client?.language || 'en');
       }
       session.systemPrompt = sp;
     }
@@ -4010,7 +4014,7 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
   try {
     const { message, sessionId } = req.body;
     if (!guestSessions.has(sessionId)) {
-      guestSessions.set(sessionId, { history: [], systemPrompt: prompts.CLIENT_SYSTEM_PROMPT });
+      guestSessions.set(sessionId, { history: [], systemPrompt: prompts.CLIENT_SYSTEM_PROMPT + prompts.CLIENT_CRISIS_RESOURCES('en') });
     }
     const session = guestSessions.get(sessionId);
     const isStart = !message || message === 'begin';
