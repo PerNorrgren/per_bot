@@ -123,17 +123,30 @@
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.08)"></div>
         </div>
 
-        <a href="/register" style="display:block;width:100%;padding:13px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:none;color:rgba(255,255,255,0.4);font-size:13px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;transition:all 0.2s;font-family:'Georgia',serif;text-align:center;text-decoration:none" onmouseover="this.style.background='rgba(255,255,255,0.06)';this.style.color='rgba(255,255,255,0.65)'" onmouseout="this.style.background='none';this.style.color='rgba(255,255,255,0.4)'">Create account</a>
+        <a href="/register" id="createAccountLink" style="display:block;width:100%;padding:13px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:none;color:rgba(255,255,255,0.4);font-size:13px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;transition:all 0.2s;font-family:'Georgia',serif;text-align:center;text-decoration:none" onmouseover="this.style.background='rgba(255,255,255,0.06)';this.style.color='rgba(255,255,255,0.65)'" onmouseout="this.style.background='none';this.style.color='rgba(255,255,255,0.4)'">Create account</a>
       </div>
 
       <div class="footer-note" style="display:flex;justify-content:space-between;align-items:center">
         <span><span data-brand="name">Deeper Mindfulness</span> · Per Norrgren</span>
-        <a href="/register" style="color:rgba(180,230,200,0.5);text-decoration:none;font-size:12px">New here?</a>
+        <a href="/register" id="newHereLink" style="color:rgba(180,230,200,0.5);text-decoration:none;font-size:12px">New here?</a>
       </div>
     </div>
   </div>
 
   <script>
+    // Per Bot 33n — both "create account" links defaulted to plain /register,
+    // silently dropping the skin context the moment someone clicked through
+    // from a skin's own /login/:slug page. window.__skinSlug is set
+    // synchronously by brand-inject.js (doesn't need to wait on the async
+    // brandReady promise), so this can run immediately.
+    if (window.__skinSlug) {
+      const registerUrl = '/register/' + window.__skinSlug;
+      const createLink = document.getElementById('createAccountLink');
+      const newHereLink = document.getElementById('newHereLink');
+      if (createLink) createLink.href = registerUrl;
+      if (newHereLink) newHereLink.href = registerUrl;
+    }
+
     const defaultSlides = [
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
       'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
