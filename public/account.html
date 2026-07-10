@@ -565,6 +565,7 @@
       try {
         const cfg = await configRes.json();
         paymentsEnabled = cfg.paymentsEnabled !== false;
+        allowCustomVoice = cfg.allowCustomVoice !== false;
         if (cfg.brandName) {
           document.querySelectorAll('[data-brand="name"]').forEach(el => el.textContent = cfg.brandName);
           document.title = document.title.split('Deeper Mindfulness').join(cfg.brandName);
@@ -580,6 +581,7 @@
 
   let voicesList = [];
   let myVoiceId  = null;
+  let allowCustomVoice = true;
   let previewAudio = null;
 
   function populate(a) {
@@ -773,6 +775,20 @@
     const isSelectedFn = v => myVoiceId ? (myVoiceId === v.voice_id) : !!v.is_default;
     const selected = voicesList.find(isSelectedFn) || null;
     const rest     = voicesList.filter(v => v !== selected);
+
+    // Custom voices turned off — still show whichever voice is currently
+    // selected (including one someone picked before this was turned off),
+    // just without the ability to switch to a different one.
+    if (!allowCustomVoice) {
+      let html = '';
+      if (selected) {
+        html += `<div class="voice-current-label">Currently selected</div>`;
+        html += voiceRowHtml(selected, true).replace(/<button[^>]*voice-btn-select[^>]*>.*?<\/button>/, '');
+      }
+      html += `<div class="modal-note" style="margin-top:10px">Choosing a different voice is turned off right now.</div>`;
+      container.innerHTML = html;
+      return;
+    }
 
     let html = '';
     if (selected) {

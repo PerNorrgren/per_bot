@@ -182,6 +182,13 @@
           </label>
         </div>
       </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
+          <input type="checkbox" id="allowCustomVoice" checked/>
+          Let clients pick their own voice
+        </label>
+        <div class="field-note">Off means everyone hears the default voice — which is also the only voice that gets cached for instant, free replays of the short signal-practice scripts (see the Signal Scripts admin panel). Anyone who's already picked a different voice keeps it; this only stops new choices while it's off.</div>
+      </div>
     </div>
   </div>
 
@@ -307,6 +314,7 @@
       if (cfg.app_name)           document.getElementById('appName').value = cfg.app_name;
       if (cfg.favicon_url)        document.getElementById('faviconPreview').src = cfg.favicon_url;
       document.getElementById('useCalmLanding').checked = cfg.use_calm_landing === null || cfg.use_calm_landing === undefined ? true : !!cfg.use_calm_landing;
+      document.getElementById('allowCustomVoice').checked = cfg.allow_custom_voice === null || cfg.allow_custom_voice === undefined ? true : !!cfg.allow_custom_voice;
       document.getElementById('talkPersonaName').value = cfg.talk_persona_name || '';
       if (cfg.talk_persona_photo_url) document.getElementById('talkPersonaPhotoPreview').src = assetUrl(cfg.talk_persona_photo_url);
       if (cfg.primary_color)      { document.getElementById('primaryColor').value = cfg.primary_color; document.getElementById('primaryColorHex').value = cfg.primary_color; }
@@ -373,6 +381,7 @@
       contactEmail: document.getElementById('contactEmail').value.trim(),
       paymentsEnabled: document.getElementById('paymentsEnabled').checked,
       useCalmLanding: document.getElementById('useCalmLanding').checked,
+      allowCustomVoice: document.getElementById('allowCustomVoice').checked,
       talkPersonaName: document.getElementById('talkPersonaName').value.trim(),
     };
     if (!body.brandName) { err.textContent = 'Organisation name is required.'; return; }
@@ -464,7 +473,11 @@
   }
   function assetUrl(stored) {
     if (!stored) return '/assets/tomte.png';
-    return stored.startsWith('http') ? stored : (stored.includes('/') ? '/' + stored : '/uploads/' + stored);
+    if (stored.startsWith('http')) return stored;
+    // Mirrors the backend faviconUrl() fix — 'favicon/<key>' uploads are
+    // served from /favicon-asset/:key, not /favicon/:key.
+    if (stored.startsWith('favicon/')) return '/favicon-asset/' + stored.slice('favicon/'.length);
+    return stored.includes('/') ? '/' + stored : '/uploads/' + stored;
   }
   function renderSkinBackgroundGallery(images) {
     const el = document.getElementById('skinBackgroundGallery');

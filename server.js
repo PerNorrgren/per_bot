@@ -5190,6 +5190,11 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
       if (prefs.voice_id === '' || prefs.voice_id === null) {
         prefs.voice_id = null;
       } else {
+        const cfg = db.getAppConfig() || {};
+        const customVoiceAllowed = cfg.allow_custom_voice === null || cfg.allow_custom_voice === undefined ? true : !!cfg.allow_custom_voice;
+        if (!customVoiceAllowed) {
+          return res.status(400).json({ error: 'Custom voices are turned off right now — please check back later.' });
+        }
         try {
           const voices = await fetchElevenLabsVoices();
           if (!voices.some(v => v.voice_id === prefs.voice_id)) {
@@ -5598,7 +5603,7 @@ app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
 
 app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName, useCalmLanding, talkPersonaName } = req.body;
+    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName, useCalmLanding, talkPersonaName, allowCustomVoice } = req.body;
     if (!brandName || !brandName.trim()) return res.status(400).json({ error: 'Organisation name is required.' });
     if (!legalEntityName || !legalEntityName.trim()) return res.status(400).json({ error: 'Legal entity name is required — it appears in your Privacy Policy and Terms.' });
     if (!contactEmail || !contactEmail.includes('@')) return res.status(400).json({ error: 'A valid contact email is required.' });
@@ -5615,6 +5620,7 @@ app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       app_name: (appName || '').trim() || null,
       use_calm_landing: useCalmLanding === undefined ? 1 : (useCalmLanding ? 1 : 0),
       talk_persona_name: (talkPersonaName || '').trim() || null,
+      allow_custom_voice: allowCustomVoice === undefined ? 1 : (allowCustomVoice ? 1 : 0),
       setup_completed: 1,
     });
 
@@ -5692,6 +5698,7 @@ app.get('/api/config', (req, res) => {
       useCalmLanding: cfg.use_calm_landing === null || cfg.use_calm_landing === undefined ? true : !!cfg.use_calm_landing,
       talkPersonaName: cfg.talk_persona_name || 'Per',
       talkPersonaPhotoUrl: faviconUrl(cfg.talk_persona_photo_url) || '/assets/tomte.png',
+      allowCustomVoice: cfg.allow_custom_voice === null || cfg.allow_custom_voice === undefined ? true : !!cfg.allow_custom_voice,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

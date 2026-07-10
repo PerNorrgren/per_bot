@@ -1149,6 +1149,16 @@ async function getDb() {
     // cache is detected and regenerated rather than served silently wrong.
     "ALTER TABLE talk_signal_scripts ADD COLUMN cached_audio_key TEXT",
     "ALTER TABLE talk_signal_scripts ADD COLUMN cached_audio_voice_id TEXT",
+    // Per Bot 33aa — global on/off for whether clients may pick a custom
+    // ElevenLabs voice at all. Off means everyone stays on the default
+    // voice, which is also the only voice the Per Bot 33z signal-script
+    // audio cache covers — so this toggle is really "how much of the
+    // caching savings do we keep" as much as it's a personalization
+    // setting. Deliberately app_config (global), not per-skin, for now —
+    // when Rotterdam/Mare go live as real skins, this — and language
+    // options — need the same per-skin treatment tomte_language_defaults
+    // already has. Not built yet; flagging here so it isn't missed.
+    "ALTER TABLE app_config ADD COLUMN allow_custom_voice INTEGER DEFAULT 1",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -3536,7 +3546,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
