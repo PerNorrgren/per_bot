@@ -224,7 +224,7 @@
         <div class="card-header"><div class="card-title">Language &amp; expression images</div></div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            Each row is one language + expression. "default" is both the plain neutral pose and the fallback for any expression that doesn't have its own image yet. A person's own personal Tomte photo always wins over these for their own account.
+            Each row is one language + expression. "default" is both the plain neutral pose and the fallback for any expression that doesn't have its own image yet. A person's own personal Tomte photo always wins over these for their own account. Optionally scope a row to one skin (e.g. a University cohort) — that skin's own login/register pages and logged-in users show it instead of the standard image for that language + expression.
           </div>
 
           <div id="tomteDefaultsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -239,6 +239,12 @@
             <div>
               <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Expression</label>
               <select id="tdNewAction" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"></select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Skin</label>
+              <select id="tdNewSkin" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+                <option value="">No skin — standard default</option>
+              </select>
             </div>
           </div>
 
@@ -811,8 +817,12 @@
 
   async function loadTomteDefaults() {
     try {
-      const res  = await fetch('/api/admin/tomte-defaults');
+      const [res, skinRes] = await Promise.all([
+        fetch('/api/admin/tomte-defaults'),
+        fetch('/api/admin/tomte-skin-defaults'),
+      ]);
       const data = await res.json();
+      const skinData = await skinRes.json();
       _tomteDefaultsActions = data.actions || [];
       _tomteDefaultsLanguages = data.languages || {};
 
@@ -822,7 +832,19 @@
       const actionSel = document.getElementById('tdNewAction');
       actionSel.innerHTML = _tomteDefaultsActions.map(a => `<option value="${a}">${a.charAt(0).toUpperCase() + a.slice(1)}</option>`).join('');
 
-      renderTomteDefaultsTable(data.rows || []);
+      const skinSel = document.getElementById('tdNewSkin');
+      const prevSkinVal = skinSel.value;
+      skinSel.innerHTML = '<option value="">No skin — standard default</option>'
+        + (skinData.skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      skinSel.value = prevSkinVal;
+
+      // Combined for display — a skin-scoped row and the standard row for
+      // the same language+expression are two different things (see the
+      // resolution order note on tomte_skin_defaults in db.js), so both
+      // show, distinguished by the skin name tag.
+      const globalRows = (data.rows || []).map(r => ({ ...r, skin_id: null, skin_name: null }));
+      const skinRows = skinData.rows || [];
+      renderTomteDefaultsTable([...globalRows, ...skinRows]);
     } catch(e) {
       document.getElementById('tomteDefaultsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
     }
@@ -833,11 +855,15 @@
     if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No images uploaded yet — add one below.</div>'; return; }
     el.innerHTML = rows.map(r => {
       const langName = _tomteDefaultsLanguages[r.language] || r.language;
+      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
+      const delOnclick = r.skin_id
+        ? `deleteTomteSkinDefault('${r.skin_id}','${r.language}','${r.action}')`
+        : `deleteTomteDefault('${r.language}','${r.action}')`;
       return `
       <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
         <img src="${r.imageUrl || '/assets/tomte.png'}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
-        <div style="flex:1; font-size:13px; color:rgba(255,255,255,0.75)">${langName} <span style="color:rgba(255,255,255,0.35)">·</span> ${r.action.charAt(0).toUpperCase() + r.action.slice(1)}</div>
-        <button class="btn sm danger" onclick="deleteTomteDefault('${r.language}','${r.action}')">Delete</button>
+        <div style="flex:1; font-size:13px; color:rgba(255,255,255,0.75)">${langName} <span style="color:rgba(255,255,255,0.35)">·</span> ${r.action.charAt(0).toUpperCase() + r.action.slice(1)}${skinTag}</div>
+        <button class="btn sm danger" onclick="${delOnclick}">Delete</button>
       </div>`;
     }).join('');
   }
@@ -848,16 +874,29 @@
     loadTomteDefaults();
   }
 
+  async function deleteTomteSkinDefault(skinId, language, action) {
+    if (!(await appConfirm(`Remove this skin's ${action} image for this language? It'll fall back to the standard default.`))) return;
+    await fetch(`/api/admin/tomte-skin-defaults/${encodeURIComponent(skinId)}/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
+    loadTomteDefaults();
+  }
+
   async function uploadTomteDefault(file) {
     const msg = document.getElementById('tdMsg');
     const language = document.getElementById('tdNewLanguage').value;
     const action = document.getElementById('tdNewAction').value;
+    const skinId = document.getElementById('tdNewSkin').value;
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('language', language);
       fd.append('action', action);
-      const res  = await fetch('/api/admin/tomte-defaults', { method: 'POST', body: fd });
+      let res;
+      if (skinId) {
+        fd.append('skinId', skinId);
+        res = await fetch('/api/admin/tomte-skin-defaults', { method: 'POST', body: fd });
+      } else {
+        res = await fetch('/api/admin/tomte-defaults', { method: 'POST', body: fd });
+      }
       const data = await res.json();
       if (data.ok) {
         msg.textContent = 'Saved.';
@@ -910,11 +949,17 @@
     const msg = document.getElementById('tdMsg');
     const language = document.getElementById('tdNewLanguage').value;
     const action = document.getElementById('tdNewAction').value;
+    const skinId = document.getElementById('tdNewSkin').value;
     try {
-      const res = await fetch('/api/admin/tomte-defaults/assign', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language, action, filename }),
-      });
+      const res = skinId
+        ? await fetch('/api/admin/tomte-skin-defaults/assign', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skinId, language, action, filename }),
+          })
+        : await fetch('/api/admin/tomte-defaults/assign', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ language, action, filename }),
+          });
       const data = await res.json();
       if (data.ok) { msg.textContent = 'Saved.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTomteDefaults(); }
       else { msg.textContent = data.error || 'Could not assign.'; msg.style.color = 'rgba(255,140,120,0.85)'; }

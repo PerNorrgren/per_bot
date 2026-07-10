@@ -272,7 +272,7 @@
     }
 
     function sendContext() {
-      const ctx = { type: 'context', page: pageName(), focus: lastFocusDescription };
+      const ctx = { type: 'context', page: pageName(), focus: lastFocusDescription, skinSlug: window.__skinSlug || null };
       if (wsReady) ws.send(JSON.stringify(ctx));
       else pendingContext = ctx;
     }

@@ -678,6 +678,28 @@ async function getDb() {
     PRIMARY KEY (language, action)
   )`);
 
+  // ── Tomte skin defaults (Per Bot 33o) — same idea as the language
+  // defaults above, one layer more specific: lets a skin (e.g. a
+  // University cohort) show its own Tomte photo instead of the standard
+  // one, for a given language+action. Kept as its own table rather than
+  // adding a nullable skin_id onto tomte_language_defaults, since that
+  // table's primary key is (language, action) and SQLite can't extend a
+  // primary key via ALTER TABLE without a full rebuild — a parallel table
+  // with its own (skin_id, language, action) key is the same shape
+  // without that risk. Resolution order (see resolveTomteImage in
+  // server.js): this skin-scoped table is checked FIRST at every tier,
+  // falling through to tomte_language_defaults exactly as before when
+  // there's no skin, or the skin has no override for that slot.
+  db.run(`CREATE TABLE IF NOT EXISTS tomte_skin_defaults (
+    skin_id TEXT NOT NULL,
+    language TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT 'default',
+    image_filename TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (skin_id, language, action)
+  )`);
+
   // ── Legal documents ──
   db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
     id TEXT PRIMARY KEY,
@@ -3032,7 +3054,10 @@ function setTomteVoiceEnabled(role, id, enabled) {
 }
 function getTomteSettings(role, id) {
   const table = role === 'client' ? 'users' : 'facilitators';
-  return queryOne(`SELECT tomte_name, tomte_image_filename, language, tomte_language, voice_id, tomte_voice_enabled FROM ${table} WHERE id=?`, [id]) || {};
+  // skin_id only exists on users (clients), not facilitators — selecting
+  // it unconditionally would error on the facilitators table.
+  const skinCol = role === 'client' ? ', skin_id' : '';
+  return queryOne(`SELECT tomte_name, tomte_image_filename, language, tomte_language, voice_id, tomte_voice_enabled${skinCol} FROM ${table} WHERE id=?`, [id]) || {};
 }
 
 // ── Admin editing a user's own profile fields directly (Per Bot 8) —
@@ -3079,6 +3104,7 @@ function getAllTomteImages() {
     ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM users WHERE tomte_image_filename IS NOT NULL`),
     ...queryAll(`SELECT DISTINCT tomte_image_filename AS filename FROM facilitators WHERE tomte_image_filename IS NOT NULL`),
     ...queryAll(`SELECT DISTINCT image_filename AS filename FROM tomte_language_defaults WHERE image_filename IS NOT NULL`),
+    ...queryAll(`SELECT DISTINCT image_filename AS filename FROM tomte_skin_defaults WHERE image_filename IS NOT NULL`),
   ];
   const seen = new Set();
   const filenames = [];
@@ -3106,6 +3132,30 @@ function setTomteLanguageDefaultImage(language, action, filename) {
 }
 function deleteTomteLanguageDefault(language, action) {
   getDbSync().run('DELETE FROM tomte_language_defaults WHERE language=? AND action=?', [language, action || 'default']);
+  save();
+}
+
+// ── Tomte skin defaults ──
+function getTomteSkinDefaults(skinId) {
+  if (skinId) return queryAll('SELECT * FROM tomte_skin_defaults WHERE skin_id=? ORDER BY language ASC, action ASC', [skinId]);
+  return queryAll(`SELECT sd.*, sk.name as skin_name FROM tomte_skin_defaults sd
+    LEFT JOIN skins sk ON sd.skin_id=sk.id ORDER BY sk.name ASC, sd.language ASC, sd.action ASC`);
+}
+function getTomteSkinDefaultImage(skinId, language, action) {
+  if (!skinId || !language) return null;
+  const row = queryOne('SELECT image_filename FROM tomte_skin_defaults WHERE skin_id=? AND language=? AND action=?', [skinId, language, action || 'default']);
+  return row ? row.image_filename : null;
+}
+function setTomteSkinDefaultImage(skinId, language, action, filename) {
+  getDbSync().run(
+    `INSERT INTO tomte_skin_defaults (skin_id, language, action, image_filename, updated_at) VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(skin_id, language, action) DO UPDATE SET image_filename=excluded.image_filename, updated_at=datetime('now')`,
+    [skinId, language, action || 'default', filename]
+  );
+  save();
+}
+function deleteTomteSkinDefault(skinId, language, action) {
+  getDbSync().run('DELETE FROM tomte_skin_defaults WHERE skin_id=? AND language=? AND action=?', [skinId, language, action || 'default']);
   save();
 }
 
@@ -3673,6 +3723,7 @@ module.exports = {
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
   getTomteLanguageDefaults, getTomteLanguageDefaultImage, setTomteLanguageDefaultImage, deleteTomteLanguageDefault, getAllTomteImages,
+  getTomteSkinDefaults, getTomteSkinDefaultImage, setTomteSkinDefaultImage, deleteTomteSkinDefault,
   getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
   // Reminders
   getInactiveUsers,

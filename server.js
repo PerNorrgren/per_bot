@@ -2180,6 +2180,46 @@ app.delete('/api/admin/tomte-defaults/:language/:action', auth.requireAuthApi(['
   res.json({ ok: true });
 });
 
+// ── Tomte skin defaults (Per Bot 33o) ──
+app.get('/api/admin/tomte-skin-defaults', auth.requireAuthApi(['admin']), (req, res) => {
+  const rows = db.getTomteSkinDefaults().map(r => ({ ...r, imageUrl: tomteImageUrl(r.image_filename) }));
+  res.json({ rows, actions: TOMTE_ACTIONS, languages: LANGUAGE_NAMES, skins: db.getAllSkins().map(s => ({ id: s.id, name: s.name })) });
+});
+app.post('/api/admin/tomte-skin-defaults/assign', auth.requireAuthApi(['admin']), (req, res) => {
+  const skinId = (req.body.skinId || '').trim();
+  const language = (req.body.language || '').trim();
+  const action = (req.body.action || 'default').trim();
+  const filename = (req.body.filename || '').trim();
+  if (!skinId || !db.getSkin(skinId)) return res.status(400).json({ error: 'Choose a skin.' });
+  if (!language) return res.status(400).json({ error: 'Choose a language.' });
+  if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
+  if (!filename) return res.status(400).json({ error: 'Choose an image from the library.' });
+  db.setTomteSkinDefaultImage(skinId, language, action, filename);
+  res.json({ ok: true, url: tomteImageUrl(filename) });
+});
+app.post('/api/admin/tomte-skin-defaults', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  const skinId = (req.body.skinId || '').trim();
+  const language = (req.body.language || '').trim();
+  const action = (req.body.action || 'default').trim();
+  if (!skinId || !db.getSkin(skinId)) return res.status(400).json({ error: 'Choose a skin.' });
+  if (!language) return res.status(400).json({ error: 'Choose a language.' });
+  if (!TOMTE_ACTIONS.includes(action)) return res.status(400).json({ error: 'Unknown action.' });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.addTomteImageToLibrary(uuidv4(), stored, null);
+    db.setTomteSkinDefaultImage(skinId, language, action, stored);
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('tomte-skin-defaults image upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload image right now — please try again.' });
+  }
+});
+app.delete('/api/admin/tomte-skin-defaults/:skinId/:language/:action', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteTomteSkinDefault(req.params.skinId, req.params.language, req.params.action);
+  res.json({ ok: true });
+});
+
 // ── Admin editing a user's own details directly (Per Bot 8) ──
 app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async (req, res) => {
   const user = db.getUser(req.params.id);
@@ -2271,12 +2311,20 @@ app.post('/api/admin/users/:id/tomte-image', auth.requireAuthApi(['admin']), upl
 //    generic /assets/tomte.png). This is also what governs the 'default'
 //    action itself, and what showing a non-default request is meant to
 //    fall back to.
-function resolveTomteImage(personalImageFilename, language, action) {
+function resolveTomteImage(personalImageFilename, language, action, skinId) {
   if (action && action !== 'default') {
+    if (skinId) {
+      const skinActionImg = db.getTomteSkinDefaultImage(skinId, language, action);
+      if (skinActionImg) return tomteImageUrl(skinActionImg);
+    }
     const actionImg = db.getTomteLanguageDefaultImage(language, action);
     if (actionImg) return tomteImageUrl(actionImg);
   }
   if (personalImageFilename) return tomteImageUrl(personalImageFilename);
+  if (skinId) {
+    const skinDefault = db.getTomteSkinDefaultImage(skinId, language, 'default');
+    if (skinDefault) return tomteImageUrl(skinDefault);
+  }
   const langDefault = db.getTomteLanguageDefaultImage(language, 'default');
   if (langDefault) return tomteImageUrl(langDefault);
   return null;
@@ -2284,7 +2332,7 @@ function resolveTomteImage(personalImageFilename, language, action) {
 
 app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const s = db.getTomteSettings(req.user.role, req.user.id);
-  const imageUrl = resolveTomteImage(s.tomte_image_filename, s.tomte_language || s.language, 'default');
+  const imageUrl = resolveTomteImage(s.tomte_image_filename, s.tomte_language || s.language, 'default', s.skin_id);
   res.json({ name: s.tomte_name || null, imageUrl, voiceEnabled: !!s.tomte_voice_enabled });
 });
 // Self-service voice-output toggle (Per Bot 11) — replaces the old
@@ -2567,6 +2615,7 @@ tomteWss.on('connection', (ws, req) => {
   let tomteLanguage = null;
   let tomteVoiceId = VOICE_ID;
   let tomtePersonalImage = null;
+  let tomteSkinId = null;
   try {
     const cookies = parseCookies(req.headers.cookie);
     const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
@@ -2580,6 +2629,7 @@ tomteWss.on('connection', (ws, req) => {
       // UI) without touching that account language at all.
       tomteLanguage = settings.tomte_language || settings.language || null;
       tomtePersonalImage = settings.tomte_image_filename || null;
+      tomteSkinId = settings.skin_id || null;
       // Personal choice always wins; otherwise Dutch defaults to Mare
       // (if configured), otherwise the app's own default voice.
       tomteVoiceId = settings.voice_id || (tomteLanguage === 'nl' && MARE_VOICE_ID ? MARE_VOICE_ID : VOICE_ID);
@@ -2596,7 +2646,7 @@ tomteWss.on('connection', (ws, req) => {
   // ElevenLabs returns (never blocks the text arriving first).
   async function speak(text, action) {
     if (action) {
-      send({ type: 'action', action, imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, action) });
+      send({ type: 'action', action, imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, action, tomteSkinId) });
     }
     send({ type: 'response_text', text });
     if (!TOMTE_VOICE_ENABLED || !voiceRequested) return;
@@ -2627,7 +2677,7 @@ tomteWss.on('connection', (ws, req) => {
     // Thinking image, shown immediately while Claude generates the real
     // reply — swapped out for whatever action the reply actually tags
     // once it comes back, a moment later.
-    send({ type: 'action', action: 'thinking', imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, 'thinking') });
+    send({ type: 'action', action: 'thinking', imageUrl: resolveTomteImage(tomtePersonalImage, tomteLanguage, 'thinking', tomteSkinId) });
     try {
       const systemPrompt = tomteSystemPrompt(currentPage, currentFocus, tomteName, tomteLanguage);
       history.push({ role: 'user', content: userText });
@@ -2680,6 +2730,16 @@ tomteWss.on('connection', (ws, req) => {
       case 'context':
         currentPage = msg.page || currentPage;
         currentFocus = msg.focus || '';
+        // Per Bot 33o — an anonymous visitor on a skin's own /login/:slug or
+        // /register/:slug page has no account yet, so there's no skin_id to
+        // read. This is the only way to know which skin's Tomte photo to
+        // show them in that pre-login window — validated against a real
+        // skin so a bogus slug can't be used to probe for anything. A
+        // logged-in user's own tomteSkinId (set above, from their account)
+        // always takes priority and is never overwritten here.
+        if (!tomteSkinId && msg.skinSlug && db.getSkin(msg.skinSlug)) {
+          tomteSkinId = msg.skinSlug;
+        }
         break;
       case 'set_voice':
         voiceRequested = !!msg.enabled;
