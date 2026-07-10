@@ -1145,10 +1145,14 @@ app.patch('/api/admin/facilitators/:id/reset-password', auth.requireAuthApi(['ad
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
-    const { name, email, password, language, skinSlug } = req.body;
+    const { name, email, password, language, skinSlug, consent, marketingOptIn } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email.' });
+    // The client already blocks submission without this, but that's just
+    // UX — the actual requirement has to be enforced here too, or it's not
+    // really a requirement.
+    if (!consent) return res.status(400).json({ error: 'Please agree to your name and email being stored to continue.' });
     // Anything outside the supported set falls back to English rather than
     // storing a value nothing downstream (Talk's language instruction,
     // localized email templates) knows how to handle.
@@ -1164,7 +1168,11 @@ app.post('/api/register', async (req, res) => {
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
-    db.registerUser(id, name.trim(), emailLower, hash, safeLanguage);
+    db.registerUser(id, name.trim(), emailLower, hash, safeLanguage, {
+      consentGiven: !!consent,
+      consentVersion: 'self-registration-v2',
+      marketingOptIn: !!marketingOptIn,
+    });
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;

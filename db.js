@@ -2164,12 +2164,21 @@ function deleteClient(id) {
 // governs the countdown; member_expires_at stays NULL until/unless they subscribe
 // via Stripe. checkTrialExpiry() (called on login) drops them to Explorer if the
 // trial lapses with no active subscription.
-function registerUser(id, name, email, passwordHash, language) {
+function registerUser(id, name, email, passwordHash, language, consent) {
+  const c = consent || {};
   const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
   getDbSync().run(
-    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client,language)
-     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?)`,
-    [id, name, email.toLowerCase(), trialEndsAt, language || 'en']
+    `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client,language,
+       consent_given,consent_date,consent_version,lawful_basis,pref_email_news)
+     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?,?,?,?,?,?)`,
+    [
+      id, name, email.toLowerCase(), trialEndsAt, language || 'en',
+      c.consentGiven ? 1 : 0,
+      c.consentGiven ? new Date().toISOString() : null,
+      c.consentGiven ? (c.consentVersion || 'self-registration-v1') : null,
+      c.consentGiven ? 'consent' : null,
+      c.marketingOptIn ? 1 : 0,
+    ]
   );
   getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
   save();

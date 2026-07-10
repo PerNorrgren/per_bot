@@ -108,7 +108,12 @@
 
       <label class="consent">
         <input type="checkbox" id="consent"/>
-        <span class="consent-text">I agree to my name and email being stored by <span data-brand="name">Deeper Mindfulness</span>. I may receive occasional updates from Per — no spam, no third parties.</span>
+        <span class="consent-text">I agree to my name and email being stored by <span data-brand="name">Deeper Mindfulness</span>. Required to create an account.</span>
+      </label>
+
+      <label class="consent">
+        <input type="checkbox" id="marketingOptIn"/>
+        <span class="consent-text">I'd like to receive occasional updates from Per — no spam, no third parties. Optional, and you can turn this off any time.</span>
       </label>
 
       <div class="error" id="error"></div>
@@ -181,6 +186,7 @@
       const password = document.getElementById('password').value;
       const language = document.getElementById('language').value;
       const consent  = document.getElementById('consent').checked;
+      const marketingOptIn = document.getElementById('marketingOptIn').checked;
       const err      = document.getElementById('error');
       const btn      = document.getElementById('submitBtn');
 
@@ -196,7 +202,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined })
       });
       const data = await res.json();
 
