@@ -90,6 +90,18 @@ async function deleteObject(key) {
 // just uploads and re-serves these objects directly — see
 // GET /newsletter-images/:key in server.js, which streams straight from R2
 // with no auth check, by design, for exactly this content type only.
+// Direct server-side PUT for one-off import/migration scripts (e.g. the
+// WordPress content migration, Per Bot 13) — same underlying PutObjectCommand
+// as uploadPublicObject below, but named separately since these keys are
+// private library content served through the existing presigned-GET/tier-
+// check path (getPlaybackUrl), not the public no-auth route. Kept distinct
+// from getUploadUrl (which returns a presigned PUT for the browser) because
+// a script runs server-side and can just write the bytes directly.
+async function putObject(key, buffer, contentType) {
+  if (!client) throw new Error('R2 is not configured — missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY.');
+  await client.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: buffer, ContentType: contentType }));
+}
+
 async function uploadPublicObject(key, buffer, contentType) {
   if (!client) throw new Error('R2 is not configured — missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY.');
   await client.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: buffer, ContentType: contentType }));
@@ -100,4 +112,4 @@ async function getPublicObject(key) {
   return result; // .Body is a readable stream; .ContentType is the stored MIME type
 }
 
-module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, uploadPublicObject, getPublicObject, R2_BUCKET };
+module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, putObject, uploadPublicObject, getPublicObject, R2_BUCKET };

@@ -789,6 +789,31 @@ async function getDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── Library file tags (Per Bot 13) ──
+  // Many-to-many theme tagging for library_files, separate from the existing
+  // single category_id/subcategory_id pair. Added for the WordPress content
+  // migration (blog posts, poems) where one piece of writing can genuinely
+  // belong to several themes (e.g. a post on setting boundaries is both
+  // "Relationships & Boundaries" and "Self-Worth"), and — the actual point —
+  // so the same tag vocabulary already used for the meditation-track playlists
+  // (Grounding, Focus, Self-Worth, Sleep, Trauma...) can be reused across
+  // content types. That shared vocabulary is what makes a real theme-based
+  // slider possible later ("more like this" pulling both a blog post and a
+  // meditation track tagged Self-Worth), not just a cosmetic label.
+  // tag is stored as free text, not a foreign key to a fixed table — matches
+  // content_kinds' philosophy of "editable list, not a hardcoded enum" without
+  // needing an extra admin screen just to add one new theme.
+  db.run(`CREATE TABLE IF NOT EXISTS library_file_tags (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(file_id, tag),
+    FOREIGN KEY (file_id) REFERENCES library_files(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_tag ON library_file_tags(tag)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_file ON library_file_tags(file_id)`);
+
   // ── Migrations — add columns to existing tables if they don't exist ──
   // This is how we handle the live database which was created before the full schema
   // above existed. The CREATE TABLE IF NOT EXISTS above handles new installs;
@@ -1620,6 +1645,38 @@ function renameLibraryFile(id, filename) {
 }
 function archiveLibraryFile(id, archived) {
   getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]); save();
+}
+
+// ── Library file tags (Per Bot 13) ──
+// addFileTag is idempotent (UNIQUE(file_id,tag) + INSERT OR IGNORE) so re-running
+// an import script never duplicates a tag on the same file.
+function addFileTag(fileId, tag) {
+  getDbSync().run('INSERT OR IGNORE INTO library_file_tags (id,file_id,tag) VALUES (?,?,?)', [crypto.randomUUID(), fileId, tag]);
+  save();
+}
+function removeFileTag(fileId, tag) {
+  getDbSync().run('DELETE FROM library_file_tags WHERE file_id=? AND tag=?', [fileId, tag]); save();
+}
+function getFileTags(fileId) {
+  return queryAll('SELECT tag FROM library_file_tags WHERE file_id=? ORDER BY tag', [fileId]).map(r => r.tag);
+}
+// Every distinct tag currently in use, with how many files carry it — powers
+// an admin "browse by theme" view and eventually the theme sliders themselves.
+function getAllTags() {
+  return queryAll(`SELECT tag, COUNT(*) as file_count FROM library_file_tags
+    GROUP BY tag ORDER BY file_count DESC, tag ASC`);
+}
+// All (non-archived) files carrying a given tag, across every content_type —
+// this is the query a theme slider ("Self-Worth: blogs + meditations + poems")
+// actually runs.
+function getFilesByTag(tag) {
+  return queryAll(`SELECT f.*, cat.name as category_name, sub.name as subcategory_name
+    FROM library_files f
+    JOIN library_file_tags t ON t.file_id = f.id
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    LEFT JOIN categories sub ON f.subcategory_id=sub.id
+    WHERE t.tag=? AND f.archived=0
+    ORDER BY f.created_at DESC`, [tag]);
 }
 // Curated content shelves on the calm landing screen (Per Bot 28) — same
 // "explicitly marked, not automatic" reasoning as getFeaturedCourses.
@@ -3820,6 +3877,7 @@ module.exports = {
   // Library
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
+  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getTalkPractices,
   // Lessons
