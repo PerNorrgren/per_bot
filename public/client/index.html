@@ -3783,9 +3783,12 @@
   }
 
   // Opening a lesson: mark it in_progress (idempotent — safe to call every
-  // time it's opened, not just the first time), then show its files using
-  // the same player overlay the Content tab already uses, and surface a
-  // quiz button if one exists.
+  // time it's opened, not just the first time). A lesson with exactly one
+  // file opens it directly, same as before. A lesson with more than one
+  // file (e.g. a poem's text AND its audio narration) used to silently
+  // only ever open the first one, with no way to reach the rest — fixed
+  // here with a small chooser instead of guessing which one the person
+  // wanted.
   async function openLesson(lessonId) {
     if (!currentInstanceId) return;
     try {
@@ -3798,36 +3801,68 @@
           body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'in_progress' }) });
       }
 
-      if (data.files && data.files.length) {
+      const askToComplete = async () => {
+        if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
+          await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
+          openCourseDetail(currentInstanceId);
+          loadResumeCard();
+        }
+      };
+      // Only arm the "mark complete?" prompt once something has actually
+      // been opened — arming it while just showing the chooser would fire
+      // it the instant the chooser closes to make way for the real content,
+      // before the person has read or listened to anything.
+      const armCompletionPrompt = (file) => {
+        if (isAudio(file)) { _onAudioStopCallback = askToComplete; }
+        else { _onPlayerCloseCallback = askToComplete; }
+      };
+
+      if (data.files && data.files.length === 1) {
+        armCompletionPrompt(data.files[0]);
         openContentFile(data.files[0]);
+      } else if (data.files && data.files.length > 1) {
+        openLessonChooser(data.lesson, data.files, data.quiz ? null : armCompletionPrompt);
       }
 
       if (data.quiz) {
         openQuiz(data.quiz, lessonId);
-      } else {
-        // No quiz — completing the lesson just means marking it done. Wait
-        // for the player to actually be closed rather than asking the
-        // instant it opens (see closePlayerOverlay's callback above) — for
-        // an audio-only file this fires via mpStop instead, see below.
-        const askToComplete = async () => {
-          if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
-            await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
-            openCourseDetail(currentInstanceId);
-            loadResumeCard();
-          }
-        };
-        if (data.files && data.files.length && isAudio(data.files[0])) {
-          _onAudioStopCallback = askToComplete;
-        } else if (data.files && data.files.length) {
-          _onPlayerCloseCallback = askToComplete;
-        } else {
-          // No file to open at all (shouldn't normally happen) — nothing to
-          // wait for, so ask right away same as before.
-          askToComplete();
-        }
+      } else if (!data.files || !data.files.length) {
+        // No file to open at all (shouldn't normally happen) — nothing to
+        // wait for, so ask right away same as before.
+        askToComplete();
       }
     } catch(e) { appAlert('Could not open this lesson. Please try again.'); }
+  }
+
+  // Small in-overlay picker for lessons with more than one file — reuses
+  // the same player-overlay chrome (title/close/history-back handling)
+  // rather than building a separate modal from scratch.
+  let _lessonChooserFiles = [];
+  let _lessonChooserOnPick = null;
+  function openLessonChooser(lesson, files, onPick) {
+    _lessonChooserFiles = files;
+    _lessonChooserOnPick = onPick;
+    document.getElementById('playerTitle').textContent = lesson.title;
+    document.getElementById('playerText').innerHTML = "Choose how you'd like to experience this:";
+    document.getElementById('playerMedia').innerHTML = files.map((f, i) => `
+      <button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">
+        ${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}
+      </button>
+    `).join('');
+    pushPlayerHistoryState();
+    document.getElementById('playerOverlay').classList.add('visible');
+    document.getElementById('fullscreenBtn').style.display = 'none';
+  }
+  function chooseLessonFile(index) {
+    const file = _lessonChooserFiles[index];
+    if (_lessonChooserOnPick) _lessonChooserOnPick(file);
+    if (isAudio(file)) {
+      closePlayerOverlay();
+      mpPlay(file);
+    } else {
+      openContentFile(file);
+    }
   }
 
   // ── Quiz taking ──
