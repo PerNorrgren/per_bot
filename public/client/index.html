@@ -2445,6 +2445,9 @@
   function isAudio(f) {
     return f.file_type?.startsWith('audio') || f.filename?.match(/\.(mp3|wav|ogg|m4a|aac)$/i);
   }
+  function isVideo(f) {
+    return f.file_type?.startsWith('video') || f.filename?.match(/\.(mp4|mov|webm|m4v)$/i);
+  }
 
   function logHistory(contentType, contentId) {
     fetch('/api/client/history', {
@@ -4011,10 +4014,11 @@
     if (_lessonCtx) _lessonCtx.lessonLocked = lessonLocked;
 
     const dayOf = (f) => { const m = f.title.match(/Day (\d+)/); return m ? parseInt(m[1], 10) : 0; };
+    const kindRank = (f) => isVideo(f) ? 0 : isAudio(f) ? 2 : 1; // Watch, then Read, then Listen
     const sorted = [...files].sort((a, b) => {
       const d = dayOf(a) - dayOf(b);
       if (d !== 0) return d;
-      return (isAudio(a) ? 1 : 0) - (isAudio(b) ? 1 : 0); // Read before Listen on the same day
+      return kindRank(a) - kindRank(b);
     });
     _lessonChooserFiles = sorted;
     _inChooserView = true;
@@ -4028,7 +4032,7 @@
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
           const locked = lessonLocked || f.locked;
-          const label = `${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}`;
+          const label = `${isVideo(f) ? '🎬 Watch' : isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}`;
           const tick = f.opened
             ? '<span class="chooser-tick">✓</span>'
             : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');

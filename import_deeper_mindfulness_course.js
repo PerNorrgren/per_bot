@@ -276,13 +276,17 @@ async function runImport(log = console.log) {
       }
     }
 
-    // Handout (Lesson 1 only) — optional supplementary reading.
+    // Handout (Lesson 1 only) — optional supplementary reading. Both
+    // formats (docx + pdf) import as separate files, so the title needs
+    // to say which is which — two identically-titled "Handout" entries
+    // in the lesson chooser gives no way to tell them apart.
     if (l.handout) {
       for (const fname of l.handout) {
         sortOrder++;
+        const ext = fname.split('.').pop().toUpperCase();
         const url = `https://deepermindfulness.org/wp-content/uploads/2025/01/${fname}`;
         await importFile({
-          url, originalName: `dm-l${lnum}-handout-${fname}`, title: `Deeper Mindfulness L${lnum} — Handout`,
+          url, originalName: `dm-l${lnum}-handout-${fname}`, title: `Deeper Mindfulness L${lnum} — Handout (${ext})`,
           description: `Deeper Mindfulness — Lesson ${lnum} handout.`,
           contentType: (whitepaperKind || otherKind).value, mandatory: false, lessonId, sortOrder,
         });
