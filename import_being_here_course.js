@@ -70,6 +70,20 @@ async function runImport(log = console.log) {
     log(`Created course "${COURSE_TITLE}" (id ${courseId}).`);
   }
 
+  // A course row is just the template — nothing is enrollable to a client
+  // until an actual open instance exists. Self-paced, free, no dates or
+  // capacity: the simplest possible offering, same as browsing the lessons
+  // directly.
+  const existingInstances = db.getInstancesForCourse(courseId);
+  const openInstance = existingInstances.find(i => i.status === 'open');
+  if (openInstance) {
+    log(`Open instance already exists (id ${openInstance.id}) — reusing.`);
+  } else {
+    const instanceId = crypto.randomUUID();
+    db.createCourseInstance(instanceId, courseId, 'self_paced', COURSE_TITLE, null, null, null, 0, null, 'open');
+    log(`Created open self-paced instance (id ${instanceId}).`);
+  }
+
   const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
   const byComplex = {};
   manifest.forEach(m => { (byComplex[m.complex] = byComplex[m.complex] || []).push(m); });
