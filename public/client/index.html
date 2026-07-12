@@ -4081,6 +4081,21 @@
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = 'none';
+    // Mobile Safari/WebKit-specific: replacing this list's innerHTML while
+    // the overlay is already visible (e.g. returning here after closing a
+    // played file, rather than opening the chooser fresh) can leave the
+    // scroll container "frozen" at its previous scroll height — the new,
+    // longer content doesn't become scrollable until something forces a
+    // layout reflow. Toggling overflow off and back on does that reliably.
+    requestAnimationFrame(() => {
+      const listEl = document.querySelector('.lesson-chooser-list');
+      if (listEl) {
+        listEl.scrollTop = 0;
+        listEl.style.overflowY = 'hidden';
+        void listEl.offsetHeight; // force reflow
+        listEl.style.overflowY = 'auto';
+      }
+    });
   }
   function chooseLessonFile(index) {
     const file = _lessonChooserFiles[index];
