@@ -191,9 +191,21 @@
             <option value="admin">Admin</option>
           </select>
           <select class="filter" id="libKind" onchange="filterLib()"></select>
+          <select class="filter" id="libFileType" onchange="filterLib()">
+            <option value="">All file types</option>
+            <option value="audio">Audio</option>
+            <option value="video">Video</option>
+            <option value="pdf">PDF</option>
+            <option value="word">Word</option>
+            <option value="powerpoint">PowerPoint</option>
+            <option value="excel">Excel</option>
+            <option value="image">Image</option>
+            <option value="text">Text / HTML</option>
+            <option value="other">Other</option>
+          </select>
           <div class="view-toggle">
-            <button id="viewBtnCards" class="active" onclick="setLibView('cards')">Cards</button>
-            <button id="viewBtnList" onclick="setLibView('list')">List</button>
+            <button id="viewBtnCards" onclick="setLibView('cards')">Cards</button>
+            <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
           <button class="btn primary" onclick="openUpload()">↑ Upload files</button>
         </div>
@@ -215,8 +227,8 @@
           <button class="btn sm danger" onclick="bulkDelete()">Delete</button>
           <button class="btn sm" onclick="clearSelection()" style="margin-left:auto">Clear</button>
         </div>
-        <div class="file-grid" id="libGrid"></div>
-        <div class="file-list" id="libList" style="display:none"></div>
+        <div class="file-grid" id="libGrid" style="display:none"></div>
+        <div class="file-list" id="libList"></div>
       </div>
 
       <!-- COURSES -->
@@ -784,7 +796,7 @@ function populateInstanceCourseSels(){
 }
 
 // ── Library ──
-let _libView = 'cards';
+let _libView = 'list';
 const _libSel = new Set();
 
 function setLibView(view) {
@@ -797,15 +809,38 @@ function setLibView(view) {
 }
 
 function onLibCatChange(){populateSub('libCat','libSub');filterLib();}
+// Buckets the file's real MIME type (f.file_type) into a small set of
+// human categories for the File Type filter. Deliberately separate from
+// f.content_type, which despite the similar name is the content taxonomy
+// (blog/poem/meditation/course_material/etc), not the file format — see
+// the library_files schema comment. As the library fills with a genuine
+// mix of formats (audio, docx course guides, pptx decks, pdfs) filtering
+// by actual format becomes its own useful axis, independent of taxonomy.
+function fileTypeBucket(mime){
+  mime = (mime||'').toLowerCase();
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime === 'application/pdf') return 'pdf';
+  if (mime.includes('wordprocessingml') || mime === 'application/msword') return 'word';
+  if (mime.includes('presentationml') || mime === 'application/vnd.ms-powerpoint') return 'powerpoint';
+  if (mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel' || mime === 'text/csv') return 'excel';
+  if (mime.startsWith('text/')) return 'text';
+  return 'other';
+}
+
 function filterLib(){
   const cat=document.getElementById('libCat').value;
   const sub=document.getElementById('libSub').value;
   const vis=document.getElementById('libVis').value;
   const kind=document.getElementById('libKind').value;
+  const fileType=document.getElementById('libFileType').value;
   const q=document.getElementById('libSearch').value.toLowerCase();
   renderLib(allFiles.filter(f=>
     (!cat||f.category_id===cat)&&(!sub||f.subcategory_id===sub)&&
-    (!vis||f.visibility===vis)&&(!kind||f.content_type===kind)&&(!q||f.title.toLowerCase().includes(q)||(f.original_name||'').toLowerCase().includes(q))
+    (!vis||f.visibility===vis)&&(!kind||f.content_type===kind)&&
+    (!fileType||fileTypeBucket(f.file_type)===fileType)&&
+    (!q||f.title.toLowerCase().includes(q)||(f.original_name||'').toLowerCase().includes(q))
   ));
 }
 
