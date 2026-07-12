@@ -5125,6 +5125,22 @@ app.post('/api/admin/fix-being-here-mandatory-swap', auth.requireAuthApi(['admin
   }
 });
 
+// ── TEMPORARY — Per Bot 13, "Listen and Learn Mindfulness" import ──
+// Fetches live from a WordPress.com staging domain — only works where real
+// internet access exists (production), same in-process reasoning as the
+// other Per Bot 13 import routes.
+app.post('/api/admin/run-listen-and-learn-import', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runImport } = require('./import_listen_and_learn');
+    const log = [];
+    const result = await runImport((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('listen and learn import error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
