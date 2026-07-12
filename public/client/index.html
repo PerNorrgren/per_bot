@@ -3812,6 +3812,7 @@
 
   // ── Courses / enrolment / progress / quizzes ──
   let currentInstanceId = null;
+  let _currentCourseLessons = []; // cached from the last openCourseDetail call — used to find the next lesson
 
   // Dashboard resume card — checked once on load, independent of which tab is open.
   async function loadResumeCard() {
@@ -3910,6 +3911,7 @@
       const res  = await fetch(`/api/client/courses/${instanceId}`);
       const data = await res.json();
       if (data.error) { document.getElementById('courseDetailHeader').innerHTML = `<div class="no-content">${data.error}</div>`; return; }
+      _currentCourseLessons = data.lessons || [];
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
       `;
@@ -4062,6 +4064,19 @@
           return `<button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">${label}${tick}</button>`;
         }).join('')}
       </div>
+      ${(() => {
+        // Next Lesson — only rendered when we actually know the course's
+        // lesson order (cached from the last openCourseDetail call) and
+        // there's genuinely another lesson after this one. Navigates
+        // regardless of lock state, same as browsing the course list
+        // directly would — sequencing only blocks playback, not
+        // visibility, so this button follows that same rule rather than
+        // hiding itself for a locked next lesson.
+        const idx = _currentCourseLessons.findIndex(l => l.id === lesson.id);
+        const next = idx >= 0 ? _currentCourseLessons[idx + 1] : null;
+        if (!next) return '';
+        return `<button class="doc-link" style="display:block;width:100%;margin-top:14px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="openLesson('${next.id}')">Next Lesson: ${next.title} →</button>`;
+      })()}
     `;
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.add('visible');
