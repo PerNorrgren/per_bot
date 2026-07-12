@@ -4984,6 +4984,25 @@ app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res)
   }
 });
 app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, res) => res.json(db.getFileUsage(req.params.id)));
+// ── TEMPORARY — Per Bot 13, WordPress content migration ──
+// Runs the blog-post import in-process (shares this server's own sql.js
+// singleton), because running it as a separate `node import_....js` console
+// process races against this server's next save() and silently loses the
+// data — see the warning at the top of import_blog_posts_batch1.js.
+// Safe to call more than once (skips anything already imported). Remove this
+// route once the WordPress content migration is finished.
+app.post('/api/admin/run-blog-import-batch1', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runImport } = require('./import_blog_posts_batch1');
+    const log = [];
+    const result = await runImport((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('blog import error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
