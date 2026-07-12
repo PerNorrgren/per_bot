@@ -5003,6 +5003,20 @@ app.post('/api/admin/run-blog-import-batch1', auth.requireAuthApi(['admin']), as
   }
 });
 
+// ── TEMPORARY — Per Bot 13, "Being Here" course build ──
+// Same in-process reasoning as the blog import route above.
+app.post('/api/admin/run-being-here-import', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runImport } = require('./import_being_here_course');
+    const log = [];
+    const result = await runImport((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('being here import error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
