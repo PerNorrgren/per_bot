@@ -5227,6 +5227,25 @@ app.post('/api/admin/fix-dm-remove-docx-handout', auth.requireAuthApi(['admin'])
   }
 });
 
+// ── Introduction to Mindfulness course import (Per Bot 14) ──
+let imfnImportJob = null;
+app.post('/api/admin/run-introduction-to-mindfulness-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (imfnImportJob && !imfnImportJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: imfnImportJob });
+  }
+  imfnImportJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = imfnImportJob;
+  const { runImport } = require('./import_introduction_to_mindfulness_course');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('introduction to mindfulness import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-introduction-to-mindfulness-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!imfnImportJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(imfnImportJob);
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
