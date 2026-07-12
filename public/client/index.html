@@ -3870,7 +3870,12 @@
       const res  = await fetch('/api/client/enrol', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ courseInstanceId: instanceId }) });
       const data = await res.json();
       if (data.requiresPayment && data.checkoutUrl) { window.location.href = data.checkoutUrl; return; }
-      if (data.ok) { loadCourses(); return; }
+      // Previously just refreshed the Browse/My Courses lists in place —
+      // the card would silently move from one list to the other with
+      // nothing else visibly happening, so enrolling felt like it did
+      // nothing unless you noticed the card had moved. Now opens the
+      // course straight away, same as clicking an already-enrolled one.
+      if (data.ok) { openCourseDetail(instanceId); return; }
       appAlert(data.error || 'Could not enrol. Please try again.');
     } catch(e) { appAlert('Could not enrol. Please try again.'); }
   }
