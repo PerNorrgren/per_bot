@@ -495,6 +495,7 @@
     .player-media video { width:100%; max-height:50vh; border-radius:10px; background:#000; }
     .player-media iframe { width:100%; height:50vh; border:none; border-radius:10px; background:#fff; }
     .player-media .doc-link { display:inline-block; padding:10px 22px; border-radius:20px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); text-decoration:none; font-size:13px; }
+    .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
 
     /* Start screen — identical to Mare Bot */
     #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:flex; align-items:center; justify-content:center; z-index:99; }
@@ -2303,11 +2304,7 @@
       // Update play buttons
       document.querySelectorAll('.play-btn.playing').forEach(b => b.classList.remove('playing'));
       document.querySelectorAll('.play-btn').forEach(b => b.textContent = '▶');
-      if (_onAudioStopCallback) {
-        const cb = _onAudioStopCallback;
-        _onAudioStopCallback = null;
-        cb();
-      }
+      handleAudioStopped();
     });
     mpAudio.play();
     // Mark play button
@@ -2335,10 +2332,19 @@
     document.getElementById('miniPlayer').classList.remove('visible');
     document.querySelectorAll('.play-btn').forEach(b => { b.classList.remove('playing'); b.textContent = '▶'; });
     _currentAudioFile = null;
-    // Per Bot 13 fix — same reasoning as closePlayerOverlay: only ask to
-    // mark the lesson complete once the person has actually stopped
-    // listening (closed the mini player or the track ended), not the
-    // instant it started.
+    handleAudioStopped();
+  }
+
+  // Shared by mpClose (manual close) and the 'ended' event (track finished
+  // on its own) — same reasoning as closePlayerOverlay: if this audio was
+  // opened from a lesson chooser, go back to the chooser (don't fire a
+  // per-file completion prompt); otherwise fall back to the old
+  // single-file behaviour.
+  function handleAudioStopped() {
+    if (_lessonCtx) {
+      openLessonChooser(_lessonCtx.lesson, _lessonChooserFiles);
+      return;
+    }
     if (_onAudioStopCallback) {
       const cb = _onAudioStopCallback;
       _onAudioStopCallback = null;
@@ -2782,6 +2788,7 @@
   let _closingPlayerViaPopstate = false;
   let _onPlayerCloseCallback = null;
   let _onAudioStopCallback = null;
+  let _inChooserView = false; // true while the chooser LIST itself is showing, false while an individual file (opened from it) is showing
   function pushPlayerHistoryState() {
     if (!_playerHistoryPushed) { history.pushState({ appOverlay: 'player' }, ''); _playerHistoryPushed = true; }
   }
@@ -2794,8 +2801,13 @@
     }
   });
   function closePlayerOverlay() {
+    // Mid-lesson, closing an individual file (not the chooser list itself)
+    // — go back to the list rather than leaving the lesson. Cleanup below
+    // still runs first (stop video, exit fullscreen) since that's needed
+    // either way.
+    const goingBackToChooser = _lessonCtx && !_inChooserView;
+
     const overlayEl = document.getElementById('playerOverlay');
-    overlayEl.classList.remove('visible');
     overlayEl.classList.remove('video-mode');
     document.getElementById('fullscreenBtn').style.display = 'none';
     document.getElementById('fullscreenBtn').textContent = 'Full screen';
@@ -2805,6 +2817,13 @@
     // playing silently in the background.
     const video = mediaEl.querySelector('video');
     if (video) { video.pause(); video.src = ''; }
+
+    if (goingBackToChooser) {
+      openLessonChooser(_lessonCtx.lesson, _lessonChooserFiles);
+      return;
+    }
+
+    overlayEl.classList.remove('visible');
     mediaEl.innerHTML = '';
     // Closed via the Close button (not the back button) — consume the
     // history entry we pushed so it doesn't linger as a stray "back"
@@ -2816,6 +2835,16 @@
       history.back();
     }
     _closingPlayerViaPopstate = false;
+
+    // Closing the chooser itself (the whole lesson, done) — fire the
+    // completion prompt once here, not once per file.
+    if (_lessonCtx) {
+      const ctx = _lessonCtx;
+      _lessonCtx = null;
+      _inChooserView = false;
+      if (ctx.askToComplete) ctx.askToComplete();
+      return;
+    }
 
     // Per Bot 13 fix: the "mark this lesson complete?" prompt (see
     // openLesson below) used to fire the instant the content opened,
@@ -3784,11 +3813,13 @@
 
   // Opening a lesson: mark it in_progress (idempotent — safe to call every
   // time it's opened, not just the first time). A lesson with exactly one
-  // file opens it directly, same as before. A lesson with more than one
-  // file (e.g. a poem's text AND its audio narration) used to silently
-  // only ever open the first one, with no way to reach the rest — fixed
-  // here with a small chooser instead of guessing which one the person
-  // wanted.
+  // file opens it directly, same as before — closing it asks to mark
+  // complete, same as always. A lesson with more than one file (e.g. a
+  // poem's text AND its audio narration) shows a chooser instead: picking
+  // a file opens it, closing THAT FILE returns to the chooser (not the
+  // course), and the "mark complete?" prompt only fires once when the
+  // chooser itself is closed — not once per file.
+  let _lessonCtx = null; // { lesson, lessonId, instanceId, askToComplete } while a multi-file lesson is open
   async function openLesson(lessonId) {
     if (!currentInstanceId) return;
     try {
@@ -3805,24 +3836,19 @@
         if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
           await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
-          openCourseDetail(currentInstanceId);
-          loadResumeCard();
         }
-      };
-      // Only arm the "mark complete?" prompt once something has actually
-      // been opened — arming it while just showing the chooser would fire
-      // it the instant the chooser closes to make way for the real content,
-      // before the person has read or listened to anything.
-      const armCompletionPrompt = (file) => {
-        if (isAudio(file)) { _onAudioStopCallback = askToComplete; }
-        else { _onPlayerCloseCallback = askToComplete; }
+        openCourseDetail(currentInstanceId);
+        loadResumeCard();
       };
 
       if (data.files && data.files.length === 1) {
-        armCompletionPrompt(data.files[0]);
+        _lessonCtx = null;
+        if (isAudio(data.files[0])) { _onAudioStopCallback = askToComplete; }
+        else { _onPlayerCloseCallback = askToComplete; }
         openContentFile(data.files[0]);
       } else if (data.files && data.files.length > 1) {
-        openLessonChooser(data.lesson, data.files, data.quiz ? null : armCompletionPrompt);
+        _lessonCtx = { lesson: data.lesson, askToComplete: data.quiz ? null : askToComplete };
+        openLessonChooser(data.lesson, data.files);
       }
 
       if (data.quiz) {
@@ -3837,28 +3863,43 @@
 
   // Small in-overlay picker for lessons with more than one file — reuses
   // the same player-overlay chrome (title/close/history-back handling)
-  // rather than building a separate modal from scratch.
+  // rather than building a separate modal from scratch. Sorted so each
+  // day's Read and Listen sit next to each other (rather than every Read
+  // first, then every Listen) and scrollable for long lists on mobile.
   let _lessonChooserFiles = [];
-  let _lessonChooserOnPick = null;
-  function openLessonChooser(lesson, files, onPick) {
-    _lessonChooserFiles = files;
-    _lessonChooserOnPick = onPick;
+  function openLessonChooser(lesson, files) {
+    const dayOf = (f) => { const m = f.title.match(/Day (\d+)/); return m ? parseInt(m[1], 10) : 0; };
+    const sorted = [...files].sort((a, b) => {
+      const d = dayOf(a) - dayOf(b);
+      if (d !== 0) return d;
+      return (isAudio(a) ? 1 : 0) - (isAudio(b) ? 1 : 0); // Read before Listen on the same day
+    });
+    _lessonChooserFiles = sorted;
+    _inChooserView = true;
     document.getElementById('playerTitle').textContent = lesson.title;
     document.getElementById('playerText').innerHTML = "Choose how you'd like to experience this:";
-    document.getElementById('playerMedia').innerHTML = files.map((f, i) => `
-      <button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">
-        ${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}
-      </button>
-    `).join('');
+    document.getElementById('playerMedia').innerHTML = `
+      <div class="lesson-chooser-list">
+        ${sorted.map((f, i) => `
+          <button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">
+            ${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}
+          </button>
+        `).join('')}
+      </div>
+    `;
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = 'none';
   }
   function chooseLessonFile(index) {
     const file = _lessonChooserFiles[index];
-    if (_lessonChooserOnPick) _lessonChooserOnPick(file);
+    _inChooserView = false;
     if (isAudio(file)) {
-      closePlayerOverlay();
+      // Hide the overlay to make room for the mini player, without
+      // triggering closePlayerOverlay's normal "leaving the lesson" side
+      // effects — closing the mini player will bring the chooser back.
+      const overlayEl = document.getElementById('playerOverlay');
+      overlayEl.classList.remove('visible');
       mpPlay(file);
     } else {
       openContentFile(file);
