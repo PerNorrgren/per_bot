@@ -422,13 +422,18 @@
 <div class="modal-overlay" id="courseDetailModal">
   <div class="modal" style="max-width:660px">
     <h3 id="cdTitle"></h3>
-    <div id="cdSequenceRow" style="display:flex;gap:18px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6)">
+    <div id="cdSequenceRow" style="display:flex;gap:18px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="cdEnforceLessonSeq" onchange="saveCourseSequence()"/> Enforce lesson sequence
       </label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="cdEnforceFileSeq" onchange="saveCourseSequence()"/> Enforce file sequence (default)
       </label>
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        Mandatory (whole course):
+        <button class="btn sm" onclick="setCourseMandatoryAll(true)">All</button>
+        <button class="btn sm" onclick="setCourseMandatoryAll(false)">None</button>
+      </span>
     </div>
     <div id="cdBody"></div>
     <div class="modal-btns">
@@ -1779,7 +1784,10 @@ async function openCourseDetail(courseId){
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
       </div>
-      ${files.length?`<div style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px">
+      ${files.length?`<div style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center">
+          Mandatory: <button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',true)">All</button><button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',false)">None</button>
+        </span>
         ${files.map(f=>`<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border-radius:6px;padding:4px 8px;font-size:12px;color:rgba(255,255,255,0.55)">
           ${ficon(f.file_type)} ${f.title}
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
@@ -1813,6 +1821,17 @@ async function setLessonFileSequence(lessonId,value){
 async function toggleFileMandatory(refId,checked){
   await fetch(`/api/content/lesson-file-refs/${refId}/mandatory`,{method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mandatory:checked})});
+}
+async function setLessonMandatoryAll(lessonId,mandatory){
+  await fetch(`/api/content/lessons/${lessonId}/mandatory-all`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mandatory})});
+  openCourseDetail(curCourseId);
+}
+async function setCourseMandatoryAll(mandatory){
+  if(!curCourseId) return;
+  await fetch(`/api/content/courses/${curCourseId}/mandatory-all`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mandatory})});
+  openCourseDetail(curCourseId);
 }
 
 function openAddFilesToLesson(lessonId,lessonTitle){

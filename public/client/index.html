@@ -499,6 +499,7 @@
     .player-media .doc-link { display:inline-block; padding:10px 22px; border-radius:20px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); text-decoration:none; font-size:13px; }
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
     .chooser-tick { float:right; color:rgba(140,220,170,0.9); font-weight:bold; }
+    .chooser-mandatory-badge { float:right; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:rgba(220,90,80,0.85); color:#fff; font-size:11px; font-weight:bold; }
     .chooser-locked { opacity:0.4; cursor:not-allowed; }
     .text-doc-reader {
       max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
@@ -3891,8 +3892,9 @@
       document.getElementById('courseLessonsList').innerHTML = data.lessons.map(l => {
         const pct = l.fileProgress?.percent ?? 0;
         const isDone = l.progress.status === 'completed';
+        const remaining = l.fileProgress ? (l.fileProgress.total - l.fileProgress.opened) : 0;
         const progressBadge = l.fileProgress?.total
-          ? `<span class="lesson-item-progress">${isDone ? '✓' : pct + '%'}</span>` : '';
+          ? `<span class="lesson-item-progress">${isDone ? '✓' : `${pct}% · ${remaining} left`}</span>` : '';
         const lockBadge = l.locked ? `<span class="lesson-item-lock" title="Complete the previous lesson to unlock">🔒</span>` : '';
         return `
         <div class="lesson-item-row">
@@ -4023,9 +4025,11 @@
         ${sorted.map((f, i) => {
           const locked = lessonLocked || f.locked;
           const label = `${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}`;
-          const tick = f.opened ? '<span class="chooser-tick">✓</span>' : '';
+          const tick = f.opened
+            ? '<span class="chooser-tick">✓</span>'
+            : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');
           if (locked) {
-            return `<button class="doc-link chooser-locked" disabled title="Open the previous item first">🔒 ${label}</button>`;
+            return `<button class="doc-link chooser-locked" disabled title="Open the previous item first">🔒 ${label}${tick}</button>`;
           }
           return `<button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">${label}${tick}</button>`;
         }).join('')}

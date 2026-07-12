@@ -5112,6 +5112,19 @@ app.post('/api/admin/fix-being-here-mandatory', auth.requireAuthApi(['admin']), 
   }
 });
 
+// ── TEMPORARY — Per Bot 13, one-off swap: audio mandatory, text optional for Being Here ──
+app.post('/api/admin/fix-being-here-mandatory-swap', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runSwap } = require('./import_being_here_mandatory_swap');
+    const log = [];
+    const result = await runSwap((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('being here mandatory swap error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
@@ -5242,6 +5255,16 @@ app.patch('/api/content/lessons/:id/file-sequence', auth.requireAuthApi(['admin'
 });
 app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['admin']), (req, res) => {
   db.setLessonFileRefMandatory(req.params.id, !!req.body.mandatory);
+  res.json({ ok: true });
+});
+// "All" / "None" bulk toggles — set every file in one lesson, or every
+// file across the whole course, in a single call.
+app.post('/api/content/lessons/:id/mandatory-all', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setAllFileRefsMandatoryForLesson(req.params.id, !!req.body.mandatory);
+  res.json({ ok: true });
+});
+app.post('/api/content/courses/:id/mandatory-all', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setAllFileRefsMandatoryForCourse(req.params.id, !!req.body.mandatory);
   res.json({ ok: true });
 });
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {

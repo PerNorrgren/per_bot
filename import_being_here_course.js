@@ -147,7 +147,7 @@ async function runImport(log = console.log) {
           null,
           null
         );
-        db.addLessonFileRef(crypto.randomUUID(), lessonId, fileId, sortOrder, true);
+        db.addLessonFileRef(crypto.randomUUID(), lessonId, fileId, sortOrder, false);
 
         log(`  OK: Day ${entry.day} — ${entry.title}`);
         filesOk++;

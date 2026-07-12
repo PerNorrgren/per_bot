@@ -119,7 +119,7 @@ async function runImport(log = console.log) {
         null,
         null
       );
-      db.addLessonFileRef(crypto.randomUUID(), lesson.id, fileId, info._withinLessonIndex + 10);
+      db.addLessonFileRef(crypto.randomUUID(), lesson.id, fileId, info._withinLessonIndex + 10, true);
 
       log(`  OK: Day ${day} audio (${(buffer.length/1024/1024).toFixed(1)} MB)`);
       ok++;

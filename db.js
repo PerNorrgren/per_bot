@@ -1831,6 +1831,19 @@ function addLessonFileRef(id, lessonId, fileId, sortOrder, mandatory) {
 function setLessonFileRefMandatory(refId, mandatory) {
   getDbSync().run('UPDATE lesson_file_refs SET mandatory=? WHERE id=?', [mandatory ? 1 : 0, refId]); save();
 }
+// Bulk "All" / "None" toggles for the admin lesson builder — set every file
+// in one lesson, or every file across every lesson in a course, mandatory
+// or not in a single call rather than checking dozens of boxes by hand.
+function setAllFileRefsMandatoryForLesson(lessonId, mandatory) {
+  getDbSync().run('UPDATE lesson_file_refs SET mandatory=? WHERE lesson_id=?', [mandatory ? 1 : 0, lessonId]); save();
+}
+function setAllFileRefsMandatoryForCourse(courseId, mandatory) {
+  const lessonIds = queryAll('SELECT id FROM lessons WHERE course_id=?', [courseId]).map(l => l.id);
+  if (!lessonIds.length) return;
+  const placeholders = lessonIds.map(() => '?').join(',');
+  getDbSync().run(`UPDATE lesson_file_refs SET mandatory=? WHERE lesson_id IN (${placeholders})`, [mandatory ? 1 : 0, ...lessonIds]);
+  save();
+}
 function getFilesForLesson(lessonId) {
   return queryAll(`SELECT r.id as ref_id, r.sort_order, r.mandatory, f.*
     FROM lesson_file_refs r JOIN library_files f ON r.file_id=f.id
@@ -3961,6 +3974,7 @@ module.exports = {
   setLessonFileSequenceOverride,
   // Lesson file refs
   addLessonFileRef, getFilesForLesson, removeLessonFileRef, setLessonFileRefMandatory,
+  setAllFileRefsMandatoryForLesson, setAllFileRefsMandatoryForCourse,
   // Lesson file opens / progress (Per Bot 13)
   logFileOpen, getOpenedFileIds, getLessonFileProgress,
   // Course instances
