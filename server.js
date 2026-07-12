@@ -5142,16 +5142,31 @@ app.post('/api/admin/run-listen-and-learn-import', auth.requireAuthApi(['admin']
 });
 
 // ── Deeper Mindfulness course import (Per Bot 14) ──
-app.post('/api/admin/run-deeper-mindfulness-import', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    const { runImport } = require('./import_deeper_mindfulness_course');
-    const log = [];
-    const result = await runImport((line) => { log.push(line); console.log(line); });
-    res.json({ ...result, log });
-  } catch (e) {
-    console.error('deeper mindfulness import error:', e.message);
-    res.status(500).json({ error: e.message });
+// Backgrounded rather than awaited in the request handler — this import
+// fetches ~80 files including full lesson videos, sequentially, which
+// comfortably exceeds Railway's gateway timeout if held open on a single
+// HTTP request (the original synchronous version 502'd with "upstream
+// error" partway through, even though the import itself may have kept
+// running server-side). POST now just starts the job and returns
+// immediately; poll the GET status route below for progress and the
+// final result. In-memory job state only — fine for a one-off admin
+// trigger, and consistent with sql.js already being in-memory per process.
+let deeperMindfulnessImportJob = null;
+app.post('/api/admin/run-deeper-mindfulness-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (deeperMindfulnessImportJob && !deeperMindfulnessImportJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: deeperMindfulnessImportJob });
   }
+  deeperMindfulnessImportJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = deeperMindfulnessImportJob;
+  const { runImport } = require('./import_deeper_mindfulness_course');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('deeper mindfulness import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-deeper-mindfulness-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!deeperMindfulnessImportJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(deeperMindfulnessImportJob);
 });
 
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
