@@ -512,6 +512,14 @@
     }
     .text-doc-reader p { color:rgba(255,255,255,0.85); margin:0 0 14px; text-align:center !important; }
     .text-doc-reader a { color:rgba(180,230,200,0.9); }
+    .now-playing-card { display:flex; flex-direction:column; align-items:center; gap:18px; padding:20px 0; }
+    .now-playing-icon { font-size:40px; opacity:0.7; }
+    .now-playing-controls { display:flex; align-items:center; gap:14px; width:100%; max-width:360px; }
+    .np-btn { background:none; border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.85); width:44px; height:44px; border-radius:50%; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .np-progress-wrap { display:flex; align-items:center; gap:10px; width:100%; max-width:360px; }
+    .np-progress { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.15); cursor:pointer; position:relative; }
+    .np-progress-fill { height:100%; border-radius:3px; background:rgba(180,230,200,0.8); width:0%; }
+    .np-time { font-size:11px; color:rgba(255,255,255,0.4); min-width:34px; text-align:right; }
 
     /* Start screen — identical to Mare Bot */
     #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:flex; align-items:center; justify-content:center; z-index:99; }
@@ -2336,13 +2344,17 @@
     mpAudio.addEventListener('timeupdate', () => {
       if (myToken !== _mpToken) return; // stale/abandoned instance
       const pct = mpAudio.duration ? (mpAudio.currentTime / mpAudio.duration * 100) : 0;
-      document.getElementById('mpFill').style.width = pct + '%';
-      document.getElementById('mpTime').textContent = fmtTime(mpAudio.currentTime);
+      const timeText = fmtTime(mpAudio.currentTime);
+      const mpFillEl = document.getElementById('mpFill'); if (mpFillEl) mpFillEl.style.width = pct + '%';
+      const mpTimeEl = document.getElementById('mpTime'); if (mpTimeEl) mpTimeEl.textContent = timeText;
+      const npFillEl = document.getElementById('npFill'); if (npFillEl) npFillEl.style.width = pct + '%';
+      const npTimeEl = document.getElementById('npTime'); if (npTimeEl) npTimeEl.textContent = timeText;
     });
     mpAudio.addEventListener('ended', () => {
       if (myToken !== _mpToken) return; // stale/abandoned instance
-      document.getElementById('mpPlayBtn').textContent = '▶';
-      document.getElementById('mpFill').style.width = '0%';
+      setAllPlayBtns('▶');
+      const mpFillEl = document.getElementById('mpFill'); if (mpFillEl) mpFillEl.style.width = '0%';
+      const npFillEl = document.getElementById('npFill'); if (npFillEl) npFillEl.style.width = '0%';
       // Update play buttons
       document.querySelectorAll('.play-btn.playing').forEach(b => b.classList.remove('playing'));
       document.querySelectorAll('.play-btn').forEach(b => b.textContent = '▶');
@@ -2356,10 +2368,23 @@
     });
   }
 
+  // Keeps the bottom mini-player's button and the in-overlay "Now Playing"
+  // card's button (when present) in sync — only one of the two is ever
+  // actually visible at a time, but both may exist in the DOM.
+  function setAllPlayBtns(text) {
+    const a = document.getElementById('mpPlayBtn'); if (a) a.textContent = text;
+    const b = document.getElementById('npPlayBtn'); if (b) b.textContent = text;
+  }
   function mpToggle() {
     if (!mpAudio) return;
-    if (mpAudio.paused) { mpAudio.play(); document.getElementById('mpPlayBtn').textContent = '⏸'; }
-    else { mpAudio.pause(); document.getElementById('mpPlayBtn').textContent = '▶'; }
+    if (mpAudio.paused) { mpAudio.play(); setAllPlayBtns('⏸'); }
+    else { mpAudio.pause(); setAllPlayBtns('▶'); }
+  }
+  function mpRestart() {
+    if (!mpAudio) return;
+    mpAudio.currentTime = 0;
+    mpAudio.play();
+    setAllPlayBtns('⏸');
   }
 
   function mpSeek(e) {
@@ -2768,6 +2793,7 @@
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (isAudio(f)) { mpPlay(f); return; }
+    _showingNowPlaying = false;
 
     const type = f.file_type?.startsWith('video') ? 'video' : 'document';
     logHistory(type, f.id);
@@ -2847,6 +2873,7 @@
   let _onPlayerCloseCallback = null;
   let _onAudioStopCallback = null;
   let _inChooserView = false; // true while the chooser LIST itself is showing, false while an individual file (opened from it) is showing
+  let _showingNowPlaying = false; // true specifically while the audio Now Playing card is showing
   function pushPlayerHistoryState() {
     if (!_playerHistoryPushed) { history.pushState({ appOverlay: 'player' }, ''); _playerHistoryPushed = true; }
   }
@@ -2875,6 +2902,15 @@
     // playing silently in the background.
     const video = mediaEl.querySelector('video');
     if (video) { video.pause(); video.src = ''; }
+    // Stop audio too, specifically when what's closing is the Now Playing
+    // card (not some other file type) — closing it is a clear "I'm done
+    // with this" signal, same as video.
+    if (_showingNowPlaying && mpAudio) {
+      mpAudio.pause(); mpAudio = null;
+      _currentAudioFile = null;
+      document.getElementById('miniPlayer').classList.remove('visible');
+    }
+    _showingNowPlaying = false;
 
     if (goingBackToChooser) {
       openLessonChooser(_lessonCtx.lesson, _lessonChooserFiles);
@@ -3934,6 +3970,7 @@
     });
     _lessonChooserFiles = sorted;
     _inChooserView = true;
+    _showingNowPlaying = false;
     document.getElementById('playerTitle').textContent = lesson.title;
     document.getElementById('playerText').innerHTML = "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
@@ -3953,15 +3990,46 @@
     const file = _lessonChooserFiles[index];
     _inChooserView = false;
     if (isAudio(file)) {
-      // Hide the overlay to make room for the mini player, without
-      // triggering closePlayerOverlay's normal "leaving the lesson" side
-      // effects — closing the mini player will bring the chooser back.
-      const overlayEl = document.getElementById('playerOverlay');
-      overlayEl.classList.remove('visible');
+      renderNowPlayingCard(file);
       mpPlay(file);
+      // The bottom mini-player would otherwise also pop up and duplicate
+      // the same controls — keep it hidden while the in-overlay "Now
+      // Playing" card is showing (mpPlay's own synchronous setup, including
+      // showing that bar, has already run by the time this line executes).
+      document.getElementById('miniPlayer').classList.remove('visible');
     } else {
       openContentFile(file);
     }
+  }
+
+  // In-overlay "Now Playing" card — keeps the same overlay open while
+  // audio plays (rather than hiding it to reveal the bottom mini-player,
+  // which used to make it look like you'd been kicked out of the lesson
+  // straight to the course page). Progress/time/play-pause are driven by
+  // the same mpAudio object and event listeners as the bottom bar — see
+  // setAllPlayBtns and the timeupdate/ended handlers in mpPlay.
+  function renderNowPlayingCard(file) {
+    _showingNowPlaying = true;
+    document.getElementById('playerTitle').textContent = file.title;
+    document.getElementById('playerText').innerHTML = '';
+    document.getElementById('playerMedia').innerHTML = `
+      <div class="now-playing-card">
+        <div class="now-playing-icon">🎧</div>
+        <div class="now-playing-controls">
+          <button class="np-btn" onclick="mpRestart()" title="Restart">⟲</button>
+          <button class="np-btn" id="npPlayBtn" onclick="mpToggle()">⏸</button>
+        </div>
+        <div class="np-progress-wrap">
+          <div class="np-progress" id="npProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
+            <div class="np-progress-fill" id="npFill"></div>
+          </div>
+          <span class="np-time" id="npTime">0:00</span>
+        </div>
+      </div>
+    `;
+    pushPlayerHistoryState();
+    document.getElementById('playerOverlay').classList.add('visible');
+    document.getElementById('fullscreenBtn').style.display = 'none';
   }
 
   // ── Quiz taking ──
