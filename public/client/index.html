@@ -373,6 +373,7 @@
     .lesson-item-body { flex:1; min-width:0; }
     .lesson-item-title { font-size:13px; color:rgba(255,255,255,0.8); }
     .lesson-item-status { font-size:11px; margin-top:3px; }
+    .lesson-item-desc { font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px; line-height:1.4; }
     .lesson-item-progress { margin-left:8px; color:rgba(180,230,200,0.8); }
     .lesson-item-lock { margin-left:6px; font-size:11px; opacity:0.6; }
     .lesson-item-status.completed { color:rgba(180,230,200,0.65); }
@@ -3896,11 +3897,13 @@
         const progressBadge = l.fileProgress?.total
           ? `<span class="lesson-item-progress">${isDone ? '✓' : `${pct}% · ${remaining} left`}</span>` : '';
         const lockBadge = l.locked ? `<span class="lesson-item-lock" title="Complete the previous lesson to unlock">🔒</span>` : '';
+        const descLine = l.description ? `<div class="lesson-item-desc">${l.description}</div>` : '';
         return `
         <div class="lesson-item-row">
           <div class="lesson-item-num">${l.lesson_number}</div>
           <div class="lesson-item-body">
             <div class="lesson-item-title">${l.title} ${lockBadge}</div>
+            ${descLine}
             <div class="lesson-item-status ${l.progress.status}">${l.progress.status==='completed'?'Completed':l.progress.status==='in_progress'?'In progress':'Not started'}${progressBadge}</div>
           </div>
           <button class="lesson-open-btn" onclick="openLesson('${l.id}')">${l.progress.status==='not_started'?'Start':'Open'}</button>
@@ -4017,9 +4020,10 @@
     _inChooserView = true;
     _showingNowPlaying = false;
     document.getElementById('playerTitle').textContent = lesson.title;
-    document.getElementById('playerText').innerHTML = lessonLocked
+    const descHtml = lesson.description ? `<div style="margin-bottom:10px">${lesson.description}</div>` : '';
+    document.getElementById('playerText').innerHTML = descHtml + (lessonLocked
       ? "🔒 Complete the previous lesson to unlock this one."
-      : "Choose how you'd like to experience this:";
+      : "Choose how you'd like to experience this:");
     document.getElementById('playerMedia').innerHTML = `
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
