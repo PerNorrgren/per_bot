@@ -496,6 +496,22 @@
     .player-media iframe { width:100%; height:50vh; border:none; border-radius:10px; background:#fff; }
     .player-media .doc-link { display:inline-block; padding:10px 22px; border-radius:20px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); text-decoration:none; font-size:13px; }
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
+    .text-doc-reader {
+      max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
+      max-width:560px; margin:0 auto; padding:4px 12px 12px;
+      color:rgba(255,255,255,0.85); font-family:'Georgia',serif; font-size:16px; line-height:1.7;
+      text-align:center;
+    }
+    /* The source files are plain generated HTML with no theme of their own
+       (black text, default serif, left-aligned by default) — override
+       everything explicitly rather than relying on the file's own styling,
+       so it always matches the app regardless of what any given file does
+       or doesn't specify. */
+    .text-doc-reader h1, .text-doc-reader h2, .text-doc-reader h3 {
+      color:rgba(255,255,255,0.95); font-weight:normal; font-style:italic; margin:0 0 18px;
+    }
+    .text-doc-reader p { color:rgba(255,255,255,0.85); margin:0 0 14px; text-align:center !important; }
+    .text-doc-reader a { color:rgba(180,230,200,0.9); }
 
     /* Start screen — identical to Mare Bot */
     #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:flex; align-items:center; justify-content:center; z-index:99; }
@@ -2789,6 +2805,21 @@
       mediaEl.appendChild(video);
     } else if (f.file_type === 'application/pdf') {
       mediaEl.innerHTML = `<iframe src="${url}"></iframe>`;
+    } else if (f.file_type === 'text/html') {
+      // Simple generated HTML (blog posts, poems) — fetch and inject the
+      // actual content styled to match the app, rather than an iframe
+      // (which would just show the raw unstyled page inside a box) or a
+      // new-tab link (which looks completely out of place, plain black
+      // text on white with none of the app's look and feel).
+      try {
+        const htmlRes = await fetch(url);
+        const htmlText = await htmlRes.text();
+        const parsed = new DOMParser().parseFromString(htmlText, 'text/html');
+        const article = parsed.querySelector('article') || parsed.body;
+        mediaEl.innerHTML = `<div class="text-doc-reader">${article.innerHTML}</div>`;
+      } catch {
+        mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
+      }
     } else {
       // Other document types (docx, pptx, etc.) — browsers generally can't render these
       // inline, so offer a direct open/download link rather than a blank frame.
