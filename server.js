@@ -5141,6 +5141,19 @@ app.post('/api/admin/run-listen-and-learn-import', auth.requireAuthApi(['admin']
   }
 });
 
+// ── Deeper Mindfulness course import (Per Bot 14) ──
+app.post('/api/admin/run-deeper-mindfulness-import', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runImport } = require('./import_deeper_mindfulness_course');
+    const log = [];
+    const result = await runImport((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('deeper mindfulness import error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
