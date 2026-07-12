@@ -5154,6 +5154,19 @@ app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['
   }
 });
 
+// ── TEMPORARY — Per Bot 13, plain lesson titles for the poem-a-day course ──
+app.post('/api/admin/fix-being-here-lesson-titles', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runRename } = require('./import_being_here_lesson_titles');
+    const log = [];
+    const result = await runRename((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('being here lesson titles error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
