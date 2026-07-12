@@ -814,11 +814,38 @@ async function getDb() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_tag ON library_file_tags(tag)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_file ON library_file_tags(file_id)`);
 
+  // ── Lesson file opens (Per Bot 13) ──
+  // Tracks every time a client opens/plays a file that's part of a lesson.
+  // Underlies three things at once: the green-tick "opened" marker in the
+  // client player, the % complete shown per lesson (opened mandatory files
+  // ÷ total mandatory files — see getLessonProgress), and gating the "mark
+  // lesson complete?" prompt on mandatory files actually being opened. Not
+  // deduped to one row per user/file on purpose — repeat opens are cheap to
+  // store and the timestamp history is useful later (e.g. reminders built
+  // on "hasn't opened anything in this lesson for two weeks").
+  db.run(`CREATE TABLE IF NOT EXISTS lesson_file_opens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    lesson_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    opened_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_lesson_file_opens_lookup ON lesson_file_opens(user_id, lesson_id, file_id)`);
+
   // ── Migrations — add columns to existing tables if they don't exist ──
   // This is how we handle the live database which was created before the full schema
   // above existed. The CREATE TABLE IF NOT EXISTS above handles new installs;
   // these ALTER TABLE statements handle the upgrade path for existing databases.
   const migrations = [
+    // Sequencing & mandatory files (Per Bot 13). Everything defaults to
+    // off/0 — existing courses are completely unaffected unless someone
+    // explicitly opts a course or lesson in.
+    "ALTER TABLE lesson_file_refs ADD COLUMN mandatory INTEGER DEFAULT 0",
+    "ALTER TABLE courses ADD COLUMN enforce_lesson_sequence INTEGER DEFAULT 0",
+    "ALTER TABLE courses ADD COLUMN enforce_file_sequence INTEGER DEFAULT 0",
+    // NULL = inherit the course's enforce_file_sequence default; 0 = force
+    // off for this lesson regardless of the course default; 1 = force on.
+    "ALTER TABLE lessons ADD COLUMN file_sequence_override INTEGER",
     // library_files columns added after initial schema
     "ALTER TABLE library_files ADD COLUMN visibility_registered INTEGER DEFAULT 0",
     "ALTER TABLE library_files ADD COLUMN visibility_member INTEGER DEFAULT 0",
@@ -1763,6 +1790,14 @@ function deleteCourse(id) {
   getDbSync().run('DELETE FROM courses WHERE id=?', [id]);
   save();
 }
+// Separate from updateCourse (rather than extending its signature) so
+// existing callers — including the Being Here import scripts — don't need
+// to change. enforceFileSequence is the course-wide default; individual
+// lessons can override it via setLessonFileSequenceOverride.
+function setCourseSequenceFlags(id, enforceLessonSequence, enforceFileSequence) {
+  getDbSync().run('UPDATE courses SET enforce_lesson_sequence=?, enforce_file_sequence=? WHERE id=?',
+    [enforceLessonSequence ? 1 : 0, enforceFileSequence ? 1 : 0, id]); save();
+}
 
 // ── Lessons ──
 function createLesson(id, courseId, lessonNumber, title, description, visibility) {
@@ -1782,19 +1817,59 @@ function deleteLesson(id) {
   getDbSync().run('DELETE FROM lessons WHERE id=?', [id]);
   save();
 }
+// override: null (inherit the course's enforce_file_sequence default), 0
+// (force off for this lesson), or 1 (force on for this lesson).
+function setLessonFileSequenceOverride(id, override) {
+  getDbSync().run('UPDATE lessons SET file_sequence_override=? WHERE id=?', [override, id]); save();
+}
 
 // ── Lesson file refs ──
-function addLessonFileRef(id, lessonId, fileId, sortOrder) {
-  getDbSync().run('INSERT INTO lesson_file_refs (id,lesson_id,file_id,sort_order) VALUES (?,?,?,?)',
-    [id, lessonId, fileId, sortOrder||0]); save();
+function addLessonFileRef(id, lessonId, fileId, sortOrder, mandatory) {
+  getDbSync().run('INSERT INTO lesson_file_refs (id,lesson_id,file_id,sort_order,mandatory) VALUES (?,?,?,?,?)',
+    [id, lessonId, fileId, sortOrder||0, mandatory ? 1 : 0]); save();
+}
+function setLessonFileRefMandatory(refId, mandatory) {
+  getDbSync().run('UPDATE lesson_file_refs SET mandatory=? WHERE id=?', [mandatory ? 1 : 0, refId]); save();
 }
 function getFilesForLesson(lessonId) {
-  return queryAll(`SELECT r.id as ref_id, r.sort_order, f.*
+  return queryAll(`SELECT r.id as ref_id, r.sort_order, r.mandatory, f.*
     FROM lesson_file_refs r JOIN library_files f ON r.file_id=f.id
     WHERE r.lesson_id=? ORDER BY r.sort_order ASC`, [lessonId]);
 }
 function removeLessonFileRef(refId) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE id=?', [refId]); save();
+}
+
+// ── Lesson file opens / progress tracking (Per Bot 13) ──
+function logFileOpen(id, userId, lessonId, fileId) {
+  getDbSync().run('INSERT INTO lesson_file_opens (id,user_id,lesson_id,file_id) VALUES (?,?,?,?)',
+    [id, userId, lessonId, fileId]); save();
+}
+// Set of file_ids this user has opened at least once within this lesson —
+// used for the green-tick marker, the completion-prompt gate, and file
+// sequence locking.
+function getOpenedFileIds(userId, lessonId) {
+  const rows = queryAll('SELECT DISTINCT file_id FROM lesson_file_opens WHERE user_id=? AND lesson_id=?', [userId, lessonId]);
+  return new Set(rows.map(r => r.file_id));
+}
+// opened/total counts against MANDATORY files specifically, falling back
+// to counting every file when nothing in the lesson has been marked
+// mandatory (in practice every real lesson should have mandatory files
+// set, but this keeps a freshly-built lesson from showing a misleading
+// 100% or a blank percentage before anyone's gone through and set flags).
+function getLessonFileProgress(userId, lessonId) {
+  const files = getFilesForLesson(lessonId);
+  const opened = getOpenedFileIds(userId, lessonId);
+  const mandatoryFiles = files.filter(f => f.mandatory);
+  const countAgainst = mandatoryFiles.length > 0 ? mandatoryFiles : files;
+  const openedCount = countAgainst.filter(f => opened.has(f.id)).length;
+  const total = countAgainst.length;
+  return {
+    opened: openedCount,
+    total,
+    percent: total > 0 ? Math.round((openedCount / total) * 100) : 0,
+    allMandatoryOpened: mandatoryFiles.length === 0 || mandatoryFiles.every(f => opened.has(f.id)),
+  };
 }
 
 // ── Course instances ──
@@ -3880,10 +3955,14 @@ module.exports = {
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getTalkPractices,
+  setCourseSequenceFlags,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
+  setLessonFileSequenceOverride,
   // Lesson file refs
-  addLessonFileRef, getFilesForLesson, removeLessonFileRef,
+  addLessonFileRef, getFilesForLesson, removeLessonFileRef, setLessonFileRefMandatory,
+  // Lesson file opens / progress (Per Bot 13)
+  logFileOpen, getOpenedFileIds, getLessonFileProgress,
   // Course instances
   createCourseInstance, getCourseInstance, getInstancesForCourse, getAllCourseInstances,
   updateCourseInstance, deleteCourseInstance,

@@ -422,6 +422,14 @@
 <div class="modal-overlay" id="courseDetailModal">
   <div class="modal" style="max-width:660px">
     <h3 id="cdTitle"></h3>
+    <div id="cdSequenceRow" style="display:flex;gap:18px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6)">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="cdEnforceLessonSeq" onchange="saveCourseSequence()"/> Enforce lesson sequence
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="cdEnforceFileSeq" onchange="saveCourseSequence()"/> Enforce file sequence (default)
+      </label>
+    </div>
     <div id="cdBody"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('courseDetailModal')">Close</button>
@@ -1747,6 +1755,8 @@ async function openCourseDetail(courseId){
   curCourseId=courseId;
   const c=allCourses.find(x=>x.id===courseId)||{};
   document.getElementById('cdTitle').textContent=c.title||'Course';
+  document.getElementById('cdEnforceLessonSeq').checked=!!c.enforce_lesson_sequence;
+  document.getElementById('cdEnforceFileSeq').checked=!!c.enforce_file_sequence;
   document.getElementById('alCourseId').value=courseId;
   const lessons=await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json());
   const el=document.getElementById('cdBody');
@@ -1754,10 +1764,16 @@ async function openCourseDetail(courseId){
   let h='<div style="display:flex;flex-direction:column;gap:8px">';
   for(const l of lessons){
     const files=await fetch(`/api/content/lessons/${l.id}/files`).then(r=>r.json());
+    const seqVal = l.file_sequence_override===null||l.file_sequence_override===undefined ? '' : (l.file_sequence_override?'1':'0');
     h+=`<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:9px;overflow:hidden">
       <div style="padding:11px 14px;display:flex;align-items:center;gap:10px">
         <div style="font-size:16px;color:rgba(255,255,255,0.2);min-width:22px">${l.lesson_number}</div>
         <div style="flex:1"><div style="font-size:13px;color:rgba(255,255,255,0.78)">${l.title}</div><div style="margin-top:3px">${vbadge(l.visibility)}</div></div>
+        <select style="font-size:11px" title="File sequence for this lesson" onchange="setLessonFileSequence('${l.id}',this.value)">
+          <option value="" ${seqVal===''?'selected':''}>File sequence: inherit</option>
+          <option value="1" ${seqVal==='1'?'selected':''}>File sequence: on</option>
+          <option value="0" ${seqVal==='0'?'selected':''}>File sequence: off</option>
+        </select>
         <button class="btn sm" onclick="editLesson('${l.id}','${l.lesson_number}','${l.title.replace(/'/g,"\\'")}','${l.visibility}')">Edit</button>
         <button class="btn sm" onclick="openQuizModal('${l.id}','${l.title.replace(/'/g,"\\'")}')">Quiz</button>
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
@@ -1766,6 +1782,9 @@ async function openCourseDetail(courseId){
       ${files.length?`<div style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px">
         ${files.map(f=>`<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border-radius:6px;padding:4px 8px;font-size:12px;color:rgba(255,255,255,0.55)">
           ${ficon(f.file_type)} ${f.title}
+          <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
+            <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
+          </label>
           <button onclick="rmLessonFile('${f.ref_id}')" style="background:none;border:none;color:rgba(255,100,80,0.4);cursor:pointer;font-size:14px">×</button>
         </div>`).join('')}
       </div>`:''}
@@ -1773,6 +1792,27 @@ async function openCourseDetail(courseId){
   }
   h+='</div>';
   el.innerHTML=h;openModal('courseDetailModal');
+}
+
+async function saveCourseSequence(){
+  if(!curCourseId) return;
+  const enforceLessonSequence=document.getElementById('cdEnforceLessonSeq').checked;
+  const enforceFileSequence=document.getElementById('cdEnforceFileSeq').checked;
+  await fetch(`/api/content/courses/${curCourseId}/sequence`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({enforceLessonSequence,enforceFileSequence})});
+  const c=allCourses.find(x=>x.id===curCourseId);
+  if(c){c.enforce_lesson_sequence=enforceLessonSequence?1:0;c.enforce_file_sequence=enforceFileSequence?1:0;}
+}
+
+async function setLessonFileSequence(lessonId,value){
+  const override = value===''?null:(value==='1');
+  await fetch(`/api/content/lessons/${lessonId}/file-sequence`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({override})});
+}
+
+async function toggleFileMandatory(refId,checked){
+  await fetch(`/api/content/lesson-file-refs/${refId}/mandatory`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mandatory:checked})});
 }
 
 function openAddFilesToLesson(lessonId,lessonTitle){

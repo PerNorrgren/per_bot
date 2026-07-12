@@ -1748,6 +1748,7 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
     const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
+    const course = db.getCourse(instance.course_id);
     const lessons = db.getLessonsForCourse(instance.course_id);
     const progressRows = db.getProgressForEnrolment(enrolment.id);
     const progressByLesson = {};
@@ -1755,11 +1756,22 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
 
     const resume = db.getResumePoint(enrolment.id, instance.course_id);
 
-    res.json({
-      instance, enrolment,
-      lessons: lessons.map(l => ({ ...l, progress: progressByLesson[l.id] || { status: 'not_started', last_position: null } })),
-      resume,
+    // Sequencing (Per Bot 13) — same "previous lesson must be completed"
+    // rule as the lesson-detail route, computed here too so the course
+    // list itself can show a lock icon without a person needing to click
+    // into a lesson first to discover it's locked.
+    let prevCompleted = true; // Lesson 1 (or whatever's first) is never locked
+    const withProgress = lessons.map(l => {
+      const progress = progressByLesson[l.id] || { status: 'not_started', last_position: null };
+      const locked = !!course?.enforce_lesson_sequence && !prevCompleted;
+      prevCompleted = progress.status === 'completed';
+      return {
+        ...l, progress, locked,
+        fileProgress: db.getLessonFileProgress(req.user.id, l.id),
+      };
     });
+
+    res.json({ instance, enrolment, lessons: withProgress, resume });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1783,10 +1795,52 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
     const bestAttempt = quizRecord ? db.getBestAttempt(enrolment.id, quizRecord.id) : null;
     const progress = db.getLessonProgress(enrolment.id, req.params.lessonId) || { status: 'not_started', last_position: null };
 
+    // Sequencing (Per Bot 13) — the lesson itself always stays viewable
+    // (its own title/structure), but every file inside it counts as locked
+    // if enforce_lesson_sequence is on and the lesson immediately before
+    // this one hasn't been completed yet. Within an unlocked lesson, file
+    // sequence (if this lesson's own override, or the course default when
+    // there's no override, says to enforce it) locks file N+1 until file N
+    // has actually been opened.
+    const course = db.getCourse(instance.course_id);
+    const courseLessons = db.getLessonsForCourse(instance.course_id);
+    const myIndex = courseLessons.findIndex(l => l.id === lesson.id);
+    const prevLesson = myIndex > 0 ? courseLessons[myIndex - 1] : null;
+    const prevLessonProgress = prevLesson ? db.getLessonProgress(enrolment.id, prevLesson.id) : null;
+    const lessonLocked = !!course?.enforce_lesson_sequence && !!prevLesson && prevLessonProgress?.status !== 'completed';
+
+    const effectiveFileSequence = lesson.file_sequence_override !== null && lesson.file_sequence_override !== undefined
+      ? !!lesson.file_sequence_override
+      : !!course?.enforce_file_sequence;
+
+    const openedIds = db.getOpenedFileIds(req.user.id, req.params.lessonId);
+    const rawFiles = db.getFilesForLesson(req.params.lessonId);
+    const files = rawFiles.map((f, i) => ({
+      ...f,
+      opened: openedIds.has(f.id),
+      locked: lessonLocked ? true : (effectiveFileSequence && i > 0 && !openedIds.has(rawFiles[i - 1].id)),
+    }));
+
     res.json({
-      lesson, files: db.getFilesForLesson(req.params.lessonId), quiz, bestAttempt, progress,
+      lesson, files, quiz, bestAttempt, progress,
       enrolment_id: enrolment.id,
+      lessonLocked,
+      fileProgress: db.getLessonFileProgress(req.user.id, req.params.lessonId),
     });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Logs a file open within a lesson — feeds the green-tick marker, the %
+// complete shown per lesson, the mandatory-files completion gate, and file
+// sequence unlocking. Separate from the general /api/client/history log
+// (which is a flat "recently played" list) since this one is specifically
+// scoped to lesson progress and needs the lessonId to make sense.
+app.post('/api/client/lesson-file-opens', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const { lessonId, fileId } = req.body;
+    if (!lessonId || !fileId) return res.status(400).json({ error: 'lessonId and fileId are required.' });
+    db.logFileOpen(uuidv4(), req.user.id, lessonId, fileId);
+    res.json({ ok: true, progress: db.getLessonFileProgress(req.user.id, lessonId) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5045,6 +5099,19 @@ app.post('/api/admin/fix-being-here-visibility', auth.requireAuthApi(['admin']),
   }
 });
 
+// ── TEMPORARY — Per Bot 13, one-off backfill: mark existing Being Here text poems mandatory ──
+app.post('/api/admin/fix-being-here-mandatory', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runBackfill } = require('./import_being_here_mandatory_backfill');
+    const log = [];
+    const result = await runBackfill((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('being here mandatory backfill error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
@@ -5154,8 +5221,29 @@ app.patch('/api/content/courses/:id/featured', auth.requireAuthApi(['admin']), (
   db.setCourseFeatured(req.params.id, !!req.body.featured);
   res.json({ ok: true });
 });
+// Sequencing (Per Bot 13) — enforceLessonSequence locks Lesson N+1 until
+// Lesson N is complete; enforceFileSequence is the course-wide default for
+// file-order locking within a lesson (individual lessons can override it,
+// see the lessons/:id/file-sequence route below). Both default off.
+app.patch('/api/content/courses/:id/sequence', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setCourseSequenceFlags(req.params.id, !!req.body.enforceLessonSequence, !!req.body.enforceFileSequence);
+  res.json({ ok: true });
+});
 
 app.get('/api/content/courses/:id/lessons', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getLessonsForCourse(req.params.id)));
+// override: null (inherit the course default), true (force file sequence
+// on for this lesson), or false (force off) — sent as 'null'/'true'/'false'
+// strings from a tri-state select, parsed here.
+app.patch('/api/content/lessons/:id/file-sequence', auth.requireAuthApi(['admin']), (req, res) => {
+  const raw = req.body.override;
+  const override = raw === null || raw === 'null' ? null : (raw === true || raw === 'true') ? 1 : 0;
+  db.setLessonFileSequenceOverride(req.params.id, override);
+  res.json({ ok: true });
+});
+app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setLessonFileRefMandatory(req.params.id, !!req.body.mandatory);
+  res.json({ ok: true });
+});
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { courseId, lessonNumber, title, visibility, fileIds } = req.body;

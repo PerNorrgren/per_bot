@@ -373,6 +373,8 @@
     .lesson-item-body { flex:1; min-width:0; }
     .lesson-item-title { font-size:13px; color:rgba(255,255,255,0.8); }
     .lesson-item-status { font-size:11px; margin-top:3px; }
+    .lesson-item-progress { margin-left:8px; color:rgba(180,230,200,0.8); }
+    .lesson-item-lock { margin-left:6px; font-size:11px; opacity:0.6; }
     .lesson-item-status.completed { color:rgba(180,230,200,0.65); }
     .lesson-item-status.in_progress { color:rgba(255,200,130,0.65); }
     .lesson-item-status.not_started { color:rgba(255,255,255,0.3); }
@@ -496,6 +498,8 @@
     .player-media iframe { width:100%; height:50vh; border:none; border-radius:10px; background:#fff; }
     .player-media .doc-link { display:inline-block; padding:10px 22px; border-radius:20px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); text-decoration:none; font-size:13px; }
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
+    .chooser-tick { float:right; color:rgba(140,220,170,0.9); font-weight:bold; }
+    .chooser-locked { opacity:0.4; cursor:not-allowed; }
     .text-doc-reader {
       max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
       max-width:560px; margin:0 auto; padding:4px 12px 12px;
@@ -3884,16 +3888,23 @@
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
       `;
-      document.getElementById('courseLessonsList').innerHTML = data.lessons.map(l => `
+      document.getElementById('courseLessonsList').innerHTML = data.lessons.map(l => {
+        const pct = l.fileProgress?.percent ?? 0;
+        const isDone = l.progress.status === 'completed';
+        const progressBadge = l.fileProgress?.total
+          ? `<span class="lesson-item-progress">${isDone ? '✓' : pct + '%'}</span>` : '';
+        const lockBadge = l.locked ? `<span class="lesson-item-lock" title="Complete the previous lesson to unlock">🔒</span>` : '';
+        return `
         <div class="lesson-item-row">
           <div class="lesson-item-num">${l.lesson_number}</div>
           <div class="lesson-item-body">
-            <div class="lesson-item-title">${l.title}</div>
-            <div class="lesson-item-status ${l.progress.status}">${l.progress.status==='completed'?'Completed':l.progress.status==='in_progress'?'In progress':'Not started'}</div>
+            <div class="lesson-item-title">${l.title} ${lockBadge}</div>
+            <div class="lesson-item-status ${l.progress.status}">${l.progress.status==='completed'?'Completed':l.progress.status==='in_progress'?'In progress':'Not started'}${progressBadge}</div>
           </div>
           <button class="lesson-open-btn" onclick="openLesson('${l.id}')">${l.progress.status==='not_started'?'Start':'Open'}</button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     } catch(e) {
       document.getElementById('courseDetailHeader').innerHTML = '<div class="no-content">Could not load this course.</div>';
     }
@@ -3913,7 +3924,8 @@
   // a file opens it, closing THAT FILE returns to the chooser (not the
   // course), and the "mark complete?" prompt only fires once when the
   // chooser itself is closed — not once per file.
-  let _lessonCtx = null; // { lesson, lessonId, instanceId, askToComplete } while a multi-file lesson is open
+  let _lessonCtx = null; // { lesson, askToComplete } while a multi-file lesson is open
+  let _currentFileProgress = null; // latest {opened,total,percent,allMandatoryOpened} for whichever lesson is open
   async function openLesson(lessonId) {
     if (!currentInstanceId) return;
     try {
@@ -3921,12 +3933,22 @@
       const data = await res.json();
       if (data.error) { appAlert(data.error); return; }
 
+      _currentFileProgress = data.fileProgress || null;
+
       if (data.progress.status === 'not_started') {
         await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'in_progress' }) });
       }
 
       const askToComplete = async () => {
+        // Mandatory files still outstanding — per Per's request, the
+        // completion prompt simply doesn't appear at all in that case,
+        // rather than appearing and blocking/warning.
+        if (_currentFileProgress && !_currentFileProgress.allMandatoryOpened) {
+          openCourseDetail(currentInstanceId);
+          loadResumeCard();
+          return;
+        }
         if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
           await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
@@ -3939,10 +3961,11 @@
         _lessonCtx = null;
         if (isAudio(data.files[0])) { _onAudioStopCallback = askToComplete; }
         else { _onPlayerCloseCallback = askToComplete; }
+        logLessonFileOpen(lessonId, data.files[0].id);
         openContentFile(data.files[0]);
       } else if (data.files && data.files.length > 1) {
-        _lessonCtx = { lesson: data.lesson, askToComplete: data.quiz ? null : askToComplete };
-        openLessonChooser(data.lesson, data.files);
+        _lessonCtx = { lesson: data.lesson, lessonId, askToComplete: data.quiz ? null : askToComplete };
+        openLessonChooser(data.lesson, data.files, data.lessonLocked);
       }
 
       if (data.quiz) {
@@ -3955,13 +3978,33 @@
     } catch(e) { appAlert('Could not open this lesson. Please try again.'); }
   }
 
+  // Logs that a file was opened (feeds green ticks, % complete, the
+  // mandatory-files completion gate, and file-sequence unlocking). Fires
+  // in the background — never blocks actually opening/playing the file.
+  async function logLessonFileOpen(lessonId, fileId) {
+    const f = _lessonChooserFiles.find(x => x.id === fileId);
+    if (f) f.opened = true; // immediate UI feedback, don't wait on the network
+    try {
+      const res = await fetch('/api/client/lesson-file-opens', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ lessonId, fileId }) });
+      const data = await res.json();
+      if (data.progress) _currentFileProgress = data.progress;
+    } catch {}
+  }
+
   // Small in-overlay picker for lessons with more than one file — reuses
   // the same player-overlay chrome (title/close/history-back handling)
   // rather than building a separate modal from scratch. Sorted so each
   // day's Read and Listen sit next to each other (rather than every Read
   // first, then every Listen) and scrollable for long lists on mobile.
   let _lessonChooserFiles = [];
-  function openLessonChooser(lesson, files) {
+  function openLessonChooser(lesson, files, lessonLocked) {
+    // Preserve whatever lock state was already known (from the initial API
+    // response) across re-renders that don't pass it explicitly — e.g. the
+    // reopen-after-closing-a-file calls elsewhere only pass (lesson, files).
+    if (lessonLocked === undefined) lessonLocked = _lessonCtx?.lessonLocked || false;
+    if (_lessonCtx) _lessonCtx.lessonLocked = lessonLocked;
+
     const dayOf = (f) => { const m = f.title.match(/Day (\d+)/); return m ? parseInt(m[1], 10) : 0; };
     const sorted = [...files].sort((a, b) => {
       const d = dayOf(a) - dayOf(b);
@@ -3972,14 +4015,20 @@
     _inChooserView = true;
     _showingNowPlaying = false;
     document.getElementById('playerTitle').textContent = lesson.title;
-    document.getElementById('playerText').innerHTML = "Choose how you'd like to experience this:";
+    document.getElementById('playerText').innerHTML = lessonLocked
+      ? "🔒 Complete the previous lesson to unlock this one."
+      : "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
       <div class="lesson-chooser-list">
-        ${sorted.map((f, i) => `
-          <button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">
-            ${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}
-          </button>
-        `).join('')}
+        ${sorted.map((f, i) => {
+          const locked = lessonLocked || f.locked;
+          const label = `${isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}`;
+          const tick = f.opened ? '<span class="chooser-tick">✓</span>' : '';
+          if (locked) {
+            return `<button class="doc-link chooser-locked" disabled title="Open the previous item first">🔒 ${label}</button>`;
+          }
+          return `<button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">${label}${tick}</button>`;
+        }).join('')}
       </div>
     `;
     pushPlayerHistoryState();
@@ -3988,7 +4037,10 @@
   }
   function chooseLessonFile(index) {
     const file = _lessonChooserFiles[index];
+    const locked = _lessonCtx?.lessonLocked || file.locked;
+    if (locked) return; // shouldn't be reachable (button is disabled), guard anyway
     _inChooserView = false;
+    if (_lessonCtx) logLessonFileOpen(_lessonCtx.lessonId, file.id);
     if (isAudio(file)) {
       renderNowPlayingCard(file);
       mpPlay(file);
