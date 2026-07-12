@@ -149,7 +149,9 @@ async function runImport(log = console.log) {
     }
   }
 
-  // Intro (lesson 0) — text only, no media in the export.
+  // Intro (lesson 0) — no media in the export, but the body text is a
+  // real course-overview write-up, not a short blurb — same file-not-
+  // description reasoning as the per-lesson notes below.
   if (manifest.intro) {
     let introLesson = existingLessons.find(l => l.lesson_number === 0);
     let introId;
@@ -158,8 +160,33 @@ async function runImport(log = console.log) {
       log('Lesson 0 (Introduction) already exists — reusing.');
     } else {
       introId = crypto.randomUUID();
-      db.createLesson(introId, courseId, 0, 'Introduction', manifest.intro.body || '', 'member');
+      db.createLesson(introId, courseId, 0, 'Introduction', '', 'member');
       log('Created Lesson 0: Introduction.');
+    }
+    const introOriginalName = 'dm-l0-intro.html';
+    if (existingNames.has(introOriginalName)) {
+      log('  SKIP (already imported): Deeper Mindfulness — Introduction');
+      filesSkipped++;
+    } else if (manifest.intro.body) {
+      try {
+        const fixedHtml = `<article>${manifest.intro.body.replace(/src="\/wp-content\//g, 'src="https://deepermindfulness.org/wp-content/')}</article>`;
+        const buffer = Buffer.from(fixedHtml, 'utf8');
+        const key = `library/${crypto.randomUUID()}.html`;
+        await media.putObject(key, buffer, 'text/html');
+        const fileId = crypto.randomUUID();
+        db.addLibraryFile(fileId, 'Deeper Mindfulness — Introduction',
+          'Deeper Mindfulness — course introduction.',
+          key, introOriginalName, 'text/html', buffer.length,
+          mindfulness.id, deeperSub.id, 'member', 'r2', false,
+          (kinds.find(k => /blog/i.test(k.label)) || otherKind).value, null, null);
+        db.addLessonFileRef(crypto.randomUUID(), introId, fileId, 1, false);
+        existingNames.add(introOriginalName);
+        log(`  OK: Deeper Mindfulness — Introduction (${(buffer.length/1024).toFixed(1)} KB)`);
+        filesOk++;
+      } catch (e) {
+        log(`  FAILED: Deeper Mindfulness — Introduction — ${e.message}`);
+        filesFailed++;
+      }
     }
   }
 
@@ -213,11 +240,40 @@ async function runImport(log = console.log) {
       });
     }
 
-    // Lesson notes — stored as lesson description, not a separate file
-    // (matches how notes read in the original: short reflective text, no
-    // standalone document). Set once even on reruns.
+    // Lesson notes — a full blog-style write-up plus a header image plus
+    // a closing poem (same content as the original WordPress course
+    // page), NOT short text. lessons.description is only ever shown as a
+    // small blurb above the file-choice buttons, so this must go in as
+    // its own text/html library file instead — same pattern as the
+    // Being Here poems, rendered properly in the player overlay rather
+    // than dumped as an oversized, unstyled, image-broken blurb.
     if (l.notes_text) {
-      db.updateLesson(lessonId, lnum, l.title, l.notes_text, 'member');
+      sortOrder++;
+      const notesOriginalName = `dm-l${lnum}-notes.html`;
+      if (existingNames.has(notesOriginalName)) {
+        log(`  SKIP (already imported): Deeper Mindfulness L${lnum} — Notes`);
+        filesSkipped++;
+      } else {
+        try {
+          const fixedHtml = `<article>${l.notes_text.replace(/src="\/wp-content\//g, 'src="https://deepermindfulness.org/wp-content/')}</article>`;
+          const buffer = Buffer.from(fixedHtml, 'utf8');
+          const key = `library/${crypto.randomUUID()}.html`;
+          await media.putObject(key, buffer, 'text/html');
+          const fileId = crypto.randomUUID();
+          db.addLibraryFile(fileId, `Deeper Mindfulness — ${l.title} Notes`,
+            `Deeper Mindfulness — ${l.title}, lesson notes and reflection poem.`,
+            key, notesOriginalName, 'text/html', buffer.length,
+            mindfulness.id, deeperSub.id, 'member', 'r2', false,
+            (kinds.find(k => /blog/i.test(k.label)) || otherKind).value, null, null);
+          db.addLessonFileRef(crypto.randomUUID(), lessonId, fileId, sortOrder, false);
+          existingNames.add(notesOriginalName);
+          log(`  OK: Deeper Mindfulness L${lnum} — Notes (${(buffer.length/1024).toFixed(1)} KB)`);
+          filesOk++;
+        } catch (e) {
+          log(`  FAILED: Deeper Mindfulness L${lnum} — Notes — ${e.message}`);
+          filesFailed++;
+        }
+      }
     }
 
     // Handout (Lesson 1 only) — optional supplementary reading.

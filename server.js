@@ -5169,6 +5169,51 @@ app.get('/api/admin/run-deeper-mindfulness-import/status', auth.requireAuthApi([
   res.json(deeperMindfulnessImportJob);
 });
 
+// ── Mindfulness For Life course import (Per Bot 14) ──
+// Backgrounded from the start — see the comment on the Deeper Mindfulness
+// route above for why (Railway gateway timeout on long sequential
+// video-file imports held open on a single HTTP request).
+let mflImportJob = null;
+app.post('/api/admin/run-mindfulness-for-life-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (mflImportJob && !mflImportJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: mflImportJob });
+  }
+  mflImportJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = mflImportJob;
+  const { runImport } = require('./import_mindfulness_for_life_course');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('mindfulness for life import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-mindfulness-for-life-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!mflImportJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(mflImportJob);
+});
+
+// ── Fix: Deeper Mindfulness lesson notes (Per Bot 14) ──
+// See fix_deeper_mindfulness_lesson_notes.js for the full story — moves
+// each lesson's notes+poem content out of lessons.description (only ever
+// shown as a small blurb, not a real page) into a proper text/html
+// library file, same rendering pattern as the Being Here poems.
+let dmNotesFixJob = null;
+app.post('/api/admin/fix-deeper-mindfulness-notes', auth.requireAuthApi(['admin']), (req, res) => {
+  if (dmNotesFixJob && !dmNotesFixJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: dmNotesFixJob });
+  }
+  dmNotesFixJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = dmNotesFixJob;
+  const { runFix } = require('./fix_deeper_mindfulness_lesson_notes');
+  runFix((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('DM notes fix error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/fix-deeper-mindfulness-notes/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!dmNotesFixJob) return res.status(404).json({ error: 'No fix run has been started yet.' });
+  res.json(dmNotesFixJob);
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
