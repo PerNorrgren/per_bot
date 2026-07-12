@@ -482,6 +482,12 @@
     .player-overlay.video-mode { position:fixed; inset:0; border-radius:0; z-index:500; padding:24px; }
     .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
     .player-overlay.video-mode .player-media video { max-height:80vh; }
+    /* The description row duplicates the title for videos (e.g. "Mindfulness
+       For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
+       that already says exactly that) and crowds/overlaps the video's top
+       edge once the video expands to fill more of the screen. Redundant in
+       video mode specifically — the title already covers it. */
+    .player-overlay.video-mode .player-text { display:none; }
     /* Per Bot 21: a second, fixed-position close button specifically for
        video mode — the row-based one below can end up pushed out of the
        visible area on a small/short viewport once a large video takes up
