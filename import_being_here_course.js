@@ -43,9 +43,14 @@ async function runImport(log = console.log) {
   const poemsSub = db.getSubcategories(writing.id).find(s => s.name.toLowerCase() === 'poems');
   if (!poemsSub) throw new Error('No "Poems" subcategory found under Writing.');
 
-  // Course category: FELT·FIBRE (seeded category, should always exist).
-  const feltCat = categories.find(c => c.name.toLowerCase().includes('felt') && !c.parent_id);
-  if (!feltCat) throw new Error('No top-level "FELT·FIBRE" category found.');
+  // Course category: FELT·FIBRE (seeded category, should always exist) —
+  // matched loosely since the interpunct/exact naming can vary between
+  // environments seeded at different times.
+  const topCats = categories.filter(c => !c.parent_id);
+  const feltCat = topCats.find(c => /felt/i.test(c.name));
+  if (!feltCat) {
+    throw new Error(`No top-level FELT·FIBRE category found. Available top-level categories: ${topCats.map(c => `"${c.name}"`).join(', ')}`);
+  }
 
   // Reuse the course if it already exists (idempotency).
   let course = db.getAllCourses().find(c => c.title === COURSE_TITLE);
