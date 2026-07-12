@@ -2264,7 +2264,27 @@
     return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
   }
 
+  // Bug fix (Per Bot 13): tapping "Listen" more than once before the first
+  // request's network round-trip finished used to create two independent
+  // Audio objects — the second call's `if (mpAudio) pause()` guard ran
+  // while mpAudio was still null (the first call hadn't reached its own
+  // `mpAudio = new Audio(...)` yet, since it was still awaiting the
+  // playback-url fetch), so neither instance ever got paused. Both then
+  // started playing simultaneously, and the abandoned one's own `ended`
+  // listener would still fire later — independently calling
+  // handleAudioStopped() and mutating shared lesson-chooser state at an
+  // unpredictable moment (this is almost certainly what caused audio to
+  // sometimes jump straight out to the course page instead of back to the
+  // chooser). Fixed with a generation token: only the most recent mpPlay
+  // call is ever allowed to actually create/play an Audio object or have
+  // its event listeners do anything.
+  let _mpToken = 0;
   async function mpPlay(file) {
+    const myToken = ++_mpToken;
+    // Tapping the same file again while it's already playing should just
+    // do nothing, rather than restart it from zero.
+    if (_currentAudioFile && _currentAudioFile.id === file.id && mpAudio && !mpAudio.paused) return;
+
     if (mpAudio) { mpAudio.pause(); mpAudio = null; }
     _currentAudioFile = file;
     document.getElementById('miniPlayerTitle').textContent = file.title;
@@ -2283,22 +2303,28 @@
       const res  = await fetch(`/api/content/library/${file.id}/playback-url`);
       const data = await res.json();
       if (!res.ok || !data.url) {
-        document.getElementById('mpPlayBtn').textContent = '▶';
+        if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
         return;
       }
       playUrl = data.url;
     } catch {
-      document.getElementById('mpPlayBtn').textContent = '▶';
+      if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
       return;
     }
 
+    // A newer play request superseded this one while we were waiting on
+    // the network — abandon this one entirely, it must never start.
+    if (myToken !== _mpToken) return;
+
     mpAudio = new Audio(playUrl);
     mpAudio.addEventListener('timeupdate', () => {
+      if (myToken !== _mpToken) return; // stale/abandoned instance
       const pct = mpAudio.duration ? (mpAudio.currentTime / mpAudio.duration * 100) : 0;
       document.getElementById('mpFill').style.width = pct + '%';
       document.getElementById('mpTime').textContent = fmtTime(mpAudio.currentTime);
     });
     mpAudio.addEventListener('ended', () => {
+      if (myToken !== _mpToken) return; // stale/abandoned instance
       document.getElementById('mpPlayBtn').textContent = '▶';
       document.getElementById('mpFill').style.width = '0%';
       // Update play buttons
@@ -2328,6 +2354,7 @@
   }
 
   function mpClose() {
+    _mpToken++; // invalidate any play request still in flight
     if (mpAudio) { mpAudio.pause(); mpAudio = null; }
     document.getElementById('miniPlayer').classList.remove('visible');
     document.querySelectorAll('.play-btn').forEach(b => { b.classList.remove('playing'); b.textContent = '▶'; });
