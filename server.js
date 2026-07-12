@@ -5214,6 +5214,19 @@ app.get('/api/admin/fix-deeper-mindfulness-notes/status', auth.requireAuthApi(['
   res.json(dmNotesFixJob);
 });
 
+// ── Fix: Deeper Mindfulness — drop docx Handout, keep PDF (Per Bot 14) ──
+app.post('/api/admin/fix-dm-remove-docx-handout', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runFix } = require('./fix_dm_remove_docx_handout');
+    const log = [];
+    const result = await runFix((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('DM docx handout removal error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
