@@ -36,20 +36,26 @@ async function runImport(log = console.log) {
 
   await db.getDb();
 
-  // Poems get filed under Writing → Poems, same home as the general poem batch.
+  // Poems get filed under Deep Mindfulness → Stress, as "Course Material" —
+  // matching the existing convention used by the other courses (e.g. the
+  // Joy course's own lesson files), rather than the general Writing → Poems
+  // home used for the standalone poem batch.
   const categories = db.getAllCategories();
-  const writing = categories.find(c => c.name.toLowerCase() === 'writing' && !c.parent_id);
-  if (!writing) throw new Error('No top-level "Writing" category found.');
-  const poemsSub = db.getSubcategories(writing.id).find(s => s.name.toLowerCase() === 'poems');
-  if (!poemsSub) throw new Error('No "Poems" subcategory found under Writing.');
+  const deepMindfulness = categories.find(c => !c.parent_id && /deep mindfulness/i.test(c.name));
+  if (!deepMindfulness) {
+    const topCats = categories.filter(c => !c.parent_id);
+    throw new Error(`No top-level "Deep Mindfulness" category found. Available top-level categories: ${topCats.map(c => `"${c.name}"`).join(', ')}`);
+  }
+  const stressSub = db.getSubcategories(deepMindfulness.id).find(s => /stress/i.test(s.name));
+  if (!stressSub) {
+    const subs = db.getSubcategories(deepMindfulness.id);
+    throw new Error(`No "Stress" subcategory found under Deep Mindfulness. Available subcategories: ${subs.map(s => `"${s.name}"`).join(', ')}`);
+  }
 
-  // Course category: FELT·FIBRE (seeded category, should always exist) —
-  // matched loosely since the interpunct/exact naming can vary between
-  // environments seeded at different times.
-  const topCats = categories.filter(c => !c.parent_id);
-  const feltCat = topCats.find(c => /felt/i.test(c.name));
-  if (!feltCat) {
-    throw new Error(`No top-level FELT·FIBRE category found. Available top-level categories: ${topCats.map(c => `"${c.name}"`).join(', ')}`);
+  const contentKinds = db.getAllContentKinds();
+  const courseMaterialKind = contentKinds.find(k => /course material/i.test(k.label));
+  if (!courseMaterialKind) {
+    throw new Error(`No "Course Material" content kind found. Available kinds: ${contentKinds.map(k => `"${k.label}"`).join(', ')}`);
   }
 
   // Reuse the course if it already exists (idempotency).
@@ -60,7 +66,7 @@ async function runImport(log = console.log) {
     log(`Course "${COURSE_TITLE}" already exists — reusing (id ${courseId}).`);
   } else {
     courseId = crypto.randomUUID();
-    db.createCourse(courseId, COURSE_TITLE, COURSE_DESCRIPTION, feltCat.id, null, false, null);
+    db.createCourse(courseId, COURSE_TITLE, COURSE_DESCRIPTION, deepMindfulness.id, stressSub.id, false, null);
     log(`Created course "${COURSE_TITLE}" (id ${courseId}).`);
   }
 
@@ -69,7 +75,7 @@ async function runImport(log = console.log) {
   manifest.forEach(m => { (byComplex[m.complex] = byComplex[m.complex] || []).push(m); });
 
   const existingLessons = db.getLessonsForCourse(courseId);
-  const existingFiles = db.getLibraryFiles({ categoryId: writing.id }) || [];
+  const existingFiles = db.getLibraryFiles({ categoryId: deepMindfulness.id }) || [];
   const existingNames = new Set(existingFiles.map(f => f.original_name));
 
   let filesOk = 0, filesSkipped = 0, filesFailed = 0;
@@ -118,12 +124,12 @@ async function runImport(log = console.log) {
           entry.filename,
           'text/html',
           buffer.length,
-          writing.id,
-          poemsSub.id,
+          deepMindfulness.id,
+          stressSub.id,
           'client',
           'r2',
           false,
-          'poem',
+          courseMaterialKind.value,
           null,
           null
         );
