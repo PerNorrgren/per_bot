@@ -480,6 +480,15 @@
        on desktop. .video-mode overrides position/sizing to cover the full viewport instead
        of being trapped inside the parent .glass panel. */
     .player-overlay.video-mode { position:fixed; inset:0; border-radius:0; z-index:500; padding:24px; }
+    /* justify-content:center on the base rule centers title+video+buttons
+       as a block — fine when it's short enough to fit, but on a longer
+       video (or a shorter browser window) the whole block overflows
+       equally top and bottom with nothing to scroll, silently pushing the
+       title off the top and the Close/Full screen buttons off the bottom.
+       Anchoring to the top and allowing vertical scroll means the video
+       may need scrolling to reach the buttons below it, but they're
+       always reachable rather than sometimes invisible. */
+    .player-overlay.video-mode { justify-content:flex-start; overflow-y:auto; }
     .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
     .player-overlay.video-mode .player-media video { max-height:80vh; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
