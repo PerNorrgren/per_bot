@@ -12,7 +12,6 @@ const fs = require('fs');
 const path = require('path');
 const db = require('./db');
 
-const COURSE_TITLE = 'Being Here';
 const DESCRIPTIONS_PATH = path.join(__dirname, 'being_here_lesson_descriptions.json');
 
 async function runUpdate(log = console.log) {
@@ -21,8 +20,17 @@ async function runUpdate(log = console.log) {
   if (!fs.existsSync(DESCRIPTIONS_PATH)) throw new Error(`Descriptions file not found at ${DESCRIPTIONS_PATH}.`);
   const descriptions = JSON.parse(fs.readFileSync(DESCRIPTIONS_PATH, 'utf8'));
 
-  const course = db.getAllCourses().find(c => c.title === COURSE_TITLE);
-  if (!course) throw new Error(`Course "${COURSE_TITLE}" not found.`);
+  // Found by a lesson title rather than the course title — the course
+  // itself has since been renamed ("A Poem a Day for your nerves"), but
+  // "Complex 1 — Existential Safety" is a stable fingerprint regardless of
+  // what the course is called at any given moment.
+  const allCourses = db.getAllCourses();
+  let course = null;
+  for (const c of allCourses) {
+    const lessons = db.getLessonsForCourse(c.id);
+    if (lessons.some(l => /existential safety/i.test(l.title))) { course = c; break; }
+  }
+  if (!course) throw new Error(`Could not find the Being Here course (looked for a lesson titled "Existential Safety"). Available courses: ${allCourses.map(c => `"${c.title}"`).join(', ')}`);
 
   const lessons = db.getLessonsForCourse(course.id);
   let updated = 0;
