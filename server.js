@@ -5146,7 +5146,13 @@ app.get('/api/content/courses/:id/lessons', auth.requireAuthApi(['admin','facili
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { courseId, lessonNumber, title, visibility, fileIds } = req.body;
-    if (!courseId || !lessonNumber || !title) return res.status(400).json({ error: 'Missing fields.' });
+    // NOTE: lessonNumber can legitimately be 0 (e.g. an intro/overview
+    // lesson meant to sort before Lesson 1) — checking truthiness here
+    // would silently reject "0" as if it were missing, so check for
+    // actual absence instead.
+    if (!courseId || lessonNumber === undefined || lessonNumber === null || lessonNumber === '' || !title) {
+      return res.status(400).json({ error: 'Missing fields.' });
+    }
     const lessonId = uuidv4();
     db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client');
     if (fileIds?.length) fileIds.forEach((fid, i) => db.addLessonFileRef(uuidv4(), lessonId, fid, i));
@@ -5162,7 +5168,11 @@ app.patch('/api/content/lessons/:id', auth.requireAuthApi(['admin']), (req, res)
   try {
     const { lessonNumber, title, description, visibility } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
-    db.updateLesson(req.params.id, parseInt(lessonNumber) || 1, title.trim(), description, visibility || 'client');
+    // Same falsy-zero issue as create: `parseInt(x) || 1` turns a genuine
+    // 0 into 1. Only fall back to 1 when parseInt actually failed (NaN).
+    const parsedNumber = parseInt(lessonNumber);
+    const finalLessonNumber = Number.isNaN(parsedNumber) ? 1 : parsedNumber;
+    db.updateLesson(req.params.id, finalLessonNumber, title.trim(), description, visibility || 'client');
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
