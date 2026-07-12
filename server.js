@@ -5032,6 +5032,19 @@ app.post('/api/admin/run-being-here-audio-import', auth.requireAuthApi(['admin']
   }
 });
 
+// ── TEMPORARY — Per Bot 13, one-off fix for the visibility bug in commits 37/41 ──
+app.post('/api/admin/fix-being-here-visibility', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runFix } = require('./import_being_here_fix_visibility');
+    const log = [];
+    const result = await runFix((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('being here visibility fix error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (req, res) => {
   const { filename } = req.body;
   if (!filename) return res.status(400).json({ error: 'Filename required.' });

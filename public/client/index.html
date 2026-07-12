@@ -2303,6 +2303,11 @@
       // Update play buttons
       document.querySelectorAll('.play-btn.playing').forEach(b => b.classList.remove('playing'));
       document.querySelectorAll('.play-btn').forEach(b => b.textContent = '▶');
+      if (_onAudioStopCallback) {
+        const cb = _onAudioStopCallback;
+        _onAudioStopCallback = null;
+        cb();
+      }
     });
     mpAudio.play();
     // Mark play button
@@ -2330,6 +2335,15 @@
     document.getElementById('miniPlayer').classList.remove('visible');
     document.querySelectorAll('.play-btn').forEach(b => { b.classList.remove('playing'); b.textContent = '▶'; });
     _currentAudioFile = null;
+    // Per Bot 13 fix — same reasoning as closePlayerOverlay: only ask to
+    // mark the lesson complete once the person has actually stopped
+    // listening (closed the mini player or the track ended), not the
+    // instant it started.
+    if (_onAudioStopCallback) {
+      const cb = _onAudioStopCallback;
+      _onAudioStopCallback = null;
+      cb();
+    }
   }
 
   async function toggleFavourite(fileId, btn) {
@@ -2766,6 +2780,8 @@
   // fullscreen on their own before back-navigation takes effect.
   let _playerHistoryPushed = false;
   let _closingPlayerViaPopstate = false;
+  let _onPlayerCloseCallback = null;
+  let _onAudioStopCallback = null;
   function pushPlayerHistoryState() {
     if (!_playerHistoryPushed) { history.pushState({ appOverlay: 'player' }, ''); _playerHistoryPushed = true; }
   }
@@ -2800,6 +2816,17 @@
       history.back();
     }
     _closingPlayerViaPopstate = false;
+
+    // Per Bot 13 fix: the "mark this lesson complete?" prompt (see
+    // openLesson below) used to fire the instant the content opened,
+    // stacked right on top of it, before the person had actually read or
+    // listened to anything. Deferring it to here — once they've genuinely
+    // closed the player — means it only appears once they're done with it.
+    if (_onPlayerCloseCallback) {
+      const cb = _onPlayerCloseCallback;
+      _onPlayerCloseCallback = null;
+      cb();
+    }
   }
 
   // Uses the browser's native Fullscreen API — proper OS-level fullscreen (hides browser
@@ -3778,12 +3805,26 @@
       if (data.quiz) {
         openQuiz(data.quiz, lessonId);
       } else {
-        // No quiz — completing the lesson just means marking it done directly.
-        if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
-          await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
-          openCourseDetail(currentInstanceId);
-          loadResumeCard();
+        // No quiz — completing the lesson just means marking it done. Wait
+        // for the player to actually be closed rather than asking the
+        // instant it opens (see closePlayerOverlay's callback above) — for
+        // an audio-only file this fires via mpStop instead, see below.
+        const askToComplete = async () => {
+          if (await appConfirm(`Mark "${data.lesson.title}" as complete?`)) {
+            await fetch('/api/client/progress', { method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ instanceId: currentInstanceId, lessonId, status: 'completed' }) });
+            openCourseDetail(currentInstanceId);
+            loadResumeCard();
+          }
+        };
+        if (data.files && data.files.length && isAudio(data.files[0])) {
+          _onAudioStopCallback = askToComplete;
+        } else if (data.files && data.files.length) {
+          _onPlayerCloseCallback = askToComplete;
+        } else {
+          // No file to open at all (shouldn't normally happen) — nothing to
+          // wait for, so ask right away same as before.
+          askToComplete();
         }
       }
     } catch(e) { appAlert('Could not open this lesson. Please try again.'); }

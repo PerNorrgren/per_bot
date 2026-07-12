@@ -112,7 +112,7 @@ async function runImport(log = console.log) {
         buffer.length,
         deepMindfulness.id,
         stressSub.id,
-        'client',
+        'member',
         'r2',
         false,
         meditationKind.value,
