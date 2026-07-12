@@ -5246,6 +5246,25 @@ app.get('/api/admin/run-introduction-to-mindfulness-import/status', auth.require
   res.json(imfnImportJob);
 });
 
+// ── Introduction to Micro Moves course import (Per Bot 14) ──
+let immImportJob = null;
+app.post('/api/admin/run-intro-to-micro-moves-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (immImportJob && !immImportJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: immImportJob });
+  }
+  immImportJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = immImportJob;
+  const { runImport } = require('./import_intro_to_micro_moves_course');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('intro to micro moves import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-intro-to-micro-moves-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!immImportJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(immImportJob);
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
