@@ -3459,7 +3459,8 @@
         Array.isArray(data.courses) ? data.courses : [],
         Array.isArray(data.content) ? data.content : [],
         Array.isArray(data.recentPoems) ? data.recentPoems : [],
-        Array.isArray(data.recentPosts) ? data.recentPosts : []
+        Array.isArray(data.recentPosts) ? data.recentPosts : [],
+        Array.isArray(data.recentBooks) ? data.recentBooks : []
       );
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
   }
@@ -3474,8 +3475,8 @@
   // items — automatic by recency, no manual Featured curation needed for
   // these two.
   let _shelvesData = [];
-  function renderFeaturedShelves(courses, content, recentPoems, recentPosts) {
-    _featuredContentData = content.concat(recentPoems, recentPosts);
+  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks) {
+    _featuredContentData = content.concat(recentPoems, recentPosts, recentBooks);
     const el = document.getElementById('featuredShelves');
     const shelves = [];
 
@@ -3541,7 +3542,20 @@
       });
     }
 
-    _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }] };
+    if (recentBooks.length) {
+      shelves.push({
+        label: 'Books',
+        rows: [{ label: 'Books', items: recentBooks }],
+        cardHtml: () => `
+          <div class="shelf-card" onclick="openThemeDetail('books',0)">
+            <div class="shelf-card-title">Books</div>
+            <div class="shelf-card-meta">${recentBooks.length} recent</div>
+          </div>
+        `,
+      });
+    }
+
+    _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }], books: [{ label: 'Books', items: recentBooks }] };
     el.innerHTML = shelves.map(s => `
       <div>
         <div class="shelf-label">${s.label}</div>

@@ -1630,6 +1630,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
       content,
       recentPoems: db.getRecentStandaloneFiles('poem', 5).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentPosts: db.getRecentStandaloneFiles('blog', 5).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
+      recentBooks: db.getRecentStandaloneFiles('book', 5).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
