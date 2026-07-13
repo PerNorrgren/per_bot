@@ -1737,11 +1737,13 @@ function setTtsCacheEntry(cacheKey, r2Key) {
 // shelves, which show automatically by recency rather than needing to be
 // hand-marked Featured like courses/practices do.
 function getRecentStandaloneFiles(contentType, limit) {
+  const limitClause = limit ? 'LIMIT ?' : '';
+  const params = limit ? [contentType, limit] : [contentType];
   return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     WHERE f.content_type=? AND f.archived=0
       AND f.id NOT IN (SELECT file_id FROM lesson_file_refs)
-    ORDER BY f.created_at DESC LIMIT ?`, [contentType, limit]);
+    ORDER BY f.created_at DESC ${limitClause}`, params);
 }
 function getFeaturedLibraryFiles() {
   return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f

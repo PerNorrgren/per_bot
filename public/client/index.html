@@ -2943,6 +2943,16 @@
       // inline, so offer a direct open/download link rather than a blank frame.
       mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
     }
+
+    // Poems/posts are opened directly from their own Home card now (not a
+    // "see the list first" doorway), so the way back to more of the same
+    // category lives here instead — inside the piece you're already
+    // reading, not before it.
+    if (f.content_type === 'poem' || f.content_type === 'blog') {
+      const label = f.content_type === 'poem' ? 'More poems →' : 'More posts →';
+      const group = f.content_type === 'poem' ? 'poems' : 'posts';
+      mediaEl.insertAdjacentHTML('beforeend', `<button class="doc-link" style="display:block;width:100%;margin-top:16px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="openThemeDetail('${group}',0)">${label}</button>`);
+    }
   }
 
   // Per Bot 21 fix: "stuck in a full-screen video with no way back" — the
@@ -3580,46 +3590,30 @@
       });
     }
 
+    const miniCard = (f) => `
+      <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
+        <div class="shelf-card-title">${f.title}</div>
+        <div class="shelf-card-meta">${f.category_name || ''}</div>
+      </div>
+    `;
+
     if (recentPoems.length) {
-      shelves.push({
-        label: 'Poems',
-        rows: [{ label: 'Poems', items: recentPoems }],
-        cardHtml: () => `
-          <div class="shelf-card" onclick="openThemeDetail('poems',0)">
-            <div class="shelf-card-title">Poems</div>
-            <div class="shelf-card-meta">${recentPoems.length} recent</div>
-          </div>
-        `,
-      });
+      shelves.push({ label: 'Poems', rows: recentPoems, cardHtml: miniCard });
     }
 
     if (recentPosts.length) {
-      shelves.push({
-        label: 'Posts',
-        rows: [{ label: 'Posts', items: recentPosts }],
-        cardHtml: () => `
-          <div class="shelf-card" onclick="openThemeDetail('posts',0)">
-            <div class="shelf-card-title">Posts</div>
-            <div class="shelf-card-meta">${recentPosts.length} recent</div>
-          </div>
-        `,
-      });
+      shelves.push({ label: 'Posts', rows: recentPosts, cardHtml: miniCard });
     }
 
     if (recentBooks.length) {
-      shelves.push({
-        label: 'Books',
-        rows: [{ label: 'Books', items: recentBooks }],
-        cardHtml: () => `
-          <div class="shelf-card" onclick="openThemeDetail('books',0)">
-            <div class="shelf-card-title">Books</div>
-            <div class="shelf-card-meta">${recentBooks.length} recent</div>
-          </div>
-        `,
-      });
+      shelves.push({ label: 'Books', rows: recentBooks, cardHtml: miniCard });
     }
 
-    _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }], books: [{ label: 'Books', items: recentBooks }] };
+    // poems/posts keep this around for the "More poems/posts →" link
+    // reached from inside a piece once you're already reading it (see
+    // openContentFile) — books don't need it, every book already shows
+    // as its own card in the row, nothing further to reveal.
+    _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }] };
     el.innerHTML = shelves.map(s => `
       <div>
         <div class="shelf-label">${s.label}</div>
@@ -3655,7 +3649,7 @@
   function openFeaturedContentById(id) {
     const f = _featuredContentData.find(x => x.id === id);
     if (!f) return;
-    openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '' });
+    openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '', content_type: f.content_type });
   }
 
   async function loadCalmLandingContent() {
