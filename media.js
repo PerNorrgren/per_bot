@@ -19,7 +19,7 @@
 // This preserves the same Registered/Member/Client/Facilitator/Admin visibility
 // cascade that already governs which files appear in a person's Content tab.
 
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const R2_ACCOUNT_ID  = process.env.R2_ACCOUNT_ID;
@@ -74,6 +74,21 @@ async function getPlaybackUrl(key) {
   return getSignedUrl(client, cmd, { expiresIn: 600 });
 }
 
+// Cheap existence check — HEAD, not GET, so it doesn't pull the object body
+// over the wire just to confirm it's there. Used by the R2 orphan sweep
+// (Per Bot 15) to check every R2-stored library_files row against the
+// real bucket without downloading anything.
+async function objectExists(key) {
+  if (!client) throw new Error('R2 is not configured.');
+  try {
+    await client.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+    return true;
+  } catch (e) {
+    if (e.name === 'NotFound' || e.$metadata?.httpStatusCode === 404) return false;
+    throw e; // some other failure (auth, network) — don't silently report as "missing"
+  }
+}
+
 async function deleteObject(key) {
   if (!client) throw new Error('R2 is not configured.');
   await client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
@@ -112,4 +127,4 @@ async function getPublicObject(key) {
   return result; // .Body is a readable stream; .ContentType is the stored MIME type
 }
 
-module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, putObject, uploadPublicObject, getPublicObject, R2_BUCKET };
+module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, putObject, uploadPublicObject, getPublicObject, objectExists, R2_BUCKET };
