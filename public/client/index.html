@@ -30,6 +30,10 @@
       border-radius:22px; overflow:hidden;
       display:flex; flex-direction:column;
       max-height:90vh;
+      max-height:90dvh; /* Per Bot 15 — dvh tracks the real available viewport
+        directly from the browser on every layout pass, no JS or resize
+        listener needed at all; browsers without dvh support just ignore
+        this line and keep the vh value above. */
     }
 
     .header { padding:18px 24px 14px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
@@ -58,7 +62,7 @@
       .bnav-icon { font-size: 40px; }
     }
     @media (min-width: 1000px) {
-      .glass { max-width: 920px; max-height: 85vh; }
+      .glass { max-width: 920px; max-height: 85vh; max-height: 85dvh; }
       .header { padding: 28px 40px 20px; }
       .wordmark { font-size: 14px; }
       .tab { font-size: 15px; padding: 17px; }
@@ -292,8 +296,16 @@
        its size during a hold phase, and contracts on the out-breath. Scale
        is driven entirely by JS (Web Animations API) so it can be paused and
        resumed mid-phase; this just sets the resting appearance. */
-    .breathing-circle-wrap { width:100%; display:flex; justify-content:center; align-items:center; height:220px; margin-top:8px; }
+    .breathing-circle-wrap { width:100%; display:flex; justify-content:center; align-items:center; height:150px; margin-top:2px; }
     .breathing-circle { width:140px; height:140px; border-radius:50%; background:radial-gradient(circle at 35% 32%, rgba(200,240,215,0.9), rgba(150,210,175,0.55) 65%, rgba(120,190,155,0.35) 100%); box-shadow:0 0 40px rgba(150,210,175,0.25); transform:scale(0.6); }
+    /* Per Bot 15b — the pattern picker needs to fit 6 options as two rows of
+       three (not the meditation timer's flex-wrap, which was landing 2 per
+       row and pushing Begin below the fold). Grid guarantees exactly 3
+       columns regardless of label length; smaller font/padding than the
+       shared .timer-chip keeps "Physiological Sigh" from overflowing its cell. */
+    .breathing-pattern-chips { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; margin-bottom:8px; }
+    .breathing-pattern-chips .timer-chip { padding:8px 4px; font-size:11.5px; text-align:center; white-space:normal; line-height:1.25; }
+    .breathing-controls-compact { gap:10px !important; }
     .practices-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
     .practices-scroll::-webkit-scrollbar { width:3px; }
     .practices-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
@@ -941,13 +953,13 @@
         <div class="breathing-circle-wrap">
           <div class="breathing-circle" id="breathingCircle"></div>
         </div>
-        <div class="timer-display-sub" id="breathingPhaseLabel" style="margin-top:14px">Ready</div>
-        <div class="timer-display-sub" id="breathingCycleLabel" style="margin:0 0 18px; opacity:0.6"></div>
+        <div class="timer-display-sub" id="breathingPhaseLabel" style="margin-top:8px">Ready</div>
+        <div class="timer-display-sub" id="breathingCycleLabel" style="margin:0 0 8px; opacity:0.6"></div>
 
-        <div class="timer-controls" id="breathingControlsPre">
+        <div class="timer-controls breathing-controls-compact" id="breathingControlsPre">
           <div class="timer-section">
             <div class="timer-section-label">Choose a pattern</div>
-            <div class="timer-chip-row" id="breathingPatternChips"><span style="color:rgba(255,255,255,0.3); font-size:13px">Loading…</span></div>
+            <div class="timer-chip-row breathing-pattern-chips" id="breathingPatternChips"><span style="color:rgba(255,255,255,0.3); font-size:13px">Loading…</span></div>
             <div id="breathingPatternSituation" style="font-size:12.5px; color:rgba(255,255,255,0.4); font-style:italic; min-height:16px; margin-top:2px"></div>
           </div>
 
@@ -1146,9 +1158,23 @@
   const sessionId = Math.random().toString(36).slice(2);
 
   // ── iOS Safari vh fix ──
+  // Per Bot 15 — --vh backs every scroll box's max-height (Practices,
+  // Sessions, History, Content, Poems: all use calc(var(--vh,1vh)*90 - 180px)).
+  // If it goes stale, all of them shrink together and stay shrunk — this is
+  // exactly what got reported as "shrinks in many places randomly, no way
+  // to get it back". The plain 'resize' listener alone doesn't reliably
+  // fire for every real change in available height — DevTools docking,
+  // the browser's own chrome collapsing/expanding, or a backgrounded tab
+  // coming back — so this recalculates on every plausible trigger, and
+  // switchTab() below also calls it directly on every navigation as a
+  // belt-and-braces check regardless of whether any event fired at all.
   function setVh() { document.documentElement.style.setProperty('--vh', window.innerHeight * 0.01 + 'px'); }
   setVh();
   window.addEventListener('resize', setVh);
+  window.addEventListener('orientationchange', setVh);
+  window.addEventListener('pageshow', setVh); // back/forward-cache restore
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setVh(); });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', setVh);
 
   // ── Invitation notice ──
   const urlParams = new URLSearchParams(location.search);
@@ -1212,6 +1238,7 @@
   function closeTimerView() { switchTab('library'); }
 
   function switchTab(tab) {
+    setVh();
     closeFacMenu();
     closeTimersMenu();
     if (tab !== 'talk') {
