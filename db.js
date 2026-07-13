@@ -1710,6 +1710,19 @@ function getFilesByTag(tag) {
 // Grouped by content_type client-side (meditation/practice/etc.) into
 // separate rows, so this just returns everything featured and lets the
 // caller decide how to bucket it.
+// Most recent standalone files of a given content type — "standalone"
+// meaning not embedded in any course lesson (Being Here's 84 poems, for
+// instance, shouldn't double up on the Home poems shelf since they're
+// already reachable through that course). Powers the Poems/Posts Home
+// shelves, which show automatically by recency rather than needing to be
+// hand-marked Featured like courses/practices do.
+function getRecentStandaloneFiles(contentType, limit) {
+  return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    WHERE f.content_type=? AND f.archived=0
+      AND f.id NOT IN (SELECT file_id FROM lesson_file_refs)
+    ORDER BY f.created_at DESC LIMIT ?`, [contentType, limit]);
+}
 function getFeaturedLibraryFiles() {
   return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
@@ -3967,7 +3980,7 @@ module.exports = {
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getTalkPractices,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,

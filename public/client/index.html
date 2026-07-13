@@ -3455,88 +3455,114 @@
     try {
       const res = await fetch('/api/client/featured');
       const data = await res.json();
-      renderFeaturedShelves(Array.isArray(data.courses) ? data.courses : [], Array.isArray(data.content) ? data.content : []);
+      renderFeaturedShelves(
+        Array.isArray(data.courses) ? data.courses : [],
+        Array.isArray(data.content) ? data.content : [],
+        Array.isArray(data.recentPoems) ? data.recentPoems : [],
+        Array.isArray(data.recentPosts) ? data.recentPosts : []
+      );
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
   }
-  function shelfLabelForType(type) {
-    const map = { meditation: 'Practices', practice: 'Practices', video: 'Videos', document: 'Read & watch', audio: 'Audio', poem: 'Poems', blog: 'Posts', video_blog: 'Video Posts', video_lesson: 'Lessons', whitepaper: 'Guides', book: 'Books' };
-    return map[type] || (type.charAt(0).toUpperCase() + type.slice(1) + 's');
-  }
   function titleCaseTag(tag) { return tag.replace(/(^|[\s-])\w/g, c => c.toUpperCase()); }
+  // Four fixed rows, each a doorway into a list rather than a row of
+  // individual files — Per Bot 14, replacing the earlier one-row-per-
+  // theme version which went one level too deep. Practices: one card per
+  // theme, tap it to see the files in that theme. Courses: unchanged,
+  // one card per course straight to its own page (a course already IS
+  // its own "list", so it doesn't need this extra layer). Poems/Posts:
+  // one card each, opening the 5 most recent standalone (non-course)
+  // items — automatic by recency, no manual Featured curation needed for
+  // these two.
   let _shelvesData = [];
-  function renderFeaturedShelves(courses, content) {
-    _featuredContentData = content;
+  function renderFeaturedShelves(courses, content, recentPoems, recentPosts) {
+    _featuredContentData = content.concat(recentPoems, recentPosts);
     const el = document.getElementById('featuredShelves');
     const shelves = [];
-    if (courses.length) {
-      shelves.push({ label: 'Courses', isCourseShelf: true, html: courses.map(c => `
-        <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}')">
-          <div class="shelf-card-title">${c.title}</div>
-          <div class="shelf-card-meta">${c.category_name || 'Course'}</div>
-        </div>
-      `).join('') });
-    }
-    // Practices/meditations get grouped by theme tag (Grounding, Sleep,
-    // Difficulty, etc.) rather than dumped into one undifferentiated
-    // "Practices" shelf — the tagging system (library_file_tags) was
-    // already built for exactly this, just never wired up to the shelves
-    // until now. A file with several tags can appear in several shelves;
-    // untagged practice content falls back to one plain "Practices" shelf
-    // rather than silently disappearing from Home.
+
     const practiceTypes = ['meditation', 'practice'];
     const practiceFiles = content.filter(f => practiceTypes.includes(f.content_type));
-    const otherFiles = content.filter(f => !practiceTypes.includes(f.content_type));
     const byTag = {};
     const untaggedPractices = [];
     practiceFiles.forEach(f => {
       if (f.tags && f.tags.length) f.tags.forEach(tag => { (byTag[tag] = byTag[tag] || []).push(f); });
       else untaggedPractices.push(f);
     });
-    const practiceCard = (f) => `
-      <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
-        <div class="shelf-card-title">${f.title}</div>
-        <div class="shelf-card-meta">${f.category_name || ''}</div>
-      </div>
-    `;
-    Object.keys(byTag).sort().forEach(tag => {
-      shelves.push({ label: titleCaseTag(tag), items: byTag[tag], html: byTag[tag].map(practiceCard).join('') });
-    });
-    if (untaggedPractices.length) {
-      shelves.push({ label: 'Practices', items: untaggedPractices, html: untaggedPractices.map(practiceCard).join('') });
+    const themeCards = Object.keys(byTag).sort().map(tag => ({ label: titleCaseTag(tag), items: byTag[tag] }));
+    if (untaggedPractices.length) themeCards.push({ label: 'General', items: untaggedPractices });
+    if (themeCards.length) {
+      shelves.push({
+        label: 'Practices',
+        rows: themeCards,
+        cardHtml: (row, i) => `
+          <div class="shelf-card" onclick="openThemeDetail('practices',${i})">
+            <div class="shelf-card-title">${row.label}</div>
+            <div class="shelf-card-meta">${row.items.length} practice${row.items.length===1?'':'s'}</div>
+          </div>
+        `,
+      });
     }
-    const byType = {};
-    otherFiles.forEach(f => { (byType[f.content_type] = byType[f.content_type] || []).push(f); });
-    Object.keys(byType).forEach(type => {
-      shelves.push({ label: shelfLabelForType(type), items: byType[type], html: byType[type].map(f => `
-        <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
-          <div class="shelf-card-title">${f.title}</div>
-          <div class="shelf-card-meta">${f.category_name || ''}</div>
-        </div>
-      `).join('') });
-    });
-    _shelvesData = shelves;
-    el.innerHTML = shelves.map((s, i) => `
+
+    if (courses.length) {
+      shelves.push({
+        label: 'Courses',
+        rows: courses,
+        cardHtml: (c) => `
+          <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}')">
+            <div class="shelf-card-title">${c.title}</div>
+            <div class="shelf-card-meta">${c.category_name || 'Course'}</div>
+          </div>
+        `,
+      });
+    }
+
+    if (recentPoems.length) {
+      shelves.push({
+        label: 'Poems',
+        rows: [{ label: 'Poems', items: recentPoems }],
+        cardHtml: () => `
+          <div class="shelf-card" onclick="openThemeDetail('poems',0)">
+            <div class="shelf-card-title">Poems</div>
+            <div class="shelf-card-meta">${recentPoems.length} recent</div>
+          </div>
+        `,
+      });
+    }
+
+    if (recentPosts.length) {
+      shelves.push({
+        label: 'Posts',
+        rows: [{ label: 'Posts', items: recentPosts }],
+        cardHtml: () => `
+          <div class="shelf-card" onclick="openThemeDetail('posts',0)">
+            <div class="shelf-card-title">Posts</div>
+            <div class="shelf-card-meta">${recentPosts.length} recent</div>
+          </div>
+        `,
+      });
+    }
+
+    _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }] };
+    el.innerHTML = shelves.map(s => `
       <div>
-        <div class="shelf-label" style="${s.isCourseShelf ? '' : 'cursor:pointer'}" ${s.isCourseShelf ? '' : `onclick="openThemeDetail(${i})"`} title="${s.isCourseShelf ? '' : 'See all'}">${s.label}${s.isCourseShelf ? '' : ' →'}</div>
-        <div class="shelf-row">${s.html}</div>
+        <div class="shelf-label">${s.label}</div>
+        <div class="shelf-row">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
       </div>
     `).join('');
   }
-  // Tapping a shelf's label (anything but Courses, which already has its
-  // own detail page) opens the full list for that theme/type — same
-  // heart/play/add-to-playlist row used everywhere else in the app
-  // (contentItemHTML), not a new bespoke UI, so favouriting or queueing
-  // something here behaves exactly like it does in Library.
-  function openThemeDetail(shelfIndex) {
-    const shelf = _shelvesData[shelfIndex];
-    if (!shelf || !shelf.items) return;
+  // Every card in every row (Courses aside) opens the same list-style
+  // overlay — heart/play/add-to-playlist per row, reusing contentItemHTML
+  // exactly as Library already does, so favouriting or queueing something
+  // here behaves identically everywhere else in the app.
+  function openThemeDetail(group, index) {
+    const row = (_shelvesData[group] || [])[index];
+    if (!row || !row.items) return;
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.remove('video-mode');
     document.getElementById('fullscreenBtn').style.display = 'none';
-    document.getElementById('playerTitle').textContent = shelf.label;
+    document.getElementById('playerTitle').textContent = row.label;
     document.getElementById('playerText').innerHTML = '';
     document.getElementById('playerMedia').innerHTML = `
-      <div class="lesson-chooser-list">${shelf.items.map(f => contentItemHTML(f)).join('')}</div>
+      <div class="lesson-chooser-list">${row.items.map(f => contentItemHTML(f)).join('')}</div>
     `;
     document.getElementById('playerOverlay').classList.add('visible');
     requestAnimationFrame(() => {
