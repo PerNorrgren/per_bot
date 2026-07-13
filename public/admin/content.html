@@ -41,7 +41,7 @@
     select.filter option { background:#1a2420; }
     input.search { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:7px; padding:7px 12px; font-size:12px; color:rgba(255,255,255,0.75); font-family:'Georgia',serif; outline:none; width:200px; }
     input.search::placeholder { color:rgba(255,255,255,0.2); }
-    .file-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+    .file-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; max-height:820px; overflow-y:auto; }
     .file-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:11px; overflow:hidden; transition:border-color 0.2s; }
     .file-card:hover { border-color:rgba(255,255,255,0.16); }
     .file-card-body { padding:14px; }
@@ -60,7 +60,7 @@
     .bulk-bar.visible { display:flex; }
     .bulk-bar .count { color:rgba(180,230,200,0.85); font-weight:bold; }
     .bulk-bar select, .bulk-bar button { font-size:12px; padding:5px 10px; }
-    .file-list { display:flex; flex-direction:column; gap:1px; background:rgba(255,255,255,0.06); border-radius:9px; overflow:hidden; }
+    .file-list { display:flex; flex-direction:column; gap:1px; background:rgba(255,255,255,0.06); border-radius:9px; max-height:825px; overflow-y:auto; }
     .file-list-row { display:flex; align-items:center; gap:12px; padding:9px 14px; background:rgba(20,22,21,0.6); font-size:12px; }
     .file-list-row .flr-cb { flex-shrink:0; }
     .file-list-row .flr-icon { flex-shrink:0; font-size:15px; width:18px; text-align:center; }
@@ -69,12 +69,12 @@
     .file-list-row .flr-cat { flex-shrink:0; color:rgba(255,255,255,0.35); width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .file-list-row .flr-vis { flex-shrink:0; width:130px; }
     .file-list-row .flr-actions { flex-shrink:0; display:flex; gap:5px; }
-    .file-list-header { display:flex; align-items:center; gap:12px; padding:7px 14px; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.25); }
+    .file-list-header { display:flex; align-items:center; gap:12px; padding:7px 14px; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.25); position:sticky; top:0; background:#0d1210; z-index:2; }
     .file-list-header .flr-title { flex:1; }
     .file-list-header .flr-meta { width:90px; }
     .file-list-header .flr-cat { width:140px; }
     .file-list-header .flr-vis { width:130px; }
-    .item-list { display:flex; flex-direction:column; gap:10px; }
+    .item-list { display:flex; flex-direction:column; gap:10px; max-height:820px; overflow-y:auto; }
     .item-row { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:11px; padding:16px 18px; display:flex; align-items:center; gap:14px; }
     .item-row-info { flex:1; }
     .item-row-title { font-size:14px; color:rgba(255,255,255,0.82); }
@@ -372,6 +372,15 @@
       <div id="efOneToOneRow" style="display:none;margin-top:8px">
         <select id="efAssignedClient"><option value="">Select a client…</option></select>
         <div style="color:rgba(255,255,255,0.25);font-size:11px;margin-top:4px">Overrides Visibility above entirely — only this client (and facilitators/admins) will ever see it.</div>
+      </div>
+    </div>
+    <div>
+      <label>Tags <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(theme — powers the themed practice shelves on the client Home screen)</span></label>
+      <div id="efTagChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="efTagInput" list="efTagSuggestions" placeholder="e.g. grounding" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addEfTag();}"/>
+        <datalist id="efTagSuggestions"></datalist>
+        <button type="button" class="btn sm" onclick="addEfTag()">Add</button>
       </div>
     </div>
     <div class="modal-err" id="efErr"></div>
@@ -1358,7 +1367,48 @@ function openEditFile(id){
   populateCatSels('efCat');
   document.getElementById('efCat').value=f.category_id||'';
   populateSub('efCat','efSub',f.subcategory_id||'');
+  loadEfTags(f.id);
   openModal('editFileModal');
+}
+
+let _efTags = [];
+async function loadEfTags(fileId) {
+  document.getElementById('efTagChips').innerHTML = '<span style="color:rgba(255,255,255,0.3);font-size:11px">Loading…</span>';
+  try {
+    const [tagsRes, allTagsRes] = await Promise.all([
+      fetch(`/api/content/library/${fileId}/tags`),
+      fetch('/api/admin/tags'),
+    ]);
+    _efTags = await tagsRes.json();
+    const allTags = await allTagsRes.json();
+    document.getElementById('efTagSuggestions').innerHTML = allTags.map(t => `<option value="${t.tag}">`).join('');
+    renderEfTagChips();
+  } catch (e) {
+    document.getElementById('efTagChips').innerHTML = '<span style="color:rgba(255,120,100,0.7);font-size:11px">Could not load tags.</span>';
+  }
+}
+function renderEfTagChips() {
+  const el = document.getElementById('efTagChips');
+  el.innerHTML = _efTags.length
+    ? _efTags.map(t => `<span class="tag cat" style="display:inline-flex;align-items:center;gap:5px">${t}<span onclick="removeEfTag('${t}')" style="cursor:pointer;opacity:0.6" title="Remove">✕</span></span>`).join('')
+    : '<span style="color:rgba(255,255,255,0.25);font-size:11px;font-style:italic">No tags yet — untagged practices fall back to a plain "Practices" shelf.</span>';
+}
+async function addEfTag() {
+  const input = document.getElementById('efTagInput');
+  const tag = input.value.trim().toLowerCase();
+  if (!tag) return;
+  const fileId = document.getElementById('efId').value;
+  const res = await fetch(`/api/content/library/${fileId}/tags`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tag }),
+  });
+  const data = await res.json();
+  if (data.tags) { _efTags = data.tags; renderEfTagChips(); input.value = ''; }
+}
+async function removeEfTag(tag) {
+  const fileId = document.getElementById('efId').value;
+  const res = await fetch(`/api/content/library/${fileId}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' });
+  const data = await res.json();
+  if (data.tags) { _efTags = data.tags; renderEfTagChips(); }
 }
 
 async function saveFileEdit(){

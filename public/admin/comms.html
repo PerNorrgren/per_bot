@@ -187,6 +187,11 @@
     .config-label { font-size:13px; color:rgba(255,255,255,0.65); }
     .config-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; }
     .config-val { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.4); }
+    /* Per Bot 14 — same bounded-scroll-box pattern already used for
+       Newsletter contacts (admin/index.html's .table class), applied here
+       since these lists had no height limit and just grew the page
+       indefinitely as content accumulated. */
+    #legalList, #motdList, #newsletterList, #planList, #translationsList { max-height:700px; overflow-y:auto; }
   </style>
 </head>
 <body>

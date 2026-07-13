@@ -1623,9 +1623,10 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 // etc.) rather than this endpoint hardcoding which types exist.
 app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   try {
+    const content = db.getFeaturedLibraryFiles().map(f => ({ ...f, tags: db.getFileTags(f.id) }));
     res.json({
       courses: db.getFeaturedCourses(),
-      content: db.getFeaturedLibraryFiles(),
+      content,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -5038,6 +5039,36 @@ app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res)
   }
 });
 app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, res) => res.json(db.getFileUsage(req.params.id)));
+
+// ── Content tagging (Per Bot 14) — the library_file_tags table and its
+// db.js functions have existed since Per Bot 13 (built for reusing the
+// audio-playlist theme vocabulary across content types) but nothing ever
+// exposed them as an editable admin UI until now. Powers both the file
+// edit modal's tag chips and the themed practice shelves on the client
+// Home screen.
+app.get('/api/admin/tags', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllTags()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/content/library/:id/tags', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getFileTags(req.params.id)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/content/library/:id/tags', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const tag = (req.body.tag || '').trim().toLowerCase();
+    if (!tag) return res.status(400).json({ error: 'Tag cannot be empty.' });
+    db.addFileTag(req.params.id, tag);
+    res.json({ ok: true, tags: db.getFileTags(req.params.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/content/library/:id/tags/:tag', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.removeFileTag(req.params.id, req.params.tag);
+    res.json({ ok: true, tags: db.getFileTags(req.params.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/content/library/by-tag/:tag', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getFilesByTag(req.params.tag)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // ── TEMPORARY — Per Bot 13, WordPress content migration ──
 // Runs the blog-post import in-process (shares this server's own sql.js
 // singleton), because running it as a separate `node import_....js` console

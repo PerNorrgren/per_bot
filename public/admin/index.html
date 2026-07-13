@@ -41,6 +41,9 @@
     .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
 
     .table { width:100%; max-height:460px; overflow-y:auto; }
+    /* Per Bot 14 — same bounded-scroll-box treatment, these four never had
+       it and just grew the page indefinitely. */
+    #contextDocsTable, #signalScriptsTable, #tomteDefaultsTable, #tomteLibraryGrid { max-height:460px; overflow-y:auto; }
     .table-row { display:flex; align-items:center; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); gap:14px; transition:background 0.15s; }
     .table-row:last-child { border-bottom:none; }
     .table-row:hover { background:rgba(255,255,255,0.03); }
