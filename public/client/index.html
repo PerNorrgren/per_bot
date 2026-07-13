@@ -62,7 +62,7 @@
       .bnav-icon { font-size: 40px; }
     }
     @media (min-width: 1000px) {
-      .glass { max-width: 920px; max-height: 85vh; max-height: 85dvh; }
+      .glass { max-width: min(92vw, 1600px); max-height: 85vh; max-height: 85dvh; }
       .header { padding: 28px 40px 20px; }
       .wordmark { font-size: 14px; }
       .tab { font-size: 15px; padding: 17px; }
@@ -2430,8 +2430,31 @@
   // itself, not the page's actual script). Passing only the ID and looking the file up
   // here is both safer and avoids re-serializing large objects into the DOM repeatedly.
   function mpPlayById(id) {
-    const f = _contentData.find(x => x.id === id) || _userPlaylists.flatMap(p => p.items).find(x => x.id === id);
-    if (f) mpPlay(f);
+    // Per Bot 15b — two real bugs were hiding here together.
+    // (1) This only ever checked _contentData, which stays empty until the
+    // Library tab has been visited once this session — so a play button
+    // inside a Home-shelf category card (built from the separate
+    // _featuredContentData, populated on Home load instead) found nothing
+    // and did nothing at all, silently. Now checks both, plus playlists.
+    const f = (_contentData || []).find(x => x.id === id)
+      || (_featuredContentData || []).find(x => x.id === id)
+      || _userPlaylists.flatMap(p => p.items).find(x => x.id === id);
+    if (!f) return;
+    // (2) If this click came from a list already displayed inside the
+    // full-screen player overlay (a Home-shelf category, a lesson chooser),
+    // starting playback used to only update the bottom mini-player bar —
+    // which sits behind that overlay, so it was invisible. chooseLessonFile
+    // already solves this for lesson choosers by switching the overlay to
+    // its in-overlay "Now Playing" card instead; this applies the same fix
+    // centrally so every play button benefits, not just that one caller.
+    const overlay = document.getElementById('playerOverlay');
+    if (overlay && overlay.classList.contains('visible')) {
+      renderNowPlayingCard(f);
+      mpPlay(f);
+      document.getElementById('miniPlayer').classList.remove('visible');
+    } else {
+      mpPlay(f);
+    }
   }
   function openContentFileById(id) {
     const f = _contentData.find(x => x.id === id);
@@ -3298,8 +3321,22 @@
   }
   function renderPractices() {
     const el = document.getElementById('practicesList');
-    const list = _practicesData;
-    if (!list.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
+    const list = _practicesData || [];
+
+    // Per Bot 15b — files a facilitator uploaded and assigned to just this
+    // one client (assigned_client_id) were only ever showing up — if at
+    // all — in Read & Watch or Meditations, and only then if their
+    // content_type happened to match one of those tabs' fixed filters.
+    // A facilitator practice with no matching content_type, or no
+    // category tagging, was invisible everywhere. _contentData (loaded
+    // by loadContent() before this runs) is already scoped by the server
+    // to what THIS client can see, so anything in it with assigned_client_id
+    // set is guaranteed to be assigned to this person specifically —
+    // no need to know our own user id client-side to filter safely.
+    const assignedFiles = (_contentData || []).filter(f => f.assigned_client_id)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    if (!list.length && !assignedFiles.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
 
     const favs = list.filter(p => p.is_favourite);
     // Per Bot 15 — anything saved from a live Talk conversation (source_type
@@ -3307,9 +3344,9 @@
     // never lands in the course/area groups below — it used to spill into a
     // flat, ever-growing "Other saved practices" list instead. As more people
     // save more Talk moments this was only going to get worse, so it's now
-    // its own collapsed-by-default group (matching the course/area group
-    // pattern), capped to the most recent 25 with its own scroll box rather
-    // than growing the whole Library page indefinitely.
+    // its own group (matching the course/area group pattern) that always
+    // shows the 3 most recent inline, with the rest (up to 25) reachable by
+    // clicking the heading, rather than growing the whole page indefinitely.
     const talkSaved = list.filter(p => !p.is_favourite && (!p.subcategory_id) && p.source_type !== 'session');
     const grouped = list.filter(p => !p.is_favourite && p.subcategory_id &&
       (_practicesGroupMode === 'area' ? p.category_id === AREA_CATEGORY_ID : p.category_id !== AREA_CATEGORY_ID));
@@ -3318,6 +3355,21 @@
     let html = '';
     if (favs.length) {
       html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
+    }
+
+    // Per Bot 15b — facilitator-assigned practices show first (above the
+    // course/area browsing below), 5 most recent inline by default; the
+    // heading itself is the only way to reveal the rest, same interaction
+    // as the course/area groups. Uses contentItemHTML (not practiceItemHTML)
+    // since these are real library_files, with the same favourite/play/
+    // add-to-playlist actions as everywhere else they appear in the app.
+    if (assignedFiles.length) {
+      const open = openPracticeGroups.has('facilitator-assigned');
+      const shown = open ? assignedFiles : assignedFiles.slice(0, 5);
+      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('facilitator-assigned')">
+        <span>From your facilitator</span><span class="practices-group-count">${assignedFiles.length}${!open && assignedFiles.length > 5 ? ` (showing 5 most recent)` : ''} ${open ? '▾' : '▸'}</span>
+      </div>`;
+      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(contentItemHTML).join('')}</div>`;
     }
 
     html += `<div class="practices-group-row">
@@ -3351,11 +3403,11 @@
     if (talkSaved.length) {
       const open = openPracticeGroups.has('talk-saved');
       const sorted = [...talkSaved].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-      const shown = sorted.slice(0, 25);
+      const shown = open ? sorted.slice(0, 25) : sorted.slice(0, 3);
       html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('talk-saved')">
-        <span>Saved from Talk</span><span class="practices-group-count">${talkSaved.length}${talkSaved.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
+        <span>Saved from Talk</span><span class="practices-group-count">${talkSaved.length}${open && talkSaved.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
       </div>`;
-      if (open) html += `<div style="max-height:420px; overflow-y:auto;">${shown.map(practiceItemHTML).join('')}</div>`;
+      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
     }
 
     el.innerHTML = html;
