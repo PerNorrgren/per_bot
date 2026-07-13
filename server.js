@@ -4318,6 +4318,50 @@ app.post('/api/speak', async (req, res) => { // public — used by guest and cli
   }
 });
 
+// ── Cached TTS for fixed scripts (Per Bot 14) ── The three quick-practice
+// buttons on the calm landing (Calm the body/mind/breath) speak a fixed
+// script, not a live AI reply — no reason to regenerate the same audio
+// from ElevenLabs on every single tap. First request for a given
+// cacheKey generates and stores it in R2; every request after that just
+// returns a presigned URL to the same file. Always Per's default voice
+// (VOICE_ID), deliberately — these are meant to sound identical every
+// time, like a real recording, not per-user-voice conversation replies.
+app.post('/api/speak-cached', async (req, res) => {
+  try {
+    const { cacheKey, text } = req.body;
+    if (!cacheKey || !text) return res.status(400).json({ error: 'cacheKey and text are required.' });
+    if (!media.isConfigured()) return res.status(500).json({ error: 'R2 is not configured.' });
+
+    let entry = db.getTtsCacheEntry(cacheKey);
+    if (!entry) {
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
+        body: JSON.stringify({
+          text,
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        return res.status(500).json({ error: err });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const r2Key = `tts-cache/${cacheKey}.mp3`;
+      await media.putObject(r2Key, buffer, 'audio/mpeg');
+      db.setTtsCacheEntry(cacheKey, r2Key);
+      entry = { cache_key: cacheKey, r2_key: r2Key };
+    }
+    const url = await media.getPlaybackUrl(entry.r2_key);
+    res.json({ url });
+  } catch (e) {
+    console.error('speak-cached error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── /listen — Deepgram STT proxy (Mare Bot architecture) ──
 const listenWss = new WebSocket.Server({ noServer: true, perMessageDeflate: false });
 
@@ -5316,6 +5360,25 @@ app.post('/api/admin/run-mmpm-practices-import', auth.requireAuthApi(['admin']),
 app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['admin']), (req, res) => {
   if (!mmpmPracticesJob) return res.status(404).json({ error: 'No import has been started yet.' });
   res.json(mmpmPracticesJob);
+});
+
+// ── Standalone poems import (Per Bot 14) ──
+let standalonePoemsJob = null;
+app.post('/api/admin/run-standalone-poems-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (standalonePoemsJob && !standalonePoemsJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: standalonePoemsJob });
+  }
+  standalonePoemsJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = standalonePoemsJob;
+  const { runImport } = require('./import_standalone_poems');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('standalone poems import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-standalone-poems-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!standalonePoemsJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(standalonePoemsJob);
 });
 
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──

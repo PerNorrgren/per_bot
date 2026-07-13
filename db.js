@@ -814,6 +814,19 @@ async function getDb() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_tag ON library_file_tags(tag)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_file ON library_file_tags(file_id)`);
 
+  // ── TTS cache (Per Bot 14) ── A small number of fixed scripts (the
+  // three quick-practice buttons on the calm landing) used to hit
+  // ElevenLabs live every single tap, via the same path as an ordinary
+  // conversational reply — slower, inconsistent phrasing risk, and pure
+  // repeated cost for text that never changes. First tap generates and
+  // caches the audio in R2 under a stable key; every tap after that just
+  // serves the same file straight back, like any other real recording.
+  db.run(`CREATE TABLE IF NOT EXISTS tts_cache (
+    cache_key TEXT PRIMARY KEY,
+    r2_key TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Lesson file opens (Per Bot 13) ──
   // Tracks every time a client opens/plays a file that's part of a lesson.
   // Underlies three things at once: the green-tick "opened" marker in the
@@ -1704,6 +1717,13 @@ function getFilesByTag(tag) {
     LEFT JOIN categories sub ON f.subcategory_id=sub.id
     WHERE t.tag=? AND f.archived=0
     ORDER BY f.created_at DESC`, [tag]);
+}
+function getTtsCacheEntry(cacheKey) {
+  return queryOne('SELECT * FROM tts_cache WHERE cache_key=?', [cacheKey]);
+}
+function setTtsCacheEntry(cacheKey, r2Key) {
+  getDbSync().run('INSERT OR REPLACE INTO tts_cache (cache_key, r2_key) VALUES (?,?)', [cacheKey, r2Key]);
+  save();
 }
 // Curated content shelves on the calm landing screen (Per Bot 28) — same
 // "explicitly marked, not automatic" reasoning as getFeaturedCourses.
@@ -3978,7 +3998,7 @@ module.exports = {
   // Library
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
-  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
+  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,

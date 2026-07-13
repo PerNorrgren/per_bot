@@ -624,11 +624,11 @@
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
-          <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">For a busy mind</div>
+          <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">Quick practice</div>
           <div style="display:flex; gap:8px; justify-content:center;">
-            <button type="button" onclick="startCalmMoment('Help me settle my body — I feel keyed up and restless.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Settle the body</button>
-            <button type="button" onclick="startCalmMoment('My mind keeps looping on the same thoughts — help me quiet it.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Quiet the loop</button>
-            <button type="button" onclick="startCalmMoment('I don\'t need to talk — just walk me through a few breaths.')" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Just breathe</button>
+            <button type="button" onclick="playQuickPractice('calm-body', QUICK_PRACTICE_SCRIPTS.body)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the body</button>
+            <button type="button" onclick="playQuickPractice('calm-mind', QUICK_PRACTICE_SCRIPTS.mind)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the mind</button>
+            <button type="button" onclick="playQuickPractice('calm-breath', QUICK_PRACTICE_SCRIPTS.breath)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the breath</button>
           </div>
         </div>
         <button type="button" id="calmSoundsBtn" onclick="toggleCalmingSounds()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
@@ -3677,14 +3677,50 @@
     document.getElementById('shareTalkBtn').style.display = '';
   }
 
-  async function startCalmMoment(prompt) {
+  // Drafts — worth a listen and an edit before they're treated as final,
+  // since re-recording later just means clearing the cached audio, not a
+  // code change. Deliberately short and un-paced (no [[PAUSE]] markers,
+  // unlike GROUNDING_SCRIPT) — these are quick, in-the-moment resets, not
+  // a longer guided practice.
+  const QUICK_PRACTICE_SCRIPTS = {
+    body: "Let's settle the body for a moment. Feel your feet on the floor. Let your shoulders drop, just a little. Breathe in, and let it out slowly — longer than you took it in. Notice your hands. Let them rest, heavy and still. One more breath like that. In. And a long, slow release. That's it. You're a little steadier now.",
+    mind: "If your mind's been looping, let's give it somewhere else to land for a moment. Notice three sounds around you right now, near or far. Now notice one thing you can feel — your clothes on your skin, or the chair beneath you. The loop doesn't need to stop all at once. Just for this moment, you're here, not there. That's enough.",
+    breath: "No need to do anything except breathe. Breathe in, and out, slowly. In again, and out, even slower this time. One more. In. And let it go completely. However that felt, it's exactly enough.",
+  };
+  async function playQuickPractice(cacheKey, script) {
     if (_calmingSoundsPlaying) toggleCalmingSounds();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'flex';
     unlockAudioPlayback();
+    setState('speaking');
+    transcriptEl.textContent = script;
+    transcriptEl.className = 'transcript-text';
+    try {
+      const r = await fetch('/api/speak-cached', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cacheKey, text: script }),
+      });
+      const data = await r.json();
+      if (!data.url) throw new Error(data.error || 'No audio URL returned.');
+      await new Promise((resolve, reject) => {
+        currentAudio = document.getElementById('ttsPlayer');
+        currentAudio.pause();
+        currentAudio.src = data.url;
+        currentAudio.onended = () => resolve();
+        currentAudio.onerror = () => reject(new Error('audio playback error'));
+        currentAudio.play().catch(reject);
+      });
+    } catch (e) {
+      console.error('quick practice playback error:', e);
+    }
+    // A few seconds of quiet before Per picks up the conversation — same
+    // greeting flow as tapping "Talk to Per" directly ([START]), not a
+    // separate scripted line, so it stays consistent with the normal
+    // opening if that greeting is ever changed later.
+    await new Promise(r => setTimeout(r, 3000));
     setState('processing');
-    await sendToBot(prompt);
+    await sendToBot('[START]');
   }
   async function initFacStrip() {
     try {
