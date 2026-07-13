@@ -775,13 +775,7 @@
         <button class="lib-subnav-btn active" id="libSubPractices" onclick="switchLibrarySub('practices')">Practices</button>
         <button class="lib-subnav-btn" id="libSubMeditations" onclick="switchLibrarySub('meditations')">Meditations</button>
         <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
-        <div style="position:relative; display:inline-block;">
-          <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
-          <div id="timersDropdown" style="display:none; position:absolute; top:100%; left:0; z-index:20; background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.4); padding:6px; min-width:180px; margin-top:6px;">
-            <button type="button" onclick="chooseTimersMenuEntry('timer')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🧘 Meditation Timer</button>
-            <button type="button" onclick="chooseTimersMenuEntry('breathing')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🌬️ Breathing Timer</button>
-          </div>
-        </div>
+        <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
       </div>
 
       <!-- Practices region -->
@@ -1014,6 +1008,21 @@
          someone actually wants to switch who they're with. Timer lives
          here too now rather than its own bottom-nav slot. -->
     <div id="facMenuDropdown" style="display:none; position:absolute; left:12px; bottom:78px; width:max-content; max-width:calc(100% - 24px); background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.4); z-index:60; overflow:hidden; max-height:60vh; overflow-y:auto;"></div>
+
+    <!-- Per Bot 15 — the Timers dropdown lives here, not nested inside
+         .lib-subnav where its trigger button sits, because that row
+         scrolls horizontally (overflow-x:auto) — and per CSS, setting
+         overflow-x to anything but visible forces overflow-y to auto too,
+         so an absolutely-positioned child dropdown got silently clipped
+         to the row's own scrollable box instead of overlaying the page
+         (that stray horizontal scrollbar Per saw was exactly this).
+         position:fixed here + JS-computed coordinates in toggleTimersMenu
+         sidestep the whole problem regardless of where the row is
+         scrolled to. -->
+    <div id="timersDropdown" style="display:none; position:fixed; z-index:60; background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.4); padding:6px; min-width:180px;">
+      <button type="button" onclick="chooseTimersMenuEntry('timer')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🧘 Meditation Timer</button>
+      <button type="button" onclick="chooseTimersMenuEntry('breathing')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🌬️ Breathing Timer</button>
+    </div>
 
     <div class="bottom-nav">
       <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">🏠</span><span id="navTalkLabel">Home</span></button>
@@ -4281,7 +4290,19 @@
   let _timersMenuOpen = false;
   function toggleTimersMenu() {
     _timersMenuOpen = !_timersMenuOpen;
-    document.getElementById('timersDropdown').style.display = _timersMenuOpen ? 'block' : 'none';
+    const dropdown = document.getElementById('timersDropdown');
+    if (_timersMenuOpen) {
+      const btn = document.getElementById('libSubTimers');
+      const r = btn.getBoundingClientRect();
+      dropdown.style.top = `${r.bottom + 6}px`;
+      // Keep it on-screen if the button is scrolled near the row's right
+      // edge — anchor to the button's left, but never let the dropdown's
+      // own width push it past the viewport.
+      const minWidth = 180;
+      const left = Math.min(r.left, window.innerWidth - minWidth - 12);
+      dropdown.style.left = `${Math.max(12, left)}px`;
+    }
+    dropdown.style.display = _timersMenuOpen ? 'block' : 'none';
   }
   function closeTimersMenu() {
     _timersMenuOpen = false;
