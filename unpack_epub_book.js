@@ -23,6 +23,8 @@
 // Idempotent: skips a book that already has epub_opf_path set, unless
 // force-re-unpack is requested.
 
+const fs = require('fs');
+const path = require('path');
 const JSZip = require('jszip');
 const db = require('./db');
 const media = require('./media');
@@ -31,6 +33,19 @@ async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   return Buffer.concat(chunks);
+}
+
+// The book uploaded through the normal Admin upload UI turned out to be
+// legacy disk storage, not R2 — the first run of this script assumed R2
+// unconditionally and failed with "the specified key does not exist."
+// Same branch the rest of the app already uses (see the playback-url
+// route) — R2 via media.getPublicObject, disk via a direct file read.
+async function fetchRawBytes(fileRow) {
+  if (fileRow.storage_type === 'r2') {
+    const obj = await media.getPublicObject(fileRow.filename);
+    return streamToBuffer(obj.Body);
+  }
+  return fs.readFileSync(path.join(__dirname, 'uploads', fileRow.filename));
 }
 
 function extToContentType(path) {
@@ -46,10 +61,8 @@ function extToContentType(path) {
 }
 
 async function unpackOne(fileRow, log) {
-  const key = fileRow.filename; // R2 key of the original raw .epub
-  log(`Fetching ${fileRow.title}...`);
-  const obj = await media.getPublicObject(key);
-  const buffer = await streamToBuffer(obj.Body);
+  log(`Fetching ${fileRow.title}... (${fileRow.storage_type} storage)`);
+  const buffer = await fetchRawBytes(fileRow);
 
   log(`Unzipping (${(buffer.length / 1024 / 1024).toFixed(1)} MB)...`);
   const zip = await JSZip.loadAsync(buffer);
