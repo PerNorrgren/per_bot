@@ -827,6 +827,29 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Translated email template cache (Per Bot 15) ── Referenced by
+  // getLocalizedTemplate/sendLocalizedEmail in server.js since at least
+  // Per Bot 8 (welcome emails, password reset links, admin password
+  // resets), but this table and its two functions were never actually
+  // created — db.getTranslatedTemplate/db.saveTranslatedTemplate have
+  // been calling into nothing. For an English recipient this was
+  // invisible (the function returns before ever touching the DB), but
+  // any non-English recipient (e.g. language='nl') hit "db.getTranslatedTemplate
+  // is not a function" — an uncaught throw, since it happens before the
+  // try/catch in getLocalizedTemplate even starts, becoming an unhandled
+  // promise rejection wherever the email call wasn't itself awaited.
+  // One row per (template_key, language) pair, exactly like the comment
+  // beside legal_translations above already assumed existed.
+  db.run(`CREATE TABLE IF NOT EXISTS translated_templates (
+    id TEXT PRIMARY KEY,
+    template_key TEXT NOT NULL,
+    language TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    html TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(template_key, language)
+  )`);
+
   // ── Lesson file opens (Per Bot 13) ──
   // Tracks every time a client opens/plays a file that's part of a lesson.
   // Underlies three things at once: the green-tick "opened" marker in the
@@ -1735,6 +1758,17 @@ function getTtsCacheEntry(cacheKey) {
 }
 function setTtsCacheEntry(cacheKey, r2Key) {
   getDbSync().run('INSERT OR REPLACE INTO tts_cache (cache_key, r2_key) VALUES (?,?)', [cacheKey, r2Key]);
+  save();
+}
+function getTranslatedTemplate(templateKey, language) {
+  return queryOne('SELECT * FROM translated_templates WHERE template_key=? AND language=?', [templateKey, language]);
+}
+function saveTranslatedTemplate(id, templateKey, language, subject, html) {
+  getDbSync().run(
+    `INSERT INTO translated_templates (id,template_key,language,subject,html) VALUES (?,?,?,?,?)
+     ON CONFLICT(template_key,language) DO UPDATE SET subject=excluded.subject, html=excluded.html`,
+    [id, templateKey, language, subject, html]
+  );
   save();
 }
 // Curated content shelves on the calm landing screen (Per Bot 28) — same
@@ -4013,6 +4047,7 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
+  getTranslatedTemplate, saveTranslatedTemplate,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,

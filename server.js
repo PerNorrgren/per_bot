@@ -5460,6 +5460,30 @@ app.get('/api/admin/unpack-epub-books/status', auth.requireAuthApi(['admin']), (
   res.json(epubUnpackJob);
 });
 
+// ── R2 orphan check (Per Bot 15) — read-only diagnostic for the rename-route
+// filename-corruption bug fixed in Per Bot 14. Backgrounded like every other
+// admin action that touches more than a handful of files (checks against R2
+// over the network, one HeadObject per file, so easily the slowest of the
+// batch jobs so far — Railway's gateway would 502 well before this finishes
+// synchronously for a library this size).
+let r2SweepJob = null;
+app.post('/api/admin/sweep-r2-orphans', auth.requireAuthApi(['admin']), (req, res) => {
+  if (r2SweepJob && !r2SweepJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: r2SweepJob });
+  }
+  r2SweepJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = r2SweepJob;
+  const { runSweep } = require('./sweep_r2_orphan_check');
+  runSweep((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('r2 orphan sweep error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/sweep-r2-orphans/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!r2SweepJob) return res.status(404).json({ error: 'No sweep job has been started yet.' });
+  res.json(r2SweepJob);
+});
+
 // ── Fix: blog/whitepaper visibility (Per Bot 14) ──
 app.post('/api/admin/fix-blog-visibility', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
