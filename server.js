@@ -1635,6 +1635,19 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// The Home shelves only ever show 5 recent poems/posts as cards — "More
+// poems/posts" needs the actual full catalog, not just those same 5
+// again. Same standalone-only scoping (excludes anything already
+// embedded in a course) as the Home shelf query.
+app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    if (!['poem', 'blog'].includes(req.params.type)) return res.status(400).json({ error: 'Unsupported type.' });
+    const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
+    const files = db.getRecentStandaloneFiles(req.params.type).map(f => ({ ...f, is_favourite: favIds.has(f.id) }));
+    res.json(files);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const instances = db.getAllCourseInstances({ status: 'open' });

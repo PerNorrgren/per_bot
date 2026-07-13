@@ -508,6 +508,7 @@
     .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
+    .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
        that already says exactly that) and crowds/overlaps the video's top
@@ -2846,6 +2847,12 @@
   let _epubFontPct = 100;
   let _epubToc = [];
   let _currentEpubFirstHref = null;
+  let _textReaderFontPct = 100;
+  function textReaderFontSize(delta) {
+    _textReaderFontPct = Math.max(70, Math.min(200, _textReaderFontPct + delta * 15));
+    const el = document.getElementById('textDocReaderBody');
+    if (el) el.style.fontSize = _textReaderFontPct + '%';
+  }
   function epubNextPage() { if (_currentEpubRendition) _currentEpubRendition.next(); }
   function epubPrevPage() { if (_currentEpubRendition) _currentEpubRendition.prev(); }
   function epubFontSize(delta) {
@@ -2982,7 +2989,14 @@
         const htmlText = await htmlRes.text();
         const parsed = new DOMParser().parseFromString(htmlText, 'text/html');
         const article = parsed.querySelector('article') || parsed.body;
-        mediaEl.innerHTML = `<div class="text-doc-reader">${article.innerHTML}</div>`;
+        _textReaderFontPct = 100;
+        mediaEl.innerHTML = `
+          <div class="text-reader-controls">
+            <button class="reader-font-btn" onclick="textReaderFontSize(-1)" title="Smaller text">A-</button>
+            <button class="reader-font-btn" onclick="textReaderFontSize(1)" title="Larger text">A+</button>
+          </div>
+          <div class="text-doc-reader" id="textDocReaderBody" style="font-size:100%">${article.innerHTML}</div>
+        `;
       } catch {
         mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
       }
@@ -3689,18 +3703,44 @@
   // overlay — heart/play/add-to-playlist per row, reusing contentItemHTML
   // exactly as Library already does, so favouriting or queueing something
   // here behaves identically everywhere else in the app.
-  function openThemeDetail(group, index) {
-    const row = (_shelvesData[group] || [])[index];
-    if (!row || !row.items) return;
+  async function openThemeDetail(group, index) {
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.remove('video-mode');
     document.getElementById('fullscreenBtn').style.display = 'none';
-    document.getElementById('playerTitle').textContent = row.label;
+    document.getElementById('playerOverlay').classList.add('visible');
+
+    // Poems/Posts: the Home shelf only ever holds the 5 most recent as
+    // cards — "More poems/posts" means the actual full catalog, fetched
+    // fresh rather than reusing that capped set.
+    if (group === 'poems' || group === 'posts') {
+      document.getElementById('playerTitle').textContent = group === 'poems' ? 'Poems' : 'Posts';
+      document.getElementById('playerText').innerHTML = '';
+      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);text-align:center">Loading…</div>';
+      try {
+        const type = group === 'poems' ? 'poem' : 'blog';
+        const res = await fetch(`/api/client/library/${type}`);
+        const items = await res.json();
+        // Merge into _featuredContentData (rather than replace) so the
+        // original 5 Home-card items — and anything else already
+        // loaded — stay openable too.
+        items.forEach(f => { if (!_featuredContentData.find(x => x.id === f.id)) _featuredContentData.push(f); });
+        renderThemeDetailList(group === 'poems' ? 'Poems' : 'Posts', items);
+      } catch {
+        document.getElementById('playerMedia').innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not load the list.</div>';
+      }
+      return;
+    }
+
+    const row = (_shelvesData[group] || [])[index];
+    if (!row || !row.items) return;
+    renderThemeDetailList(row.label, row.items);
+  }
+  function renderThemeDetailList(label, items) {
+    document.getElementById('playerTitle').textContent = label;
     document.getElementById('playerText').innerHTML = '';
     document.getElementById('playerMedia').innerHTML = `
-      <div class="lesson-chooser-list">${row.items.map(f => contentItemHTML(f)).join('')}</div>
+      <div class="lesson-chooser-list">${items.map(f => contentItemHTML(f)).join('')}</div>
     `;
-    document.getElementById('playerOverlay').classList.add('visible');
     requestAnimationFrame(() => {
       const listEl = document.querySelector('.lesson-chooser-list');
       if (listEl) { listEl.style.overflowY = 'hidden'; void listEl.offsetHeight; listEl.style.overflowY = 'auto'; }
