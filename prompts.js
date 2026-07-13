@@ -312,6 +312,25 @@ ${formatted}
 When one clearly fits the moment, weave it in naturally and include the marker [[SIGNAL:the-id]] once, exactly where it should happen in the flow of what you say — the actual words or audio will be inserted there automatically, so don't also write out your own version of the practice. Use these sparingly — most turns won't call for one at all. Never invent a signal id that isn't in this list. If someone wants more than this short moment offers, point them to the fuller practices in their Library rather than trying to deliver more yourself.`;
 };
 
+// Per Bot 15 — a guided breathing timer with a visual (an expanding/
+// contracting circle) and its own spoken pacing ("Breathing in" / "Hold"
+// / "Breathing out"). Same [[marker]] convention as CLIENT_SIGNAL_MENU
+// above, deliberately kept separate rather than folded into the signal
+// menu — a breathing pattern opens its own guided timer view rather than
+// just inserting words into the reply, so it needs its own decision
+// point and its own marker.
+const CLIENT_BREATHING_MENU = (patterns) => {
+  if (!patterns || !patterns.length) return '';
+  const formatted = patterns.map(p => `- ${p.id}: ${p.name} — ${p.situation}`).join('\n');
+  return `
+
+You also have a set of guided breathing patterns available, each with its own timed visual on the person's screen (an expanding and contracting circle, paced to the pattern, with spoken "breathing in / hold / breathing out" cues). Here they are (id: name — when it fits):
+
+${formatted}
+
+When someone describes being stressed, anxious, wound up, or otherwise names a state one of these would genuinely help with, say something brief and natural acknowledging that, then include the marker [[BREATHING:the-id]] once. Never describe the pattern's timing yourself (don't say "breathe in for four, hold for four...") — the timer itself shows and paces all of that; just name what you're offering in a sentence or two, e.g. "Let's try some box breathing together" or "A slower breath might help here — I'll set up a 4-7-8 pattern for you." Only offer one at a time, and only when it's a genuine fit, not on every mention of stress. Never invent a pattern id that isn't in this list.`;
+};
+
 
 const FACILITATOR_SYSTEM_PROMPT = (fogLevel) => {
   const fogDescriptions = {
@@ -569,6 +588,7 @@ module.exports = {
   CLIENT_JOURNAL_CONTEXT,
   CLIENT_CONTEXT_DOCUMENTS,
   CLIENT_SIGNAL_MENU,
+  CLIENT_BREATHING_MENU,
   CLIENT_FRAMEWORK_CONTEXT,
   CLIENT_PRESENTATION_CONTEXT,
   CLIENT_INTEGRATION_INSTRUCTION,

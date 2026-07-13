@@ -288,6 +288,12 @@
     .timer-running-buttons { display:flex; gap:12px; justify-content:center; margin-top:8px; }
     .timer-btn { flex:1; padding:13px; border-radius:12px; border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.7); font-size:14px; font-family:'Georgia',serif; cursor:pointer; }
     .timer-btn-stop { border-color:rgba(255,140,120,0.3); background:rgba(255,140,120,0.08); color:rgba(255,160,140,0.85); }
+    /* Breathing timer — a solid circle that expands on the in-breath, holds
+       its size during a hold phase, and contracts on the out-breath. Scale
+       is driven entirely by JS (Web Animations API) so it can be paused and
+       resumed mid-phase; this just sets the resting appearance. */
+    .breathing-circle-wrap { width:100%; display:flex; justify-content:center; align-items:center; height:220px; margin-top:8px; }
+    .breathing-circle { width:140px; height:140px; border-radius:50%; background:radial-gradient(circle at 35% 32%, rgba(200,240,215,0.9), rgba(150,210,175,0.55) 65%, rgba(120,190,155,0.35) 100%); box-shadow:0 0 40px rgba(150,210,175,0.25); transform:scale(0.6); }
     .practices-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
     .practices-scroll::-webkit-scrollbar { width:3px; }
     .practices-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
@@ -606,6 +612,7 @@
 <audio id="ttsPlayer" style="display:none"></audio>
 <audio id="timerBellAudio" style="display:none"></audio>
 <audio id="timerMusicAudio" style="display:none" loop></audio>
+<audio id="breathingCueAudio" style="display:none"></audio>
 
 <!-- Start screen — user must tap before any audio -->
 <div id="start">
@@ -636,7 +643,7 @@
            useCalmLanding is off (App Setup) or once a real conversation
            has actually started this session (_talkEngaged) — from then
            on, talkChatContent takes over exactly as before. -->
-      <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
+      <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:flex-start; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
         <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <button type="button" id="calmMainBtn" onclick="startLiveTalk()" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:16px; line-height:1.5; cursor:pointer;">Talk to<br/>Per</button>
@@ -687,6 +694,9 @@
         <div style="display:flex; gap:8px; justify-content:center">
           <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
           <button type="button" id="shareTalkBtn" class="save-talk-btn" style="display:none" onclick="shareMoment(lastBotReply)">Share</button>
+        </div>
+        <div style="display:flex; justify-content:center; margin-top:6px">
+          <button type="button" id="talkBreathingPromptBtn" style="display:none; padding:10px 20px; border-radius:20px; border:1px solid rgba(180,230,200,0.4); background:rgba(180,230,200,0.13); color:rgba(190,235,210,0.95); font-family:Georgia,serif; font-size:13.5px; cursor:pointer" onclick="openSuggestedBreathing()"></button>
         </div>
         <div class="indicators">
           <div class="wave" id="wave"><span></span><span></span><span></span><span></span><span></span></div>
@@ -765,7 +775,13 @@
         <button class="lib-subnav-btn active" id="libSubPractices" onclick="switchLibrarySub('practices')">Practices</button>
         <button class="lib-subnav-btn" id="libSubMeditations" onclick="switchLibrarySub('meditations')">Meditations</button>
         <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
-        <button class="lib-subnav-btn" id="libSubTimer" onclick="switchTab('timer')">Timer</button>
+        <div style="position:relative; display:inline-block;">
+          <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
+          <div id="timersDropdown" style="display:none; position:absolute; top:100%; left:0; z-index:20; background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.4); padding:6px; min-width:180px; margin-top:6px;">
+            <button type="button" onclick="chooseTimersMenuEntry('timer')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🧘 Meditation Timer</button>
+            <button type="button" onclick="chooseTimersMenuEntry('breathing')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🌬️ Breathing Timer</button>
+          </div>
+        </div>
       </div>
 
       <!-- Practices region -->
@@ -914,6 +930,51 @@
           <div class="timer-running-buttons">
             <button class="timer-btn" id="timerPauseBtn" onclick="pauseResumeTimer()">Pause</button>
             <button class="timer-btn timer-btn-stop" onclick="stopMeditationTimer()">End</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Breathing (Per Bot 15) — deliberately much simpler than the meditation
+         timer above: pick a pre-designed pattern, tap Begin, watch the circle.
+         No bells, no music, no custom duration — the pattern itself sets the
+         pace. Talk can pre-select a pattern here too (see openSuggestedBreathing). -->
+    <div class="timer-view" id="breathingView">
+      <button type="button" class="timer-close-btn" onclick="closeBreathingView()" title="Close" aria-label="Close">&times;</button>
+      <div class="timer-scroll">
+
+        <div class="breathing-circle-wrap">
+          <div class="breathing-circle" id="breathingCircle"></div>
+        </div>
+        <div class="timer-display-sub" id="breathingPhaseLabel" style="margin-top:14px">Ready</div>
+        <div class="timer-display-sub" id="breathingCycleLabel" style="margin:0 0 18px; opacity:0.6"></div>
+
+        <div class="timer-controls" id="breathingControlsPre">
+          <div class="timer-section">
+            <div class="timer-section-label">Choose a pattern</div>
+            <div class="timer-chip-row" id="breathingPatternChips"><span style="color:rgba(255,255,255,0.3); font-size:13px">Loading…</span></div>
+            <div id="breathingPatternSituation" style="font-size:12.5px; color:rgba(255,255,255,0.4); font-style:italic; min-height:16px; margin-top:2px"></div>
+          </div>
+
+          <div class="timer-section">
+            <div class="timer-field-row">
+              <label>Number of cycles</label>
+              <div class="timer-custom-row">
+                <input type="range" id="breathingCyclesSlider" min="2" max="15" value="6"/>
+                <span id="breathingCyclesLabel">6 cycles</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="timer-err" id="breathingErr"></div>
+          <button class="timer-start-btn" id="breathingStartBtn" onclick="startBreathingTimer()">Begin</button>
+        </div>
+
+        <div class="timer-controls" id="breathingControlsRunning" style="display:none">
+          <div class="timer-running-buttons">
+            <button class="timer-btn" id="breathingPauseBtn" onclick="pauseResumeBreathing()">Pause</button>
+            <button class="timer-btn timer-btn-stop" onclick="stopBreathingTimer()">End</button>
           </div>
         </div>
 
@@ -1143,6 +1204,7 @@
 
   function switchTab(tab) {
     closeFacMenu();
+    closeTimersMenu();
     if (tab !== 'talk') {
       sendFinalizeBeacon();
       // The finalize beacon above only tells the server the conversation
@@ -1163,8 +1225,10 @@
     document.getElementById('libraryView').classList.toggle('visible', tab === 'library');
     document.getElementById('coursesView').classList.toggle('visible', tab === 'courses');
     document.getElementById('timerView').classList.toggle('visible',   tab === 'timer');
+    document.getElementById('breathingView').classList.toggle('visible', tab === 'breathing');
     document.getElementById('youView').classList.toggle('visible',     tab === 'you');
     if (tab === 'timer')   loadTimerSounds();
+    if (tab === 'breathing') loadBreathingPatterns();
     if (tab === 'courses') { closeCourseDetail(); loadCourses(); }
     if (tab === 'library') { loadContent().then(() => { loadPractices(); loadLibraryMeditations(); }); switchLibrarySub(_currentLibSub); }
     if (tab === 'you')     switchYouSub(_currentYouSub);
@@ -2038,6 +2102,7 @@
         busy = false;
         document.getElementById('saveTalkBtn').style.display = 'none';
         document.getElementById('shareTalkBtn').style.display = 'none';
+        document.getElementById('talkBreathingPromptBtn').style.display = 'none';
         await speak(reply);
         // Per Bot 33s — a signal script Talk chose to play as an actual
         // audio file (rather than a spoken text snippet, which is already
@@ -2051,6 +2116,17 @@
             signalAudio.onerror = resolveAudio;
             signalAudio.play().catch(resolveAudio);
           });
+        }
+        // Per Bot 15 — Talk suggested a guided breathing pattern this turn
+        // (see resolveBreathingMarker server-side). Shown as a prompt to
+        // tap into, not auto-launched — starting the timer itself still
+        // needs the person's own tap so the phase-cue audio can play
+        // reliably on iOS Safari (see openSuggestedBreathing).
+        if (data.breathingPattern) {
+          pendingBreathingPattern = data.breathingPattern;
+          const promptBtn = document.getElementById('talkBreathingPromptBtn');
+          promptBtn.textContent = `Start ${data.breathingPattern.name} →`;
+          promptBtn.style.display = '';
         }
         // Save button only makes sense for a real exchange, not the
         // opening greeting — and only once they can actually see/hear
@@ -3190,9 +3266,18 @@
     if (!list.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
 
     const favs = list.filter(p => p.is_favourite);
+    // Per Bot 15 — anything saved from a live Talk conversation (source_type
+    // 'talk', the default) has no category/subcategory tagging at all, so it
+    // never lands in the course/area groups below — it used to spill into a
+    // flat, ever-growing "Other saved practices" list instead. As more people
+    // save more Talk moments this was only going to get worse, so it's now
+    // its own collapsed-by-default group (matching the course/area group
+    // pattern), capped to the most recent 25 with its own scroll box rather
+    // than growing the whole Library page indefinitely.
+    const talkSaved = list.filter(p => !p.is_favourite && (!p.subcategory_id) && p.source_type !== 'session');
     const grouped = list.filter(p => !p.is_favourite && p.subcategory_id &&
       (_practicesGroupMode === 'area' ? p.category_id === AREA_CATEGORY_ID : p.category_id !== AREA_CATEGORY_ID));
-    const ungrouped = list.filter(p => !p.is_favourite && !grouped.includes(p));
+    const ungrouped = list.filter(p => !p.is_favourite && !grouped.includes(p) && !talkSaved.includes(p));
 
     let html = '';
     if (favs.length) {
@@ -3225,6 +3310,16 @@
 
     if (ungrouped.length) {
       html += `<div class="content-section-hdr">Other saved practices</div>` + ungrouped.map(practiceItemHTML).join('');
+    }
+
+    if (talkSaved.length) {
+      const open = openPracticeGroups.has('talk-saved');
+      const sorted = [...talkSaved].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      const shown = sorted.slice(0, 25);
+      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('talk-saved')">
+        <span>Saved from Talk</span><span class="practices-group-count">${talkSaved.length}${talkSaved.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
+      </div>`;
+      if (open) html += `<div style="max-height:420px; overflow-y:auto;">${shown.map(practiceItemHTML).join('')}</div>`;
     }
 
     el.innerHTML = html;
@@ -3483,6 +3578,207 @@
     document.getElementById('timerControlsPre').style.display = '';
     document.getElementById('timerPauseBtn').textContent = 'Pause';
     renderTimerDisplay();
+  }
+
+  // ── Breathing timer (Per Bot 15) ──
+  // Deliberately much simpler than the meditation timer above: pick a
+  // pre-designed pattern (in/hold/out phases with fixed seconds, set by
+  // Admin), tap Begin, watch the circle expand and contract. The circle's
+  // scale is driven by the Web Animations API rather than a plain CSS
+  // transition specifically so pausing mid-breath is a real pause (an
+  // Animation object can be paused/resumed exactly where it is), not a
+  // jump back to a rest state the way toggling a CSS class would be.
+  let breathingPatterns = [];
+  let breathingSelectedPattern = null;
+  let breathingCycles = 6;
+  let breathingCycleIndex = 0;
+  let breathingPhaseIndex = 0;
+  let breathingAnim = null;
+  let breathingState = 'idle'; // idle | running | paused
+  let breathingCircleScale = 0.6; // tracked across phases so 'hold' can freeze at wherever 'in'/'out' left off
+  let breathingCueUrls = {}; // { in, hold, out } -> presigned playback URL, resolved once per session
+  let pendingBreathingPattern = null; // set when Talk suggests one, consumed by openSuggestedBreathing
+
+  async function loadBreathingPatterns() {
+    try {
+      const res = await fetch('/api/breathing-patterns');
+      breathingPatterns = await res.json();
+    } catch(e) { breathingPatterns = []; }
+    renderBreathingPatternChips();
+  }
+
+  function renderBreathingPatternChips() {
+    const row = document.getElementById('breathingPatternChips');
+    if (!breathingPatterns.length) {
+      row.innerHTML = '<span style="color:rgba(255,255,255,0.3); font-size:13px">No patterns available yet.</span>';
+      return;
+    }
+    row.innerHTML = breathingPatterns.map(p =>
+      `<button type="button" class="timer-chip${breathingSelectedPattern && breathingSelectedPattern.id === p.id ? ' active' : ''}" data-pattern-id="${p.id}">${escHtmlPoem(p.name)}</button>`
+    ).join('');
+    row.querySelectorAll('[data-pattern-id]').forEach(btn => {
+      btn.onclick = () => selectBreathingPattern(btn.getAttribute('data-pattern-id'));
+    });
+    if (!breathingSelectedPattern && breathingPatterns.length) selectBreathingPattern(breathingPatterns[0].id);
+  }
+
+  function selectBreathingPattern(id) {
+    const p = breathingPatterns.find(p => p.id === id);
+    if (!p) return;
+    breathingSelectedPattern = p;
+    document.getElementById('breathingPatternSituation').textContent = '';
+    document.querySelectorAll('#breathingPatternChips [data-pattern-id]').forEach(btn => {
+      btn.classList.toggle('active', btn.getAttribute('data-pattern-id') === id);
+    });
+    const slider = document.getElementById('breathingCyclesSlider');
+    slider.value = p.default_cycles || 6;
+    updateBreathingCyclesLabel();
+  }
+
+  function updateBreathingCyclesLabel() {
+    const n = document.getElementById('breathingCyclesSlider').value;
+    document.getElementById('breathingCyclesLabel').textContent = `${n} cycle${n == 1 ? '' : 's'}`;
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    const slider = document.getElementById('breathingCyclesSlider');
+    if (slider) slider.addEventListener('input', updateBreathingCyclesLabel);
+  });
+
+  // Resolves the three shared voice cues via the same cached-TTS mechanism
+  // as the quick-practice buttons — first person to ever start a breathing
+  // timer generates and caches all three in Per's own voice; everyone
+  // after that just gets the cached file back. Called from inside the
+  // Begin tap so the resulting .play() calls stay close enough to the
+  // original gesture to work reliably on iOS Safari.
+  async function resolveBreathingCues() {
+    const cues = { in: ['breathing-in', 'Breathing in.'], hold: ['breathing-hold', 'Hold.'], out: ['breathing-out', 'Breathing out.'] };
+    await Promise.all(Object.entries(cues).map(async ([type, [cacheKey, text]]) => {
+      if (breathingCueUrls[type]) return;
+      try {
+        const res = await fetch('/api/speak-cached', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cacheKey, text })
+        });
+        const data = await res.json();
+        if (data.url) breathingCueUrls[type] = data.url;
+      } catch(e) { /* best effort — the visual still works without the cue */ }
+    }));
+  }
+
+  function playBreathingCue(type) {
+    const url = breathingCueUrls[type];
+    if (!url) return;
+    const audio = document.getElementById('breathingCueAudio');
+    try { audio.src = url; audio.currentTime = 0; audio.play().catch(() => {}); } catch(e) {}
+  }
+
+  async function startBreathingTimer() {
+    const err = document.getElementById('breathingErr');
+    err.textContent = '';
+    if (!breathingSelectedPattern) { err.textContent = 'Choose a pattern first.'; return; }
+
+    breathingCycles = parseInt(document.getElementById('breathingCyclesSlider').value, 10) || breathingSelectedPattern.default_cycles || 6;
+    breathingCycleIndex = 0;
+    breathingPhaseIndex = 0;
+    breathingCircleScale = 0.6;
+    document.getElementById('breathingCircle').style.transform = 'scale(0.6)';
+
+    await resolveBreathingCues();
+
+    breathingState = 'running';
+    document.getElementById('breathingControlsPre').style.display = 'none';
+    document.getElementById('breathingControlsRunning').style.display = '';
+    runBreathingPhase();
+  }
+
+  function runBreathingPhase() {
+    if (breathingState !== 'running') return;
+    if (breathingCycleIndex >= breathingCycles) { finishBreathingTimer(); return; }
+
+    const phase = breathingSelectedPattern.phases[breathingPhaseIndex];
+    const circle = document.getElementById('breathingCircle');
+    const label  = document.getElementById('breathingPhaseLabel');
+    const sub    = document.getElementById('breathingCycleLabel');
+
+    label.textContent = phase.type === 'in' ? 'Breathing in' : phase.type === 'out' ? 'Breathing out' : 'Hold';
+    sub.textContent = `Cycle ${breathingCycleIndex + 1} of ${breathingCycles}`;
+    playBreathingCue(phase.type);
+
+    const MIN_SCALE = 0.55, MAX_SCALE = 1.05;
+    const targetScale = phase.type === 'in' ? MAX_SCALE : phase.type === 'out' ? MIN_SCALE : breathingCircleScale;
+
+    breathingAnim = circle.animate(
+      [{ transform: `scale(${breathingCircleScale})` }, { transform: `scale(${targetScale})` }],
+      { duration: phase.seconds * 1000, easing: 'ease-in-out', fill: 'forwards' }
+    );
+    breathingAnim.onfinish = () => {
+      breathingCircleScale = targetScale;
+      breathingPhaseIndex++;
+      if (breathingPhaseIndex >= breathingSelectedPattern.phases.length) {
+        breathingPhaseIndex = 0;
+        breathingCycleIndex++;
+      }
+      runBreathingPhase();
+    };
+  }
+
+  function pauseResumeBreathing() {
+    const btn = document.getElementById('breathingPauseBtn');
+    if (breathingState === 'running') {
+      breathingState = 'paused';
+      if (breathingAnim) breathingAnim.pause();
+      btn.textContent = 'Resume';
+      document.getElementById('breathingPhaseLabel').textContent = 'Paused';
+    } else if (breathingState === 'paused') {
+      breathingState = 'running';
+      if (breathingAnim) breathingAnim.play();
+      btn.textContent = 'Pause';
+    }
+  }
+
+  function finishBreathingTimer() {
+    breathingState = 'idle';
+    document.getElementById('breathingPhaseLabel').textContent = 'Complete';
+    document.getElementById('breathingCycleLabel').textContent = '';
+    document.getElementById('breathingControlsRunning').style.display = 'none';
+    document.getElementById('breathingControlsPre').style.display = '';
+    document.getElementById('breathingPauseBtn').textContent = 'Pause';
+  }
+
+  function stopBreathingTimer() {
+    if (breathingAnim) { breathingAnim.cancel(); breathingAnim = null; }
+    document.getElementById('breathingCueAudio').pause();
+    breathingState = 'idle';
+    document.getElementById('breathingCircle').style.transform = 'scale(0.6)';
+    document.getElementById('breathingPhaseLabel').textContent = 'Ready';
+    document.getElementById('breathingCycleLabel').textContent = '';
+    document.getElementById('breathingControlsRunning').style.display = 'none';
+    document.getElementById('breathingControlsPre').style.display = '';
+    document.getElementById('breathingPauseBtn').textContent = 'Pause';
+  }
+
+  function closeBreathingView() {
+    stopBreathingTimer();
+    switchTab('library');
+  }
+
+  // Talk suggested a pattern this turn (see sendToBot's handling of
+  // data.breathingPattern) — tapping the prompt switches to the breathing
+  // view with that pattern pre-selected. Still requires the person's own
+  // tap on Begin afterward, rather than auto-starting: the phase-cue audio
+  // needs a real user gesture to reliably play on iOS Safari, same reason
+  // the meditation timer resolves its bell/music URLs inside startMeditationTimer
+  // rather than ahead of time.
+  function openSuggestedBreathing() {
+    if (!pendingBreathingPattern) return;
+    const p = pendingBreathingPattern;
+    pendingBreathingPattern = null;
+    document.getElementById('talkBreathingPromptBtn').style.display = 'none';
+    switchTab('breathing');
+    loadBreathingPatterns().then(() => {
+      if (!breathingPatterns.some(bp => bp.id === p.id)) breathingPatterns = [...breathingPatterns, p];
+      selectBreathingPattern(p.id);
+    });
   }
 
   // ── Tier gating (Per Bot 5, item 5) — Sessions/History are Member features. ──
@@ -3976,6 +4272,30 @@
     const dropdown = document.getElementById('facMenuDropdown');
     const trigger = document.getElementById('navTalk');
     if (!dropdown.contains(e.target) && !trigger.contains(e.target)) closeFacMenu();
+  });
+
+  // Per Bot 15 — "Timers" subnav button opens a small dropdown to pick
+  // between the meditation timer and the breathing timer, rather than two
+  // separate buttons competing for space in the subnav row. Same open/
+  // close/outside-click convention as the facilitator menu above.
+  let _timersMenuOpen = false;
+  function toggleTimersMenu() {
+    _timersMenuOpen = !_timersMenuOpen;
+    document.getElementById('timersDropdown').style.display = _timersMenuOpen ? 'block' : 'none';
+  }
+  function closeTimersMenu() {
+    _timersMenuOpen = false;
+    document.getElementById('timersDropdown').style.display = 'none';
+  }
+  function chooseTimersMenuEntry(which) {
+    closeTimersMenu();
+    switchTab(which);
+  }
+  document.addEventListener('click', (e) => {
+    if (!_timersMenuOpen) return;
+    const dropdown = document.getElementById('timersDropdown');
+    const trigger = document.getElementById('libSubTimers');
+    if (!dropdown.contains(e.target) && !trigger.contains(e.target)) closeTimersMenu();
   });
   function renderFacMenu() {
     const el = document.getElementById('facMenuDropdown');
