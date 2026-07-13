@@ -5478,6 +5478,20 @@ app.patch('/api/content/library/:id/rename', auth.requireAuthApi(['admin']), (re
   if (!filename) return res.status(400).json({ error: 'Filename required.' });
   const file = db.getLibraryFile(req.params.id);
   if (!file) return res.status(404).json({ error: 'Not found.' });
+
+  // R2-stored files: `filename` in the database IS the actual storage
+  // key (e.g. library/{uuid}.epub) — it's meant to be an opaque,
+  // permanent reference, never a user-facing name. This route used to
+  // overwrite it unconditionally, which silently orphaned the real R2
+  // object under its real key while the database pointed at a name that
+  // was never uploaded there — exactly what happened to a book file this
+  // session ("the specified key does not exist" once something tried to
+  // actually fetch it). The display name people actually see is `title`,
+  // already editable through the normal save — nothing to rename here.
+  if (file.storage_type === 'r2') {
+    return res.json({ ok: true, filename: file.filename, note: 'R2 files keep their storage key — only the title changes.' });
+  }
+
   const ext = path.extname(file.filename);
   const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_') + ext;
   try {
