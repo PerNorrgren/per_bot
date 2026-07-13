@@ -3201,18 +3201,66 @@ app.get('/api/clients/:id/practices', auth.requireAuthApi(['admin','facilitator'
 app.post('/api/practices/text', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
   const { client_id, title, content } = req.body;
   if (!client_id || !title) return res.status(400).json({ error: 'client_id and title required.' });
-  db.addPractice(uuidv4(), client_id, title, 'text', content, '');
+  // Per Bot 15c — this used to fall through to addPractice's own defaults
+  // (source_type='talk', facilitator_id=null), making a practice the
+  // facilitator deliberately added indistinguishable from something the
+  // client saved themselves mid-Talk-conversation. Now properly
+  // attributed, so it can show in its own place rather than blending in.
+  db.addPractice(uuidv4(), client_id, title, 'text', content, '', 'facilitator', null, null, req.user.id);
   res.json({ ok: true });
 });
-app.post('/api/practices/audio', auth.requireAuthApi(['admin','facilitator']), upload.single('file'), (req, res) => {
+app.post('/api/practices/audio', auth.requireAuthApi(['admin','facilitator']), upload.single('file'), async (req, res) => {
   const { client_id, title } = req.body;
   if (!client_id || !title || !req.file) return res.status(400).json({ error: 'Missing fields.' });
   const id = uuidv4();
-  db.addPractice(id, client_id, title, 'audio', '', req.file.filename);
-  res.json({ id, filename: req.file.filename });
+  // Per Bot 15c — this used to leave the uploaded file sitting in ./uploads
+  // on the container's own filesystem and store just that filename —
+  // fine right up until the next deploy or restart, at which point the
+  // file is gone (only the sql.js DB file has a persistent volume; this
+  // directory never did) while the practice row referencing it lives on
+  // forever, permanently broken. Every audio practice ever added this way
+  // was on borrowed time. Now relayed straight into R2 like every other
+  // upload in this app, and the local temp copy is cleaned up right after.
+  if (media.isConfigured()) {
+    try {
+      const buffer = fs.readFileSync(req.file.path);
+      const key = `practices/${id}${path.extname(req.file.originalname || req.file.filename) || '.mp3'}`;
+      await media.putObject(key, buffer, req.file.mimetype || 'audio/mpeg');
+      fs.unlink(req.file.path, () => {}); // best effort — don't hold up the response on cleanup
+      // See /api/practices/text above for why source_type/facilitator_id are set explicitly here.
+      db.addPractice(id, client_id, title, 'audio', '', key, 'facilitator', null, null, req.user.id, 'r2');
+      return res.json({ id, storageType: 'r2' });
+    } catch (e) {
+      console.error('practice audio R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+    }
+  }
+  db.addPractice(id, client_id, title, 'audio', '', req.file.filename, 'facilitator', null, null, req.user.id, 'disk');
+  res.json({ id, storageType: 'disk' });
 });
 app.patch('/api/practices/:id/favourite', (req, res) => { db.toggleFavourite(req.params.id); res.json({ ok: true }); });
 app.patch('/api/practices/:id/use',       (req, res) => { db.incrementUseCount(req.params.id); res.json({ ok: true }); });
+
+// Per Bot 15c — resolves a real playback URL for an audio practice rather
+// than the client hardcoding /uploads/:filename directly, which only ever
+// worked for the (non-persistent, now-legacy) disk storage path. A client
+// may only ever resolve their own practice; a facilitator/admin may
+// resolve any (matching the same access shape as the library-files
+// playback-url route).
+app.get('/api/practices/:id/playback-url', auth.requireAuthApi(['client', 'facilitator', 'admin']), async (req, res) => {
+  try {
+    const p = db.getPractice(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Not found.' });
+    if (req.user.role === 'client' && p.client_id !== req.user.id) return res.status(403).json({ error: 'Not yours.' });
+    if (p.storage_type === 'r2') {
+      const url = await media.getPlaybackUrl(p.filename);
+      return res.json({ url });
+    }
+    // Legacy disk path — kept only so any practice added before this fix
+    // that might still happen to have survived on disk isn't broken
+    // outright; anything genuinely lost just 404s from here same as before.
+    return res.json({ url: `/uploads/${p.filename}` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Save something offered in Talk straight into the client's own Practices
 // list — reuses the exact same practices table/tab that facilitator- and
 // admin-added practices already use. type 'text' matches how those are

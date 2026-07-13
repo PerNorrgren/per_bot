@@ -541,6 +541,15 @@
        on scrolling, fullscreen quirks, or the browser's own back button. */
     .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; }
     .player-overlay.video-mode .player-close-floating, .player-overlay.reader-mode .player-close-floating { display:flex; }
+    /* Per Bot 15c — the floating close button is position:fixed, independent
+       of the title's own layout, so a long title centered edge-to-edge could
+       run straight under/through it on a narrow screen — exactly the
+       "buttons disappear" symptom. Reserving real space on both sides (not
+       just padding, which text can still visually reach past when centered)
+       keeps the title clear of the button at any length. */
+    .player-overlay.video-mode .player-title, .player-overlay.reader-mode .player-title {
+      padding:0 52px; box-sizing:border-box; margin-top:4px;
+    }
     .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
@@ -3308,7 +3317,14 @@
     if (p) openPractice(p.id, p.title, p.type, p.content, p.filename);
   }
   function practiceItemHTML(p) {
-    const sourceLabel = p.source_type === 'session' ? 'From a session' : 'Saved from Talk';
+    // Per Bot 15c — was a binary session/not-session check, which mislabels
+    // a facilitator-added practice as "Saved from Talk". Now covers all
+    // four real cases: a supervisor/facilitator session summary, a Talk
+    // session summary, something the facilitator added directly, or
+    // something the client saved themselves mid-Talk-conversation.
+    const sourceLabel = p.source_type === 'session'
+      ? (p.facilitator_id ? `From a session with ${p.facilitator_name || 'your facilitator'}` : 'From a session with Talk')
+      : p.source_type === 'facilitator' ? 'Added by your facilitator' : 'Saved from Talk';
     return `
       <div class="practice-item" onclick="openPracticeById('${p.id}')">
         <span class="practice-icon">${p.type==='audio'?'🎵':'📄'}</span>
@@ -3327,49 +3343,65 @@
     // one client (assigned_client_id) were only ever showing up — if at
     // all — in Read & Watch or Meditations, and only then if their
     // content_type happened to match one of those tabs' fixed filters.
-    // A facilitator practice with no matching content_type, or no
-    // category tagging, was invisible everywhere. _contentData (loaded
-    // by loadContent() before this runs) is already scoped by the server
-    // to what THIS client can see, so anything in it with assigned_client_id
-    // set is guaranteed to be assigned to this person specifically —
-    // no need to know our own user id client-side to filter safely.
-    const assignedFiles = (_contentData || []).filter(f => f.assigned_client_id)
-      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    // _contentData (loaded by loadContent() before this runs) is already
+    // scoped by the server to what THIS client can see, so anything in it
+    // with assigned_client_id set is guaranteed to be assigned to this
+    // person specifically — no need to know our own user id client-side.
+    const assignedFiles = (_contentData || []).filter(f => f.assigned_client_id);
 
     if (!list.length && !assignedFiles.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
 
     const favs = list.filter(p => p.is_favourite);
-    // Per Bot 15 — anything saved from a live Talk conversation (source_type
-    // 'talk', the default) has no category/subcategory tagging at all, so it
-    // never lands in the course/area groups below — it used to spill into a
-    // flat, ever-growing "Other saved practices" list instead. As more people
-    // save more Talk moments this was only going to get worse, so it's now
-    // its own group (matching the course/area group pattern) that always
-    // shows the 3 most recent inline, with the rest (up to 25) reachable by
-    // clicking the heading, rather than growing the whole page indefinitely.
-    const talkSaved = list.filter(p => !p.is_favourite && (!p.subcategory_id) && p.source_type !== 'session');
-    const grouped = list.filter(p => !p.is_favourite && p.subcategory_id &&
+
+    // Per Bot 15c — session-derived rows (getPracticesForClient's
+    // sessionAsPractices) are ALWAYS source_type='session', whether the
+    // session was with a real facilitator/supervisor or was Talk itself —
+    // facilitator_id is the only thing that tells those two apart
+    // (null for Talk). Both kinds also carry a hardcoded FELT·FIBRE >
+    // Facilitation tag, which used to make them fall out of the By-course
+    // view entirely and land in "Other saved practices" instead, exactly
+    // backwards from what they need — so they're now excluded from the
+    // course/area grouping below entirely and given their own two
+    // sections, supervisor above Talk, each a 5-preview/25-on-request list.
+    const sessions = list.filter(p => !p.is_favourite && p.source_type === 'session');
+    const supervisorSessions = sessions.filter(p => p.facilitator_id)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    const talkSessions = sessions.filter(p => !p.facilitator_id)
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+    // Practices the facilitator added directly (source_type='facilitator',
+    // Per Bot 15c) — merges with assignedFiles into one "From your
+    // facilitator" list below, sorted together by date, since from the
+    // client's point of view "my facilitator gave me this" is one idea
+    // regardless of which of the two upload paths it came through.
+    const facilitatorAdded = list.filter(p => !p.is_favourite && p.source_type === 'facilitator');
+
+    const remaining = list.filter(p => !p.is_favourite && p.source_type !== 'session' && p.source_type !== 'facilitator');
+    const grouped = remaining.filter(p => p.subcategory_id &&
       (_practicesGroupMode === 'area' ? p.category_id === AREA_CATEGORY_ID : p.category_id !== AREA_CATEGORY_ID));
-    const ungrouped = list.filter(p => !p.is_favourite && !grouped.includes(p) && !talkSaved.includes(p));
+    const ungrouped = remaining.filter(p => !grouped.includes(p));
 
     let html = '';
     if (favs.length) {
       html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
     }
 
-    // Per Bot 15b — facilitator-assigned practices show first (above the
-    // course/area browsing below), 5 most recent inline by default; the
-    // heading itself is the only way to reveal the rest, same interaction
-    // as the course/area groups. Uses contentItemHTML (not practiceItemHTML)
-    // since these are real library_files, with the same favourite/play/
-    // add-to-playlist actions as everywhere else they appear in the app.
-    if (assignedFiles.length) {
-      const open = openPracticeGroups.has('facilitator-assigned');
-      const shown = open ? assignedFiles : assignedFiles.slice(0, 5);
-      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('facilitator-assigned')">
-        <span>From your facilitator</span><span class="practices-group-count">${assignedFiles.length}${!open && assignedFiles.length > 5 ? ` (showing 5 most recent)` : ''} ${open ? '▾' : '▸'}</span>
+    // "From your facilitator" — shows first, 5 most recent inline, the
+    // heading itself the only way to reveal the rest. Files use
+    // contentItemHTML (favourite/play/add-to-playlist); practices-table
+    // rows use practiceItemHTML — concatenated and sorted together so
+    // date order is honest regardless of which path each came through.
+    const facilitatorItems = [
+      ...assignedFiles.map(f => ({ item: f, kind: 'file' })),
+      ...facilitatorAdded.map(p => ({ item: p, kind: 'practice' })),
+    ].sort((a, b) => new Date(b.item.created_at || 0) - new Date(a.item.created_at || 0));
+    if (facilitatorItems.length) {
+      const open = openPracticeGroups.has('facilitator-items');
+      const shown = open ? facilitatorItems : facilitatorItems.slice(0, 5);
+      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('facilitator-items')">
+        <span>From your facilitator</span><span class="practices-group-count">${facilitatorItems.length}${!open && facilitatorItems.length > 5 ? ' (showing 5 most recent)' : ''} ${open ? '▾' : '▸'}</span>
       </div>`;
-      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(contentItemHTML).join('')}</div>`;
+      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(x => x.kind === 'file' ? contentItemHTML(x.item) : practiceItemHTML(x.item)).join('')}</div>`;
     }
 
     html += `<div class="practices-group-row">
@@ -3400,20 +3432,25 @@
       html += `<div class="content-section-hdr">Other saved practices</div>` + ungrouped.map(practiceItemHTML).join('');
     }
 
-    if (talkSaved.length) {
-      const open = openPracticeGroups.has('talk-saved');
-      const sorted = [...talkSaved].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-      const shown = open ? sorted.slice(0, 25) : sorted.slice(0, 3);
-      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('talk-saved')">
-        <span>Saved from Talk</span><span class="practices-group-count">${talkSaved.length}${open && talkSaved.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
-      </div>`;
-      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
-    }
+    // Per Bot 15c — supervisor sessions above Talk sessions, both the same
+    // 5-inline / click-heading-for-25 pattern (previously Talk sessions
+    // showed every single one, unbounded).
+    const sessionGroup = (key, label, items) => {
+      if (!items.length) return '';
+      const open = openPracticeGroups.has(key);
+      const shown = open ? items.slice(0, 25) : items.slice(0, 5);
+      return `<div class="practices-group-hdr" onclick="togglePracticeGroup('${key}')">
+        <span>${label}</span><span class="practices-group-count">${items.length}${open && items.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
+      </div>
+      <div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
+    };
+    html += sessionGroup('supervisor-sessions', 'Sessions with Supervisor', supervisorSessions);
+    html += sessionGroup('talk-sessions', 'Sessions with Talk', talkSessions);
 
     el.innerHTML = html;
   }
   async function toggleFav(id) { await fetch(`/api/practices/${id}/favourite`,{method:'PATCH'}); loadPractices(); }
-  function openPractice(id, title, type, content, filename) {
+  async function openPractice(id, title, type, content, filename) {
     pushPlayerHistoryState();
     document.getElementById('playerTitle').textContent = title;
     if (type==='text') {
@@ -3421,9 +3458,27 @@
       document.getElementById('playerOverlay').classList.add('visible');
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
     } else {
-      const audio = new Audio(`/uploads/${filename}`);
-      document.getElementById('playerText').textContent = 'Playing…';
+      document.getElementById('playerText').textContent = 'Loading…';
       document.getElementById('playerOverlay').classList.add('visible');
+      // Per Bot 15c — used to hardcode new Audio(`/uploads/${filename}`),
+      // which only ever worked for the old (non-persistent) disk storage
+      // path. Now resolves a real URL — R2-backed practices get a signed
+      // playback URL same as everywhere else in the app.
+      let url;
+      try {
+        const res = await fetch(`/api/practices/${id}/playback-url`);
+        const data = await res.json();
+        if (!res.ok || !data.url) {
+          document.getElementById('playerText').textContent = 'Could not play this — the file may be missing.';
+          return;
+        }
+        url = data.url;
+      } catch {
+        document.getElementById('playerText').textContent = 'Could not play this — network error.';
+        return;
+      }
+      const audio = new Audio(url);
+      document.getElementById('playerText').textContent = 'Playing…';
       audio.play();
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
       audio.onended = () => { document.getElementById('playerText').textContent='Done.'; };

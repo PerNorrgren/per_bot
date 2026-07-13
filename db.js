@@ -1292,6 +1292,18 @@ async function getDb() {
     // version is already inaccessible via the normal visibility gate, so
     // they only ever see the preview, same as before this feature existed.
     "ALTER TABLE library_files ADD COLUMN full_version_id TEXT",
+    // Per Bot 15c — practices.filename used to always mean a path on local
+    // disk (multer diskStorage, ./uploads/), which is NOT the persistent
+    // volume — only the sql.js DB file has one of those. Any audio
+    // practice added via the facilitator's "Add practice" feature was
+    // silently gone the next time the service redeployed or restarted,
+    // while its database row (and its now-broken playback) lived on
+    // forever. New audio practices now go to R2 like everything else;
+    // storage_type tells the playback-url route which path to resolve.
+    // Existing rows default to 'disk' — most of those files are almost
+    // certainly already gone by now, but this at least stops the bleeding
+    // for anything added from here on.
+    "ALTER TABLE practices ADD COLUMN storage_type TEXT DEFAULT 'disk'",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -3050,9 +3062,9 @@ function unreleaseSession(id) {
 }
 
 // ── Practices ──
-function addPractice(id, clientId, title, type, content, filename, sourceType, categoryId, subcategoryId, facilitatorId) {
-  getDbSync().run('INSERT INTO practices (id,client_id,title,type,content,filename,source_type,category_id,subcategory_id,facilitator_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    [id, clientId, title, type, content||'', filename||'', sourceType||'talk', categoryId||null, subcategoryId||null, facilitatorId||null]); save();
+function addPractice(id, clientId, title, type, content, filename, sourceType, categoryId, subcategoryId, facilitatorId, storageType) {
+  getDbSync().run('INSERT INTO practices (id,client_id,title,type,content,filename,source_type,category_id,subcategory_id,facilitator_id,storage_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [id, clientId, title, type, content||'', filename||'', sourceType||'talk', categoryId||null, subcategoryId||null, facilitatorId||null, storageType||'disk']); save();
 }
 // Session notes released to a client (sessions.client_summary) are shown
 // alongside self-saved Talk practices rather than duplicated into the
@@ -3106,6 +3118,9 @@ function getPracticesForClient(clientId, facilitatorId) {
     facilitator_id: s.facilitator_id,
   }));
   return [...own, ...sessionAsPractices].sort((a, b) => (b.created_at||'').localeCompare(a.created_at||''));
+}
+function getPractice(id) {
+  return queryOne('SELECT * FROM practices WHERE id=?', [id]);
 }
 function toggleFavourite(id) { getDbSync().run('UPDATE practices SET is_favourite=1-is_favourite WHERE id=?', [id]); save(); }
 function incrementUseCount(id) { getDbSync().run('UPDATE practices SET use_count=use_count+1 WHERE id=?', [id]); save(); }
@@ -4252,7 +4267,7 @@ module.exports = {
   addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
-  addPractice, getPracticesForClient, toggleFavourite, incrementUseCount, deletePractice,
+  addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice,
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History
