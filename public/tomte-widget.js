@@ -315,11 +315,27 @@
     document.addEventListener('focusin', (e) => noteFocus(e.target), true);
     document.addEventListener('click', (e) => noteFocus(e.target), true);
 
+    // iOS/WebKit has a known quirk where showing or hiding one fixed-
+    // position element (this panel) can freeze scrolling in an unrelated
+    // sibling scroll container elsewhere on the page — reported on the
+    // course lesson chooser specifically: opening Tomte over it left the
+    // file list stuck, unable to scroll, until reload. Harmless no-op on
+    // any page that doesn't have that element.
+    function nudgeScrollContainers() {
+      document.querySelectorAll('.lesson-chooser-list').forEach((el) => {
+        const prev = el.style.overflowY;
+        el.style.overflowY = 'hidden';
+        void el.offsetHeight; // force reflow
+        el.style.overflowY = prev || 'auto';
+      });
+    }
+
     function openPanel() {
       panel.classList.add('tomte-open');
       positionPanel();
       connect();
       inputEl.focus();
+      nudgeScrollContainers();
       // First contact (Per Bot 8) — greets once per browser session, not
       // every time the panel opens, so it doesn't get repetitive if
       // someone opens/closes him a few times while using the app.
@@ -328,7 +344,7 @@
         whenReady(() => ws.send(JSON.stringify({ type: 'greet', page: pageName() })));
       }
     }
-    function closePanel() { panel.classList.remove('tomte-open'); }
+    function closePanel() { panel.classList.remove('tomte-open'); nudgeScrollContainers(); }
 
     // ── Movable fab (mobile fix) — the fab defaults to its original
     // bottom-right CSS spot, but on small screens that can sit right on
