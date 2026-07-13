@@ -10,7 +10,7 @@
     #tomte-fab {
       position: fixed; right: 18px; bottom: 18px; width: 58px; height: 58px;
       border-radius: 50%; overflow: hidden; cursor: pointer; z-index: 99998;
-      border: 2px solid rgba(180,230,200,0.5); background: #0d1210;
+      border: 2px solid rgba(230,175,90,0.5); background: #0d1210;
       box-shadow: 0 4px 18px rgba(0,0,0,0.35); transition: transform 0.2s;
     }
     #tomte-fab:hover { transform: scale(1.06); }
@@ -19,7 +19,7 @@
     #tomte-fab img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; }
     #tomte-fab .tomte-badge {
       position: absolute; top: -3px; right: -3px; width: 14px; height: 14px; border-radius: 50%;
-      background: rgba(180,230,200,0.9); border: 2px solid #0d1210; display: none;
+      background: rgba(230,175,90,0.9); border: 2px solid #0d1210; display: none;
     }
     #tomte-fab.tomte-listening { border-color: rgba(255,140,120,0.8); animation: tomte-pulse 1.2s ease-in-out infinite; }
     @keyframes tomte-pulse { 0%,100% { box-shadow: 0 4px 18px rgba(255,140,120,0.15); } 50% { box-shadow: 0 4px 24px rgba(255,140,120,0.45); } }
@@ -42,10 +42,10 @@
     #tomte-close:hover { color: rgba(255,255,255,0.8); }
     #tomte-voice-toggle { background: none; border: none; color: rgba(255,255,255,0.4); font-size: 15px; cursor: pointer; padding: 4px 6px; }
     #tomte-voice-toggle:hover { color: rgba(255,255,255,0.75); }
-    #tomte-voice-toggle.tomte-voice-on { color: rgba(180,230,200,0.9); }
+    #tomte-voice-toggle.tomte-voice-on { color: rgba(230,175,90,0.9); }
     #tomte-messages { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-height: 80px; }
     .tomte-msg { max-width: 88%; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
-    .tomte-msg.tomte-bot { background: rgba(180,230,200,0.1); border: 1px solid rgba(180,230,200,0.2); color: rgba(220,255,235,0.9); align-self: flex-start; }
+    .tomte-msg.tomte-bot { background: rgba(230,175,90,0.1); border: 1px solid rgba(230,175,90,0.2); color: rgba(255,228,190,0.9); align-self: flex-start; }
     .tomte-msg.tomte-user { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); align-self: flex-end; }
     .tomte-empty { color: rgba(255,255,255,0.3); font-size: 12px; font-style: italic; text-align: center; padding: 16px 8px; }
     #tomte-input-row { display: flex; gap: 6px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.08); }
@@ -58,17 +58,17 @@
       padding: 7px 9px; cursor: pointer; font-size: 14px; color: rgba(255,255,255,0.6); line-height: 1;
     }
     .tomte-icon-btn.tomte-mic-on { border-color: rgba(255,120,100,0.7); background: rgba(255,120,100,0.18); color: rgba(255,150,130,0.95); animation: tomte-pulse 1.2s ease-in-out infinite; }
-    .tomte-icon-btn.tomte-primary { border-color: rgba(180,230,200,0.35); color: rgba(180,230,200,0.85); }
+    .tomte-icon-btn.tomte-primary { border-color: rgba(230,175,90,0.35); color: rgba(230,175,90,0.85); }
     #tomte-mic-status {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       margin: 0 10px 8px 10px; padding: 8px 12px; border-radius: 8px;
       background: rgba(255,140,120,0.1); border: 1px solid rgba(255,140,120,0.35);
       font-size: 13px; color: rgba(255,190,175,0.95);
     }
-    #tomte-mic-status.tomte-mic-ready { background: rgba(180,230,200,0.1); border-color: rgba(180,230,200,0.35); color: rgba(200,235,215,0.95); }
+    #tomte-mic-status.tomte-mic-ready { background: rgba(230,175,90,0.1); border-color: rgba(230,175,90,0.35); color: rgba(255,224,185,0.95); }
     #tomte-mic-send-btn {
-      background: rgba(180,230,200,0.18); border: 1px solid rgba(180,230,200,0.45);
-      color: rgba(200,235,215,0.95); border-radius: 6px; padding: 4px 14px;
+      background: rgba(230,175,90,0.18); border: 1px solid rgba(230,175,90,0.45);
+      color: rgba(255,224,185,0.95); border-radius: 6px; padding: 4px 14px;
       font-size: 12px; cursor: pointer; flex-shrink: 0;
     }
   `;
@@ -355,6 +355,15 @@
     // pen all go through the same code path.
     const FAB_MARGIN = 8;
     function clampNum(v, min, max) { return Math.min(Math.max(v, min), max); }
+    // window.innerWidth/innerHeight don't reliably reflect what's actually
+    // visible on mobile — Safari's address bar expanding or collapsing
+    // after a position was computed can leave a fixed-position element's
+    // top edge sitting behind the toolbar, looking like it "scrolled off"
+    // even though nothing moved. visualViewport tracks the true visible
+    // area and stays current; fall back to window dimensions where it's
+    // not available.
+    function viewportWidth() { return window.visualViewport ? window.visualViewport.width : window.innerWidth; }
+    function viewportHeight() { return window.visualViewport ? window.visualViewport.height : window.innerHeight; }
     function loadFabPos() {
       try {
         const saved = JSON.parse(localStorage.getItem('tomte_fab_pos') || 'null');
@@ -374,8 +383,8 @@
     function restoreFabPos() {
       const saved = loadFabPos();
       if (!saved) return; // leave default CSS right/bottom spot untouched
-      const x = clampNum(saved.x, FAB_MARGIN, window.innerWidth - fab.offsetWidth - FAB_MARGIN);
-      const y = clampNum(saved.y, FAB_MARGIN, window.innerHeight - fab.offsetHeight - FAB_MARGIN);
+      const x = clampNum(saved.x, FAB_MARGIN, viewportWidth() - fab.offsetWidth - FAB_MARGIN);
+      const y = clampNum(saved.y, FAB_MARGIN, viewportHeight() - fab.offsetHeight - FAB_MARGIN);
       applyFabPos({ x, y });
     }
     // Wherever the fab ends up, the panel opens near it — above if there's
@@ -388,10 +397,10 @@
       const ph = panel.offsetHeight || 400;
       let left = r.right - pw;
       if (left < FAB_MARGIN) left = r.left;
-      left = clampNum(left, FAB_MARGIN, window.innerWidth - pw - FAB_MARGIN);
+      left = clampNum(left, FAB_MARGIN, viewportWidth() - pw - FAB_MARGIN);
       let top = r.top - ph - 8;
       if (top < FAB_MARGIN) top = r.bottom + 8;
-      top = clampNum(top, FAB_MARGIN, window.innerHeight - ph - FAB_MARGIN);
+      top = clampNum(top, FAB_MARGIN, viewportHeight() - ph - FAB_MARGIN);
       panel.style.right = 'auto';
       panel.style.bottom = 'auto';
       panel.style.left = left + 'px';
@@ -399,6 +408,12 @@
     }
     restoreFabPos();
     window.addEventListener('resize', restoreFabPos);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => {
+        restoreFabPos();
+        if (panel.classList.contains('tomte-open')) positionPanel();
+      });
+    }
 
     let fabDragging = false, fabDragMoved = false;
     let dragStartX = 0, dragStartY = 0, fabStartX = 0, fabStartY = 0;
@@ -421,8 +436,8 @@
         fab.classList.add('tomte-dragging');
       }
       if (!fabDragMoved) return;
-      const x = clampNum(fabStartX + dx, FAB_MARGIN, window.innerWidth - fab.offsetWidth - FAB_MARGIN);
-      const y = clampNum(fabStartY + dy, FAB_MARGIN, window.innerHeight - fab.offsetHeight - FAB_MARGIN);
+      const x = clampNum(fabStartX + dx, FAB_MARGIN, viewportWidth() - fab.offsetWidth - FAB_MARGIN);
+      const y = clampNum(fabStartY + dy, FAB_MARGIN, viewportHeight() - fab.offsetHeight - FAB_MARGIN);
       applyFabPos({ x, y });
     });
     fab.addEventListener('pointerup', (e) => {
