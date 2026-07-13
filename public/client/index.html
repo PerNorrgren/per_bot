@@ -3537,6 +3537,22 @@
         Array.isArray(data.recentBooks) ? data.recentBooks : []
       );
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
+    // Same WebKit quirk as Tomte's panel and the lesson chooser: adding
+    // this much content to an already-rendered, already-scrolling
+    // container (.talk-view) can leave its scrollable area stuck at
+    // whatever it measured on first paint — before the shelves existed —
+    // so the page looks like its top has "gone missing" once there's
+    // more here than fits on screen. Forcing a reflow after the shelves
+    // land fixes it the same way.
+    requestAnimationFrame(() => {
+      const tv = document.querySelector('.talk-view');
+      if (tv) {
+        tv.scrollTop = 0;
+        tv.style.overflowY = 'hidden';
+        void tv.offsetHeight;
+        tv.style.overflowY = 'auto';
+      }
+    });
   }
   function titleCaseTag(tag) { return tag.replace(/(^|[\s-])\w/g, c => c.toUpperCase()); }
   // Four fixed rows, each a doorway into a list rather than a row of
