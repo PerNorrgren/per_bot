@@ -1623,7 +1623,8 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 // etc.) rather than this endpoint hardcoding which types exist.
 app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   try {
-    const content = db.getFeaturedLibraryFiles().map(f => ({ ...f, tags: db.getFileTags(f.id) }));
+    const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
+    const content = db.getFeaturedLibraryFiles().map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
     res.json({
       courses: db.getFeaturedCourses(),
       content,
@@ -5294,6 +5295,25 @@ app.post('/api/admin/run-intro-to-micro-moves-import', auth.requireAuthApi(['adm
 app.get('/api/admin/run-intro-to-micro-moves-import/status', auth.requireAuthApi(['admin']), (req, res) => {
   if (!immImportJob) return res.status(404).json({ error: 'No import has been started yet.' });
   res.json(immImportJob);
+});
+
+// ── MMPM practice audio import (Per Bot 14) ──
+let mmpmPracticesJob = null;
+app.post('/api/admin/run-mmpm-practices-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (mmpmPracticesJob && !mmpmPracticesJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: mmpmPracticesJob });
+  }
+  mmpmPracticesJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = mmpmPracticesJob;
+  const { runImport } = require('./import_mmpm_practices');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('mmpm practices import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!mmpmPracticesJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(mmpmPracticesJob);
 });
 
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──

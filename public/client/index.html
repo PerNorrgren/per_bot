@@ -601,7 +601,7 @@
   <div class="glass" style="position:relative">
 
     <div class="header">
-      <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
+      <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
     </div>
 
     <!-- Talk -->
@@ -933,7 +933,7 @@
     <div id="facMenuDropdown" style="display:none; position:absolute; left:12px; bottom:78px; width:max-content; max-width:calc(100% - 24px); background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.4); z-index:60; overflow:hidden; max-height:60vh; overflow-y:auto;"></div>
 
     <div class="bottom-nav">
-      <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">💬</span><span id="navTalkLabel">Per</span></button>
+      <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">🏠</span><span id="navTalkLabel">Home</span></button>
       <button class="bnav-btn"        id="navLibrary"  onclick="switchTab('library')"><span class="bnav-icon">📚</span>Library</button>
       <button class="bnav-btn"        id="navCourses"  onclick="switchTab('courses')"><span class="bnav-icon">🎓</span>Courses</button>
       <button class="bnav-btn"        id="navYou"      onclick="switchTab('you')"><span class="bnav-icon">🧘</span>You</button>
@@ -2448,13 +2448,19 @@
     } else {
       await fetch(`/api/client/favourites/${fileId}`, { method: 'POST' });
     }
-    // Update in data
-    const f = _contentData.find(x => x.id === fileId);
+    // Immediate visual feedback on the actual button tapped, regardless of
+    // which view it's in (Library's content scroll, or the Home theme
+    // detail overlay reusing this same row) — direct DOM update rather
+    // than assuming a particular container needs re-rendering.
+    btn.classList.toggle('active', !isActive);
+    const f = _contentData.find(x => x.id === fileId) || _featuredContentData.find(x => x.id === fileId);
     if (f) f.is_favourite = !isActive;
-    // Full re-render — favourited items are now excluded from the main list (and vice
-    // versa), so a partial update to just the favourites strip would leave the main
-    // list showing a stale duplicate or a missing item until the next full reload.
-    renderContentScroll();
+    // Full re-render only matters for the content-scroll view specifically
+    // — favourited items move into their own "Favourites" section there,
+    // a genuine reshuffle a class toggle alone can't do. The theme detail
+    // overlay is a flat list with no such section, so it needs nothing
+    // beyond the class toggle above.
+    if (document.getElementById('contentScroll').offsetParent !== null) renderContentScroll();
   }
 
   function isAudio(f) {
@@ -3453,37 +3459,90 @@
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
   }
   function shelfLabelForType(type) {
-    const map = { meditation: 'Meditations', practice: 'Practices', video: 'Videos', document: 'Read & watch', audio: 'Audio' };
+    const map = { meditation: 'Practices', practice: 'Practices', video: 'Videos', document: 'Read & watch', audio: 'Audio', poem: 'Poems', blog: 'Posts', video_blog: 'Video Posts', video_lesson: 'Lessons', whitepaper: 'Guides', book: 'Books' };
     return map[type] || (type.charAt(0).toUpperCase() + type.slice(1) + 's');
   }
+  function titleCaseTag(tag) { return tag.replace(/(^|[\s-])\w/g, c => c.toUpperCase()); }
+  let _shelvesData = [];
   function renderFeaturedShelves(courses, content) {
     _featuredContentData = content;
     const el = document.getElementById('featuredShelves');
     const shelves = [];
     if (courses.length) {
-      shelves.push({ label: 'Courses', html: courses.map(c => `
+      shelves.push({ label: 'Courses', isCourseShelf: true, html: courses.map(c => `
         <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}')">
           <div class="shelf-card-title">${c.title}</div>
           <div class="shelf-card-meta">${c.category_name || 'Course'}</div>
         </div>
       `).join('') });
     }
+    // Practices/meditations get grouped by theme tag (Grounding, Sleep,
+    // Difficulty, etc.) rather than dumped into one undifferentiated
+    // "Practices" shelf — the tagging system (library_file_tags) was
+    // already built for exactly this, just never wired up to the shelves
+    // until now. A file with several tags can appear in several shelves;
+    // untagged practice content falls back to one plain "Practices" shelf
+    // rather than silently disappearing from Home.
+    const practiceTypes = ['meditation', 'practice'];
+    const practiceFiles = content.filter(f => practiceTypes.includes(f.content_type));
+    const otherFiles = content.filter(f => !practiceTypes.includes(f.content_type));
+    const byTag = {};
+    const untaggedPractices = [];
+    practiceFiles.forEach(f => {
+      if (f.tags && f.tags.length) f.tags.forEach(tag => { (byTag[tag] = byTag[tag] || []).push(f); });
+      else untaggedPractices.push(f);
+    });
+    const practiceCard = (f) => `
+      <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
+        <div class="shelf-card-title">${f.title}</div>
+        <div class="shelf-card-meta">${f.category_name || ''}</div>
+      </div>
+    `;
+    Object.keys(byTag).sort().forEach(tag => {
+      shelves.push({ label: titleCaseTag(tag), items: byTag[tag], html: byTag[tag].map(practiceCard).join('') });
+    });
+    if (untaggedPractices.length) {
+      shelves.push({ label: 'Practices', items: untaggedPractices, html: untaggedPractices.map(practiceCard).join('') });
+    }
     const byType = {};
-    content.forEach(f => { (byType[f.content_type] = byType[f.content_type] || []).push(f); });
+    otherFiles.forEach(f => { (byType[f.content_type] = byType[f.content_type] || []).push(f); });
     Object.keys(byType).forEach(type => {
-      shelves.push({ label: shelfLabelForType(type), html: byType[type].map(f => `
+      shelves.push({ label: shelfLabelForType(type), items: byType[type], html: byType[type].map(f => `
         <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
           <div class="shelf-card-title">${f.title}</div>
           <div class="shelf-card-meta">${f.category_name || ''}</div>
         </div>
       `).join('') });
     });
-    el.innerHTML = shelves.map(s => `
+    _shelvesData = shelves;
+    el.innerHTML = shelves.map((s, i) => `
       <div>
-        <div class="shelf-label">${s.label}</div>
+        <div class="shelf-label" style="${s.isCourseShelf ? '' : 'cursor:pointer'}" ${s.isCourseShelf ? '' : `onclick="openThemeDetail(${i})"`} title="${s.isCourseShelf ? '' : 'See all'}">${s.label}${s.isCourseShelf ? '' : ' →'}</div>
         <div class="shelf-row">${s.html}</div>
       </div>
     `).join('');
+  }
+  // Tapping a shelf's label (anything but Courses, which already has its
+  // own detail page) opens the full list for that theme/type — same
+  // heart/play/add-to-playlist row used everywhere else in the app
+  // (contentItemHTML), not a new bespoke UI, so favouriting or queueing
+  // something here behaves exactly like it does in Library.
+  function openThemeDetail(shelfIndex) {
+    const shelf = _shelvesData[shelfIndex];
+    if (!shelf || !shelf.items) return;
+    pushPlayerHistoryState();
+    document.getElementById('playerOverlay').classList.remove('video-mode');
+    document.getElementById('fullscreenBtn').style.display = 'none';
+    document.getElementById('playerTitle').textContent = shelf.label;
+    document.getElementById('playerText').innerHTML = '';
+    document.getElementById('playerMedia').innerHTML = `
+      <div class="lesson-chooser-list">${shelf.items.map(f => contentItemHTML(f)).join('')}</div>
+    `;
+    document.getElementById('playerOverlay').classList.add('visible');
+    requestAnimationFrame(() => {
+      const listEl = document.querySelector('.lesson-chooser-list');
+      if (listEl) { listEl.style.overflowY = 'hidden'; void listEl.offsetHeight; listEl.style.overflowY = 'auto'; }
+    });
   }
   function openFeaturedCourse(instanceId) {
     switchTab('courses');
@@ -3634,7 +3693,31 @@
     renderFacMenu();
     selectFacilitator('talk');
   }
+  // Home (Per Bot 14) — renamed from the old "Per" nav slot. For the
+  // common case (no real facilitator assigned, just "Talk to Per" in
+  // _facList) this button should just go straight Home rather than
+  // popping a one-item dropdown with nothing to actually choose between.
+  // Facilitator-switching itself is untouched for anyone who does have
+  // one — same dropdown as before, just reached via this now
+  // differently-labelled button.
+  function goHome() {
+    closeFacMenu();
+    switchTab('talk');
+    // Force the landing+shelves view regardless of _talkEngaged or which
+    // facilitator was selected — "Home" is meant to always be reachable
+    // as a clean landing, not a resume-where-you-left-off view. Nothing
+    // about the underlying conversation state is touched, so "Talk to
+    // Per" from here picks back up normally.
+    _activeFacilitatorId = 'talk';
+    renderFacMenu();
+    document.getElementById('navTalkLabel').textContent = 'Home';
+    document.getElementById('calmLanding').style.display = 'flex';
+    document.getElementById('talkChatContent').style.display = 'none';
+    document.getElementById('facDetailPane').style.display = 'none';
+    loadFeaturedShelves();
+  }
   function toggleFacMenu() {
+    if (_facList.length <= 1) { goHome(); return; }
     const opening = !_facMenuOpen;
     if (opening) switchTab('talk'); // runs closeFacMenu() first (harmless no-op here) then switches tab content — the actual open happens after, below
     _facMenuOpen = opening;
@@ -3678,7 +3761,7 @@
     renderFacMenu();
     const entry = _facList.find(f => f.id === id);
     const isTalk = !entry || entry.isTalk;
-    document.getElementById('navTalkLabel').textContent = entry ? entry.name : 'Per';
+    document.getElementById('navTalkLabel').textContent = (entry && !entry.isTalk) ? entry.name : 'Home';
     document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? 'flex' : 'none';
     document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? 'flex' : 'none';
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
