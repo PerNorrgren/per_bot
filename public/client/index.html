@@ -491,6 +491,18 @@
     .player-overlay.video-mode { justify-content:flex-start; overflow-y:auto; }
     .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
     .player-overlay.video-mode .player-media video { max-height:80vh; }
+    /* EPUB reader (Per Bot 14) — full-screen like video-mode, but the
+       book itself needs a fixed-height box for epub.js to render pages
+       into (it manages its own internal pagination/scroll, so the outer
+       page must not also scroll or the two fight each other), plus its
+       own small toolbar for page turning and font size. */
+    .player-overlay.reader-mode { justify-content:flex-start; overflow-y:hidden; }
+    .player-overlay.reader-mode .player-text { display:none; }
+    .reader-box { width:100%; max-width:700px; height:70vh; background:#fdfaf3; border-radius:10px; margin:0 auto; }
+    .reader-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; max-width:700px; margin:10px auto 0; }
+    .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
+    .reader-font-btns { display:flex; gap:6px; }
+    .reader-font-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
        that already says exactly that) and crowds/overlaps the video's top
@@ -572,6 +584,10 @@
     .pw-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
     .pw-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
   </style>
+  <!-- EPUB reader (Per Bot 14) — JSZip is epub.js's own dependency for
+       reading the zip container; must load before epub.js itself. -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 </head>
 <body>
 
@@ -2820,11 +2836,23 @@
   }
 
 
+  let _currentEpubBook = null;
+  let _currentEpubRendition = null;
+  let _epubFontPct = 100;
+  function epubNextPage() { if (_currentEpubRendition) _currentEpubRendition.next(); }
+  function epubPrevPage() { if (_currentEpubRendition) _currentEpubRendition.prev(); }
+  function epubFontSize(delta) {
+    if (!_currentEpubRendition) return;
+    _epubFontPct = Math.max(70, Math.min(200, _epubFontPct + delta * 15));
+    _currentEpubRendition.themes.fontSize(_epubFontPct + '%');
+  }
+
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (isAudio(f)) { mpPlay(f); return; }
     _showingNowPlaying = false;
 
+    const isEpub = f.file_type === 'application/epub+zip';
     const type = f.file_type?.startsWith('video') ? 'video' : 'document';
     logHistory(type, f.id);
 
@@ -2835,6 +2863,7 @@
     mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.toggle('video-mode', type === 'video');
+    overlayEl.classList.toggle('reader-mode', isEpub);
     overlayEl.classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = type === 'video' ? '' : 'none';
 
@@ -2851,6 +2880,39 @@
       url = data.url;
     } catch {
       mediaEl.innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this file — network error.</div>';
+      return;
+    }
+
+    if (isEpub) {
+      // iOS/Android don't reliably hand an .epub link off to a native
+      // reader when served from a web app — tested directly, it doesn't.
+      // epub.js renders the real, reflowable content in-page instead:
+      // genuine pagination and adjustable text size, not a page-image
+      // imitation of it.
+      mediaEl.innerHTML = `
+        <div id="readerBox" class="reader-box"></div>
+        <div class="reader-controls">
+          <button class="reader-nav-btn" onclick="epubPrevPage()" title="Previous page">‹</button>
+          <div class="reader-font-btns">
+            <button class="reader-font-btn" onclick="epubFontSize(-1)" title="Smaller text">A-</button>
+            <button class="reader-font-btn" onclick="epubFontSize(1)" title="Larger text">A+</button>
+          </div>
+          <button class="reader-nav-btn" onclick="epubNextPage()" title="Next page">›</button>
+        </div>
+      `;
+      try {
+        if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; }
+        const book = ePub(url);
+        const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
+        _epubFontPct = 100;
+        rendition.themes.fontSize(_epubFontPct + '%');
+        await rendition.display();
+        _currentEpubBook = book;
+        _currentEpubRendition = rendition;
+      } catch (e) {
+        console.error('epub render error:', e);
+        mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this book.</div>`;
+      }
       return;
     }
 
@@ -2924,6 +2986,8 @@
 
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.remove('video-mode');
+    overlayEl.classList.remove('reader-mode');
+    if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; _currentEpubRendition = null; }
     document.getElementById('fullscreenBtn').style.display = 'none';
     document.getElementById('fullscreenBtn').textContent = 'Full screen';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
