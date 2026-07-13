@@ -5447,6 +5447,38 @@ app.get('/api/admin/unpack-epub-books/status', auth.requireAuthApi(['admin']), (
   res.json(epubUnpackJob);
 });
 
+// ── Fix: blog/whitepaper visibility (Per Bot 14) ──
+app.post('/api/admin/fix-blog-visibility', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { runFix } = require('./fix_blog_visibility');
+    const log = [];
+    const result = await runFix((line) => { log.push(line); console.log(line); });
+    res.json({ ...result, log });
+  } catch (e) {
+    console.error('blog visibility fix error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fix: poem Fusion Builder shortcodes (Per Bot 14) ──
+let poemShortcodeFixJob = null;
+app.post('/api/admin/fix-poem-shortcodes', auth.requireAuthApi(['admin']), (req, res) => {
+  if (poemShortcodeFixJob && !poemShortcodeFixJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: poemShortcodeFixJob });
+  }
+  poemShortcodeFixJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = poemShortcodeFixJob;
+  const { runFix } = require('./fix_poem_shortcodes');
+  runFix((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('poem shortcode fix error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/fix-poem-shortcodes/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!poemShortcodeFixJob) return res.status(404).json({ error: 'No fix run has been started yet.' });
+  res.json(poemShortcodeFixJob);
+});
+
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──
 app.post('/api/admin/fix-being-here-lesson-descriptions', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
