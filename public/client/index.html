@@ -503,6 +503,11 @@
     .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
     .reader-font-btns { display:flex; gap:6px; }
     .reader-font-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
+    .reader-toc-panel { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); width:min(90vw,700px); max-height:50vh; overflow-y:auto; background:#14211d; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px; z-index:502; }
+    .reader-toc-panel.open { display:block; }
+    .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
+    .reader-toc-item:last-child { border-bottom:none; }
+    .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
        that already says exactly that) and crowds/overlaps the video's top
@@ -516,7 +521,7 @@
        video size, so there's always something reachable without relying
        on scrolling, fullscreen quirks, or the browser's own back button. */
     .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; }
-    .player-overlay.video-mode .player-close-floating { display:flex; }
+    .player-overlay.video-mode .player-close-floating, .player-overlay.reader-mode .player-close-floating { display:flex; }
     .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
@@ -2839,12 +2844,39 @@
   let _currentEpubBook = null;
   let _currentEpubRendition = null;
   let _epubFontPct = 100;
+  let _epubToc = [];
+  let _currentEpubFirstHref = null;
   function epubNextPage() { if (_currentEpubRendition) _currentEpubRendition.next(); }
   function epubPrevPage() { if (_currentEpubRendition) _currentEpubRendition.prev(); }
   function epubFontSize(delta) {
     if (!_currentEpubRendition) return;
     _epubFontPct = Math.max(70, Math.min(200, _epubFontPct + delta * 15));
     _currentEpubRendition.themes.fontSize(_epubFontPct + '%');
+  }
+  // "Back to the beginning" — jumps to the first real table-of-contents
+  // entry rather than display() with no argument, since some books'
+  // very first spine item is a blank cover/title page rather than
+  // anywhere a reader would actually want to land.
+  function epubGoToStart() {
+    if (!_currentEpubRendition) return;
+    if (_currentEpubFirstHref) _currentEpubRendition.display(_currentEpubFirstHref);
+    else _currentEpubRendition.display();
+  }
+  function renderEpubToc() {
+    const panel = document.getElementById('readerTocPanel');
+    if (!panel) return;
+    panel.innerHTML = _epubToc.map(item =>
+      `<button class="reader-toc-item" onclick="epubGoToTocItem('${item.href}')">${item.label.trim()}</button>`
+    ).join('');
+  }
+  function epubToggleToc() {
+    const panel = document.getElementById('readerTocPanel');
+    if (!panel) return;
+    panel.classList.toggle('open');
+  }
+  function epubGoToTocItem(href) {
+    if (_currentEpubRendition) _currentEpubRendition.display(href);
+    document.getElementById('readerTocPanel')?.classList.remove('open');
   }
 
   async function openContentFile(f) {
@@ -2893,8 +2925,11 @@
       // imitation of it.
       mediaEl.innerHTML = `
         <div id="readerBox" class="reader-box"></div>
+        <div id="readerTocPanel" class="reader-toc-panel"></div>
         <div class="reader-controls">
           <button class="reader-nav-btn" onclick="epubPrevPage()" title="Previous page">‹</button>
+          <button class="reader-nav-btn" onclick="epubGoToStart()" title="Back to the beginning">⇤</button>
+          <button class="reader-nav-btn" onclick="epubToggleToc()" title="Contents">☰</button>
           <div class="reader-font-btns">
             <button class="reader-font-btn" onclick="epubFontSize(-1)" title="Smaller text">A-</button>
             <button class="reader-font-btn" onclick="epubFontSize(1)" title="Larger text">A+</button>
@@ -2915,6 +2950,12 @@
         rendition.themes.fontSize(_epubFontPct + '%');
         await rendition.display();
         _currentEpubBook = book;
+        _currentEpubFirstHref = null;
+        book.loaded.navigation.then((nav) => {
+          _epubToc = nav.toc || [];
+          if (_epubToc.length) _currentEpubFirstHref = _epubToc[0].href;
+          renderEpubToc();
+        }).catch(() => { _epubToc = []; });
         _currentEpubRendition = rendition;
       } catch (e) {
         console.error('epub render error:', e);
@@ -3004,7 +3045,7 @@
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.remove('video-mode');
     overlayEl.classList.remove('reader-mode');
-    if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; _currentEpubRendition = null; }
+    if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; _currentEpubRendition = null; _epubToc = []; _currentEpubFirstHref = null; }
     document.getElementById('fullscreenBtn').style.display = 'none';
     document.getElementById('fullscreenBtn').textContent = 'Full screen';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
