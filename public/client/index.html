@@ -2870,6 +2870,7 @@
     // Ask the server for a playback URL — checked against this person's tier first,
     // same as audio. Works for both R2-stored and legacy disk files transparently.
     let url;
+    let epubReaderUrl = null;
     try {
       const res  = await fetch(`/api/content/library/${f.id}/playback-url`);
       const data = await res.json();
@@ -2878,6 +2879,7 @@
         return;
       }
       url = data.url;
+      epubReaderUrl = data.epubReaderUrl || null;
     } catch {
       mediaEl.innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this file — network error.</div>';
       return;
@@ -2902,7 +2904,12 @@
       `;
       try {
         if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; }
-        const book = ePub(url);
+        // Unpacked books (data.epubReaderUrl) load lazily — epub.js fetches
+        // each chapter/resource as it's actually needed, through our own
+        // per-resource proxy, rather than downloading and unzipping the
+        // whole book upfront. Older/not-yet-unpacked books fall back to
+        // the original full-file approach — slower, but still works.
+        const book = epubReaderUrl ? ePub(epubReaderUrl) : ePub(url);
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');

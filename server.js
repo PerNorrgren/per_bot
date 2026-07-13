@@ -5062,13 +5062,59 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
 
     if (file.storage_type === 'r2') {
       const url = await media.getPlaybackUrl(file.filename);
-      return res.json({ url, expiresIn: 600 });
+      const response = { url, expiresIn: 600 };
+      // Unpacked books (see unpack_epub_book.js) get a second URL pointing
+      // at the per-resource proxy below — the reader prefers this one so
+      // it fetches chapters as needed rather than the whole .epub upfront.
+      if (file.epub_opf_path) {
+        response.epubReaderUrl = `/api/content/library/${file.id}/epub-resource/${file.epub_opf_path}`;
+      }
+      return res.json(response);
     }
     // Legacy disk file — same URL pattern as before, no change in behaviour.
     res.json({ url: `/uploads/${file.filename}`, expiresIn: null });
   } catch (e) {
     console.error('playback-url error:', e.message);
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── EPUB resource proxy (Per Bot 14) — same tier check as playback-url
+// above, but serves one internal file at a time from an unpacked book
+// rather than a single presigned URL to the whole archive. Same-origin,
+// so the reader's normal auth cookie covers every request automatically
+// — no per-resource presigned URLs to juggle.
+app.get('/api/content/library/:id/epub-resource/*', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : db.canAccessFile(file, userFlags, req.user.id);
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    if (!file.epub_opf_path) return res.status(404).json({ error: 'This book has not been unpacked for lazy loading yet.' });
+
+    const relPath = req.params[0];
+    const r2Key = `epub-unpacked/${file.id}/${relPath}`;
+    const ext = (relPath.split('.').pop() || '').toLowerCase();
+    const contentType = {
+      xhtml: 'application/xhtml+xml', html: 'text/html', htm: 'text/html',
+      css: 'text/css', js: 'application/javascript',
+      opf: 'application/oebps-package+xml', ncx: 'application/x-dtbncx+xml', xml: 'application/xml',
+      jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', svg: 'image/svg+xml',
+      otf: 'font/otf', ttf: 'font/ttf', woff: 'font/woff', woff2: 'font/woff2',
+    }[ext] || 'application/octet-stream';
+
+    const obj = await media.getPublicObject(r2Key);
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'private, max-age=3600');
+    obj.Body.pipe(res);
+  } catch (e) {
+    console.error('epub-resource error:', e.message);
+    res.status(404).json({ error: 'Resource not found.' });
   }
 });
 
@@ -5380,6 +5426,25 @@ app.post('/api/admin/run-standalone-poems-import', auth.requireAuthApi(['admin']
 app.get('/api/admin/run-standalone-poems-import/status', auth.requireAuthApi(['admin']), (req, res) => {
   if (!standalonePoemsJob) return res.status(404).json({ error: 'No import has been started yet.' });
   res.json(standalonePoemsJob);
+});
+
+// ── EPUB unpacking for lazy reading (Per Bot 14) ──
+let epubUnpackJob = null;
+app.post('/api/admin/unpack-epub-books', auth.requireAuthApi(['admin']), (req, res) => {
+  if (epubUnpackJob && !epubUnpackJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: epubUnpackJob });
+  }
+  epubUnpackJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = epubUnpackJob;
+  const { runUnpack } = require('./unpack_epub_book');
+  runUnpack((line) => { job.log.push(line); console.log(line); }, req.body?.fileId || null)
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('epub unpack error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/unpack-epub-books/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!epubUnpackJob) return res.status(404).json({ error: 'No unpack job has been started yet.' });
+  res.json(epubUnpackJob);
 });
 
 // ── TEMPORARY — Per Bot 13, plain-English lesson descriptions for Being Here ──

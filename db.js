@@ -1224,6 +1224,18 @@ async function getDb() {
     // options — need the same per-skin treatment tomte_language_defaults
     // already has. Not built yet; flagging here so it isn't missed.
     "ALTER TABLE app_config ADD COLUMN allow_custom_voice INTEGER DEFAULT 1",
+    // EPUB lazy-loading (Per Bot 14) — a book's raw .epub is a zip archive;
+    // reading it in-browser via epub.js by default means downloading and
+    // unzipping the WHOLE file client-side before the first page can show
+    // — fine for a short excerpt, genuinely too slow/heavy for a full-
+    // length book on mobile. Once unpacked server-side (see
+    // unpack_epub_book.js), this stores the relative path to the real
+    // content.opf inside the unpacked file tree (found via META-INF/
+    // container.xml, since it isn't always at a fixed location) — lets
+    // the reader fetch chapters one at a time through
+    // /api/content/library/:id/epub-resource/* instead. NULL until a
+    // given book has actually been unpacked.
+    "ALTER TABLE library_files ADD COLUMN epub_opf_path TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1674,7 +1686,7 @@ function getLibraryFiles(filters = {}) {
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice','epub_opf_path'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
