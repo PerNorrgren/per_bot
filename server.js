@@ -3642,6 +3642,26 @@ async function resolveSignalMarkers(text, requestVoiceId) {
   return { text: resolved.replace(/\s{2,}/g, ' ').trim(), audioUrl };
 }
 
+// Per Bot 15 — resolves a [[BREATHING:id]] marker Talk drops into a reply.
+// Unlike [[SIGNAL:id]] (which inlines text or plays a file within the
+// spoken reply), a breathing pattern opens its own guided timer view —
+// so this just strips the marker from what gets spoken and returns the
+// full pattern (with parsed phases) as a separate field for the client
+// to act on. An unknown/archived id strips silently, same as an unknown
+// signal id, rather than leaving a raw marker in what gets read aloud.
+function resolveBreathingMarker(text) {
+  const match = text.match(/\[\[BREATHING:([a-zA-Z0-9_-]+)\]\]/);
+  if (!match) return { text, breathingPattern: null };
+  const pattern = db.getBreathingPattern(match[1]);
+  if (!pattern || pattern.archived) {
+    console.warn('[breathing] unknown or archived pattern id in reply:', match[1]);
+  }
+  return {
+    text: text.replace(match[0], '').replace(/\s{2,}/g, ' ').trim(),
+    breathingPattern: (pattern && !pattern.archived) ? pattern : null,
+  };
+}
+
 app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { message, sessionId, clientId } = req.body;
@@ -3681,6 +3701,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         // "universal items only", same as everywhere else skins appear.
         sp += prompts.CLIENT_CONTEXT_DOCUMENTS(db.getContextDocumentsForSkin(client?.skin_id));
         sp += prompts.CLIENT_SIGNAL_MENU(db.getSignalScriptMenu(client?.skin_id));
+        sp += prompts.CLIENT_BREATHING_MENU(db.getBreathingPatternMenu());
         // Variety rotation applies to everyone, unconditionally — this is
         // about avoiding staleness across sessions, not sensitive clinical
         // context, so it doesn't need any of the gating above.
@@ -3711,8 +3732,9 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
     // source of truth for which voice this reply should be cached
     // against, checked fresh on every turn.
     const voiceClient = session.clientId ? db.getUser(session.clientId) : null;
-    const { text: cleanReply, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply, voiceClient?.voice_id);
-    res.json({ reply: cleanReply, signalAudioUrl });
+    const { text: afterSignals, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply, voiceClient?.voice_id);
+    const { text: cleanReply, breathingPattern } = resolveBreathingMarker(afterSignals);
+    res.json({ reply: cleanReply, signalAudioUrl, breathingPattern });
   } catch(e) {
     console.error('chat error:', e);
     res.status(500).json({ error: e.message });
@@ -5176,6 +5198,47 @@ app.delete('/api/content/library/:id/tags/:tag', auth.requireAuthApi(['admin']),
 app.get('/api/content/library/by-tag/:tag', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getFilesByTag(req.params.tag)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Breathing patterns (Per Bot 15) ── A simple guided breathing timer —
+// Talk can launch one via a [[BREATHING:id]] marker (see resolveBreathingMarker
+// above), or a person can open the timer directly and pick one themselves.
+// Client-facing list is deliberately open to any logged-in role, same as
+// the meditation timer's own content — nothing sensitive in a breathing
+// pattern's name/phases/cycles.
+app.get('/api/breathing-patterns', auth.requireAuthApi(['client', 'facilitator', 'admin']), (req, res) => {
+  try { res.json(db.getBreathingPatterns()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/breathing-patterns', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getBreathingPatterns(true)); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/breathing-patterns', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { name, situation, phases, defaultCycles, sortOrder } = req.body;
+    if (!name || !Array.isArray(phases) || !phases.length) {
+      return res.status(400).json({ error: 'name and a non-empty phases array are required.' });
+    }
+    const badPhase = phases.find(p => !['in', 'hold', 'out'].includes(p.type) || !Number.isFinite(p.seconds) || p.seconds <= 0);
+    if (badPhase) return res.status(400).json({ error: 'Every phase needs type in/hold/out and a positive number of seconds.' });
+    const id = (req.body.id || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || uuidv4();
+    if (db.getBreathingPattern(id)) return res.status(400).json({ error: 'A pattern with that id already exists.' });
+    db.createBreathingPattern(id, name.trim(), (situation || '').trim(), phases, defaultCycles || 6, sortOrder || 0);
+    res.json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/breathing-patterns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (req.body.phases) {
+      const badPhase = req.body.phases.find(p => !['in', 'hold', 'out'].includes(p.type) || !Number.isFinite(p.seconds) || p.seconds <= 0);
+      if (badPhase) return res.status(400).json({ error: 'Every phase needs type in/hold/out and a positive number of seconds.' });
+    }
+    db.updateBreathingPattern(req.params.id, req.body);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/breathing-patterns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteBreathingPattern(req.params.id); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── TEMPORARY — Per Bot 13, WordPress content migration ──
 // Runs the blog-post import in-process (shares this server's own sql.js
 // singleton), because running it as a separate `node import_....js` console

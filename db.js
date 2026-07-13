@@ -850,6 +850,31 @@ async function getDb() {
     UNIQUE(template_key, language)
   )`);
 
+  // ── Breathing patterns (Per Bot 15) ── A simple guided breathing timer,
+  // deliberately much simpler than the meditation timer's bell/interval
+  // options. Each pattern is a fixed phase sequence (in/hold/out, each
+  // with its own seconds) repeated for a number of cycles. Talk can drop
+  // a [[BREATHING:id]] marker into a reply (same convention as
+  // [[SIGNAL:id]]) when someone mentions being stressed or similar —
+  // server resolves it to the real pattern, client pre-loads the
+  // breathing view with it. `situation` is shown only in Talk's own
+  // system prompt (see prompts.js CLIENT_BREATHING_MENU), never to the
+  // person directly — it's just guidance for when each pattern fits.
+  // Only three spoken cues ever exist across every pattern — "Breathing
+  // in", "Hold", "Breathing out" — generated once via the same
+  // /api/speak-cached mechanism as the quick-practice buttons, then
+  // reused for every pattern; patterns only define timing, never audio.
+  db.run(`CREATE TABLE IF NOT EXISTS breathing_patterns (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    situation TEXT NOT NULL DEFAULT '',
+    phases TEXT NOT NULL,
+    default_cycles INTEGER NOT NULL DEFAULT 6,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Lesson file opens (Per Bot 13) ──
   // Tracks every time a client opens/plays a file that's part of a lesson.
   // Underlies three things at once: the green-tick "opened" marker in the
@@ -1413,6 +1438,10 @@ async function getDb() {
   const existingLegal = queryAll('SELECT id FROM legal_documents LIMIT 1');
   if (!existingLegal.length) seedLegalDocuments();
 
+  // Seed default breathing patterns if empty
+  const existingBreathing = queryAll('SELECT id FROM breathing_patterns LIMIT 1');
+  if (!existingBreathing.length) seedBreathingPatterns();
+
   save();
   return db;
 }
@@ -1544,6 +1573,38 @@ function seedMembershipPlans() {
   plans.forEach(p => {
     db.run(`INSERT OR IGNORE INTO membership_plans (id,tier,name,billing_cycle,price_pence,trial_days,active)
       VALUES (?,?,?,?,?,?,1)`, [p.id, p.tier, p.name, p.billing_cycle, p.price_pence, p.trial_days]);
+  });
+}
+
+// Six starting patterns, each a JSON phase array ({type:'in'|'hold'|'out', seconds})
+// for ONE cycle — the client repeats it default_cycles times. `situation` is
+// Talk-facing guidance only (see CLIENT_BREATHING_MENU in prompts.js), never
+// shown to the person. Per can add, edit, or archive these from Admin —
+// this seed just gives Talk something usable on day one.
+function seedBreathingPatterns() {
+  const patterns = [
+    { id: 'box-breathing', name: 'Box Breathing', sort_order: 1, default_cycles: 6,
+      situation: 'General stress or overwhelm; steadying before something specific (a meeting, a hard conversation). A solid, structured all-rounder.',
+      phases: [{type:'in',seconds:4},{type:'hold',seconds:4},{type:'out',seconds:4},{type:'hold',seconds:4}] },
+    { id: 'extended-exhale', name: 'Extended Exhale', sort_order: 2, default_cycles: 8,
+      situation: 'Anxious, racing thoughts, needs calming down rather than energising up. The longer exhale is the active ingredient.',
+      phases: [{type:'in',seconds:4},{type:'out',seconds:6}] },
+    { id: '4-7-8', name: '4-7-8 Breathing', sort_order: 3, default_cycles: 5,
+      situation: 'Winding down, trouble settling, especially before sleep. Slower and more demanding than the others — best when there is a little more time.',
+      phases: [{type:'in',seconds:4},{type:'hold',seconds:7},{type:'out',seconds:8}] },
+    { id: 'coherent-breathing', name: 'Coherent Breathing', sort_order: 4, default_cycles: 8,
+      situation: 'No acute distress — a steady baseline practice, or a gentle general reset with nothing specific driving it.',
+      phases: [{type:'in',seconds:5},{type:'out',seconds:5}] },
+    { id: 'physiological-sigh', name: 'Physiological Sigh', sort_order: 5, default_cycles: 5,
+      situation: 'A sudden stress spike, right now, in the moment — the fastest reset available. The double inhale is the whole point.',
+      phases: [{type:'in',seconds:2},{type:'in',seconds:1},{type:'out',seconds:6}] },
+    { id: 'quick-reset', name: 'Quick Reset', sort_order: 6, default_cycles: 6,
+      situation: 'Very short window — between calls, before walking into a room. Just needs 30-40 seconds, nothing more.',
+      phases: [{type:'in',seconds:3},{type:'out',seconds:3}] },
+  ];
+  patterns.forEach(p => {
+    db.run(`INSERT OR IGNORE INTO breathing_patterns (id,name,situation,phases,default_cycles,sort_order,archived)
+      VALUES (?,?,?,?,?,?,0)`, [p.id, p.name, p.situation, JSON.stringify(p.phases), p.default_cycles, p.sort_order]);
   });
 }
 
@@ -1769,6 +1830,56 @@ function saveTranslatedTemplate(id, templateKey, language, subject, html) {
      ON CONFLICT(template_key,language) DO UPDATE SET subject=excluded.subject, html=excluded.html`,
     [id, templateKey, language, subject, html]
   );
+  save();
+}
+
+// ── Breathing patterns (Per Bot 15) ── phases stored as a JSON string in
+// the DB, always parsed back into a real array before it leaves this file
+// — nothing outside db.js should ever have to know it's stored as text.
+function parseBreathingPattern(row) {
+  if (!row) return row;
+  let phases = [];
+  try { phases = JSON.parse(row.phases); } catch (e) { phases = []; }
+  return { ...row, phases };
+}
+function getBreathingPatterns(includeArchived) {
+  const sql = includeArchived
+    ? 'SELECT * FROM breathing_patterns ORDER BY sort_order ASC, name ASC'
+    : 'SELECT * FROM breathing_patterns WHERE archived=0 ORDER BY sort_order ASC, name ASC';
+  return queryAll(sql).map(parseBreathingPattern);
+}
+function getBreathingPattern(id) {
+  return parseBreathingPattern(queryOne('SELECT * FROM breathing_patterns WHERE id=?', [id]));
+}
+// Talk-facing menu never needs anything beyond what CLIENT_BREATHING_MENU
+// actually prints (id/name/situation) — kept separate from the full row
+// so nothing accidentally leaks phase timing into the prompt as filler.
+function getBreathingPatternMenu() {
+  return queryAll('SELECT id, name, situation FROM breathing_patterns WHERE archived=0 ORDER BY sort_order ASC, name ASC');
+}
+function createBreathingPattern(id, name, situation, phases, defaultCycles, sortOrder) {
+  getDbSync().run(
+    `INSERT INTO breathing_patterns (id,name,situation,phases,default_cycles,sort_order,archived) VALUES (?,?,?,?,?,?,0)`,
+    [id, name, situation || '', JSON.stringify(phases), defaultCycles || 6, sortOrder || 0]
+  );
+  save();
+}
+function updateBreathingPattern(id, fields) {
+  const allowed = ['name', 'situation', 'phases', 'default_cycles', 'sort_order', 'archived'];
+  const sets = [];
+  const params = [];
+  for (const k of allowed) {
+    if (fields[k] === undefined) continue;
+    sets.push(`${k}=?`);
+    params.push(k === 'phases' ? JSON.stringify(fields[k]) : fields[k]);
+  }
+  if (!sets.length) return;
+  params.push(id);
+  getDbSync().run(`UPDATE breathing_patterns SET ${sets.join(', ')} WHERE id=?`, params);
+  save();
+}
+function deleteBreathingPattern(id) {
+  getDbSync().run('DELETE FROM breathing_patterns WHERE id=?', [id]);
   save();
 }
 // Curated content shelves on the calm landing screen (Per Bot 28) — same
@@ -4048,6 +4159,7 @@ module.exports = {
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,
+  getBreathingPatterns, getBreathingPattern, getBreathingPatternMenu, createBreathingPattern, updateBreathingPattern, deleteBreathingPattern,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
