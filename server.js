@@ -1624,13 +1624,14 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
-    const content = db.getFeaturedLibraryFiles().map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
+    const userFlags = db.userFlagsFromRecord(db.getUser(req.user.id), 'client');
+    const content = db.getFeaturedLibraryFiles(userFlags, req.user.id).map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
     res.json({
       courses: db.getFeaturedCourses(),
       content,
-      recentPoems: db.getRecentStandaloneFiles('poem', 5).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
-      recentPosts: db.getRecentStandaloneFiles('blog', 5).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
-      recentBooks: db.getRecentStandaloneFiles('book').map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
+      recentPoems: db.getRecentStandaloneFiles('poem', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
+      recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
+      recentBooks: db.getRecentStandaloneFiles('book', null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1643,7 +1644,8 @@ app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res)
   try {
     if (!['poem', 'blog'].includes(req.params.type)) return res.status(400).json({ error: 'Unsupported type.' });
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
-    const files = db.getRecentStandaloneFiles(req.params.type).map(f => ({ ...f, is_favourite: favIds.has(f.id) }));
+    const userFlags = db.userFlagsFromRecord(db.getUser(req.user.id), 'client');
+    const files = db.getRecentStandaloneFiles(req.params.type, null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) }));
     res.json(files);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -4117,9 +4119,12 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
     // but a logged-in Explorer/Member/Client only ever sees what their own tier permits —
     // getAllLibraryFilesWithAccess tags every file with `accessible`; we filter on it here
     // rather than relying on the frontend to respect that flag (it previously didn't).
+    // Per Bot 15 — a real client also never sees a preview edition once their own tier
+    // already qualifies for its linked full edition (suppressAccessiblePreviews); admin/
+    // facilitator keep seeing both, deliberately, since they're managing the content.
     const files = req.user.role === 'facilitator' || req.user.role === 'admin'
       ? db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
-      : db.getAllLibraryFilesWithAccess(userFlags, req.user.id).filter(f => f.accessible);
+      : db.suppressAccessiblePreviews(db.getAllLibraryFilesWithAccess(userFlags, req.user.id).filter(f => f.accessible), db.userMaxLevel(userFlags));
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }

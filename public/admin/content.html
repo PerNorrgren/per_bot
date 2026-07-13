@@ -365,6 +365,11 @@
       </div>
     </div>
     <div>
+      <label>Full version <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(only if THIS file is a preview/excerpt — links it to the complete in-app edition)</span></label>
+      <select id="efFullVersion"><option value="">Not a preview — this is the only edition</option></select>
+      <div style="color:rgba(255,255,255,0.25);font-size:11px;margin-top:4px">Once set, anyone whose tier already grants them the full version below will never see this preview alongside it — they'll just see the full one.</div>
+    </div>
+    <div>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="efOneToOne" onchange="toggleOneToOne(this.checked)"/>
         One-to-one — share with a single client only, instead of by visibility tier
@@ -1346,6 +1351,25 @@ async function doUpload(){
 }
 
 // ── Edit file ──
+// Per Bot 15 — preview/full edition linking. Filtered to book/whitepaper
+// content types deliberately (not every file in the library) since those
+// are the only content types this was actually asked for, and a plain
+// list of every library file would be unusably long. Excludes the file
+// being edited itself (can't be a preview of its own full version) and
+// excludes anything that's ITSELF already set up as a preview (a preview
+// of a preview isn't a case this is meant to support).
+function populateEfFullVersionOptions(currentFileId, selectedId) {
+  const sel = document.getElementById('efFullVersion');
+  const candidates = allFiles.filter(f =>
+    f.id !== currentFileId &&
+    ['book', 'whitepaper'].includes(f.content_type) &&
+    !f.full_version_id
+  );
+  sel.innerHTML = '<option value="">Not a preview — this is the only edition</option>'
+    + candidates.map(f => `<option value="${f.id}">${f.title}</option>`).join('');
+  sel.value = selectedId || '';
+}
+
 function openEditFile(id){
   const f=allFiles.find(x=>x.id===id);if(!f)return;
   document.getElementById('efId').value=f.id;
@@ -1355,6 +1379,7 @@ function openEditFile(id){
   document.getElementById('efVis').value=f.visibility||'client';
   document.getElementById('efKind').innerHTML = contentKindOptions(f.content_type||'');
   document.getElementById('efExternalLink').value = f.external_link || '';
+  populateEfFullVersionOptions(f.id, f.full_version_id || '');
   document.getElementById('efOneToOne').checked = !!f.assigned_client_id;
   toggleOneToOne(!!f.assigned_client_id);
   loadClientPickerOptions(f.assigned_client_id || '');
@@ -1428,6 +1453,7 @@ async function saveFileEdit(){
       visibility:document.getElementById('efVis').value,
       content_type:document.getElementById('efKind').value||null,
       external_link:document.getElementById('efExternalLink').value.trim()||null,
+      full_version_id:document.getElementById('efFullVersion').value||null,
       assigned_client_id: oneToOne ? assignedClientId : null})
   });
   // Rename file if changed

@@ -1284,6 +1284,14 @@ async function getDb() {
     // /api/content/library/:id/epub-resource/* instead. NULL until a
     // given book has actually been unpacked.
     "ALTER TABLE library_files ADD COLUMN epub_opf_path TEXT",
+    // Preview/full edition linking (Per Bot 15) — a lower-tier "preview"
+    // file (e.g. visibility='registered') can point at the full edition
+    // it's a preview of. Anyone whose own tier already qualifies for the
+    // full version never sees the preview alongside it in a listing —
+    // see suppressAccessiblePreviews below. Below that tier, the full
+    // version is already inaccessible via the normal visibility gate, so
+    // they only ever see the preview, same as before this feature existed.
+    "ALTER TABLE library_files ADD COLUMN full_version_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1770,7 +1778,7 @@ function getLibraryFiles(filters = {}) {
   return queryAll(sql, params);
 }
 function updateLibraryFile(id, fields) {
-  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice','epub_opf_path'];
+  const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice','epub_opf_path','full_version_id'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
@@ -1887,25 +1895,61 @@ function deleteBreathingPattern(id) {
 // Grouped by content_type client-side (meditation/practice/etc.) into
 // separate rows, so this just returns everything featured and lets the
 // caller decide how to bucket it.
+// Per Bot 15 — hides a preview edition from anyone whose own tier already
+// qualifies for the full edition it's linked to (full_version_id). Below
+// that tier the full edition is already invisible via the normal
+// visibility gate (canSeeFile), so this only ever removes the preview,
+// never the full edition, and never touches files with no link at all.
+// A dangling link (the linked file was since deleted) is treated as "no
+// link" — never hide something based on a reference that no longer
+// resolves to anything.
+function suppressAccessiblePreviews(files, userLevel) {
+  return files.filter(f => {
+    if (!f.full_version_id) return true;
+    const full = getLibraryFile(f.full_version_id);
+    if (!full) return true;
+    const fullLevel = LEVEL_RANK[full.visibility] ?? 0;
+    return userLevel < fullLevel;
+  });
+}
+
 // Most recent standalone files of a given content type — "standalone"
 // meaning not embedded in any course lesson (Being Here's 84 poems, for
 // instance, shouldn't double up on the Home poems shelf since they're
 // already reachable through that course). Powers the Poems/Posts Home
 // shelves, which show automatically by recency rather than needing to be
 // hand-marked Featured like courses/practices do.
-function getRecentStandaloneFiles(contentType, limit) {
-  const limitClause = limit ? 'LIMIT ?' : '';
-  const params = limit ? [contentType, limit] : [contentType];
-  return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+// userFlags/userId (Per Bot 15) — every caller is a client-only route, so
+// this always tier-filters and applies preview suppression now; passing
+// no userFlags at all skips both (kept only as a defensive fallback, not
+// meant to be relied on by any real caller). Limit is applied in JS,
+// after filtering, rather than in the SQL query — filtering out
+// inaccessible or suppressed rows AFTER a SQL-level LIMIT could silently
+// hand back fewer than `limit` items even when enough visible ones exist
+// further down the list.
+function getRecentStandaloneFiles(contentType, limit, userFlags, userId) {
+  const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     WHERE f.content_type=? AND f.archived=0
       AND f.id NOT IN (SELECT file_id FROM lesson_file_refs)
-    ORDER BY f.created_at DESC ${limitClause}`, params);
+    ORDER BY f.created_at DESC`, [contentType]);
+  let visible = files;
+  if (userFlags) {
+    const level = userMaxLevel(userFlags);
+    visible = suppressAccessiblePreviews(files.filter(f => canSeeFile(f, level, userId)), level);
+  }
+  return limit ? visible.slice(0, limit) : visible;
 }
-function getFeaturedLibraryFiles() {
-  return queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+function getFeaturedLibraryFiles(userFlags, userId) {
+  const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     WHERE f.featured=1 AND f.archived=0 ORDER BY f.title`);
+  let visible = files;
+  if (userFlags) {
+    const level = userMaxLevel(userFlags);
+    visible = suppressAccessiblePreviews(files.filter(f => canSeeFile(f, level, userId)), level);
+  }
+  return visible;
 }
 // Practices Talk is allowed to reach for and play mid-conversation (Per Bot
 // 33j) — same "explicitly marked, not automatic" pattern as featured, kept
@@ -4226,7 +4270,7 @@ module.exports = {
   checkTrialExpiry,
   // Content visibility
   getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, getFacilitatorResources,
-  userMaxLevel, LEVEL_RANK,
+  userMaxLevel, LEVEL_RANK, suppressAccessiblePreviews,
   // Invitations
   createInvitation, getInvitationByToken, acceptInvitation, getInvitationsForFacilitator,
   // Guest leads
