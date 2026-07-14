@@ -1304,6 +1304,13 @@ async function getDb() {
     // certainly already gone by now, but this at least stops the bleeding
     // for anything added from here on.
     "ALTER TABLE practices ADD COLUMN storage_type TEXT DEFAULT 'disk'",
+    // Per Bot 15h — legal documents had no way to differ by skin at all;
+    // every skin showed the exact same Terms/Privacy regardless of which
+    // market or jurisdiction it actually serves. NULL = the global
+    // document (used by any skin without its own); set = only that
+    // skin's users see this version, versioned independently of the
+    // global one under the same slug.
+    "ALTER TABLE legal_documents ADD COLUMN skin_id TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -4044,9 +4051,23 @@ function seedLegalDocuments() {
   }
 }
 
-function getLegalDocument(slug) {
+// Per Bot 15h — skinId is optional throughout. When given, a skin-specific
+// published document under this slug wins; if that skin has never had its
+// own version, this falls back to the global (skin_id IS NULL) one, so a
+// new skin never shows "document not found" just for lacking its own copy
+// yet. Version numbers are scoped per (slug, skinId) — a skin's own
+// "privacy-policy" versions independently of the global one under the
+// same slug, exactly as if it were its own document with a shared name.
+function getLegalDocument(slug, skinId) {
+  if (skinId) {
+    const scoped = queryOne(
+      `SELECT * FROM legal_documents WHERE slug=? AND skin_id=? AND published=1 ORDER BY version DESC LIMIT 1`,
+      [slug, skinId]
+    );
+    if (scoped) return scoped;
+  }
   return queryOne(
-    `SELECT * FROM legal_documents WHERE slug=? AND published=1 ORDER BY version DESC LIMIT 1`,
+    `SELECT * FROM legal_documents WHERE slug=? AND skin_id IS NULL AND published=1 ORDER BY version DESC LIMIT 1`,
     [slug]
   );
 }
@@ -4063,38 +4084,61 @@ function getLegalDocumentVersion(slug, version) {
   return queryOne('SELECT * FROM legal_documents WHERE slug=? AND version=?', [slug, version]);
 }
 
-function getLegalDocumentHistory(slug) {
-  return queryAll('SELECT * FROM legal_documents WHERE slug=? ORDER BY version DESC', [slug]);
+function getLegalDocumentHistory(slug, skinId) {
+  return queryAll(
+    skinId ? 'SELECT * FROM legal_documents WHERE slug=? AND skin_id=? ORDER BY version DESC'
+           : 'SELECT * FROM legal_documents WHERE slug=? AND skin_id IS NULL ORDER BY version DESC',
+    skinId ? [slug, skinId] : [slug]
+  );
 }
 
-function getAllCurrentLegalDocuments() {
-  return queryAll(
+// Per Bot 15h — skinId here means "documents for this skin, falling back
+// to the global set for any slug this skin has no override for" — the
+// same merge logic as getLegalDocument, just for the whole list at once
+// (used by the public /legal index page).
+function getAllCurrentLegalDocuments(skinId) {
+  const global = queryAll(
     `SELECT ld.* FROM legal_documents ld
      INNER JOIN (
        SELECT slug, MAX(version) as max_version
-       FROM legal_documents WHERE published=1
+       FROM legal_documents WHERE published=1 AND skin_id IS NULL
        GROUP BY slug
-     ) latest ON ld.slug=latest.slug AND ld.version=latest.max_version
+     ) latest ON ld.slug=latest.slug AND ld.version=latest.max_version AND ld.skin_id IS NULL
      ORDER BY ld.title ASC`
   );
+  if (!skinId) return global;
+  const scoped = queryAll(
+    `SELECT ld.* FROM legal_documents ld
+     INNER JOIN (
+       SELECT slug, MAX(version) as max_version
+       FROM legal_documents WHERE published=1 AND skin_id=?
+       GROUP BY slug
+     ) latest ON ld.slug=latest.slug AND ld.version=latest.max_version AND ld.skin_id=?
+     ORDER BY ld.title ASC`, [skinId, skinId]
+  );
+  const scopedSlugs = new Set(scoped.map(d => d.slug));
+  return [...scoped, ...global.filter(d => !scopedSlugs.has(d.slug))].sort((a,b) => a.title.localeCompare(b.title));
 }
 
 function getAllLegalDocumentsAdmin() {
   return queryAll(
-    `SELECT ld.*,
+    `SELECT ld.*, sk.name as skin_name,
       (SELECT COUNT(*) FROM user_legal_consents WHERE slug=ld.slug AND version=ld.version) as consent_count
      FROM legal_documents ld
-     ORDER BY ld.slug ASC, ld.version DESC`
+     LEFT JOIN skins sk ON ld.skin_id=sk.id
+     ORDER BY ld.slug ASC, ld.skin_id IS NULL DESC, ld.version DESC`
   );
 }
 
-function createLegalDocument(id, slug, title, content, requiresConsent) {
-  const current = queryOne('SELECT MAX(version) as v FROM legal_documents WHERE slug=?', [slug]);
+function createLegalDocument(id, slug, title, content, requiresConsent, skinId) {
+  const current = skinId
+    ? queryOne('SELECT MAX(version) as v FROM legal_documents WHERE slug=? AND skin_id=?', [slug, skinId])
+    : queryOne('SELECT MAX(version) as v FROM legal_documents WHERE slug=? AND skin_id IS NULL', [slug]);
   const version = (current?.v || 0) + 1;
   db.run(
-    `INSERT INTO legal_documents (id,slug,title,version,content,requires_consent,published)
-     VALUES (?,?,?,?,?,?,0)`,
-    [id, slug, title, version, content, requiresConsent ? 1 : 0]
+    `INSERT INTO legal_documents (id,slug,title,version,content,requires_consent,published,skin_id)
+     VALUES (?,?,?,?,?,?,0,?)`,
+    [id, slug, title, version, content, requiresConsent ? 1 : 0, skinId || null]
   );
   save();
   return version;

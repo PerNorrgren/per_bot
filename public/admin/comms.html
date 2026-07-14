@@ -466,13 +466,13 @@
 
   <!-- ── Legal documents ── -->
   <div>
+  <!-- Legal documents moved to Settings (Per Bot 15h) — now skin-aware, so it lives alongside Skins rather than duplicated here. -->
+  <div>
     <div class="section-label">Legal documents</div>
     <div class="card">
-      <div class="card-header">
-        <div class="card-title">Published documents</div>
-        <button class="btn primary" onclick="openLegalModal()">+ New document / version</button>
+      <div class="card-body" style="padding:16px 20px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.45)">Moved to <a href="/setup" style="color:rgba(180,230,200,0.8)">Settings</a> — now scopable per skin (e.g. a different jurisdiction's Terms for a skin serving a different market).</div>
       </div>
-      <div id="legalList"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -2427,7 +2427,6 @@
   // ── Boot ──
   checkAuth().then(() => {
     loadMotd();
-    loadLegal();
     loadPlans();
     loadTestDestination();
     loadReminderConfig();

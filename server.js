@@ -6235,7 +6235,7 @@ app.get('/legal/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public'
 
 // ── Legal document API — public ──
 app.get('/api/legal', (req, res) => {
-  try { res.json(db.getAllCurrentLegalDocuments()); }
+  try { res.json(db.getAllCurrentLegalDocuments(req.query.skin || null)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6243,7 +6243,7 @@ app.get('/api/legal/:slug', (req, res) => {
   try {
     const doc = req.query.version
       ? db.getLegalDocumentVersion(req.params.slug, parseInt(req.query.version))
-      : db.getLegalDocument(req.params.slug);
+      : db.getLegalDocument(req.params.slug, req.query.skin || null);
     if (!doc) return res.status(404).json({ error: 'Document not found.' });
     res.json(doc);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -6281,10 +6281,11 @@ app.get('/api/admin/legal', auth.requireAuthApi(['admin']), (req, res) => {
 
 app.post('/api/admin/legal', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { slug, title, content, requiresConsent } = req.body;
+    const { slug, title, content, requiresConsent, skinId } = req.body;
     if (!slug || !title || !content) return res.status(400).json({ error: 'slug, title, and content required.' });
+    if (skinId && !db.getSkin(skinId)) return res.status(400).json({ error: 'That is not a valid skin.' });
     const id      = uuidv4();
-    const version = db.createLegalDocument(id, slug.toLowerCase().replace(/\s+/g,'-'), title, content, requiresConsent);
+    const version = db.createLegalDocument(id, slug.toLowerCase().replace(/\s+/g,'-'), title, content, requiresConsent, skinId || null);
     res.json({ id, version });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

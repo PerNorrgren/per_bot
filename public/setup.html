@@ -278,6 +278,58 @@
     </div>
   </div>
 
+  <!-- Legal documents (Per Bot 15h) — moved here from Communications since
+       this is where skin-scoped settings now live. A document can be
+       global (every skin without its own copy uses it) or scoped to one
+       skin (its own version, e.g. a different jurisdiction's Terms),
+       matching the same blank-vs-scoped convention as everywhere else
+       skin-aware in this app. -->
+  <div class="card">
+    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between">
+      <div class="card-title">Legal documents</div>
+      <button class="btn-primary" style="padding:7px 14px;font-size:11px" onclick="openLegalEditor()">+ New document</button>
+    </div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:4px">Terms, Privacy Policy, and similar published documents. Scope one to a skin if it needs to differ — e.g. a different jurisdiction's terms for a skin serving a different market — otherwise it applies everywhere.</div>
+      <div id="legalDocsList" style="display:flex; flex-direction:column; gap:8px"></div>
+    </div>
+  </div>
+
+  <div class="card" id="legalEditorCard" style="display:none">
+    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between">
+      <div class="card-title" id="legalEditorTitle">New document</div>
+      <button onclick="closeLegalEditor()" style="background:none; border:none; color:rgba(255,255,255,0.4); font-size:20px; cursor:pointer; line-height:1">&times;</button>
+    </div>
+    <div class="card-body">
+      <input type="hidden" id="legalEditId"/>
+      <div class="field">
+        <label>Document title</label>
+        <input type="text" id="legalDocTitle" placeholder="e.g. Privacy Policy"/>
+      </div>
+      <div class="field">
+        <label>URL slug</label>
+        <input type="text" id="legalDocSlug" placeholder="e.g. privacy-policy"/>
+        <div class="field-note">Used in the URL: /legal/[slug]. Leave blank to auto-generate from title. To create a new version of an existing document, use the same slug (and same skin) as the existing one.</div>
+      </div>
+      <div class="field">
+        <label>Skin</label>
+        <select id="legalDocSkin"><option value="">No skin — applies everywhere without its own version</option></select>
+      </div>
+      <div class="field">
+        <label>Content (Markdown)</label>
+        <textarea id="legalDocContent" style="min-height:240px" placeholder="# Document Title&#10;&#10;## Section&#10;&#10;Content here..."></textarea>
+      </div>
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.6)">
+        <input type="checkbox" id="legalDocConsent"/>
+        Requires user consent (tick box to accept)
+      </label>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:4px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveLegalDocument()">Save as draft</button>
+      </div>
+      <div class="msg err" id="legalEditorErr"></div>
+    </div>
+  </div>
+
   <div class="msg err" id="setupErr"></div>
   <button class="btn-primary" id="setupBtn" onclick="submitSetup()">Save and continue</button>
 </div>
@@ -550,8 +602,109 @@
     await loadSkins();
   }
 
+  // ══ Legal documents (Per Bot 15h) ══
+  let _legalDocsData = [];
+  let _editingLegalId = null;
+
+  async function loadLegalDocs() {
+    try {
+      const res = await fetch('/api/admin/legal');
+      _legalDocsData = await res.json();
+      renderLegalDocsList();
+    } catch(e) { /* quiet — secondary panel */ }
+  }
+
+  function renderLegalDocsList() {
+    const el = document.getElementById('legalDocsList');
+    // Latest version per (slug, skin) pair — a skin-scoped doc and the
+    // global doc under the same slug are two distinct rows here, since
+    // they version independently.
+    const latest = {};
+    _legalDocsData.forEach(d => {
+      const key = d.slug + '::' + (d.skin_id || '');
+      if (!latest[key] || d.version > latest[key].version) latest[key] = d;
+    });
+    const rows = Object.values(latest).sort((a,b) => a.title.localeCompare(b.title));
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No documents yet.</div>'; return; }
+    el.innerHTML = rows.map(d => `
+      <div style="display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 14px">
+        <div style="flex:1">
+          <div style="font-size:13.5px;color:rgba(255,255,255,0.85)">${d.title} ${d.published ? '' : '<span style="font-size:10px;color:rgba(255,255,255,0.3);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:2px 6px;margin-left:4px">draft</span>'}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.35)">v${d.version} · ${d.skin_name ? d.skin_name : 'every skin'} · ${d.requires_consent ? 'requires consent' : 'info only'} · ${d.consent_count || 0} consents</div>
+        </div>
+        <a class="btn-primary" style="padding:7px 14px;font-size:11px;text-decoration:none" href="/legal/${d.slug}${d.skin_id ? '?skin='+d.skin_id : ''}" target="_blank">View</a>
+        ${!d.published ? `<button class="btn-primary" style="padding:7px 14px;font-size:11px" onclick="publishLegalDocument('${d.id}')">Publish</button>` : ''}
+        <button class="btn-primary" style="padding:7px 14px;font-size:11px" onclick="openLegalEditor('${d.id}')">Edit / Version</button>
+      </div>
+    `).join('');
+  }
+
+  function populateLegalDocSkinOptions(selectedSkinId) {
+    const sel = document.getElementById('legalDocSkin');
+    sel.innerHTML = '<option value="">No skin — applies everywhere without its own version</option>'
+      + _skinsData.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    sel.value = selectedSkinId || '';
+  }
+
+  function openLegalEditor(id) {
+    _editingLegalId = id || null;
+    document.getElementById('legalEditorErr').textContent = '';
+    if (id) {
+      const doc = _legalDocsData.find(d => d.id === id);
+      if (!doc) return;
+      document.getElementById('legalEditorTitle').textContent = `New version of "${doc.title}"`;
+      document.getElementById('legalEditId').value = '';
+      document.getElementById('legalDocTitle').value = doc.title;
+      document.getElementById('legalDocSlug').value = doc.slug;
+      document.getElementById('legalDocContent').value = doc.content;
+      document.getElementById('legalDocConsent').checked = !!doc.requires_consent;
+      populateLegalDocSkinOptions(doc.skin_id);
+    } else {
+      document.getElementById('legalEditorTitle').textContent = 'New document';
+      document.getElementById('legalEditId').value = '';
+      document.getElementById('legalDocTitle').value = '';
+      document.getElementById('legalDocSlug').value = '';
+      document.getElementById('legalDocContent').value = '';
+      document.getElementById('legalDocConsent').checked = false;
+      populateLegalDocSkinOptions('');
+    }
+    document.getElementById('legalEditorCard').style.display = '';
+    document.getElementById('legalEditorCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function closeLegalEditor() {
+    _editingLegalId = null;
+    document.getElementById('legalEditorCard').style.display = 'none';
+  }
+
+  async function saveLegalDocument() {
+    const title = document.getElementById('legalDocTitle').value.trim();
+    const content = document.getElementById('legalDocContent').value.trim();
+    const consent = document.getElementById('legalDocConsent').checked;
+    const skinId = document.getElementById('legalDocSkin').value;
+    const err = document.getElementById('legalEditorErr');
+    let slug = document.getElementById('legalDocSlug').value.trim();
+    if (!title) { err.textContent = 'Title required.'; return; }
+    if (!content) { err.textContent = 'Content required.'; return; }
+    if (!slug) slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    const res = await fetch('/api/admin/legal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, title, content, requiresConsent: consent, skinId: skinId || null })
+    });
+    const data = await res.json();
+    if (data.id) { closeLegalEditor(); loadLegalDocs(); }
+    else err.textContent = data.error || 'Could not save.';
+  }
+
+  async function publishLegalDocument(id) {
+    if (!(await appConfirm('Publish this document? It will be visible immediately to everyone it applies to.'))) return;
+    await fetch(`/api/admin/legal/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'publish' }) });
+    loadLegalDocs();
+  }
+
   loadCurrentConfig();
   loadSkins();
+  loadLegalDocs();
 </script>
 
 <script>window.TOMTE_PAGE = 'Setup';</script>
