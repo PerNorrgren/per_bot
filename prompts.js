@@ -319,6 +319,24 @@ When one clearly fits the moment, weave it in naturally and include the marker [
 // menu — a breathing pattern opens its own guided timer view rather than
 // just inserting words into the reply, so it needs its own decision
 // point and its own marker.
+// Per Bot 15p — the sectioned knowledge ladder's always-on menu. Only
+// ever the topic title + one-line menu_line, per topic — real depth
+// (Overview/User/Teacher/Scientist, or whatever levels exist) is fetched
+// on demand by Talk itself via the get_knowledge tool, never carried
+// here regardless of relevance. This is what replaced Context documents
+// being injected in full on every turn.
+const CLIENT_KNOWLEDGE_MENU = (topics) => {
+  if (!topics || !topics.length) return '';
+  const formatted = topics.map(t => `- ${t.id}: ${t.title} — ${t.menu_line}`).join('\n');
+  return `
+
+You have access to a deeper knowledge base, organised by topic — each with a real depth ladder underneath (an overview, then progressively more clinical/technical detail) that you can reach into mid-reply using the get_knowledge tool, rather than needing it all in front of you constantly. Here's what's available (id: title — what it covers):
+
+${formatted}
+
+Call get_knowledge(topic_id, level) when a conversation genuinely goes deep enough to need real depth on one of these — not for every mention of a related word, just when actually reasoning about it in some depth would serve the person. An explorative or surface-level conversation needs nothing beyond this menu to steer well. You can call it more than once in the same reply, at different levels or different topics, following the conversation wherever it actually goes — deeper, back out, sideways to something related, in whatever order makes sense. Never mention the tool, the levels, or this menu itself to the person; the depth should simply show up in how you're speaking, not be narrated.`;
+};
+
 const CLIENT_BREATHING_MENU = (patterns) => {
   if (!patterns || !patterns.length) return '';
   const formatted = patterns.map(p => `- ${p.id}: ${p.name} — ${p.situation}`).join('\n');
@@ -589,6 +607,7 @@ module.exports = {
   CLIENT_CONTEXT_DOCUMENTS,
   CLIENT_SIGNAL_MENU,
   CLIENT_BREATHING_MENU,
+  CLIENT_KNOWLEDGE_MENU,
   CLIENT_FRAMEWORK_CONTEXT,
   CLIENT_PRESENTATION_CONTEXT,
   CLIENT_INTEGRATION_INSTRUCTION,

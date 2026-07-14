@@ -730,6 +730,15 @@ async function getDb() {
   // knowledge the way there is for a specific practice — so size matters
   // here in a way it doesn't for the scripts above. skin_id NULL =
   // universal, same convention as everywhere else skins appear.
+  //
+  // Per Bot 15p — no longer injected into the live system prompt at all
+  // (see the sectioned knowledge ladder below, which replaces that job
+  // properly). Kept only as: (1) the source material a topic's sections
+  // were generated from, for provenance, and (2) the corpus the
+  // search_source_material fallback tool searches when the curated
+  // ladder doesn't have something a conversation actually needs — i.e.
+  // exactly the "go outside the boundary, but stay within the app's own
+  // material" Per asked for. Never re-added to the always-on prompt.
   db.run(`CREATE TABLE IF NOT EXISTS talk_context_documents (
     id TEXT PRIMARY KEY,
     skin_id TEXT,
@@ -873,6 +882,75 @@ async function getDb() {
     sort_order INTEGER NOT NULL DEFAULT 0,
     archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // ── Sectioned knowledge (Per Bot 15p) ──
+  // Replaces Context documents as Talk's ongoing knowledge mechanism —
+  // that feature stays only as historical source material now (see
+  // knowledge_documents.source_note), never injected into a live
+  // conversation again. The actual mechanism: every topic always carries
+  // a free "Heading" (topic.menu_line, part of the topic row itself,
+  // shown to Talk every turn like the Signal Script menu already is) —
+  // real depth beyond that lives in knowledge_topic_content, one row per
+  // (topic, level), fetched by Talk mid-reply via a tool call only when
+  // a conversation actually goes there. Levels are a real table, not a
+  // hardcoded enum, specifically so a new level can be added later
+  // without a schema change — see knowledge_levels_config below.
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    source_note TEXT DEFAULT '',
+    raw_text TEXT DEFAULT '',
+    skin_id TEXT,
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // The depth ladder itself, above Heading. sort_order controls both
+  // display order and "how deep is this" for authoring guidance; the
+  // description is fed to the generation prompt so it knows what each
+  // level is actually for (kept here, not hardcoded in prompts.js, so a
+  // newly added level's own description drives its own generation
+  // without a code change).
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_levels_config (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    description TEXT DEFAULT ''
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_topics (
+    id TEXT PRIMARY KEY,
+    document_id TEXT,
+    title TEXT NOT NULL,
+    menu_line TEXT NOT NULL,
+    skin_id TEXT,
+    facilitator_id TEXT,
+    archived INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (document_id) REFERENCES knowledge_documents(id)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_topic_content (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL,
+    level_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(topic_id, level_id),
+    FOREIGN KEY (topic_id) REFERENCES knowledge_topics(id),
+    FOREIGN KEY (level_id) REFERENCES knowledge_levels_config(id)
+  )`);
+
+  // Cross-links between related topics (Per's "link material" ask) —
+  // stored one-directional but always written/read as a pair, so linking
+  // A to B also means B shows A as related, without needing two rows
+  // maintained by hand.
+  db.run(`CREATE TABLE IF NOT EXISTS knowledge_topic_links (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL,
+    linked_topic_id TEXT NOT NULL,
+    UNIQUE(topic_id, linked_topic_id)
   )`);
 
   // ── Lesson file opens (Per Bot 13) ──
@@ -1311,6 +1389,13 @@ async function getDb() {
     // skin's users see this version, versioned independently of the
     // global one under the same slug.
     "ALTER TABLE legal_documents ADD COLUMN skin_id TEXT",
+    // Per Bot 15o — powers the "unseen enquiries" badge; NULL means never
+    // viewed in the admin People page yet. Facilitator requests don't need
+    // an equivalent column since their own status field ('pending' until
+    // an actual decision is made) already means the same thing more
+    // usefully — viewing the list shouldn't clear that badge, only acting
+    // on it should.
+    "ALTER TABLE guest_leads ADD COLUMN seen_at TEXT",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -1468,6 +1553,10 @@ async function getDb() {
   // Seed default breathing patterns if empty
   const existingBreathing = queryAll('SELECT id FROM breathing_patterns LIMIT 1');
   if (!existingBreathing.length) seedBreathingPatterns();
+
+  // Seed the default knowledge depth ladder if empty
+  const existingLevels = queryAll('SELECT id FROM knowledge_levels_config LIMIT 1');
+  if (!existingLevels.length) seedKnowledgeLevels();
 
   save();
   return db;
@@ -1632,6 +1721,28 @@ function seedBreathingPatterns() {
   patterns.forEach(p => {
     db.run(`INSERT OR IGNORE INTO breathing_patterns (id,name,situation,phases,default_cycles,sort_order,archived)
       VALUES (?,?,?,?,?,?,0)`, [p.id, p.name, p.situation, JSON.stringify(p.phases), p.default_cycles, p.sort_order]);
+  });
+}
+
+// Per Bot 15p — the depth ladder above Heading (Heading itself is just
+// topic.menu_line, always free, no row here). Each level's description
+// is fed straight into the generation prompt, so it drives what gets
+// written at that depth for every topic — change the description here
+// and future generations follow it, without touching prompt code.
+function seedKnowledgeLevels() {
+  const levels = [
+    { id: 'overview', name: 'Overview', sort_order: 1,
+      description: 'A clear, plain-language summary of this topic — a paragraph or two. Enough for Talk to explain the idea to someone directly, in ordinary conversation, without jargon.' },
+    { id: 'user', name: 'User', sort_order: 2,
+      description: 'Practical, person-facing depth: how this actually shows up for someone, what it feels like, what to do about it, concrete phrases and signals to offer. Written for guiding a real person through this in conversation.' },
+    { id: 'teacher', name: 'Teacher', sort_order: 3,
+      description: 'The working knowledge a facilitator or teacher needs: mechanisms, sequencing, what to watch for, common mistakes, how this connects to other areas of the framework. Assumes clinical/practice familiarity.' },
+    { id: 'scientist', name: 'Scientist', sort_order: 4,
+      description: 'Full mechanistic and evidence depth — the underlying science, the specific pathways, supporting research, edge cases and failure modes. The fullest, most technical version of this topic.' },
+  ];
+  levels.forEach(l => {
+    db.run(`INSERT OR IGNORE INTO knowledge_levels_config (id,name,sort_order,description) VALUES (?,?,?,?)`,
+      [l.id, l.name, l.sort_order, l.description]);
   });
 }
 
@@ -1909,6 +2020,154 @@ function deleteBreathingPattern(id) {
   getDbSync().run('DELETE FROM breathing_patterns WHERE id=?', [id]);
   save();
 }
+
+// ══ Sectioned knowledge (Per Bot 15p) ══
+
+// -- Levels config --
+function getKnowledgeLevels() {
+  return queryAll('SELECT * FROM knowledge_levels_config ORDER BY sort_order ASC');
+}
+function addKnowledgeLevel(id, name, sortOrder, description) {
+  getDbSync().run('INSERT INTO knowledge_levels_config (id,name,sort_order,description) VALUES (?,?,?,?)',
+    [id, name, sortOrder, description || '']);
+  save();
+}
+function updateKnowledgeLevel(id, fields) {
+  const allowed = ['name', 'sort_order', 'description'];
+  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!sets.length) return;
+  const params = sets.map(k => fields[k]);
+  params.push(id);
+  getDbSync().run(`UPDATE knowledge_levels_config SET ${sets.map(k => `${k}=?`).join(',')} WHERE id=?`, params);
+  save();
+}
+function deleteKnowledgeLevel(id) {
+  // Deliberately doesn't cascade-delete existing content at this level —
+  // removing a level from the ladder shouldn't silently destroy work
+  // already written at it; that content just becomes unreachable via the
+  // tool until the level (or an equivalent one) exists again.
+  getDbSync().run('DELETE FROM knowledge_levels_config WHERE id=?', [id]);
+  save();
+}
+
+// -- Documents (source material only — never injected live, see schema comment) --
+function createKnowledgeDocument(id, title, sourceNote, rawText, skinId) {
+  getDbSync().run('INSERT INTO knowledge_documents (id,title,source_note,raw_text,skin_id) VALUES (?,?,?,?,?)',
+    [id, title, sourceNote || '', rawText || '', skinId || null]);
+  save();
+}
+function getKnowledgeDocuments() {
+  return queryAll('SELECT id,title,source_note,skin_id,archived,created_at FROM knowledge_documents ORDER BY created_at DESC');
+}
+function getKnowledgeDocument(id) {
+  return queryOne('SELECT * FROM knowledge_documents WHERE id=?', [id]);
+}
+function archiveKnowledgeDocument(id, archived) {
+  getDbSync().run('UPDATE knowledge_documents SET archived=? WHERE id=?', [archived ? 1 : 0, id]);
+  save();
+}
+function deleteKnowledgeDocument(id) {
+  getDbSync().run('DELETE FROM knowledge_documents WHERE id=?', [id]);
+  save();
+}
+
+// -- Topics --
+function createKnowledgeTopic(id, documentId, title, menuLine, skinId, facilitatorId) {
+  getDbSync().run(
+    'INSERT INTO knowledge_topics (id,document_id,title,menu_line,skin_id,facilitator_id) VALUES (?,?,?,?,?,?)',
+    [id, documentId || null, title, menuLine, skinId || null, facilitatorId || null]
+  );
+  save();
+}
+function updateKnowledgeTopic(id, fields) {
+  const allowed = ['title', 'menu_line', 'skin_id', 'facilitator_id', 'archived'];
+  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!sets.length) return;
+  const params = sets.map(k => fields[k]);
+  params.push(id);
+  getDbSync().run(`UPDATE knowledge_topics SET ${sets.map(k => `${k}=?`).join(',')} WHERE id=?`, params);
+  save();
+}
+function deleteKnowledgeTopic(id) {
+  getDbSync().run('DELETE FROM knowledge_topic_content WHERE topic_id=?', [id]);
+  getDbSync().run('DELETE FROM knowledge_topic_links WHERE topic_id=? OR linked_topic_id=?', [id, id]);
+  getDbSync().run('DELETE FROM knowledge_topics WHERE id=?', [id]);
+  save();
+}
+// Talk-facing menu — id/title/menu_line only, scoped to skin (blank =
+// universal) and facilitator (blank = every facilitator's own sessions;
+// set = only that facilitator's sessions, per Per's own-knowledge ask).
+// This is the ONLY thing sent on every turn; everything else is fetched
+// on demand via the tool.
+function getKnowledgeMenu(skinId, facilitatorId) {
+  return queryAll(
+    `SELECT id, title, menu_line FROM knowledge_topics
+     WHERE archived=0
+       AND (skin_id IS NULL OR skin_id=?)
+       AND (facilitator_id IS NULL OR facilitator_id=?)
+     ORDER BY title ASC`,
+    [skinId || null, facilitatorId || null]
+  );
+}
+function getKnowledgeTopic(id) {
+  return queryOne('SELECT * FROM knowledge_topics WHERE id=?', [id]);
+}
+function getKnowledgeTopicsForDocument(documentId) {
+  return queryAll('SELECT * FROM knowledge_topics WHERE document_id=? ORDER BY title ASC', [documentId]);
+}
+function getAllKnowledgeTopicsAdmin() {
+  return queryAll(`SELECT t.*, d.title as document_title, sk.name as skin_name
+    FROM knowledge_topics t
+    LEFT JOIN knowledge_documents d ON t.document_id=d.id
+    LEFT JOIN skins sk ON t.skin_id=sk.id
+    ORDER BY t.title ASC`);
+}
+
+// -- Content per level --
+function setKnowledgeTopicContent(topicId, levelId, content) {
+  getDbSync().run(
+    `INSERT INTO knowledge_topic_content (id,topic_id,level_id,content) VALUES (?,?,?,?)
+     ON CONFLICT(topic_id,level_id) DO UPDATE SET content=excluded.content, updated_at=datetime('now')`,
+    [crypto.randomUUID(), topicId, levelId, content]
+  );
+  save();
+}
+// The actual tool-facing lookup — this is what get_knowledge resolves to.
+function getKnowledgeTopicContent(topicId, levelId) {
+  return queryOne('SELECT * FROM knowledge_topic_content WHERE topic_id=? AND level_id=?', [topicId, levelId]);
+}
+function getKnowledgeTopicAllContent(topicId) {
+  return queryAll(
+    `SELECT c.*, l.name as level_name, l.sort_order FROM knowledge_topic_content c
+     JOIN knowledge_levels_config l ON c.level_id=l.id
+     WHERE c.topic_id=? ORDER BY l.sort_order ASC`,
+    [topicId]
+  );
+}
+
+// -- Cross-links --
+function linkKnowledgeTopics(topicId, linkedTopicId) {
+  if (topicId === linkedTopicId) return;
+  getDbSync().run('INSERT OR IGNORE INTO knowledge_topic_links (id,topic_id,linked_topic_id) VALUES (?,?,?)',
+    [crypto.randomUUID(), topicId, linkedTopicId]);
+  getDbSync().run('INSERT OR IGNORE INTO knowledge_topic_links (id,topic_id,linked_topic_id) VALUES (?,?,?)',
+    [crypto.randomUUID(), linkedTopicId, topicId]);
+  save();
+}
+function unlinkKnowledgeTopics(topicId, linkedTopicId) {
+  getDbSync().run('DELETE FROM knowledge_topic_links WHERE (topic_id=? AND linked_topic_id=?) OR (topic_id=? AND linked_topic_id=?)',
+    [topicId, linkedTopicId, linkedTopicId, topicId]);
+  save();
+}
+function getLinkedKnowledgeTopics(topicId) {
+  return queryAll(
+    `SELECT t.id, t.title, t.menu_line FROM knowledge_topic_links kl
+     JOIN knowledge_topics t ON kl.linked_topic_id=t.id
+     WHERE kl.topic_id=? AND t.archived=0`,
+    [topicId]
+  );
+}
+
 // Curated content shelves on the calm landing screen (Per Bot 28) — same
 // "explicitly marked, not automatic" reasoning as getFeaturedCourses.
 // Grouped by content_type client-side (meditation/practice/etc.) into
@@ -3289,6 +3548,16 @@ function addGuestLead(id, name, email, source) {
 function getGuestLeads() { return queryAll('SELECT * FROM guest_leads ORDER BY created_at DESC'); }
 function deleteGuestLead(id) { getDbSync().run('DELETE FROM guest_leads WHERE id=?', [id]); save(); }
 function getGuestLead(id) { return queryOne('SELECT * FROM guest_leads WHERE id=?', [id]); }
+// Per Bot 15o — badge count for the People nav link. "Unseen" here means
+// "never opened the Enquiries list since this came in" — viewing the list
+// clears it, unlike facilitator requests below (see getPendingFacilitatorRequestCount).
+function getUnseenGuestLeadCount() {
+  return queryOne('SELECT COUNT(*) as c FROM guest_leads WHERE seen_at IS NULL')?.c || 0;
+}
+function markGuestLeadsSeen() {
+  getDbSync().run("UPDATE guest_leads SET seen_at=datetime('now') WHERE seen_at IS NULL");
+  save();
+}
 
 // ── Facilitator requests (Per Bot 5, item 11) ──
 function createFacilitatorRequest(id, userId, name, email, message) {
@@ -3315,6 +3584,13 @@ function getFacilitatorRequests(status) {
      ORDER BY fr.created_at DESC`,
     params
   );
+}
+// Per Bot 15o — badge count for the People nav link. Deliberately just a
+// count of status='pending', not a separate "seen" concept — the badge
+// should only clear when the request is actually acted on (approved/
+// declined/deferred/archived), not just by glancing at the list.
+function getPendingFacilitatorRequestCount() {
+  return queryOne("SELECT COUNT(*) as c FROM facilitator_requests WHERE status='pending'")?.c || 0;
 }
 function getFacilitatorRequestById(id) {
   return queryOne(
@@ -4309,6 +4585,13 @@ module.exports = {
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,
   getBreathingPatterns, getBreathingPattern, getBreathingPatternMenu, createBreathingPattern, updateBreathingPattern, deleteBreathingPattern,
+  // Sectioned knowledge (Per Bot 15p)
+  getKnowledgeLevels, addKnowledgeLevel, updateKnowledgeLevel, deleteKnowledgeLevel,
+  createKnowledgeDocument, getKnowledgeDocuments, getKnowledgeDocument, archiveKnowledgeDocument, deleteKnowledgeDocument,
+  createKnowledgeTopic, updateKnowledgeTopic, deleteKnowledgeTopic, getKnowledgeMenu, getKnowledgeTopic,
+  getKnowledgeTopicsForDocument, getAllKnowledgeTopicsAdmin,
+  setKnowledgeTopicContent, getKnowledgeTopicContent, getKnowledgeTopicAllContent,
+  linkKnowledgeTopics, unlinkKnowledgeTopics, getLinkedKnowledgeTopics,
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
@@ -4379,10 +4662,10 @@ module.exports = {
   // Invitations
   createInvitation, getInvitationByToken, acceptInvitation, getInvitationsForFacilitator,
   // Guest leads
-  addGuestLead, getGuestLeads, deleteGuestLead, getGuestLead,
+  addGuestLead, getGuestLeads, deleteGuestLead, getGuestLead, getUnseenGuestLeadCount, markGuestLeadsSeen,
   createFacilitatorRequest, getPendingFacilitatorRequestByEmail, getFacilitatorRequests,
   getFacilitatorRequestById, setFacilitatorRequestStatus, deleteFacilitatorRequest,
-  getLatestFacilitatorRequestForUser,
+  getLatestFacilitatorRequestForUser, getPendingFacilitatorRequestCount,
   // Membership plans
   getMembershipPlans, updateMembershipPlan,
   // MOTD
