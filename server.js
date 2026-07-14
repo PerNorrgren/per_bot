@@ -3951,6 +3951,54 @@ async function resolveGetKnowledgeTool(input) {
   return row.content;
 }
 
+// Per Bot 15r — the "go outside the boundary, but stay within the app's
+// own material" fallback Per asked for. Deliberately a second, separate
+// tool from get_knowledge rather than folded into it: get_knowledge is a
+// direct, cheap lookup by (topic, level) — this one is a real search,
+// genuinely slower and more expensive (it's its own Claude call), meant
+// for the rarer case where the curated ladder above doesn't have
+// something a conversation actually needs. Searches talk_context_documents
+// — the old Context Documents feature, kept alive for exactly this,
+// having stopped being injected into every turn (see its schema comment).
+// Never reaches beyond the app's own uploaded material — no web search,
+// nothing outside what's actually been fed into this app.
+const SEARCH_SOURCE_TOOL_DEF = {
+  name: 'search_source_material',
+  description: "Search the full library of originally-uploaded source documents for something relevant that the curated knowledge base above doesn't cover. Slower than get_knowledge and only worth reaching for when a conversation genuinely needs depth that isn't in any topic yet — not a first resort, and not for anything the knowledge menu already has a topic for.",
+  input_schema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'What to search for — a real question or concept, not a single keyword.' },
+    },
+    required: ['query'],
+  },
+};
+async function resolveSearchSourceMaterialTool(input, skinId) {
+  const docs = db.getContextDocumentsForSkin(skinId);
+  if (!docs.length) return 'No source material has been uploaded yet — nothing to search.';
+  // Defensive cap only, same reasoning as the generation pipeline's own
+  // MAX_CHARS — stops an accidental very-large corpus from becoming a
+  // silent runaway cost on a tool call that can fire mid-conversation.
+  const MAX_CHARS = 300000;
+  let corpus = docs.map(d => `=== ${d.title} ===\n${d.content}`).join('\n\n');
+  if (corpus.length > MAX_CHARS) corpus = corpus.slice(0, MAX_CHARS);
+  const searchPrompt = `You are searching a library of source documents for material relevant to a specific query, on behalf of another AI mid-conversation with a real person. Read the documents below and extract only the passages genuinely relevant to the query — a paragraph or two per relevant point is plenty, not whole sections. If nothing here is genuinely relevant, say so plainly rather than including tangential material to seem useful.
+
+QUERY: ${input.query}
+
+SOURCE DOCUMENTS:
+${corpus}`;
+  try {
+    return await anthropicFetch(
+      'You are a precise research assistant. Extract only what is genuinely relevant to the query; never pad, never include tangential material just to have something to say.',
+      [{ role: 'user', content: searchPrompt }],
+      1200
+    );
+  } catch(e) {
+    return `Search failed (${e.message}) — proceed with what you already know rather than waiting on this.`;
+  }
+}
+
 // maxTokens defaults raised from 400 → 1500 (Per Bot 33h). On models with
 // adaptive thinking on by default, thinking tokens are drawn from the same
 // max_tokens budget as the visible reply — 400 was tight enough on Opus
@@ -3968,10 +4016,18 @@ async function callClaude(systemPrompt, messages, maxTokens = 1500) {
 // need or currently offer a knowledge menu at all). Harmless to call even
 // when no knowledge topics exist yet: the menu in the system prompt is
 // empty, so there's nothing for the model to reach for.
-async function callClaudeWithKnowledge(systemPrompt, messages, maxTokens = 1500) {
+// Per Bot 15r — now also offers search_source_material, scoped to the
+// client's own skin via closure (the tool-resolver signature only ever
+// receives the model's own input, not caller context, so skinId has to
+// be captured here rather than threaded through the generic tool loop).
+async function callClaudeWithKnowledge(systemPrompt, messages, maxTokens = 1500, skinId = null) {
   const text = await anthropicFetchWithTools(
-    systemPrompt, messages, [KNOWLEDGE_TOOL_DEF],
-    { get_knowledge: resolveGetKnowledgeTool },
+    systemPrompt, messages,
+    [KNOWLEDGE_TOOL_DEF, SEARCH_SOURCE_TOOL_DEF],
+    {
+      get_knowledge: resolveGetKnowledgeTool,
+      search_source_material: (input) => resolveSearchSourceMaterialTool(input, skinId),
+    },
     maxTokens
   );
   return stripMarkdown(text);
@@ -4212,15 +4268,20 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       ? session.history
       : [{ role: 'user', content: 'begin' }];
 
-    const reply = await callClaudeWithKnowledge(session.systemPrompt, messages, 1500);
+    // Per Bot 15r — fetched fresh via session.clientId, not the
+    // block-scoped `client` above (which only exists the one time
+    // systemPrompt gets built) — same reasoning as voiceClient below.
+    const currentClient = session.clientId ? db.getUser(session.clientId) : null;
+    const reply = await callClaudeWithKnowledge(session.systemPrompt, messages, 1500, currentClient?.skin_id);
     session.history.push({ role: 'assistant', content: reply });
     session.transcript.push(`BOT: ${reply}`);
 
     // Per Bot 33z — session.clientId (not the block-scoped `client` above,
     // which only exists the one time systemPrompt gets built) is the
     // source of truth for which voice this reply should be cached
-    // against, checked fresh on every turn.
-    const voiceClient = session.clientId ? db.getUser(session.clientId) : null;
+    // against, checked fresh on every turn. Reuses currentClient fetched
+    // just above rather than a second identical lookup.
+    const voiceClient = currentClient;
     const { text: afterSignals, audioUrl: signalAudioUrl } = await resolveSignalMarkers(reply, voiceClient?.voice_id);
     const { text: cleanReply, breathingPattern } = resolveBreathingMarker(afterSignals);
     res.json({ reply: cleanReply, signalAudioUrl, breathingPattern });
