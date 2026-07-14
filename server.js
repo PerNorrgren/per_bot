@@ -2705,10 +2705,15 @@ async function runKnowledgeGeneration(doc, log) {
   const rawText = doc.raw_text.length > MAX_CHARS ? doc.raw_text.slice(0, MAX_CHARS) : doc.raw_text;
 
   log(`Reading "${doc.title}" (${doc.raw_text.length.toLocaleString()} characters) and identifying topics...`);
+  // Per Bot 15s — this was hitting the default 25s timeout on real
+  // documents (172k characters was enough to trigger it) and failing
+  // with a misleading "user aborted" message. Backgrounded job, nobody
+  // waiting on a live reply — 3 minutes is a reasonable ceiling for
+  // reading a whole document and proposing a full topic list.
   const extractionResponse = await anthropicFetch(
     'You are a careful, precise knowledge editor. Follow the instructions exactly and respond with valid JSON only — no preamble, no markdown fences.',
     [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText) }],
-    8000
+    8000, 180000
   );
   let topicStubs;
   try {
@@ -2734,7 +2739,7 @@ async function runKnowledgeGeneration(doc, log) {
       const levelsResponse = await anthropicFetch(
         'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond with valid JSON only — no preamble, no markdown fences.',
         [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(doc.title, topic.title, topic.menuLine, levels, rawText) }],
-        8000
+        8000, 180000
       );
       const levelContent = JSON.parse(levelsResponse.replace(/^```json\s*|```\s*$/g, '').trim());
       for (const level of levels) {
@@ -2797,7 +2802,7 @@ async function runKnowledgeLevelBackfill(level, log) {
       const response = await anthropicFetch(
         'You are a careful, precise knowledge writer, grounded strictly in the material given. Respond with valid JSON only — no preamble, no markdown fences.',
         [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(topic.document_title || topic.title, topic.title, topic.menu_line, [level], groundingText) }],
-        4000
+        4000, 180000
       );
       const parsed = JSON.parse(response.replace(/^```json\s*|```\s*$/g, '').trim());
       if (parsed[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, parsed[level.id]);
@@ -3840,10 +3845,19 @@ app.delete('/api/messages/:id', auth.requireAuthApi(['admin','facilitator']), (r
 // reasons) never addressed the actual cause, which is why it didn't help
 // on its own.
 //
-// AbortSignal.timeout(25000) — fails fast rather than hanging indefinitely
-// if a request genuinely stalls, so a bad connection burns a few seconds
-// of a retry budget instead of the whole thing.
-async function anthropicFetch(systemPrompt, messages, maxTokens) {
+// AbortSignal.timeout — fails fast rather than hanging indefinitely if a
+// request genuinely stalls, so a bad connection burns a few seconds of a
+// retry budget instead of the whole thing. Defaults to 25s (unchanged for
+// every existing caller — a live chat reply should fail fast, not leave
+// someone waiting). Callers processing something genuinely large — the
+// knowledge-generation pipeline reading a whole document, say — pass a
+// longer one explicitly; that's a real, slow-but-legitimate call, not a
+// stall, and 25s was never going to be enough for it regardless of
+// connection quality. The "Error: The user aborted a request" message
+// this produces when it fires is Node's own generic AbortController
+// wording — misleading in that it sounds like someone clicked cancel,
+// but it's always this timeout, never an actual person aborting anything.
+async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 25000) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -3853,7 +3867,7 @@ async function anthropicFetch(systemPrompt, messages, maxTokens) {
       'Connection': 'close',
     },
     body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages }),
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json();
   if (!data.content) throw new Error(JSON.stringify(data));
@@ -3989,10 +4003,15 @@ QUERY: ${input.query}
 SOURCE DOCUMENTS:
 ${corpus}`;
   try {
+    // Per Bot 15s — 45s rather than the 25s default: this can search a
+    // genuinely large corpus, and 25s was proving too tight even for the
+    // backgrounded generation pipeline. Deliberately not as long as
+    // generation's own 180s, though — this fires mid-conversation, with
+    // someone actually waiting on a reply, not watching a progress log.
     return await anthropicFetch(
       'You are a precise research assistant. Extract only what is genuinely relevant to the query; never pad, never include tangential material just to have something to say.',
       [{ role: 'user', content: searchPrompt }],
-      1200
+      1200, 45000
     );
   } catch(e) {
     return `Search failed (${e.message}) — proceed with what you already know rather than waiting on this.`;
