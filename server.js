@@ -2673,6 +2673,40 @@ app.put('/api/admin/knowledge/topics/:id/content/:levelId', auth.requireAuthApi(
   db.setKnowledgeTopicContent(req.params.id, req.params.levelId, req.body.content);
   res.json({ ok: true });
 });
+// Per Bot 15v — regenerate one existing topic's content directly, rather
+// than needing to re-run the whole document (which would re-propose and
+// duplicate every topic that already succeeded). Exactly the fix needed
+// for a topic that failed to parse the first time around — same
+// underlying call as the pipeline, just scoped to one topic. Synchronous
+// rather than backgrounded: this is one API call, not a whole document's
+// worth of them, so it comfortably fits in a normal request/response.
+app.post('/api/admin/knowledge/topics/:id/generate-content', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const topic = db.getKnowledgeTopic(req.params.id);
+    if (!topic) return res.status(404).json({ error: 'Topic not found.' });
+    const levels = db.getKnowledgeLevels();
+    if (!levels.length) return res.status(400).json({ error: 'No knowledge levels exist yet.' });
+
+    let sourceTitle = topic.title;
+    let sourceText = null;
+    if (topic.document_id) {
+      const doc = db.getKnowledgeDocument(topic.document_id);
+      if (doc) { sourceTitle = doc.title; sourceText = doc.raw_text; }
+    }
+    if (!sourceText) {
+      // No linked document (or it's since been deleted) — fall back to
+      // whatever content already exists for this topic, same reasoning
+      // as the level-backfill job.
+      const existing = db.getKnowledgeTopicAllContent(topic.id);
+      sourceText = existing.length ? existing.map(c => `[${c.level_name}]\n${c.content}`).join('\n\n') : topic.menu_line;
+    }
+
+    const levelContent = await generateContentForTopic(topic.id, sourceTitle, topic.title, topic.menu_line, levels, sourceText);
+    res.json({ ok: true, levelsGenerated: Object.keys(levelContent) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/knowledge/topics/:id/links/:linkedId', auth.requireAuthApi(['admin']), (req, res) => {
   db.linkKnowledgeTopics(req.params.id, req.params.linkedId);
   res.json({ ok: true });
@@ -2694,26 +2728,82 @@ app.delete('/api/admin/knowledge/topics/:id/links/:linkedId', auth.requireAuthAp
 // real document can easily produce a dozen-plus topics, each needing
 // its own API round-trip — this would time out as a synchronous request
 // long before a real document finished.
+// Per Bot 15v — parses the ===LEVEL:id===...===END=== format from
+// KNOWLEDGE_GENERATE_LEVELS_PROMPT. Replaces JSON.parse for this specific
+// response — see that prompt's own comment for why: real prose reliably
+// broke strict JSON parsing (unescaped line breaks reading as invalid
+// control characters), and a plain delimiter has no escaping rules to
+// get wrong in the first place. Returns { levelId: content }, only for
+// levels actually found in the response — a level missing from the
+// output (rather than present-but-empty) just doesn't get a key, same
+// as the old JSON version's `if (levelContent[level.id])` guard expected.
+function parseLevelDelimitedResponse(text, levels) {
+  const result = {};
+  for (let i = 0; i < levels.length; i++) {
+    const level = levels[i];
+    const startMarker = `===LEVEL:${level.id}===`;
+    const startIdx = text.indexOf(startMarker);
+    if (startIdx === -1) continue;
+    const contentStart = startIdx + startMarker.length;
+    // Content runs until the next level's marker, or ===END===, or the
+    // end of the text — whichever comes first.
+    const nextLevelIdx = i + 1 < levels.length ? text.indexOf(`===LEVEL:${levels[i + 1].id}===`, contentStart) : -1;
+    const endIdx = text.indexOf('===END===', contentStart);
+    const candidates = [nextLevelIdx, endIdx, text.length].filter(n => n !== -1);
+    const contentEnd = Math.min(...candidates);
+    const content = text.slice(contentStart, contentEnd).trim();
+    if (content) result[level.id] = content;
+  }
+  return result;
+}
+
+// Per Bot 15v — the actual per-topic generation call, pulled out into its
+// own function so it can be reused both by the full document pipeline
+// (runKnowledgeGeneration) and by a standalone "regenerate this one
+// topic's content" action — needed because a topic that failed to parse
+// during a full run (see the delimiter-format comment above) shouldn't
+// require re-running the whole document and duplicating every topic that
+// already succeeded.
+async function generateContentForTopic(topicId, docTitle, topicTitle, menuLine, levels, rawText) {
+  const levelsResponse = await anthropicFetch(
+    'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond in the exact delimiter format requested — no JSON, no markdown fences, no commentary.',
+    [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(docTitle, topicTitle, menuLine, levels, rawText) }],
+    16000, 240000, true
+  );
+  const levelContent = parseLevelDelimitedResponse(levelsResponse, levels);
+  if (!Object.keys(levelContent).length) throw new Error('No level content found in the response — check it came back in the expected format.');
+  for (const level of levels) {
+    if (levelContent[level.id]) db.setKnowledgeTopicContent(topicId, level.id, levelContent[level.id]);
+  }
+  return levelContent;
+}
+
 async function runKnowledgeGeneration(doc, log) {
   const levels = db.getKnowledgeLevels();
   if (!levels.length) throw new Error('No knowledge levels exist yet — nothing to generate content for.');
 
-  // Defensive cap only — a whole book is still fine context-window-wise,
-  // this just stops an accidental multi-megabyte paste from becoming a
-  // silent runaway cost across every one of the per-topic calls below.
-  const MAX_CHARS = 400000;
+  // Defensive cap only — a whole book is still fine context-window-wise
+  // (Sonnet 5's context window is 1M tokens), this just stops an
+  // accidental multi-megabyte paste from becoming a silent runaway cost
+  // across every one of the per-topic calls below. Raised from 400k
+  // Per Bot 15u — the Science Foundation alone was already 305k
+  // characters, 77% of that ceiling, with more large documents still to
+  // come; 1M characters leaves real room without approaching the actual
+  // context limit.
+  const MAX_CHARS = 1000000;
   const rawText = doc.raw_text.length > MAX_CHARS ? doc.raw_text.slice(0, MAX_CHARS) : doc.raw_text;
 
   log(`Reading "${doc.title}" (${doc.raw_text.length.toLocaleString()} characters) and identifying topics...`);
-  // Per Bot 15s — this was hitting the default 25s timeout on real
-  // documents (172k characters was enough to trigger it) and failing
-  // with a misleading "user aborted" message. Backgrounded job, nobody
-  // waiting on a live reply — 3 minutes is a reasonable ceiling for
-  // reading a whole document and proposing a full topic list.
+  // Per Bot 15u — widened again: the Signal Guide (172k chars) needed the
+  // Per Bot 15t fix; the very next document (Science Foundation, 305k
+  // chars) is nearly double that. max_tokens only costs money for tokens
+  // actually generated, never for the ceiling itself, so there's no real
+  // downside to generous headroom here — better to set this once with
+  // real margin than keep reactively bumping it document by document.
   const extractionResponse = await anthropicFetch(
     'You are a careful, precise knowledge editor. Follow the instructions exactly and respond with valid JSON only — no preamble, no markdown fences.',
     [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText) }],
-    16000, 180000, true
+    32000, 300000, true
   );
   let topicStubs;
   try {
@@ -2736,15 +2826,7 @@ async function runKnowledgeGeneration(doc, log) {
   for (const topic of createdTopics) {
     log(`Generating depth content for "${topic.title}"...`);
     try {
-      const levelsResponse = await anthropicFetch(
-        'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond with valid JSON only — no preamble, no markdown fences.',
-        [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(doc.title, topic.title, topic.menuLine, levels, rawText) }],
-        12000, 180000, true
-      );
-      const levelContent = JSON.parse(levelsResponse.replace(/^```json\s*|```\s*$/g, '').trim());
-      for (const level of levels) {
-        if (levelContent[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, levelContent[level.id]);
-      }
+      await generateContentForTopic(topic.id, doc.title, topic.title, topic.menuLine, levels, rawText);
     } catch(e) {
       log(`  Could not generate content for "${topic.title}" (${e.message}) — the topic itself was still created; you can generate its content individually later.`);
     }
@@ -2799,13 +2881,7 @@ async function runKnowledgeLevelBackfill(level, log) {
       ? existing.map(c => `[${c.level_name}]\n${c.content}`).join('\n\n')
       : topic.menu_line;
     try {
-      const response = await anthropicFetch(
-        'You are a careful, precise knowledge writer, grounded strictly in the material given. Respond with valid JSON only — no preamble, no markdown fences.',
-        [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(topic.document_title || topic.title, topic.title, topic.menu_line, [level], groundingText) }],
-        6000, 180000, true
-      );
-      const parsed = JSON.parse(response.replace(/^```json\s*|```\s*$/g, '').trim());
-      if (parsed[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, parsed[level.id]);
+      await generateContentForTopic(topic.id, topic.document_title || topic.title, topic.title, topic.menu_line, [level], groundingText);
       done++;
     } catch(e) {
       log(`  Could not backfill "${topic.title}" (${e.message}).`);

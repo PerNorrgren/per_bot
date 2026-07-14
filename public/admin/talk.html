@@ -407,6 +407,10 @@
       <div><label>Menu line <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(the only thing carried every turn — write for an AI judging relevance, not a person reading it)</span></label>
         <input type="text" id="kbTopicMenuLine" placeholder="e.g. why background stress needs grounding before anything else"/>
       </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:6px">
+        <button type="button" class="btn primary" onclick="regenerateKbTopicContent()">🔄 Regenerate all content (AI)</button>
+        <span id="kbTopicRegenStatus" style="font-size:12px; color:rgba(255,255,255,0.4)"></span>
+      </div>
       <div id="kbTopicLevelsWrap" style="display:flex; flex-direction:column; gap:10px; margin-top:6px"></div>
       <div style="margin-top:6px">
         <label>Related topics</label>
@@ -1191,6 +1195,26 @@
     err.textContent = '';
     err.style.color = 'rgba(180,230,200,0.85)';
     err.textContent = 'Saved.';
+  }
+  // Per Bot 15v — fixes topics that failed generation the first time
+  // (see the delimiter-format fix) without re-running the whole document
+  // pipeline, which would re-propose and duplicate every topic that
+  // already succeeded. One API call, scoped to just this topic.
+  async function regenerateKbTopicContent() {
+    const status = document.getElementById('kbTopicRegenStatus');
+    status.textContent = 'Generating… this can take a minute or two.';
+    status.style.color = 'rgba(255,255,255,0.4)';
+    try {
+      const res = await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}/generate-content`, { method: 'POST' });
+      const data = await res.json();
+      if (data.error) { status.textContent = data.error; status.style.color = 'rgba(255,140,120,0.85)'; return; }
+      status.textContent = `Done — generated: ${data.levelsGenerated.join(', ')}.`;
+      status.style.color = 'rgba(180,230,200,0.85)';
+      openKbTopicModal(_kbEditingTopicId); // refresh the modal to show the new content
+    } catch(e) {
+      status.textContent = 'Network error — try again.';
+      status.style.color = 'rgba(255,140,120,0.85)';
+    }
   }
   async function saveKbTopicLevelContent(levelId) {
     const content = document.getElementById(`kbTopicLevel_${levelId}`).value;

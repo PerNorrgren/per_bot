@@ -223,7 +223,15 @@ PACING: one question, then wait. Silence is not a gap to fill — it's where the
 
 NO EVALUATION, NO RESCUING: never "well done," never "that's great," never rush to reassure when something difficult surfaces. Stay present with it. If it gets heavy, ask before going further: "Okay to stay with that a moment longer?"
 
-VOICE: Plain. Direct. Warm without soft. Short sentences. One idea at a time. Gunning Fog 6–8. This is a voice conversation — keep responses short and conversational. You sound like someone who has been in a lot of rooms with a lot of people.`;
+VOICE: Plain. Direct. Warm without soft. Short sentences. One idea at a time. Gunning Fog 6–8. This is a voice conversation — keep responses short and conversational. You sound like someone who has been in a lot of rooms with a lot of people.
+
+Warmth is carried, not performed. Carrying it looks like precision and the willingness to name a hard thing plainly — not sentences that announce "I care about you." If a reply would read as reassurance more than as accuracy, it's performing, not carrying.
+
+Language is inside-out, always: the body initiates, the world responds. "Press the heel — feel the floor press back," never "the floor supports you." This isn't a phrasing preference; it's the difference between agency and passivity in what's actually being described.
+
+Never evangelical. No "you'll be okay," no "this will change everything," no language of breakthroughs or healing journeys — these are exactly the phrases someone who's been stuck a long time has already heard, from people who meant well, that didn't hold. What actually earns trust: here's what's happening, here's why it's been hard, here's what the body needs — no drama, no promises, just mechanism and invitation.
+
+Sensation before mechanism, in the small moments too, not just the formal inquiry structure above: let something be felt before it's explained, when there's room to do both at all.`;
 
 // Per Bot 33u — crisis resources, one per supported language. Verified
 // live (not from training data, which goes stale on exactly this kind of
@@ -538,6 +546,21 @@ Respond with ONLY a JSON array, no preamble, no markdown fences:
 // and drifting in framing). Levels and their descriptions are passed in
 // dynamically from knowledge_levels_config, not hardcoded, so a newly
 // added level gets picked up automatically without a prompt change.
+// Per Bot 15q — Step 2: for one already-identified topic, generate real
+// content at every level in the ladder, in one call (so the levels stay
+// consistent with each other rather than being generated independently
+// and drifting in framing). Levels and their descriptions are passed in
+// dynamically from knowledge_levels_config, not hardcoded, so a newly
+// added level gets picked up automatically without a prompt change.
+//
+// Per Bot 15v — deliberately NOT asking for JSON here any more. Real
+// multi-paragraph prose almost always contains literal line breaks, and
+// a model writing "valid JSON" doesn't reliably escape every one of them
+// as \n — in practice roughly 60% of a real generation run came back as
+// "Bad control character in string literal" or similar JSON.parse
+// failures, all from the exact same cause. A plain delimiter format has
+// no escaping rules to get right in the first place — the content
+// between two markers is just read verbatim, whatever it contains.
 const KNOWLEDGE_GENERATE_LEVELS_PROMPT = (docTitle, topicTitle, menuLine, levels, rawText) => `
 You are writing the actual depth content for one topic in a structured knowledge base, for an AI conversational companion (Talk) to draw on mid-conversation when this topic comes up in real depth.
 
@@ -552,10 +575,10 @@ ${levels.map(l => `- ${l.id} ("${l.name}"): ${l.description}`).join('\n')}
 SOURCE MATERIAL (draw only from what's actually here — do not invent claims, mechanisms, or citations not present in this material):
 ${rawText}
 
-Respond with ONLY a JSON object, no preamble, no markdown fences, one key per level id exactly as given above:
-{
-  ${levels.map(l => `"${l.id}": "..."`).join(',\n  ')}
-}`;
+Respond with each level's content one after another, in exactly this format — no JSON, no markdown fences, no commentary before or between sections:
+
+${levels.map(l => `===LEVEL:${l.id}===\n(the actual content for ${l.name} goes here — real prose, paragraph breaks and all, exactly as it should read)`).join('\n')}
+===END===`;
 
 const GENERATE_ARC_UPDATE = (currentArc, recentSummaries) => `
 Based on the current arc and recent session summaries, suggest an updated arc statement.
