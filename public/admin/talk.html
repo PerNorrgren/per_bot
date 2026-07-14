@@ -1136,15 +1136,53 @@
   function renderKbTopicsTable() {
     const el = document.getElementById('kbTopicsTable');
     if (!_kbTopics.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No topics yet — generate some from a source document above.</div>'; return; }
-    el.innerHTML = _kbTopics.map(t => `
-      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+    const totalLevels = _kbLevels.length || 1;
+    el.innerHTML = _kbTopics.map(t => {
+      const count = t.content_count || 0;
+      let statusHtml;
+      if (count === 0) {
+        statusHtml = `<span style="color:rgba(255,140,120,0.85); font-weight:bold">⚠ Empty — no content generated yet</span>`;
+      } else if (count < totalLevels) {
+        statusHtml = `<span style="color:rgba(255,200,120,0.85)">${count}/${totalLevels} levels</span>`;
+      } else {
+        statusHtml = `<span style="color:rgba(180,230,200,0.7)">✓ ${count}/${totalLevels} levels</span>`;
+      }
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid ${count === 0 ? 'rgba(255,140,120,0.3)' : 'rgba(255,255,255,0.07)'}; border-radius:8px;">
         <div style="flex:1">
           <div style="font-size:13px; color:rgba(255,255,255,0.75)">${escHtml(t.title)}${t.archived ? ' <span style="color:rgba(255,160,140,0.7)">· archived</span>' : ''}${t.document_title ? ` <span style="color:rgba(255,255,255,0.3)">· from ${escHtml(t.document_title)}</span>` : ''}</div>
           <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px; font-style:italic">${escHtml(t.menu_line || '')}</div>
+          <div style="font-size:11px; margin-top:4px">${statusHtml}</div>
         </div>
+        <button class="btn sm primary" onclick="regenerateKbTopicRow('${t.id}', this)">${count === 0 ? '🔄 Generate content' : '🔄 Regenerate'}</button>
         <button class="btn sm" onclick="openKbTopicModal('${t.id}')">Edit</button>
         <button class="btn sm danger" onclick="deleteKbTopicRow('${t.id}')">Delete</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
+  }
+  // Per Bot 15w — one-click regenerate straight from the list row, no
+  // need to open Edit first to find the button. Disables just this row's
+  // button while working (not the whole list) so several can run one
+  // after another without confusion about which is mid-flight.
+  async function regenerateKbTopicRow(topicId, btnEl) {
+    const origText = btnEl.textContent;
+    btnEl.disabled = true;
+    btnEl.textContent = 'Generating…';
+    try {
+      const res = await fetch(`/api/admin/knowledge/topics/${topicId}/generate-content`, { method: 'POST' });
+      const data = await res.json();
+      if (data.error) {
+        appAlert(`Could not generate content: ${data.error}`);
+        btnEl.disabled = false;
+        btnEl.textContent = origText;
+        return;
+      }
+      loadKbTopics(); // re-render the whole row with the updated status
+    } catch(e) {
+      appAlert('Network error — try again.');
+      btnEl.disabled = false;
+      btnEl.textContent = origText;
+    }
   }
   async function deleteKbTopicRow(id) {
     if (!(await appConfirm('Delete this topic entirely? Talk will no longer be able to reach for it, at any level.'))) return;

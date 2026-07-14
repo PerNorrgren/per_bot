@@ -2115,8 +2115,15 @@ function getKnowledgeTopic(id) {
 function getKnowledgeTopicsForDocument(documentId) {
   return queryAll('SELECT * FROM knowledge_topics WHERE document_id=? ORDER BY title ASC', [documentId]);
 }
+// Per Bot 15w — content_count added so the admin list can show which
+// topics actually have depth content and which don't, at a glance,
+// without an N+1 fetch per topic just to find out. Per hit exactly this
+// gap: 13 topics existed with real titles/menu_lines but zero content
+// (see the delimiter-format fix), and the list gave no visible sign of
+// it — every row looked identical whether it had content or not.
 function getAllKnowledgeTopicsAdmin() {
-  return queryAll(`SELECT t.*, d.title as document_title, sk.name as skin_name
+  return queryAll(`SELECT t.*, d.title as document_title, sk.name as skin_name,
+    (SELECT COUNT(*) FROM knowledge_topic_content c WHERE c.topic_id=t.id AND c.content != '') as content_count
     FROM knowledge_topics t
     LEFT JOIN knowledge_documents d ON t.document_id=d.id
     LEFT JOIN skins sk ON t.skin_id=sk.id
