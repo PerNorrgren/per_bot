@@ -335,11 +335,16 @@
 
     <div>
       <div class="card">
-        <div class="card-header"><div class="card-title">Topics</div></div>
+        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+          <div class="card-title">Topics</div>
+          <button class="btn primary" onclick="triggerKbDuplicateScan()">🔍 Scan for duplicates</button>
+        </div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            Every topic Talk can reach for. The menu_line is the only thing carried on every turn — everything else here is fetched only when a conversation actually goes deep enough to need it.
+            Every topic Talk can reach for. The menu_line is the only thing carried on every turn — everything else here is fetched only when a conversation actually goes deep enough to need it. New generations now avoid recreating topics that already exist here — this scan is for cleaning up anything from before that existed.
           </div>
+          <div id="kbDuplicateScanLog" style="display:none; margin-bottom:14px; background:rgba(0,0,0,0.25); border-radius:8px; padding:12px 14px; font-size:11.5px; color:rgba(255,255,255,0.5); max-height:120px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"></div>
+          <div id="kbDuplicateGroups" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;"></div>
           <div id="kbTopicsTable" style="display:flex; flex-direction:column; gap:6px;">
             <div class="loading">Loading…</div>
           </div>
@@ -1122,6 +1127,72 @@
     } catch(e) {
       _kbBackfillTimer = setTimeout(() => pollKbBackfill(levelId), 3000);
     }
+  }
+
+  // Per Bot 15x — review-only duplicate scan. Shows groups for Per to
+  // decide on individually; never deletes anything on its own.
+  let _kbDuplicateScanTimer = null;
+  async function triggerKbDuplicateScan() {
+    const logEl = document.getElementById('kbDuplicateScanLog');
+    logEl.style.display = 'block';
+    logEl.textContent = 'Starting…';
+    document.getElementById('kbDuplicateGroups').innerHTML = '';
+    try {
+      await fetch('/api/admin/knowledge/scan-duplicates', { method: 'POST' });
+      pollKbDuplicateScan();
+    } catch(e) {
+      logEl.textContent = 'Could not start: ' + e.message;
+    }
+  }
+  async function pollKbDuplicateScan() {
+    clearTimeout(_kbDuplicateScanTimer);
+    try {
+      const res = await fetch('/api/admin/knowledge/scan-duplicates/status');
+      const job = await res.json();
+      const logEl = document.getElementById('kbDuplicateScanLog');
+      logEl.textContent = (job.log || []).join('\n') || 'Working…';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (job.error) { logEl.textContent += '\n\nError: ' + job.error; return; }
+      if (job.done) {
+        logEl.textContent += '\n\nDone.';
+        renderKbDuplicateGroups(job.result?.groups || []);
+        return;
+      }
+      _kbDuplicateScanTimer = setTimeout(pollKbDuplicateScan, 2500);
+    } catch(e) {
+      _kbDuplicateScanTimer = setTimeout(pollKbDuplicateScan, 3000);
+    }
+  }
+  function renderKbDuplicateGroups(groups) {
+    const el = document.getElementById('kbDuplicateGroups');
+    if (!groups.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(180,230,200,0.7);font-style:italic">No genuine duplicates found.</div>'; return; }
+    el.innerHTML = groups.map((g, gi) => `
+      <div style="background:rgba(255,200,120,0.06); border:1px solid rgba(255,200,120,0.25); border-radius:10px; padding:12px 14px;" id="kbDupGroup_${gi}">
+        <div style="font-size:11px; color:rgba(255,200,120,0.85); font-style:italic; margin-bottom:8px">${escHtml(g.reason)}</div>
+        ${g.topics.map(t => `
+          <label style="display:flex; align-items:flex-start; gap:8px; padding:4px 0; cursor:pointer">
+            <input type="radio" name="kbDupKeep_${gi}" value="${t.id}" ${t.id === g.recommendedKeepId ? 'checked' : ''} style="margin-top:3px"/>
+            <span style="font-size:12.5px; color:rgba(255,255,255,0.75)">${escHtml(t.title)} <span style="color:rgba(255,255,255,0.35); font-style:italic">— ${escHtml(t.menu_line || '')}</span></span>
+          </label>
+        `).join('')}
+        <div style="margin-top:8px">
+          <button class="btn sm primary" onclick="resolveKbDuplicateGroup(${gi}, ${JSON.stringify(g.topics.map(t=>t.id))})">Keep selected, delete the rest</button>
+          <button class="btn sm" onclick="document.getElementById('kbDupGroup_${gi}').remove()">Ignore this group</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  async function resolveKbDuplicateGroup(groupIndex, topicIds) {
+    const selected = document.querySelector(`input[name="kbDupKeep_${groupIndex}"]:checked`);
+    if (!selected) { appAlert('Choose which one to keep first.'); return; }
+    const keepId = selected.value;
+    const toDelete = topicIds.filter(id => id !== keepId);
+    if (!(await appConfirm(`Delete ${toDelete.length} topic(s), keeping the one selected? This can't be undone.`))) return;
+    for (const id of toDelete) {
+      await fetch(`/api/admin/knowledge/topics/${id}`, { method: 'DELETE' });
+    }
+    document.getElementById(`kbDupGroup_${groupIndex}`).remove();
+    loadKbTopics();
   }
 
   async function loadKbTopics() {

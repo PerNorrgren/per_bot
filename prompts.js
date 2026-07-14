@@ -521,18 +521,46 @@ This will be read by the client themselves. Write directly to them, second perso
 // proposes links between topics that are genuinely related, since this
 // call is the only point that ever sees the whole document at once — a
 // later per-topic call has no way to know what else exists.
-const KNOWLEDGE_EXTRACT_TOPICS_PROMPT = (docTitle, rawText) => `
+// Per Bot 15q — Step 1 of the knowledge-generation pipeline: read a whole
+// source document and propose a clean set of topics from it. Explicitly
+// asked to deduplicate and merge, since a real document (the Signal Guide,
+// Science Foundation, etc.) very often covers the same underlying idea
+// more than once from different angles — that redundancy should collapse
+// into one well-scoped topic, not become three near-identical ones. Also
+// proposes links between topics that are genuinely related, since this
+// call is the only point that ever sees the whole document at once — a
+// later per-topic call has no way to know what else exists.
+//
+// Per Bot 15x — now also takes existingTopics (title + menu_line from
+// every topic already in the knowledge base, across every document) so
+// dedup happens ACROSS documents too, not just within the one being
+// processed. Before this, generating from a second overlapping document
+// (ANS Architecture after the Signal Guide) reliably recreated the same
+// concepts under slightly different names — the model had no way to know
+// they already existed. This is the preventive fix Per asked for
+// ("built in when new content is added"), as distinct from the separate
+// scan-and-clean action for what's already duplicated from before this
+// existed.
+const KNOWLEDGE_EXTRACT_TOPICS_PROMPT = (docTitle, rawText, existingTopics = []) => `
 You are helping build a structured knowledge base from a source document, for an AI conversational companion (Talk) to draw on. Your job right now is ONLY to identify the topics this document contains — not to write the deep content itself, that happens in a separate step per topic.
 
 SOURCE DOCUMENT: "${docTitle}"
 
 ${rawText}
 
+${existingTopics.length ? `TOPICS THAT ALREADY EXIST IN THE KNOWLEDGE BASE (from other documents already processed):
+${existingTopics.map(t => `- ${t.title}: ${t.menu_line}`).join('\n')}
+
+Before proposing anything, check this list. Real documents on the same framework very often cover the same underlying concept from a different angle or with different terminology — that is NOT a new topic, it's the same one. Rules for handling this:
+- If this document covers a concept already in the list above, with the same or superficially different name, do NOT propose it as a new topic. Either leave it out entirely, or if this document genuinely adds real depth beyond what's already there, still don't create a duplicate — that additional depth belongs folded into the existing topic later, not as a second entry.
+- Only propose a new topic for something genuinely not already covered by the list above.
+- You may still propose links between a new topic and an existing one — reference the existing topic by its exact title from the list above, same as you would a new topic.
+` : ''}
 Read the whole document and propose a clean, well-scoped set of topics. Guidelines:
 - Each topic should be a genuinely distinct idea someone could ask about or a conversation could go deep on — not a arbitrary chapter/section split, and not so broad it's really several ideas glued together.
 - This document likely covers some ideas more than once, from different angles or at different points — merge those into ONE topic rather than producing near-duplicates. Favour fewer, well-scoped topics over many overlapping ones.
 - Give each topic a short, clear title (2–6 words) and a one-line menu_line: a single sentence, written for an AI deciding whether this topic is relevant to what's being discussed right now — specific enough to be useful, never vague ("stress and the body" is too vague; "why background stress needs grounding before anything else" is useful).
-- Propose links between topics that are genuinely, substantively related — not everything-to-everything, only real conceptual connections (e.g. a topic on the Moro Reflex Brake and a topic on Sleep as Substrate, since sleep is described as the main lever for the Brake). Reference linked topics by their exact title text.
+- Propose links between topics that are genuinely, substantively related — not everything-to-everything, only real conceptual connections (e.g. a topic on the Moro Reflex Brake and a topic on Sleep as Substrate, since sleep is described as the main lever for the Brake). Reference linked topics by their exact title text — this can be a title from this document's own new topics, or from the existing-topics list above.
 
 Respond with ONLY a JSON array, no preamble, no markdown fences:
 [
@@ -561,6 +589,29 @@ Respond with ONLY a JSON array, no preamble, no markdown fences:
 // failures, all from the exact same cause. A plain delimiter format has
 // no escaping rules to get right in the first place — the content
 // between two markers is just read verbatim, whatever it contains.
+// Per Bot 15x — the review-based cleanup counterpart to the preventive
+// cross-document dedup fix in KNOWLEDGE_EXTRACT_TOPICS_PROMPT above: for
+// topics that already exist from before that fix landed (Signal Guide +
+// ANS Architecture both went in before it), this scans everything
+// currently in the knowledge base and groups genuine duplicates for Per
+// to review. Deliberately NOT auto-deleting anything, unlike generation
+// itself — creating a topic is low-risk and easily undone by deleting it
+// later; removing one is not, and "is this really the same concept" is a
+// judgment call worth a human glance rather than blind trust. Menu-line-
+// only judgment (not full content) — cheap and fast for a first pass.
+const KNOWLEDGE_FIND_DUPLICATES_PROMPT = (topics) => `
+You are reviewing a knowledge base built for a conversational AI, looking for topics that are genuine duplicates or near-duplicates of each other — the same underlying concept covered more than once, most often because they were generated from two different source documents that both covered the same idea, sometimes under a different name or from a different angle.
+
+TOPICS (id :: title :: menu_line):
+${topics.map(t => `${t.id} :: ${t.title} :: ${t.menu_line}`).join('\n')}
+
+Identify GROUPS of topics that are genuinely the same concept — not just related or thematically close, actually redundant. Being part of the same broader framework is not enough to group two topics; they need to cover the same specific idea. For each genuine duplicate group, recommend which one to keep (usually whichever has the clearer title or more complete, specific menu_line) and give one brief, concrete reason.
+
+Respond with ONLY a JSON array, no preamble, no markdown fences. If no genuine duplicates exist, respond with an empty array:
+[
+  { "topic_ids": ["id1", "id2"], "recommended_keep_id": "id1", "reason": "..." }
+]`;
+
 const KNOWLEDGE_GENERATE_LEVELS_PROMPT = (docTitle, topicTitle, menuLine, levels, rawText) => `
 You are writing the actual depth content for one topic in a structured knowledge base, for an AI conversational companion (Talk) to draw on mid-conversation when this topic comes up in real depth.
 
@@ -694,5 +745,6 @@ module.exports = {
   GENERATE_CLIENT_SUMMARY,
   GENERATE_ARC_UPDATE,
   KNOWLEDGE_EXTRACT_TOPICS_PROMPT,
+  KNOWLEDGE_FIND_DUPLICATES_PROMPT,
   KNOWLEDGE_GENERATE_LEVELS_PROMPT,
 };
