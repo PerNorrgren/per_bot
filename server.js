@@ -4376,7 +4376,16 @@ app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
 app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { level, tier, sendWelcomeEmail } = req.body;
-    const memberTier = tier != null ? parseInt(tier) : (level === 'member' ? 1 : parseInt(level) || 1);
+    // Per Bot 15l — level='registered' (the dropdown's actual value for
+    // "Explorer (free)") isn't 'member' and isn't a parseable integer, so
+    // this used to fall through to parseInt(level)||1 — NaN||1 is 1, so
+    // choosing Explorer here silently set Member tier instead, every
+    // time. That's exactly why a "downgrade to Explorer" never seemed to
+    // take: the request went through, it just set the wrong tier.
+    const memberTier = tier != null ? parseInt(tier)
+      : level === 'member'     ? 1
+      : level === 'registered' ? 0
+      : parseInt(level) || 1;
 
     const user = db.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });

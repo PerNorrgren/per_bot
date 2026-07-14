@@ -29,6 +29,14 @@
     .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
     .btn.danger:hover { background:rgba(255,100,80,0.08); }
     .btn.sm { padding:5px 10px; font-size:10px; }
+    /* Per Bot 15m — added for the new Breathing patterns tab, matching
+       the card/section-label convention used on the other admin pages. */
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .card-body { padding:20px; display:flex; flex-direction:column; gap:14px; }
+    .loading { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.2); font-style:italic; }
     .content { flex:1; overflow:hidden; }
     .main { height:100%; overflow-y:auto; padding:24px 28px; }
     .main::-webkit-scrollbar { width:4px; }
@@ -175,6 +183,7 @@
       <button class="nav-tab" data-tab="instances">Instances</button>
       <button class="nav-tab" data-tab="playlists">Playlists</button>
       <button class="nav-tab" data-tab="categories">Categories</button>
+      <button class="nav-tab" data-tab="breathing">Breathing</button>
     </div>
     <div class="topbar-right">
       <a href="/admin/" class="btn">Users</a>
@@ -287,6 +296,50 @@
         <div class="cat-tree" id="kindTree"></div>
       </div>
 
+      <!-- Breathing patterns (Per Bot 15m) — moved here from Users/Admin,
+           since these are content (like Signal scripts) rather than a
+           people-management or admin-configuration concern. -->
+      <div class="panel" id="panel-breathing" style="padding:28px">
+        <div class="section-label">Breathing patterns</div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Breathing patterns</div></div>
+          <div class="card-body" style="padding:16px 20px">
+            <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+              Guided breathing timer patterns — an expanding/contracting circle paced to in/hold/out phases, with three shared spoken cues ("Breathing in", "Hold", "Breathing out") in Per's own voice. Talk can offer one via a [[BREATHING:id]] marker when it fits (see Situation below — Talk sees this, never the person). A person can also open the Breathing timer directly and pick one themselves.
+            </div>
+
+            <div id="breathingPatternsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+              <div class="loading">Loading…</div>
+            </div>
+
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <button class="btn primary" onclick="openBreathingPatternModal()">+ Add breathing pattern</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Breathing Pattern Modal (moved here Per Bot 15m) -->
+<div class="modal-overlay" id="breathingPatternModal">
+  <div class="modal">
+    <h3 id="bpModalTitle">Add breathing pattern</h3>
+    <input type="hidden" id="bpId"/>
+    <div><label>Name</label><input type="text" id="bpName" placeholder="e.g. Box Breathing"/></div>
+    <div><label>Situation (what Talk sees to judge fit — never shown to the person)</label><input type="text" id="bpSituation" placeholder="e.g. General stress or overwhelm, steadying before something specific"/></div>
+    <div><label>Default cycles</label><input type="number" id="bpDefaultCycles" min="1" max="30" value="6"/></div>
+    <div>
+      <label>Phases (one cycle — repeated for the number of cycles above)</label>
+      <div id="bpPhasesRows" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+      <button type="button" class="btn" onclick="addBreathingPhaseRow()">+ Add phase</button>
+    </div>
+    <div class="modal-err" id="bpErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('breathingPatternModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveBreathingPattern()">Save</button>
     </div>
   </div>
 </div>
@@ -2372,7 +2425,126 @@ async function delKind(id){
   await fetch(`/api/content/kinds/${id}`,{method:'DELETE'});loadAll();
 }
 
+// ══ Breathing patterns (moved here from Users/Admin, Per Bot 15m) ══
+let _breathingEditId = null;
+
+async function loadBreathingPatternsAdmin() {
+  try {
+    const rows = await (await fetch('/api/admin/breathing-patterns')).json();
+    renderBreathingPatternsTable(rows || []);
+  } catch(e) {
+    document.getElementById('breathingPatternsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+  }
+}
+
+function renderBreathingPatternsTable(rows) {
+  const el = document.getElementById('breathingPatternsTable');
+  if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
+  el.innerHTML = rows.map(r => {
+    const phaseSummary = r.phases.map(p => `${p.type} ${p.seconds}s`).join(' · ');
+    const archivedTag = r.archived ? ` <span style="color:rgba(255,160,140,0.7)">· archived</span>` : '';
+    return `
+    <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+      <div style="flex:1">
+        <div style="font-size:13px; color:rgba(255,255,255,0.75)">${r.name}${archivedTag} <span style="color:rgba(255,255,255,0.35)">· ${r.default_cycles} cycles</span></div>
+        <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${phaseSummary}</div>
+        <div style="font-size:11px; color:rgba(255,255,255,0.3); margin-top:2px; font-style:italic">${r.situation || ''}</div>
+      </div>
+      <button class="btn sm" onclick="toggleBreathingArchive('${r.id}', ${r.archived ? 0 : 1})">${r.archived ? 'Unarchive' : 'Archive'}</button>
+      <button class="btn sm" onclick="openBreathingPatternModal('${r.id}')">Edit</button>
+      <button class="btn sm danger" onclick="deleteBreathingPatternRow('${r.id}')">Delete</button>
+    </div>`;
+  }).join('');
+}
+
+async function toggleBreathingArchive(id, archived) {
+  await fetch(`/api/admin/breathing-patterns/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ archived })
+  });
+  loadBreathingPatternsAdmin();
+}
+
+async function deleteBreathingPatternRow(id) {
+  if (!(await appConfirm('Delete this breathing pattern? Talk will no longer be able to offer it, and it will disappear from the client picker.'))) return;
+  await fetch(`/api/admin/breathing-patterns/${id}`, { method: 'DELETE' });
+  loadBreathingPatternsAdmin();
+}
+
+function addBreathingPhaseRow(type, seconds) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex; gap:8px; align-items:center;';
+  row.innerHTML = `
+    <select class="bp-phase-type" style="flex:1">
+      <option value="in">In</option>
+      <option value="hold">Hold</option>
+      <option value="out">Out</option>
+    </select>
+    <input type="number" class="bp-phase-seconds" min="1" max="30" value="${seconds || 4}" style="width:70px" placeholder="seconds"/>
+    <span style="font-size:12px;color:rgba(255,255,255,0.4)">sec</span>
+    <button type="button" class="btn sm danger" onclick="this.parentElement.remove()">✕</button>
+  `;
+  document.getElementById('bpPhasesRows').appendChild(row);
+  if (type) row.querySelector('.bp-phase-type').value = type;
+}
+
+function readBreathingPhaseRows() {
+  return [...document.querySelectorAll('#bpPhasesRows > div')].map(row => ({
+    type: row.querySelector('.bp-phase-type').value,
+    seconds: parseInt(row.querySelector('.bp-phase-seconds').value, 10) || 0,
+  }));
+}
+
+async function openBreathingPatternModal(id) {
+  _breathingEditId = id || null;
+  document.getElementById('bpErr').textContent = '';
+  document.getElementById('bpPhasesRows').innerHTML = '';
+  if (id) {
+    document.getElementById('bpModalTitle').textContent = 'Edit breathing pattern';
+    const rows = await (await fetch('/api/admin/breathing-patterns')).json();
+    const p = rows.find(r => r.id === id);
+    if (!p) return;
+    document.getElementById('bpName').value = p.name;
+    document.getElementById('bpSituation').value = p.situation || '';
+    document.getElementById('bpDefaultCycles').value = p.default_cycles;
+    p.phases.forEach(ph => addBreathingPhaseRow(ph.type, ph.seconds));
+  } else {
+    document.getElementById('bpModalTitle').textContent = 'Add breathing pattern';
+    document.getElementById('bpName').value = '';
+    document.getElementById('bpSituation').value = '';
+    document.getElementById('bpDefaultCycles').value = 6;
+    addBreathingPhaseRow('in', 4);
+    addBreathingPhaseRow('out', 4);
+  }
+  openModal('breathingPatternModal');
+}
+
+async function saveBreathingPattern() {
+  const err = document.getElementById('bpErr');
+  err.textContent = '';
+  const name = document.getElementById('bpName').value.trim();
+  const situation = document.getElementById('bpSituation').value.trim();
+  const defaultCycles = parseInt(document.getElementById('bpDefaultCycles').value, 10) || 6;
+  const phases = readBreathingPhaseRows();
+  if (!name) { err.textContent = 'Name is required.'; return; }
+  if (!phases.length || phases.some(p => !p.seconds || p.seconds <= 0)) {
+    err.textContent = 'Every phase needs a positive number of seconds.';
+    return;
+  }
+  const body = { name, situation, defaultCycles, phases };
+  const res = _breathingEditId
+    ? await fetch(`/api/admin/breathing-patterns/${_breathingEditId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    : await fetch('/api/admin/breathing-patterns', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    err.textContent = data.error || 'Could not save.';
+    return;
+  }
+  closeModal('breathingPatternModal');
+  loadBreathingPatternsAdmin();
+}
+
 loadAll();
+loadBreathingPatternsAdmin();
 </script>
 
 <script>window.TOMTE_PAGE = 'Admin — Content';</script>

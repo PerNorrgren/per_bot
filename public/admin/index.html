@@ -139,7 +139,7 @@
 
   <div class="page">
 
-    <!-- Admins -->
+<!-- Admins -->
     <div>
       <div class="section-label">Admins</div>
       <div class="card">
@@ -175,6 +175,25 @@
       </div>
     </div>
 
+    <!-- Facilitator requests (Per Bot 5, item 11) -->
+    <div>
+      <div class="section-label">Facilitator requests</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Facilitator requests</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm primary disabled" id="frApproveBtn" onclick="bulkFacilitatorRequests('approve')">Approve</button>
+            <button class="btn sm disabled" id="frDeferBtn" onclick="bulkFacilitatorRequests('defer')">Defer</button>
+            <button class="btn sm warn disabled" id="frDeclineBtn" onclick="bulkFacilitatorRequests('decline')">Decline</button>
+            <button class="btn sm disabled" id="frArchiveBtn" onclick="bulkFacilitatorRequests('archive')">Archive</button>
+            <button class="btn sm danger disabled" id="frDelBtn" onclick="bulkFacilitatorRequests('delete')">Delete</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="frSearch" placeholder="Search requests… (* and ? wildcards)" oninput="renderFacilitatorRequests()"/></div>
+        <div class="table" id="frTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
     <!-- Clients -->
     <div>
       <div class="section-label">All clients</div>
@@ -195,6 +214,83 @@
       </div>
     </div>
 
+    <!-- Members -->
+    <div>
+      <div class="section-label">Members</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Members</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn sm" onclick="openNewMemberModal()">Add Member</button>
+            <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
+            <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
+            <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
+            <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
+            <button class="btn sm danger disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="memberSearch" placeholder="Search members… (* and ? wildcards)" oninput="renderMembers()"/></div>
+        <div class="table" id="membersTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Users — self-registered -->
+    <div>
+      <div class="section-label">Explorers</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Explorers</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm primary" onclick="openNewExplorerModal()">+ Add Explorer</button>
+            <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
+            <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="userSearch" placeholder="Search explorers… (* and ? wildcards)" oninput="renderUsers()"/></div>
+        <div class="table" id="usersTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Newsletter-only contacts — no login, passive email addresses -->
+    <div>
+      <div class="section-label">Newsletter contacts</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Newsletter contacts</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="inline-select" id="nlContactBulkAction">
+              <option value="">Bulk action…</option>
+              <option value="explorer">Move to Explorer</option>
+              <option value="1">Move to Member 1</option>
+              <option value="2">Move to Member 2</option>
+              <option value="3">Move to Member 3</option>
+              <option value="delete">Delete</option>
+            </select>
+            <button class="btn sm disabled" id="nlContactApplyBtn" onclick="applyNlContactBulkAction()">Apply</button>
+          </div>
+        </div>
+        <div class="modal-note" style="padding:0 20px 10px">No login — receive the newsletter only. Moving one up gives them a real password and a welcome email.</div>
+        <div class="card-search-wrap"><input class="card-search" id="nlContactSearch" placeholder="Search newsletter contacts… (* and ? wildcards)" oninput="renderNlContacts()"/></div>
+        <div class="table" id="nlContactsTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Guest Leads -->
+    <div>
+      <div class="section-label">Enquiries</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Enquiries</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm disabled" id="leadUpgradeBtn" onclick="upgradeSelectedLeads()">Convert</button>
+            <button class="btn sm primary disabled" id="leadSyncBtn" onclick="syncLeads()">Sync to Brevo</button>
+            <button class="btn sm danger disabled" id="leadDelBtn" onclick="deleteSelectedLeads()">Delete</button>
+          </div>
+        </div>
+        <div class="card-search-wrap"><input class="card-search" id="leadSearch" placeholder="Search enquiries… (* and ? wildcards)" oninput="renderLeads()"/></div>
+        <div class="table" id="leadsTable"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
 
     <!-- Tomte image library (Per Bot 31) — the actual pool: a photo can
          just sit here without being assigned to anything. Language +
@@ -288,26 +384,6 @@
       </div>
     </div>
 
-    <!-- Breathing patterns (Per Bot 15) -->
-    <div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">Breathing patterns</div></div>
-        <div class="card-body" style="padding:16px 20px">
-          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            Guided breathing timer patterns — an expanding/contracting circle paced to in/hold/out phases, with three shared spoken cues ("Breathing in", "Hold", "Breathing out") in Per's own voice. Talk can offer one via a [[BREATHING:id]] marker when it fits (see Situation below — Talk sees this, never the person). A person can also open the Breathing timer directly and pick one themselves.
-          </div>
-
-          <div id="breathingPatternsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
-            <div class="loading">Loading…</div>
-          </div>
-
-          <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <button class="btn primary" onclick="openBreathingPatternModal()">+ Add breathing pattern</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Talk context documents (Per Bot 33s) -->
     <div>
       <div class="card">
@@ -344,104 +420,7 @@
       </div>
     </div>
 
-    <!-- Members -->
-    <div>
-      <div class="section-label">Members</div>
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Members</div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn sm" onclick="openNewMemberModal()">Add Member</button>
-            <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
-            <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
-            <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
-            <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
-            <button class="btn sm danger disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
-          </div>
-        </div>
-        <div class="card-search-wrap"><input class="card-search" id="memberSearch" placeholder="Search members… (* and ? wildcards)" oninput="renderMembers()"/></div>
-        <div class="table" id="membersTable"><div class="loading">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Users — self-registered -->
-    <div>
-      <div class="section-label">Explorers</div>
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Explorers</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm primary" onclick="openNewExplorerModal()">+ Add Explorer</button>
-            <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
-            <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
-          </div>
-        </div>
-        <div class="card-search-wrap"><input class="card-search" id="userSearch" placeholder="Search explorers… (* and ? wildcards)" oninput="renderUsers()"/></div>
-        <div class="table" id="usersTable"><div class="loading">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Newsletter-only contacts — no login, passive email addresses -->
-    <div>
-      <div class="section-label">Newsletter contacts</div>
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Newsletter contacts</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <select class="inline-select" id="nlContactBulkAction">
-              <option value="">Bulk action…</option>
-              <option value="explorer">Move to Explorer</option>
-              <option value="1">Move to Member 1</option>
-              <option value="2">Move to Member 2</option>
-              <option value="3">Move to Member 3</option>
-              <option value="delete">Delete</option>
-            </select>
-            <button class="btn sm disabled" id="nlContactApplyBtn" onclick="applyNlContactBulkAction()">Apply</button>
-          </div>
-        </div>
-        <div class="modal-note" style="padding:0 20px 10px">No login — receive the newsletter only. Moving one up gives them a real password and a welcome email.</div>
-        <div class="card-search-wrap"><input class="card-search" id="nlContactSearch" placeholder="Search newsletter contacts… (* and ? wildcards)" oninput="renderNlContacts()"/></div>
-        <div class="table" id="nlContactsTable"><div class="loading">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Facilitator requests (Per Bot 5, item 11) -->
-    <div>
-      <div class="section-label">Facilitator requests</div>
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Facilitator requests</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm primary disabled" id="frApproveBtn" onclick="bulkFacilitatorRequests('approve')">Approve</button>
-            <button class="btn sm disabled" id="frDeferBtn" onclick="bulkFacilitatorRequests('defer')">Defer</button>
-            <button class="btn sm warn disabled" id="frDeclineBtn" onclick="bulkFacilitatorRequests('decline')">Decline</button>
-            <button class="btn sm disabled" id="frArchiveBtn" onclick="bulkFacilitatorRequests('archive')">Archive</button>
-            <button class="btn sm danger disabled" id="frDelBtn" onclick="bulkFacilitatorRequests('delete')">Delete</button>
-          </div>
-        </div>
-        <div class="card-search-wrap"><input class="card-search" id="frSearch" placeholder="Search requests… (* and ? wildcards)" oninput="renderFacilitatorRequests()"/></div>
-        <div class="table" id="frTable"><div class="loading">Loading…</div></div>
-      </div>
-    </div>
-
-    <!-- Guest Leads -->
-    <div>
-      <div class="section-label">Enquiries</div>
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Enquiries</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm disabled" id="leadUpgradeBtn" onclick="upgradeSelectedLeads()">Convert</button>
-            <button class="btn sm primary disabled" id="leadSyncBtn" onclick="syncLeads()">Sync to Brevo</button>
-            <button class="btn sm danger disabled" id="leadDelBtn" onclick="deleteSelectedLeads()">Delete</button>
-          </div>
-        </div>
-        <div class="card-search-wrap"><input class="card-search" id="leadSearch" placeholder="Search enquiries… (* and ? wildcards)" oninput="renderLeads()"/></div>
-        <div class="table" id="leadsTable"><div class="loading">Loading…</div></div>
-      </div>
-    </div>
-
-  </div>
+   </div>
 
   <!-- Upgrade Explorer Modal -->
   <div class="modal-overlay" id="upgradeModal" onclick="if(event.target===this)closeModal('upgradeModal')">
@@ -759,27 +738,6 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('signalScriptModal')">Cancel</button>
         <button class="modal-ok" onclick="saveSignalScript()">Save</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Breathing Pattern Modal (Per Bot 15) -->
-  <div class="modal-overlay" id="breathingPatternModal">
-    <div class="modal">
-      <h3 id="bpModalTitle">Add breathing pattern</h3>
-      <input type="hidden" id="bpId"/>
-      <div><label>Name</label><input type="text" id="bpName" placeholder="e.g. Box Breathing"/></div>
-      <div><label>Situation (what Talk sees to judge fit — never shown to the person)</label><input type="text" id="bpSituation" placeholder="e.g. General stress or overwhelm, steadying before something specific"/></div>
-      <div><label>Default cycles</label><input type="number" id="bpDefaultCycles" min="1" max="30" value="6"/></div>
-      <div>
-        <label>Phases (one cycle — repeated for the number of cycles above)</label>
-        <div id="bpPhasesRows" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
-        <button type="button" class="btn" onclick="addBreathingPhaseRow()">+ Add phase</button>
-      </div>
-      <div class="modal-err" id="bpErr"></div>
-      <div class="modal-btns">
-        <button class="modal-cancel" onclick="closeModal('breathingPatternModal')">Cancel</button>
-        <button class="modal-ok" onclick="saveBreathingPattern()">Save</button>
       </div>
     </div>
   </div>
@@ -1123,124 +1081,6 @@
     loadSignalScripts();
   }
 
-  // ══ Breathing patterns (Per Bot 15) ══
-  let _breathingEditId = null;
-
-  async function loadBreathingPatternsAdmin() {
-    try {
-      const rows = await (await fetch('/api/admin/breathing-patterns')).json();
-      renderBreathingPatternsTable(rows || []);
-    } catch(e) {
-      document.getElementById('breathingPatternsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
-    }
-  }
-
-  function renderBreathingPatternsTable(rows) {
-    const el = document.getElementById('breathingPatternsTable');
-    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
-    el.innerHTML = rows.map(r => {
-      const phaseSummary = r.phases.map(p => `${p.type} ${p.seconds}s`).join(' · ');
-      const archivedTag = r.archived ? ` <span style="color:rgba(255,160,140,0.7)">· archived</span>` : '';
-      return `
-      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
-        <div style="flex:1">
-          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${r.name}${archivedTag} <span style="color:rgba(255,255,255,0.35)">· ${r.default_cycles} cycles</span></div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${phaseSummary}</div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.3); margin-top:2px; font-style:italic">${r.situation || ''}</div>
-        </div>
-        <button class="btn sm" onclick="toggleBreathingArchive('${r.id}', ${r.archived ? 0 : 1})">${r.archived ? 'Unarchive' : 'Archive'}</button>
-        <button class="btn sm" onclick="openBreathingPatternModal('${r.id}')">Edit</button>
-        <button class="btn sm danger" onclick="deleteBreathingPatternRow('${r.id}')">Delete</button>
-      </div>`;
-    }).join('');
-  }
-
-  async function toggleBreathingArchive(id, archived) {
-    await fetch(`/api/admin/breathing-patterns/${id}`, {
-      method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ archived })
-    });
-    loadBreathingPatternsAdmin();
-  }
-
-  async function deleteBreathingPatternRow(id) {
-    if (!(await appConfirm('Delete this breathing pattern? Talk will no longer be able to offer it, and it will disappear from the client picker.'))) return;
-    await fetch(`/api/admin/breathing-patterns/${id}`, { method: 'DELETE' });
-    loadBreathingPatternsAdmin();
-  }
-
-  function addBreathingPhaseRow(type, seconds) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex; gap:8px; align-items:center;';
-    row.innerHTML = `
-      <select class="bp-phase-type" style="flex:1">
-        <option value="in">In</option>
-        <option value="hold">Hold</option>
-        <option value="out">Out</option>
-      </select>
-      <input type="number" class="bp-phase-seconds" min="1" max="30" value="${seconds || 4}" style="width:70px" placeholder="seconds"/>
-      <span style="font-size:12px;color:rgba(255,255,255,0.4)">sec</span>
-      <button type="button" class="btn sm danger" onclick="this.parentElement.remove()">✕</button>
-    `;
-    document.getElementById('bpPhasesRows').appendChild(row);
-    if (type) row.querySelector('.bp-phase-type').value = type;
-  }
-
-  function readBreathingPhaseRows() {
-    return [...document.querySelectorAll('#bpPhasesRows > div')].map(row => ({
-      type: row.querySelector('.bp-phase-type').value,
-      seconds: parseInt(row.querySelector('.bp-phase-seconds').value, 10) || 0,
-    }));
-  }
-
-  async function openBreathingPatternModal(id) {
-    _breathingEditId = id || null;
-    document.getElementById('bpErr').textContent = '';
-    document.getElementById('bpPhasesRows').innerHTML = '';
-    if (id) {
-      document.getElementById('bpModalTitle').textContent = 'Edit breathing pattern';
-      const rows = await (await fetch('/api/admin/breathing-patterns')).json();
-      const p = rows.find(r => r.id === id);
-      if (!p) return;
-      document.getElementById('bpName').value = p.name;
-      document.getElementById('bpSituation').value = p.situation || '';
-      document.getElementById('bpDefaultCycles').value = p.default_cycles;
-      p.phases.forEach(ph => addBreathingPhaseRow(ph.type, ph.seconds));
-    } else {
-      document.getElementById('bpModalTitle').textContent = 'Add breathing pattern';
-      document.getElementById('bpName').value = '';
-      document.getElementById('bpSituation').value = '';
-      document.getElementById('bpDefaultCycles').value = 6;
-      addBreathingPhaseRow('in', 4);
-      addBreathingPhaseRow('out', 4);
-    }
-    openModal('breathingPatternModal');
-  }
-
-  async function saveBreathingPattern() {
-    const err = document.getElementById('bpErr');
-    err.textContent = '';
-    const name = document.getElementById('bpName').value.trim();
-    const situation = document.getElementById('bpSituation').value.trim();
-    const defaultCycles = parseInt(document.getElementById('bpDefaultCycles').value, 10) || 6;
-    const phases = readBreathingPhaseRows();
-    if (!name) { err.textContent = 'Name is required.'; return; }
-    if (!phases.length || phases.some(p => !p.seconds || p.seconds <= 0)) {
-      err.textContent = 'Every phase needs a positive number of seconds.';
-      return;
-    }
-    const body = { name, situation, defaultCycles, phases };
-    const res = _breathingEditId
-      ? await fetch(`/api/admin/breathing-patterns/${_breathingEditId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
-      : await fetch('/api/admin/breathing-patterns', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      err.textContent = data.error || 'Could not save.';
-      return;
-    }
-    closeModal('breathingPatternModal');
-    loadBreathingPatternsAdmin();
-  }
-
   function toggleSignalKindFields() {
     const isAudio = document.getElementById('ssKind').value === 'audio';
     document.getElementById('ssTextField').style.display = isAudio ? 'none' : '';
@@ -1570,7 +1410,6 @@
   });
 
   loadSignalScripts();
-  loadBreathingPatternsAdmin();
   loadContextDocuments();
 
   // ── Utilities ──
