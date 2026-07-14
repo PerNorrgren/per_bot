@@ -378,6 +378,7 @@
     .courses-section-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:10px; }
     .course-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:border-color 0.2s; }
     .course-card:hover { border-color:rgba(255,255,255,0.18); }
+    .course-card.locked { opacity:0.5; }
     .course-card-title { font-size:14px; color:rgba(255,255,255,0.82); }
     .course-card-sub { font-size:12px; color:rgba(255,255,255,0.35); margin-top:3px; }
     .course-progress-bar { height:5px; background:rgba(255,255,255,0.08); border-radius:3px; margin-top:10px; overflow:hidden; }
@@ -4725,8 +4726,8 @@
     const el = document.getElementById('myCoursesList');
     if (!list.length) { el.innerHTML = '<div class="no-content">You haven\'t enrolled in anything yet.</div>'; return; }
     el.innerHTML = list.map(i => `
-      <div class="course-card" onclick="openCourseDetail('${i.id}')">
-        <div class="course-card-title">${i.course_title}</div>
+      <div class="course-card" onclick="${i.locked ? `showLockedNotice('This course is not currently available.')` : `openCourseDetail('${i.id}')`}">
+        <div class="course-card-title">${i.locked ? '🔒 ' : ''}${i.course_title}</div>
         <div class="course-card-sub">${i.title}${i.mode==='cohort'?' · Cohort':''}</div>
         <div class="course-progress-bar"><div class="course-progress-fill" style="width:${i.percent_complete||0}%"></div></div>
         <div class="course-progress-pct">${i.percent_complete||0}% complete</div>
@@ -4738,10 +4739,10 @@
     const el = document.getElementById('browseCoursesList');
     if (!list.length) { el.innerHTML = '<div class="no-content">Nothing new to enrol in right now.</div>'; return; }
     el.innerHTML = list.map(i => `
-      <div class="course-card" onclick="enrolInCourse('${i.id}')">
-        <div class="course-card-title">${i.course_title}</div>
+      <div class="course-card ${i.locked ? 'locked' : ''}" onclick="${i.locked ? `showLockedNotice('This course is not currently available.')` : `enrolInCourse('${i.id}')`}">
+        <div class="course-card-title">${i.locked ? '🔒 ' : ''}${i.course_title}</div>
         <div class="course-card-sub">${i.title}${i.mode==='cohort'&&i.start_date?' · Starts '+i.start_date:''}</div>
-        <div class="course-card-price">${i.price_cents ? '£'+(i.price_cents/100).toFixed(2) : 'Free'}</div>
+        ${i.locked ? '' : `<div class="course-card-price">${i.price_cents ? '£'+(i.price_cents/100).toFixed(2) : 'Free'}</div>`}
         <div class="course-card-badge">${i.mode==='cohort'?'Cohort':'Self-paced'}</div>
       </div>
     `).join('');
@@ -4793,8 +4794,13 @@
         const remaining = l.fileProgress ? (l.fileProgress.total - l.fileProgress.opened) : 0;
         const progressBadge = l.fileProgress?.total
           ? `<span class="lesson-item-progress">${isDone ? '✓' : `${pct}% · ${remaining} left`}</span>` : '';
-        const lockBadge = l.locked ? `<span class="lesson-item-lock" title="Complete the previous lesson to unlock">🔒</span>` : '';
+        const lockBadge = l.locked
+          ? `<span class="lesson-item-lock" title="${l.lockReason === 'admin' ? 'Not currently available' : 'Complete the previous lesson to unlock'}">🔒</span>`
+          : '';
         const descLine = l.description ? `<div class="lesson-item-desc">${l.description}</div>` : '';
+        const openClick = l.lockReason === 'admin'
+          ? `showLockedNotice('This lesson is not currently available.')`
+          : `openLesson('${l.id}')`;
         return `
         <div class="lesson-item-row">
           <div class="lesson-item-num">${l.lesson_number}</div>
@@ -4803,7 +4809,7 @@
             ${descLine}
             <div class="lesson-item-status ${l.progress.status}">${l.progress.status==='completed'?'Completed':l.progress.status==='in_progress'?'In progress':'Not started'}${progressBadge}</div>
           </div>
-          <button class="lesson-open-btn" onclick="openLesson('${l.id}')">${l.progress.status==='not_started'?'Start':'Open'}</button>
+          <button class="lesson-open-btn" onclick="${openClick}">${l.progress.status==='not_started'?'Start':'Open'}</button>
         </div>
       `;
       }).join('');

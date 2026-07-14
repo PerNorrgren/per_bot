@@ -485,6 +485,13 @@
     <div><label>Restrict to</label>
       <select id="cSkin"><option value="">No restriction — visible to everyone</option></select>
     </div>
+    <div><label>Access <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(Locked — still shows up, can't be opened. Hidden — doesn't show up at all.)</span></label>
+      <select id="cAccessStatus">
+        <option value="visible">Visible</option>
+        <option value="locked">Locked</option>
+        <option value="hidden">Hidden</option>
+      </select>
+    </div>
     <div id="lessonBuilderWrap"><label>Lessons (files assigned after saving)</label>
       <div class="lesson-builder">
         <div class="lesson-builder-hdr">Add lessons</div>
@@ -544,6 +551,13 @@
         <option value="facilitator">Facilitator</option>
       </select>
     </div>
+    <div><label>Access <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(Locked — still shows up, can't be opened. Hidden — doesn't show up at all.)</span></label>
+      <select id="alAccessStatus">
+        <option value="visible">Visible</option>
+        <option value="locked">Locked</option>
+        <option value="hidden">Hidden</option>
+      </select>
+    </div>
     <div id="alPickerWrap"><label>Pick files from library</label>
       <div class="file-picker">
         <div class="file-picker-filters" style="display:flex;gap:6px;margin-bottom:6px">
@@ -595,6 +609,7 @@
       <div><label>Capacity</label><input type="number" id="instCapacity" min="1" placeholder="Leave blank for unlimited"/></div>
     </div>
     <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
+    <div><label>Stripe Price ID <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank to charge the amount above directly; paste a Price ID from Stripe to use a pre-created Price object instead, e.g. for cleaner reporting)</span></label><input type="text" id="instStripePriceId" placeholder="price_..."/></div>
     <div class="modal-err" id="instErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('instanceModal')">Cancel</button>
@@ -1699,6 +1714,7 @@ function openNewInstance(){
   document.getElementById('instMode').value='self_paced';
   document.getElementById('instStart').value='';document.getElementById('instEnd').value='';document.getElementById('instCapacity').value='';
   document.getElementById('instPrice').value='';
+  document.getElementById('instStripePriceId').value='';
   document.getElementById('instStatus').value='draft';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
@@ -1717,6 +1733,7 @@ function editInstance(id){
   document.getElementById('instEnd').value=i.end_date||'';
   document.getElementById('instCapacity').value=i.capacity||'';
   document.getElementById('instPrice').value=i.price_cents?(i.price_cents/100).toFixed(2):'';
+  document.getElementById('instStripePriceId').value=i.stripe_price_id||'';
   document.getElementById('instStatus').value=i.status;
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
@@ -1732,11 +1749,12 @@ async function saveInstance(){
   const endDate=document.getElementById('instEnd').value||null;
   const capacity=document.getElementById('instCapacity').value?parseInt(document.getElementById('instCapacity').value):null;
   const priceCents=document.getElementById('instPrice').value?Math.round(parseFloat(document.getElementById('instPrice').value)*100):0;
+  const stripePriceId=document.getElementById('instStripePriceId').value.trim()||null;
   const status=document.getElementById('instStatus').value;
   const err=document.getElementById('instErr');
   if(!courseId||!title){err.textContent='Course and title are required.';return;}
 
-  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,status});
+  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status});
   const res=id
     ? await fetch(`/api/admin/course-instances/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body})
     : await fetch('/api/admin/course-instances',{method:'POST',headers:{'Content-Type':'application/json'},body});
@@ -1834,7 +1852,7 @@ function renderCourses(courses){
   el.innerHTML=courses.map(c=>`
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
         <div class="item-row-meta">${c.description||''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
@@ -1859,6 +1877,7 @@ function openNewCourse(){
   document.getElementById('cTitle').value='';mountRichEditor('cDesc');setRichEditorContent('cDesc','');
   document.getElementById('cCat').value='';document.getElementById('cSub').innerHTML='<option value="">Select…</option>';
   document.getElementById('cSkin').value='';
+  document.getElementById('cAccessStatus').value='visible';
   document.getElementById('lessonEntries').innerHTML='';document.getElementById('cErr').textContent='';
   addLE();openModal('newCourseModal');
 }
@@ -1879,6 +1898,7 @@ function editCourse(courseId){
   populateSub('cCat','cSub');
   document.getElementById('cSub').value=c.subcategory_id||'';
   document.getElementById('cSkin').value=c.skin_id||'';
+  document.getElementById('cAccessStatus').value=c.access_status||'visible';
   document.getElementById('cErr').textContent='';
   openModal('newCourseModal');
 }
@@ -1894,7 +1914,8 @@ async function saveCourse(){
     const res=await fetch(`/api/content/courses/${editId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({title,description:document.getElementById('cDesc').value,
         categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,
-        skinId:document.getElementById('cSkin').value||null})});
+        skinId:document.getElementById('cSkin').value||null,
+        accessStatus:document.getElementById('cAccessStatus').value})});
     const d=await res.json();
     if(d.error){err.textContent=d.error;return;}
     closeModal('newCourseModal');loadAll();
@@ -1909,7 +1930,8 @@ async function saveCourse(){
   const res=await fetch('/api/content/courses',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({title,description:document.getElementById('cDesc').value,
       categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,
-      skinId:document.getElementById('cSkin').value||null,lessons})});
+      skinId:document.getElementById('cSkin').value||null,
+      accessStatus:document.getElementById('cAccessStatus').value,lessons})});
   const d=await res.json();
   if(d.error){err.textContent=d.error;return;}
   closeModal('newCourseModal');loadAll();openCourseDetail(d.id);
@@ -1942,13 +1964,13 @@ async function openCourseDetail(courseId){
     h+=`<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:9px;overflow:hidden">
       <div style="padding:11px 14px;display:flex;align-items:center;gap:10px">
         <div style="font-size:16px;color:rgba(255,255,255,0.2);min-width:22px">${l.lesson_number}</div>
-        <div style="flex:1"><div style="font-size:13px;color:rgba(255,255,255,0.78)">${l.title}</div><div style="margin-top:3px">${vbadge(l.visibility)}</div></div>
+        <div style="flex:1"><div style="font-size:13px;color:rgba(255,255,255,0.78)">${l.title}${l.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${l.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}</div><div style="margin-top:3px">${vbadge(l.visibility)}</div></div>
         <select style="font-size:11px" title="File sequence for this lesson" onchange="setLessonFileSequence('${l.id}',this.value)">
           <option value="" ${seqVal===''?'selected':''}>File sequence: inherit</option>
           <option value="1" ${seqVal==='1'?'selected':''}>File sequence: on</option>
           <option value="0" ${seqVal==='0'?'selected':''}>File sequence: off</option>
         </select>
-        <button class="btn sm" onclick="editLesson('${l.id}','${l.lesson_number}','${l.title.replace(/'/g,"\\'")}','${l.visibility}')">Edit</button>
+        <button class="btn sm" onclick="editLesson('${l.id}','${l.lesson_number}','${l.title.replace(/'/g,"\\'")}','${l.visibility}','${l.access_status||'visible'}')">Edit</button>
         <button class="btn sm" onclick="openQuizModal('${l.id}','${l.title.replace(/'/g,"\\'")}')">Quiz</button>
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
@@ -2042,7 +2064,7 @@ function openAddFilesToLesson(lessonId,lessonTitle){
   addFilesLessonId=lessonId;editingLessonId=null;
   document.getElementById('alTitle').textContent='Add files to: '+lessonTitle;
   document.getElementById('alNum').value='';document.getElementById('alLessonTitle').value=lessonTitle;
-  document.getElementById('alVis').value='client';document.getElementById('alErr').textContent='';
+  document.getElementById('alVis').value='client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value=lessonId;
   document.getElementById('alPickerWrap').style.display='';
   renderPicker('alPicker');openModal('addLessonModal');
@@ -2052,19 +2074,19 @@ function openAddLesson(){
   addFilesLessonId=null;editingLessonId=null;
   document.getElementById('alTitle').textContent='Add lesson';
   document.getElementById('alNum').value='';document.getElementById('alLessonTitle').value='';
-  document.getElementById('alVis').value='client';document.getElementById('alErr').textContent='';
+  document.getElementById('alVis').value='client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value='';
   document.getElementById('alPickerWrap').style.display='';
   renderPicker('alPicker');openModal('addLessonModal');
 }
 
-// Edit metadata only (number/title/visibility) — no file picker, since files
-// are managed separately via "+ Files" above.
-function editLesson(lessonId,num,title,visibility){
+// Edit metadata only (number/title/visibility/access) — no file picker,
+// since files are managed separately via "+ Files" above.
+function editLesson(lessonId,num,title,visibility,accessStatus){
   addFilesLessonId=null;editingLessonId=lessonId;
   document.getElementById('alTitle').textContent='Edit lesson';
   document.getElementById('alNum').value=num;document.getElementById('alLessonTitle').value=title;
-  document.getElementById('alVis').value=visibility;document.getElementById('alErr').textContent='';
+  document.getElementById('alVis').value=visibility;document.getElementById('alAccessStatus').value=accessStatus||'visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value=lessonId;
   document.getElementById('alPickerWrap').style.display='none';
   openModal('addLessonModal');
@@ -2076,6 +2098,7 @@ async function saveLesson(){
   const title=document.getElementById('alLessonTitle').value.trim();
   const num=document.getElementById('alNum').value;
   const vis=document.getElementById('alVis').value;
+  const accessStatus=document.getElementById('alAccessStatus').value;
   const err=document.getElementById('alErr');
 
   if(addFilesLessonId){
@@ -2091,7 +2114,7 @@ async function saveLesson(){
 
   if(editingLessonId){
     const res=await fetch(`/api/content/lessons/${editingLessonId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({lessonNumber:parseInt(num),title,visibility:vis})});
+      body:JSON.stringify({lessonNumber:parseInt(num),title,visibility:vis,accessStatus})});
     const d=await res.json();
     if(d.error){err.textContent=d.error;return;}
     closeModal('addLessonModal');openCourseDetail(courseId);return;
@@ -2099,7 +2122,7 @@ async function saveLesson(){
 
   const fileIds=getPickerSel('alPicker');
   const res=await fetch('/api/content/lessons',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({courseId,lessonNumber:parseInt(num),title,visibility:vis,fileIds})});
+    body:JSON.stringify({courseId,lessonNumber:parseInt(num),title,visibility:vis,accessStatus,fileIds})});
   const d=await res.json();
   if(d.error){err.textContent=d.error;return;}
   closeModal('addLessonModal');openCourseDetail(courseId);

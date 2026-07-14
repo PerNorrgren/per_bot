@@ -1402,6 +1402,17 @@ async function getDb() {
     // the handover note on why courses/lessons need a design decision
     // before this touches the existing per-instance Stripe paywall.
     "ALTER TABLE courses ADD COLUMN visibility TEXT DEFAULT 'client'",
+    // Per Bot 16 — manual admin override, separate from the tier-ladder
+    // `visibility` column above (which per Per's own clarification isn't
+    // needed for courses/lessons at all right now — nothing there needs
+    // hiding from Explorer specifically). This is a simple three-state
+    // switch any admin can set regardless of viewer tier: 'visible' (shown,
+    // fully open — the default), 'locked' (still shows up so people can
+    // see it exists, but can't actually be opened by anyone), 'hidden'
+    // (doesn't show up at all). Applies at both the course and lesson
+    // level independently.
+    "ALTER TABLE courses ADD COLUMN access_status TEXT DEFAULT 'visible'",
+    "ALTER TABLE lessons ADD COLUMN access_status TEXT DEFAULT 'visible'",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2283,13 +2294,13 @@ function getFileUsage(fileId) {
 // courses are unaffected and can still be toggled per-course as before.
 // Per Bot 15k — enforce_lesson_sequence defaults on too now, for the same
 // reason: without it, nothing stopped starting straight at Lesson 2.
-function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility) {
-  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence,enforce_lesson_sequence,visibility) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1, 1, visibility||'client']); save();
+function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility, accessStatus) {
+  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence,enforce_lesson_sequence,visibility,access_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1, 1, visibility||'client', accessStatus||'visible']); save();
 }
-function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility) {
-  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=?,visibility=? WHERE id=?',
-    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, visibility||'client', id]); save();
+function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility, accessStatus) {
+  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=?,visibility=?,access_status=? WHERE id=?',
+    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, visibility||'client', accessStatus||'visible', id]); save();
 }
 function getCourse(id) { return queryOne('SELECT * FROM courses WHERE id=?', [id]); }
 function getAllCourses(filters = {}) {
@@ -2342,13 +2353,13 @@ function setCourseSequenceFlags(id, enforceLessonSequence, enforceFileSequence) 
 }
 
 // ── Lessons ──
-function createLesson(id, courseId, lessonNumber, title, description, visibility) {
-  getDbSync().run('INSERT INTO lessons (id,course_id,lesson_number,title,description,visibility) VALUES (?,?,?,?,?,?)',
-    [id, courseId, lessonNumber, title, description||'', visibility||'client']); save();
+function createLesson(id, courseId, lessonNumber, title, description, visibility, accessStatus) {
+  getDbSync().run('INSERT INTO lessons (id,course_id,lesson_number,title,description,visibility,access_status) VALUES (?,?,?,?,?,?,?)',
+    [id, courseId, lessonNumber, title, description||'', visibility||'client', accessStatus||'visible']); save();
 }
-function updateLesson(id, lessonNumber, title, description, visibility) {
-  getDbSync().run('UPDATE lessons SET lesson_number=?,title=?,description=?,visibility=? WHERE id=?',
-    [lessonNumber, title, description||'', visibility||'client', id]); save();
+function updateLesson(id, lessonNumber, title, description, visibility, accessStatus) {
+  getDbSync().run('UPDATE lessons SET lesson_number=?,title=?,description=?,visibility=?,access_status=? WHERE id=?',
+    [lessonNumber, title, description||'', visibility||'client', accessStatus||'visible', id]); save();
 }
 function getLessonsForCourse(courseId) {
   return queryAll('SELECT * FROM lessons WHERE course_id=? ORDER BY lesson_number ASC', [courseId]);
@@ -2483,7 +2494,7 @@ function getInstancesForCourse(courseId) {
   return queryAll('SELECT * FROM course_instances WHERE course_id=? ORDER BY created_at DESC', [courseId]);
 }
 function getAllCourseInstances(filters = {}) {
-  let sql = `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id
+  let sql = `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id, c.access_status as course_access_status
     FROM course_instances ci LEFT JOIN courses c ON ci.course_id=c.id WHERE 1=1`;
   const params = [];
   if (filters.status) { sql += ' AND ci.status=?'; params.push(filters.status); }

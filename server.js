@@ -1741,7 +1741,13 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
     // shows to users belonging to that same skin. Unrestricted courses
     // (the overwhelming majority — course_skin_id null) show to everyone,
     // same as before this existed.
-    const visible = instances.filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id);
+    // Per Bot 16 — a hidden course (course_access_status='hidden') is
+    // excluded entirely, same as a skin mismatch; a locked one still shows
+    // (tagged `locked: true`) so people can see it exists, just not open it
+    // — enrol is blocked separately below.
+    const visible = instances
+      .filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id)
+      .filter(i => i.course_access_status !== 'hidden');
     const myEnrolments = db.getEnrolmentsForUser(req.user.id);
     const byInstance = {};
     myEnrolments.forEach(e => { byInstance[e.course_instance_id] = e; });
@@ -1752,6 +1758,7 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
         enrolled: !!enrolment,
         enrolment_id: enrolment?.id || null,
         percent_complete: enrolment?.percent_complete ?? null,
+        locked: i.course_access_status === 'locked',
       };
     }));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1782,6 +1789,14 @@ app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) 
     const instance = db.getCourseInstance(courseInstanceId);
     if (!instance) return res.status(404).json({ error: 'Course instance not found.' });
     if (instance.status !== 'open') return res.status(400).json({ error: 'This course is not currently open for enrolment.' });
+
+    const course = db.getCourse(instance.course_id);
+    // Per Bot 16 — same reasoning as the skin-restriction check just below:
+    // block a direct API call too, not just hide the enrol button, so a
+    // locked/hidden course can't be enrolled in by hitting the endpoint
+    // directly even if it never showed up (hidden) or showed as locked.
+    if (course?.access_status === 'locked') return res.status(403).json({ error: 'This course is not currently available.' });
+    if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Course instance not found.' });
 
     const existing = db.getEnrolmentForUserAndInstance(req.user.id, courseInstanceId);
     if (existing) return res.json({ ok: true, enrolmentId: existing.id, note: 'Already enrolled.' });
@@ -1852,7 +1867,18 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
     const course = db.getCourse(instance.course_id);
-    const lessons = db.getLessonsForCourse(instance.course_id);
+    // Per Bot 16 — a locked course can't be opened at all, even by someone
+    // already enrolled from before it was locked; a hidden one behaves the
+    // same as "not found" here too, for anyone hitting the URL directly.
+    if (course?.access_status === 'locked') return res.status(403).json({ error: 'This course is not currently available.' });
+    if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Not found.' });
+
+    const allLessons = db.getLessonsForCourse(instance.course_id);
+    // Hidden lessons are excluded entirely, same as a hidden course above —
+    // sequencing below only ever sees the lessons that actually show, so a
+    // hidden lesson doesn't leave a numbering gap in the "previous lesson"
+    // chain either.
+    const lessons = allLessons.filter(l => l.access_status !== 'hidden');
     const progressRows = db.getProgressForEnrolment(enrolment.id);
     const progressByLesson = {};
     progressRows.forEach(p => { progressByLesson[p.lesson_id] = p; });
@@ -1863,13 +1889,20 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
     // rule as the lesson-detail route, computed here too so the course
     // list itself can show a lock icon without a person needing to click
     // into a lesson first to discover it's locked.
+    // Per Bot 16 — a lesson admin-locked directly (access_status='locked')
+    // is locked regardless of sequence; the two reasons are surfaced
+    // separately (lockReason) so the frontend can show the right message
+    // rather than a generic one for both.
     let prevCompleted = true; // Lesson 1 (or whatever's first) is never locked
     const withProgress = lessons.map(l => {
       const progress = progressByLesson[l.id] || { status: 'not_started', last_position: null };
-      const locked = !!course?.enforce_lesson_sequence && !prevCompleted;
+      const sequenceLocked = !!course?.enforce_lesson_sequence && !prevCompleted;
+      const adminLocked = l.access_status === 'locked';
       prevCompleted = progress.status === 'completed';
       return {
-        ...l, progress, locked,
+        ...l, progress,
+        locked: adminLocked || sequenceLocked,
+        lockReason: adminLocked ? 'admin' : (sequenceLocked ? 'sequence' : null),
         fileProgress: db.getLessonFileProgress(req.user.id, l.id),
       };
     });
@@ -1893,6 +1926,18 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
     const lesson = db.getLesson(req.params.lessonId);
     if (!lesson || lesson.course_id !== instance.course_id) return res.status(404).json({ error: 'Lesson not found in this course.' });
 
+    const course = db.getCourse(instance.course_id);
+    // Per Bot 16 — a locked/hidden course blocks every lesson inside it,
+    // and a hidden lesson behaves as if it doesn't exist even if someone
+    // has the direct URL (e.g. from before it was hidden). A locked lesson
+    // is allowed to reach here (the list still shows it) but the actual
+    // open is refused below, once the response would otherwise return
+    // real content — this is the enforcement point, not the list.
+    if (course?.access_status === 'locked') return res.status(403).json({ error: 'This course is not currently available.' });
+    if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Lesson not found in this course.' });
+    if (lesson.access_status === 'hidden') return res.status(404).json({ error: 'Lesson not found in this course.' });
+    if (lesson.access_status === 'locked') return res.status(403).json({ error: 'This lesson is not currently available.' });
+
     const quizRecord = db.getQuizForLesson(req.params.lessonId);
     const quiz = quizRecord ? db.getQuizForTaking(quizRecord.id) : null;
     const bestAttempt = quizRecord ? db.getBestAttempt(enrolment.id, quizRecord.id) : null;
@@ -1905,8 +1950,7 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
     // sequence (if this lesson's own override, or the course default when
     // there's no override, says to enforce it) locks file N+1 until file N
     // has actually been opened.
-    const course = db.getCourse(instance.course_id);
-    const courseLessons = db.getLessonsForCourse(instance.course_id);
+    const courseLessons = db.getLessonsForCourse(instance.course_id).filter(l => l.access_status !== 'hidden');
     const myIndex = courseLessons.findIndex(l => l.id === lesson.id);
     const prevLesson = myIndex > 0 ? courseLessons[myIndex - 1] : null;
     const prevLessonProgress = prevLesson ? db.getLessonProgress(enrolment.id, prevLesson.id) : null;
@@ -6485,13 +6529,17 @@ app.post('/api/content/library/bulk-visibility', auth.requireAuthApi(['admin']),
 
 app.get('/api/content/courses', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getAllCourses(req.query)));
 app.post('/api/content/courses', auth.requireAuthApi(['admin']), (req, res) => {
-  const { title, description, categoryId, subcategoryId, lessons, skinId, visibility } = req.body;
+  const { title, description, categoryId, subcategoryId, lessons, skinId, visibility, accessStatus } = req.body;
   if (!title || !categoryId) return res.status(400).json({ error: 'Title and category required.' });
   const courseId = uuidv4();
-  db.createCourse(courseId, title, description, categoryId, subcategoryId, false, skinId || null, visibility || 'client');
+  db.createCourse(courseId, title, description, categoryId, subcategoryId, false, skinId || null, visibility || 'client', accessStatus || 'visible');
   // Per Bot 16 — a lesson's own visibility (if given) still wins; the
   // course's visibility is only the default a new lesson pre-fills with.
-  if (lessons?.length) lessons.forEach(l => db.createLesson(uuidv4(), courseId, l.number, l.title, l.description || '', l.visibility || visibility || 'client'));
+  // A new lesson always starts 'visible' regardless of the course's own
+  // access_status — locking/hiding a course doesn't retroactively lock/
+  // hide its lessons individually, the course-level check already covers
+  // that at read time.
+  if (lessons?.length) lessons.forEach(l => db.createLesson(uuidv4(), courseId, l.number, l.title, l.description || '', l.visibility || visibility || 'client', 'visible'));
   res.json({ id: courseId });
 });
 app.get('/api/content/courses/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
@@ -6503,9 +6551,9 @@ app.get('/api/content/courses/:id', auth.requireAuthApi(['admin','facilitator'])
 // change a course's title/description/category after the fact.
 app.patch('/api/content/courses/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { title, description, categoryId, subcategoryId, guestVisible, skinId, visibility } = req.body;
+    const { title, description, categoryId, subcategoryId, guestVisible, skinId, visibility, accessStatus } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
-    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible, skinId || null, visibility);
+    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible, skinId || null, visibility, accessStatus);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -6569,7 +6617,7 @@ app.post('/api/content/courses/:id/mandatory-all', auth.requireAuthApi(['admin']
 });
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { courseId, lessonNumber, title, visibility, fileIds } = req.body;
+    const { courseId, lessonNumber, title, visibility, accessStatus, fileIds } = req.body;
     // NOTE: lessonNumber can legitimately be 0 (e.g. an intro/overview
     // lesson meant to sort before Lesson 1) — checking truthiness here
     // would silently reject "0" as if it were missing, so check for
@@ -6578,7 +6626,7 @@ app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
       return res.status(400).json({ error: 'Missing fields.' });
     }
     const lessonId = uuidv4();
-    db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client');
+    db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client', accessStatus || 'visible');
     if (fileIds?.length) fileIds.forEach((fid, i) => db.addLessonFileRef(uuidv4(), lessonId, fid, i));
     res.json({ id: lessonId });
   } catch (e) {
@@ -6590,13 +6638,13 @@ app.get('/api/content/lessons/:id/files', auth.requireAuthApi(['admin','facilita
 // Edit — same gap as courses: create and delete existed, edit didn't.
 app.patch('/api/content/lessons/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { lessonNumber, title, description, visibility } = req.body;
+    const { lessonNumber, title, description, visibility, accessStatus } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
     // Same falsy-zero issue as create: `parseInt(x) || 1` turns a genuine
     // 0 into 1. Only fall back to 1 when parseInt actually failed (NaN).
     const parsedNumber = parseInt(lessonNumber);
     const finalLessonNumber = Number.isNaN(parsedNumber) ? 1 : parsedNumber;
-    db.updateLesson(req.params.id, finalLessonNumber, title.trim(), description, visibility || 'client');
+    db.updateLesson(req.params.id, finalLessonNumber, title.trim(), description, visibility || 'client', accessStatus || 'visible');
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
