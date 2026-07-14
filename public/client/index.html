@@ -1099,6 +1099,32 @@
   </div>
 </div>
 
+<!-- Per Bot 16 — replaces the old instant-redirect-to-Stripe behaviour for
+     an Explorer tapping a priced course: shows both real paths (buy this
+     one course outright, or unlock everything via Membership) rather than
+     assuming which one they want. Members always enrol free regardless of
+     price and never see this — checked before it's ever opened. -->
+<div class="pw-overlay" id="coursePurchaseModal">
+  <div class="pw-modal" style="max-width:380px">
+    <h3 id="cpTitle">Course</h3>
+    <div id="cpDesc" style="font-size:13px;color:rgba(255,255,255,0.45);line-height:1.5"></div>
+    <button class="pw-ok" id="cpBuyBtn" style="width:100%;text-align:center;padding:12px" onclick="purchaseCourseOneOff()">
+      Buy this course — <span id="cpPrice"></span>
+    </button>
+    <div style="display:flex;align-items:center;gap:10px;margin:2px 0">
+      <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.3)">or</div>
+      <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
+    </div>
+    <div style="font-size:12.5px;color:rgba(255,255,255,0.4);line-height:1.5">Become a Member for unlimited access to every course, practice, and more — instead of paying per course.</div>
+    <a href="/membership" style="display:block;text-align:center;padding:11px;border-radius:8px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.08);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">See Membership</a>
+    <div class="pw-err" id="cpErr"></div>
+    <div class="pw-btns">
+      <button class="pw-cancel" onclick="document.getElementById('coursePurchaseModal').classList.remove('visible')">Not now</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── Working-button feedback (Per Bot 8) — same reusable pattern as the
   // facilitator screen: setBtnLoading(btn, true, 'Label…') swaps a button's
@@ -4716,7 +4742,12 @@
       const mine = list.filter(i => i.enrolled);
       const browse = list.filter(i => !i.enrolled);
       renderMyCourses(mine);
-      renderBrowseCourses(browse);
+      // Per Bot 16 — a Member always enrols free regardless of a course's
+      // price (existing server-side rule), so the purchase popup is only
+      // ever relevant to an Explorer — checked once here rather than
+      // re-fetching account status on every card render.
+      const account = await getFullAccount();
+      renderBrowseCourses(browse, (account.member_tier || 0) >= 1);
     } catch(e) {
       document.getElementById('myCoursesList').innerHTML = '<div class="no-content">Could not load courses.</div>';
     }
@@ -4735,17 +4766,54 @@
     `).join('');
   }
 
-  function renderBrowseCourses(list) {
+  let _browseCoursesData = [];
+  function renderBrowseCourses(list, isMember) {
+    _browseCoursesData = list;
     const el = document.getElementById('browseCoursesList');
     if (!list.length) { el.innerHTML = '<div class="no-content">Nothing new to enrol in right now.</div>'; return; }
-    el.innerHTML = list.map(i => `
-      <div class="course-card ${i.locked ? 'locked' : ''}" onclick="${i.locked ? `showLockedNotice('This course is not currently available.')` : `enrolInCourse('${i.id}')`}">
+    el.innerHTML = list.map(i => {
+      const clickAction = i.locked
+        ? `showLockedNotice('This course is not currently available.')`
+        : (i.price_cents && !isMember ? `openCoursePurchaseModal('${i.id}')` : `enrolInCourse('${i.id}')`);
+      return `
+      <div class="course-card ${i.locked ? 'locked' : ''}" onclick="${clickAction}">
         <div class="course-card-title">${i.locked ? '🔒 ' : ''}${i.course_title}</div>
         <div class="course-card-sub">${i.title}${i.mode==='cohort'&&i.start_date?' · Starts '+i.start_date:''}</div>
-        ${i.locked ? '' : `<div class="course-card-price">${i.price_cents ? '£'+(i.price_cents/100).toFixed(2) : 'Free'}</div>`}
+        ${i.locked ? '' : `<div class="course-card-price">${i.price_cents && !isMember ? '£'+(i.price_cents/100).toFixed(2) : 'Free'}</div>`}
         <div class="course-card-badge">${i.mode==='cohort'?'Cohort':'Self-paced'}</div>
       </div>
-    `).join('');
+    `;
+    }).join('');
+  }
+
+  // Per Bot 16 — the popup itself: shows the one-off price alongside
+  // Membership as an equally real option, rather than assuming an Explorer
+  // wants to pay per-course just because that's the only thing that used
+  // to happen. "Buy this course" reuses the exact same /api/client/enrol
+  // → Stripe Checkout flow that already existed; this only changes what
+  // happens before that call fires.
+  let _cpInstanceId = null;
+  function openCoursePurchaseModal(instanceId) {
+    const i = _browseCoursesData.find(x => x.id === instanceId);
+    if (!i) return;
+    _cpInstanceId = instanceId;
+    document.getElementById('cpTitle').textContent = i.course_title;
+    document.getElementById('cpDesc').textContent = i.title || '';
+    document.getElementById('cpPrice').textContent = '£' + (i.price_cents / 100).toFixed(2);
+    document.getElementById('cpErr').textContent = '';
+    document.getElementById('coursePurchaseModal').classList.add('visible');
+  }
+
+  async function purchaseCourseOneOff() {
+    if (!_cpInstanceId) return;
+    const btn = document.getElementById('cpBuyBtn');
+    setBtnLoading(btn, true, 'Starting checkout…');
+    try {
+      await enrolInCourse(_cpInstanceId); // redirects to Stripe on success
+      document.getElementById('coursePurchaseModal').classList.remove('visible');
+    } finally {
+      setBtnLoading(btn, false);
+    }
   }
 
   async function enrolInCourse(instanceId) {
