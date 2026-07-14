@@ -1989,9 +1989,17 @@ function getFileUsage(fileId) {
 }
 
 // ── Courses ──
+// Per Bot 15g — enforce_file_sequence explicitly set to 1 here rather than
+// left to the column's own SQL default (which is 0, baked in permanently
+// by the migration that added the column — changing that default string
+// wouldn't affect any table that already exists). New lessons under a new
+// course inherit this via file_sequence_override staying NULL, so a
+// freshly built course now defaults to enforced sequence throughout,
+// matching how it's actually meant to be used day to day; existing
+// courses are unaffected and can still be toggled per-course as before.
 function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
-  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id) VALUES (?,?,?,?,?,?,?)',
-    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null]); save();
+  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence) VALUES (?,?,?,?,?,?,?,?)',
+    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1]); save();
 }
 function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
   getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=? WHERE id=?',
@@ -2099,6 +2107,23 @@ function getFilesForLesson(lessonId) {
 }
 function removeLessonFileRef(refId) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE id=?', [refId]); save();
+}
+// Per Bot 15g — batch version for drag-and-drop: the whole new order
+// arrives in one call rather than one step at a time. Only touches refs
+// that actually belong to this lesson (never trusts ordering data to
+// silently move a ref out from under a different lesson), and any ref
+// belonging to the lesson that wasn't included in the list keeps its
+// existing relative order, appended after the ones that were — so a
+// stale/incomplete list can't accidentally drop files from the lesson.
+function reorderLessonFileRefs(lessonId, orderedRefIds) {
+  const all = queryAll('SELECT id FROM lesson_file_refs WHERE lesson_id=? ORDER BY sort_order ASC, id ASC', [lessonId]);
+  const allIds = new Set(all.map(r => r.id));
+  const validOrder = orderedRefIds.filter(id => allIds.has(id));
+  const missing = all.map(r => r.id).filter(id => !validOrder.includes(id));
+  const finalOrder = [...validOrder, ...missing];
+  const dbc = getDbSync();
+  finalOrder.forEach((id, i) => dbc.run('UPDATE lesson_file_refs SET sort_order=? WHERE id=?', [i, id]));
+  save();
 }
 // Per Bot 15f — moves one file up or down within its lesson. Existing
 // refs default to sort_order=0 (never set individually before now), so
@@ -4245,7 +4270,7 @@ module.exports = {
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,
   // Lesson file refs
-  addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, setLessonFileRefMandatory,
+  addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, reorderLessonFileRefs, setLessonFileRefMandatory,
   setAllFileRefsMandatoryForLesson, setAllFileRefsMandatoryForCourse,
   // Lesson file opens / progress (Per Bot 13)
   logFileOpen, getOpenedFileIds, getLessonFileProgress,

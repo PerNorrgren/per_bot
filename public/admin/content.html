@@ -1860,16 +1860,15 @@ async function openCourseDetail(courseId){
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
       </div>
-      ${files.length?`<div style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-        <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center">
+      ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-direction:column;gap:6px">
+        <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center;margin-bottom:2px">
           Mandatory: <button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',true)">All</button><button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',false)">None</button>
         </span>
-        ${files.map((f,i)=>`<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border-radius:6px;padding:4px 8px;font-size:12px;color:rgba(255,255,255,0.55)">
-          <span style="display:flex;flex-direction:column;line-height:0.7;margin-right:2px">
-            <button onclick="moveLessonFile('${f.ref_id}','up')" ${i===0?'disabled':''} style="background:none;border:none;color:rgba(255,255,255,${i===0?'0.15':'0.4'});cursor:${i===0?'default':'pointer'};font-size:10px;padding:1px 2px" title="Move up">▲</button>
-            <button onclick="moveLessonFile('${f.ref_id}','down')" ${i===files.length-1?'disabled':''} style="background:none;border:none;color:rgba(255,255,255,${i===files.length-1?'0.15':'0.4'});cursor:${i===files.length-1?'default':'pointer'};font-size:10px;padding:1px 2px" title="Move down">▼</button>
-          </span>
-          ${ficon(f.file_type)} ${f.title}
+        ${files.map(f=>`<div class="lesson-file-row" draggable="true" data-ref-id="${f.ref_id}"
+            ondragstart="lfDragStart(event)" ondragover="lfDragOver(event)" ondrop="lfDrop(event)" ondragend="lfDragEnd(event)"
+            style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:6px;padding:6px 10px;font-size:12px;color:rgba(255,255,255,0.55)">
+          <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
+          ${ficon(f.file_type)} <span style="flex:1">${f.title}</span>
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>
@@ -1902,10 +1901,37 @@ async function toggleFileMandatory(refId,checked){
   await fetch(`/api/content/lesson-file-refs/${refId}/mandatory`,{method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mandatory:checked})});
 }
-async function moveLessonFile(refId,direction){
-  await fetch(`/api/content/lesson-file-refs/${refId}/move`,{method:'PATCH',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({direction})});
-  openCourseDetail(curCourseId); // re-render to reflect the new order
+// Per Bot 15g — drag-and-drop reorder. Standard HTML5 DnD pattern: the
+// dragged row physically moves in the DOM as you drag over other rows
+// (dragover), so what you see while dragging IS the new order already —
+// dragend just reads that final DOM order back out and persists it in
+// one call, rather than the up/down-button approach needing you to
+// chase a small target up the list one step at a time.
+let _lfDragSrc = null;
+function lfDragStart(e) {
+  _lfDragSrc = e.currentTarget;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.style.opacity = '0.4';
+}
+function lfDragOver(e) {
+  e.preventDefault();
+  const target = e.currentTarget;
+  if (!_lfDragSrc || target === _lfDragSrc) return;
+  const rect = target.getBoundingClientRect();
+  const after = (e.clientY - rect.top) > (rect.height / 2);
+  target.parentElement.insertBefore(_lfDragSrc, after ? target.nextSibling : target);
+}
+function lfDrop(e) { e.preventDefault(); }
+async function lfDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  const container = e.currentTarget.closest('.lesson-files-list');
+  _lfDragSrc = null;
+  if (!container) return;
+  const lessonId = container.getAttribute('data-lesson-id');
+  const refIds = [...container.querySelectorAll('.lesson-file-row')].map(el => el.getAttribute('data-ref-id'));
+  await fetch(`/api/content/lessons/${lessonId}/files/reorder`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ refIds })
+  });
 }
 async function setLessonMandatoryAll(lessonId,mandatory){
   await fetch(`/api/content/lessons/${lessonId}/mandatory-all`,{method:'POST',headers:{'Content-Type':'application/json'},

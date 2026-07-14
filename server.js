@@ -5865,6 +5865,12 @@ app.patch('/api/content/lesson-file-refs/:id/move', auth.requireAuthApi(['admin'
   db.moveLessonFileRef(req.params.id, direction);
   res.json({ ok: true });
 });
+// Per Bot 15g — drag-and-drop reorder: the whole new order in one call.
+app.patch('/api/content/lessons/:id/files/reorder', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!Array.isArray(req.body.refIds)) return res.status(400).json({ error: 'refIds array required.' });
+  db.reorderLessonFileRefs(req.params.id, req.body.refIds);
+  res.json({ ok: true });
+});
 // "All" / "None" bulk toggles — set every file in one lesson, or every
 // file across the whole course, in a single call.
 app.post('/api/content/lessons/:id/mandatory-all', auth.requireAuthApi(['admin']), (req, res) => {
