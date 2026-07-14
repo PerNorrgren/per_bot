@@ -1069,6 +1069,18 @@
   </div>
 </div>
 
+<!-- Per Bot 15d — "see all" window for Talk sessions, since the Practices
+     tab itself only ever shows the single most recent one inline now. -->
+<div class="pw-overlay" id="talkSessionsModal">
+  <div class="pw-modal" style="max-width:480px">
+    <h3>Sessions with Talk</h3>
+    <div id="talkSessionsModalBody" style="max-height:60vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+    <div class="pw-btns">
+      <button class="pw-cancel" onclick="document.getElementById('talkSessionsModal').classList.remove('visible')">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── Working-button feedback (Per Bot 8) — same reusable pattern as the
   // facilitator screen: setBtnLoading(btn, true, 'Label…') swaps a button's
@@ -3386,22 +3398,20 @@
       html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
     }
 
-    // "From your facilitator" — shows first, 5 most recent inline, the
-    // heading itself the only way to reveal the rest. Files use
-    // contentItemHTML (favourite/play/add-to-playlist); practices-table
-    // rows use practiceItemHTML — concatenated and sorted together so
-    // date order is honest regardless of which path each came through.
+    // "Facilitator tracks" — files a facilitator uploaded and assigned
+    // (assigned_client_id) merged with practices they added directly
+    // (source_type='facilitator'), sorted together by date. Per Bot 15d —
+    // simplified from the earlier click-to-expand pattern: always shows
+    // the 5 most recent in a fixed scroll box, full stop — no "see all"
+    // for this one, unlike the Talk sessions group below.
     const facilitatorItems = [
       ...assignedFiles.map(f => ({ item: f, kind: 'file' })),
       ...facilitatorAdded.map(p => ({ item: p, kind: 'practice' })),
     ].sort((a, b) => new Date(b.item.created_at || 0) - new Date(a.item.created_at || 0));
     if (facilitatorItems.length) {
-      const open = openPracticeGroups.has('facilitator-items');
-      const shown = open ? facilitatorItems : facilitatorItems.slice(0, 5);
-      html += `<div class="practices-group-hdr" onclick="togglePracticeGroup('facilitator-items')">
-        <span>From your facilitator</span><span class="practices-group-count">${facilitatorItems.length}${!open && facilitatorItems.length > 5 ? ' (showing 5 most recent)' : ''} ${open ? '▾' : '▸'}</span>
-      </div>`;
-      html += `<div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(x => x.kind === 'file' ? contentItemHTML(x.item) : practiceItemHTML(x.item)).join('')}</div>`;
+      const shown = facilitatorItems.slice(0, 5);
+      html += `<div class="content-section-hdr">Facilitator tracks</div>
+        <div style="max-height:340px; overflow-y:auto;">${shown.map(x => x.kind === 'file' ? contentItemHTML(x.item) : practiceItemHTML(x.item)).join('')}</div>`;
     }
 
     html += `<div class="practices-group-row">
@@ -3432,9 +3442,8 @@
       html += `<div class="content-section-hdr">Other saved practices</div>` + ungrouped.map(practiceItemHTML).join('');
     }
 
-    // Per Bot 15c — supervisor sessions above Talk sessions, both the same
-    // 5-inline / click-heading-for-25 pattern (previously Talk sessions
-    // showed every single one, unbounded).
+    // Per Bot 15c — supervisor sessions get the same 5-inline / click-heading
+    // pattern as the course/area groups above.
     const sessionGroup = (key, label, items) => {
       if (!items.length) return '';
       const open = openPracticeGroups.has(key);
@@ -3445,9 +3454,29 @@
       <div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
     };
     html += sessionGroup('supervisor-sessions', 'Sessions with Supervisor', supervisorSessions);
-    html += sessionGroup('talk-sessions', 'Sessions with Talk', talkSessions);
+
+    // Per Bot 15d — Talk sessions specifically simplified further: just the
+    // single most recent one shown inline, with a button opening a proper
+    // modal window (not an inline expand) for the rest, capped at 25 there.
+    if (talkSessions.length) {
+      html += `<div class="content-section-hdr">Talk sessions</div>`;
+      html += practiceItemHTML(talkSessions[0]);
+      if (talkSessions.length > 1) {
+        html += `<button type="button" onclick="openTalkSessionsModal()" style="display:block; width:calc(100% - 36px); margin:6px 18px 0; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">See all ${talkSessions.length} sessions with Talk →</button>`;
+      }
+    }
+
+    // Per Bot 15d — stashed for openTalkSessionsModal, called from the
+    // "See all" button rendered above.
+    _lastTalkSessions = talkSessions;
 
     el.innerHTML = html;
+  }
+  let _lastTalkSessions = [];
+  function openTalkSessionsModal() {
+    const body = document.getElementById('talkSessionsModalBody');
+    body.innerHTML = _lastTalkSessions.slice(0, 25).map(practiceItemHTML).join('');
+    document.getElementById('talkSessionsModal').classList.add('visible');
   }
   async function toggleFav(id) { await fetch(`/api/practices/${id}/favourite`,{method:'PATCH'}); loadPractices(); }
   async function openPractice(id, title, type, content, filename) {
