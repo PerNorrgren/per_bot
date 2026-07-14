@@ -101,14 +101,41 @@
       display:flex; flex-direction:column; overflow:hidden;
     }
 
-    .section { border-bottom:1px solid rgba(255,255,255,0.06); }
-    .section-header {
-      padding:12px 16px 10px; display:flex; align-items:center; justify-content:space-between;
-      cursor:pointer;
+    /* Per Bot 16 — the five left-col sections (Arc, Sessions, Recordings,
+       Practices, Messages) used to all sit stacked and permanently
+       expanded in one narrow scrolling column, so Messages — the thing
+       actually used constantly during a live session — ended up squeezed
+       under four other sections. Replaced with a tab bar, matching the
+       app's own pattern (the admin six-area topbar, and the message
+       thread tabs one level down inside this very panel) rather than an
+       accordion or a separate page — this stays a live working surface
+       next to the client's name and the Talk panel, not something you
+       navigate away from mid-session.
+    */
+    .section-tabs {
+      display:flex; flex-wrap:wrap; gap:5px;
+      padding:12px 12px 10px; border-bottom:1px solid rgba(255,255,255,0.07);
+      flex-shrink:0;
     }
-    .section-title { font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
-    .section-toggle { font-size:12px; color:rgba(255,255,255,0.25); }
-    .section-body { padding:0 16px 14px; }
+    .section-tab {
+      padding:6px 11px; border-radius:8px; border:1px solid rgba(255,255,255,0.1);
+      background:none; color:rgba(255,255,255,0.4); font-size:11px; letter-spacing:0.03em;
+      cursor:pointer; font-family:'Georgia',serif; display:flex; align-items:center; gap:5px;
+      transition:all 0.15s;
+    }
+    .section-tab:hover { border-color:rgba(255,255,255,0.22); color:rgba(255,255,255,0.6); }
+    .section-tab.active { border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.85); background:rgba(180,230,200,0.08); }
+    .section-tab-badge {
+      display:inline-flex; align-items:center; justify-content:center; min-width:15px; height:15px;
+      padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.85); color:#fff;
+      font-size:9.5px; font-weight:bold; line-height:1;
+    }
+    .section-tab-badge:empty { display:none; }
+
+    .section-panels { flex:1; overflow:hidden; display:flex; flex-direction:column; }
+    .section-panel { display:none; padding:14px 16px; overflow-y:auto; flex:1; }
+    .section-panel.active { display:block; }
+    .section-panel.active.flex-panel { display:flex; flex-direction:column; overflow:hidden; }
 
     .arc-text {
       font-size:13px; line-height:1.7; color:rgba(255,255,255,0.65);
@@ -304,7 +331,7 @@
     .msg-thread-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
     .msg-thread-tab { padding:5px 11px; border-radius:12px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); font-size:11px; cursor:pointer; }
     .msg-thread-tab.active { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.8); background:rgba(180,230,200,0.08); }
-    .msg-list { display:flex; flex-direction:column; gap:8px; max-height:280px; overflow-y:auto; padding:4px 2px; margin-bottom:10px; }
+    .msg-list { display:flex; flex-direction:column; gap:8px; flex:1; min-height:0; overflow-y:auto; padding:4px 2px; margin-bottom:10px; }
     .msg-bubble-row { display:flex; }
     .msg-bubble-row.me { justify-content:flex-end; }
     .msg-bubble { max-width:78%; padding:8px 11px; border-radius:10px; font-size:12.5px; line-height:1.5; position:relative; }
@@ -431,58 +458,43 @@
 
       <!-- Left col (hidden until client selected) -->
       <div class="left-col" id="leftCol" style="display:none">
-        <!-- Arc -->
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">Arc / Development Plan</span>
-          </div>
-          <div class="section-body">
+        <div class="section-tabs" id="facSectionTabs">
+          <button class="section-tab" data-tab="arc" onclick="switchFacTab('arc')">Arc</button>
+          <button class="section-tab" data-tab="sessions" onclick="switchFacTab('sessions')">Sessions <span class="section-tab-badge" id="sessionCount"></span></button>
+          <button class="section-tab" data-tab="recordings" onclick="switchFacTab('recordings')">Recordings</button>
+          <button class="section-tab" data-tab="practices" onclick="switchFacTab('practices')">Practices</button>
+          <button class="section-tab" data-tab="messages" onclick="switchFacTab('messages')">Messages <span class="section-tab-badge" id="msgUnreadBadge"></span></button>
+        </div>
+
+        <div class="section-panels" id="facSectionPanels">
+          <!-- Arc -->
+          <div class="section-panel" data-panel="arc">
             <textarea class="arc-text" id="arcText" rows="4" placeholder="Not yet established — will form as sessions accumulate."></textarea>
             <button class="save-arc-btn" id="saveArcBtn">Save arc</button>
           </div>
-        </div>
 
-        <!-- Sessions -->
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">Sessions</span>
-            <span class="section-toggle" id="sessionCount"></span>
+          <!-- Sessions -->
+          <div class="section-panel" data-panel="sessions">
+            <div class="sessions-list" id="sessionsList" style="max-height:none"></div>
           </div>
-          <div class="section-body">
-            <div class="sessions-list" id="sessionsList"></div>
-          </div>
-        </div>
 
-        <!-- Video call recordings (Per Bot 12) — separate from the clinical
-             session notes above; these are actual call recordings/transcripts,
-             private to the facilitator until explicitly shared with the client. -->
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">Video call recordings</span>
+          <!-- Video call recordings (Per Bot 12) — separate from the clinical
+               session notes above; these are actual call recordings/transcripts,
+               private to the facilitator until explicitly shared with the client. -->
+          <div class="section-panel" data-panel="recordings">
+            <div class="sessions-list" id="callRecordingsList" style="max-height:none"></div>
           </div>
-          <div class="section-body">
-            <div class="sessions-list" id="callRecordingsList"></div>
-          </div>
-        </div>
 
-        <!-- Practices -->
-        <div class="section practices-section">
-          <div class="section-header">
-            <span class="section-title">Practices</span>
+          <!-- Practices -->
+          <div class="section-panel flex-panel" data-panel="practices" style="padding:14px 0 0">
+            <div class="practices-list" id="facPracticesList"></div>
+            <div class="add-practice-wrap">
+              <button class="add-practice-btn" id="addPracticeBtn2">+ Add practice</button>
+            </div>
           </div>
-          <div class="practices-list" id="facPracticesList"></div>
-          <div class="add-practice-wrap">
-            <button class="add-practice-btn" id="addPracticeBtn2">+ Add practice</button>
-          </div>
-        </div>
 
-        <!-- Messages -->
-        <div class="section">
-          <div class="section-header">
-            <span class="section-title">Messages</span>
-            <span class="section-toggle" id="msgUnreadBadge"></span>
-          </div>
-          <div class="section-body">
+          <!-- Messages -->
+          <div class="section-panel flex-panel" data-panel="messages">
             <div class="msg-thread-tabs" id="msgThreadTabs">
               <button class="msg-thread-tab active" data-session="" onclick="switchMsgThread('')">General</button>
             </div>
@@ -729,6 +741,7 @@
     document.getElementById('sessionActions').style.display = 'flex';
     document.getElementById('leftCol').style.display = '';
     document.getElementById('rightCol').style.display = '';
+    switchFacTab('messages');
 
     document.querySelectorAll('.client-item').forEach(el => el.classList.remove('active'));
     event?.target?.classList.add('active');
@@ -948,10 +961,20 @@
     _msgSessionId = sessionId;
     loadMessages();
   }
+
+  // Per Bot 16 — the primary tab bar for the left column (Arc / Sessions /
+  // Recordings / Practices / Messages). Only one panel is ever visible at
+  // a time now, so anything that used to just scroll to a section (see
+  // jumpToSessionMessages below) needs to switch to its tab first.
+  function switchFacTab(name) {
+    document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.section-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === name));
+  }
+
   function jumpToSessionMessages() {
     document.getElementById('sessionReviewModal').classList.remove('visible');
+    switchFacTab('messages');
     switchMsgThread(reviewSessionId);
-    document.getElementById('msgList').scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function msgBubbleContent(m) {
