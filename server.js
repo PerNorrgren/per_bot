@@ -2713,7 +2713,7 @@ async function runKnowledgeGeneration(doc, log) {
   const extractionResponse = await anthropicFetch(
     'You are a careful, precise knowledge editor. Follow the instructions exactly and respond with valid JSON only — no preamble, no markdown fences.',
     [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText) }],
-    8000, 180000
+    16000, 180000, true
   );
   let topicStubs;
   try {
@@ -2739,7 +2739,7 @@ async function runKnowledgeGeneration(doc, log) {
       const levelsResponse = await anthropicFetch(
         'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond with valid JSON only — no preamble, no markdown fences.',
         [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(doc.title, topic.title, topic.menuLine, levels, rawText) }],
-        8000, 180000
+        12000, 180000, true
       );
       const levelContent = JSON.parse(levelsResponse.replace(/^```json\s*|```\s*$/g, '').trim());
       for (const level of levels) {
@@ -2802,7 +2802,7 @@ async function runKnowledgeLevelBackfill(level, log) {
       const response = await anthropicFetch(
         'You are a careful, precise knowledge writer, grounded strictly in the material given. Respond with valid JSON only — no preamble, no markdown fences.',
         [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(topic.document_title || topic.title, topic.title, topic.menu_line, [level], groundingText) }],
-        4000, 180000
+        6000, 180000, true
       );
       const parsed = JSON.parse(response.replace(/^```json\s*|```\s*$/g, '').trim());
       if (parsed[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, parsed[level.id]);
@@ -3857,7 +3857,21 @@ app.delete('/api/messages/:id', auth.requireAuthApi(['admin','facilitator']), (r
 // this produces when it fires is Node's own generic AbortController
 // wording — misleading in that it sounds like someone clicked cancel,
 // but it's always this timeout, never an actual person aborting anything.
-async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 25000) {
+async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 25000, disableThinking = false) {
+  const requestBody = { model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages };
+  // Per Bot 15t — Sonnet 5 runs with adaptive thinking on by default now
+  // (a real behavior change from 4.6: a request with no `thinking` field
+  // used to just run without it; on Sonnet 5 the same request now thinks
+  // anyway), and thinking tokens draw from this same max_tokens budget —
+  // it's a genuine hard limit on thinking PLUS the actual reply combined,
+  // not a limit on the reply alone. For a strict "produce valid JSON, no
+  // prose" task, thinking's own token spend is unpredictable and buys
+  // little — worse, it can quietly eat most of the budget before any of
+  // the actual JSON gets written, truncating the response mid-array. This
+  // is exactly what happened generating knowledge-base topics from a
+  // large document: the call succeeded, produced real text, and still
+  // failed to parse because it never reached the closing bracket.
+  if (disableThinking) requestBody.thinking = { type: 'disabled' };
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -3866,7 +3880,7 @@ async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 250
       'Content-Type': 'application/json',
       'Connection': 'close',
     },
-    body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages }),
+    body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json();
@@ -4011,7 +4025,7 @@ ${corpus}`;
     return await anthropicFetch(
       'You are a precise research assistant. Extract only what is genuinely relevant to the query; never pad, never include tangential material just to have something to say.',
       [{ role: 'user', content: searchPrompt }],
-      1200, 45000
+      1200, 45000, true
     );
   } catch(e) {
     return `Search failed (${e.message}) — proceed with what you already know rather than waiting on this.`;
