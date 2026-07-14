@@ -158,7 +158,17 @@
 <body>
 <div class="app">
   <div class="topbar">
-    <div><div class="logo" data-brand="name">Deeper Mindfulness</div><div class="logo-name">Content Library</div></div>
+    <div style="position:relative">
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Content Library</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
+    </div>
     <div class="nav-tabs">
       <button class="nav-tab active" data-tab="library">Library</button>
       <button class="nav-tab" data-tab="courses">Courses</button>
@@ -167,9 +177,10 @@
       <button class="nav-tab" data-tab="categories">Categories</button>
     </div>
     <div class="topbar-right">
-      <a href="/admin/" class="btn">← Admin</a>
-      <a href="/setup" class="btn">App setup</a>
-      <button class="btn" onclick="logout()">Sign out</button>
+      <a href="/admin/" class="btn">Users</a>
+      <a href="/admin/content" class="btn primary">Content library</a>
+      <a href="/admin/comms" class="btn">Communications</a>
+      <a href="/setup" class="btn">Settings</a>
     </div>
   </div>
   <div class="content">
@@ -726,6 +737,15 @@ document.querySelectorAll('.nav-tab').forEach(t=>t.addEventListener('click',()=>
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function openModal(id){document.getElementById(id).classList.add('open');}
 async function logout(){await fetch('/api/logout',{method:'POST'});location.href='/login';}
+// Per Bot 15j — shared admin-menu dropdown, same as every other admin page.
+function toggleAdminMenu() {
+  const m = document.getElementById('adminMenu');
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', e => {
+  const m = document.getElementById('adminMenu');
+  if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+});
 
 function ficon(t=''){
   if(t.includes('audio')||t.includes('mp3')||t.includes('mpeg'))return'🎵';

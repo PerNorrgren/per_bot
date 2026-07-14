@@ -8,11 +8,27 @@
   <link rel="apple-touch-icon" href="/favicon-dynamic"/>
   <link rel="manifest" href="/site.webmanifest"/>
   <script src="/js/dialogs.js"></script>
+  <script src="/brand-inject.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px 80px; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); }
+    body { display:flex; flex-direction:column; align-items:center; }
 
-    .panel { width:100%; max-width:560px; display:flex; flex-direction:column; gap:18px; }
+    /* ── Topbar (Per Bot 15j) — same structure/behavior as every other
+       admin page, shown once this deployment's first-run setup is done
+       (see _alreadySetUp below); during first-run itself there's no admin
+       session/nav worth showing yet, so it stays hidden until then. ── */
+    .topbar { width:100%; padding:16px 28px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:none; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; box-sizing:border-box; }
+    .topbar.visible { display:flex; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:10px; align-items:center; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+
+    .panel { width:100%; max-width:560px; display:flex; flex-direction:column; gap:18px; padding:40px 16px 80px; }
     .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:4px; }
     .page-title { font-size:24px; color:rgba(255,255,255,0.85); font-weight:normal; margin-bottom:6px; }
     .page-sub { font-size:14px; color:rgba(255,255,255,0.4); line-height:1.6; }
@@ -59,9 +75,28 @@
 </head>
 <body>
 
+<div class="topbar" id="setupTopbar">
+  <div style="position:relative">
+    <div class="logo" data-brand="name">Deeper Mindfulness</div>
+    <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+      <span class="logo-name" style="font-size:18px">Settings</span>
+      <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+    </button>
+    <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+      <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+      <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <a href="/admin/" class="btn">Users</a>
+    <a href="/admin/content" class="btn">Content library</a>
+    <a href="/admin/comms" class="btn">Communications</a>
+    <a href="/setup" class="btn primary">Settings</a>
+  </div>
+</div>
+
 <div class="panel">
   <div>
-    <a id="backToAdminLink" href="/admin/" style="display:none;font-size:12px;color:rgba(255,255,255,0.4);text-decoration:none;margin-bottom:10px">← Admin</a>
     <div class="wordmark" id="setupWordmark">First-run setup</div>
     <div class="page-title" id="setupTitle">Let's set this up</div>
     <div class="page-sub" id="setupSub">This runs once, for this deployment only. Nothing here is shared with any other facilitator's copy of this app — each one is fully independent.</div>
@@ -335,6 +370,17 @@
 </div>
 
 <script>
+  // Per Bot 15j — shared admin-menu dropdown, same as every other admin page.
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
+  async function logout() { await fetch('/api/logout', {method:'POST'}); location.href = '/login'; }
+
   function togglePaymentsNote() {
     document.getElementById('stripeNote').style.display = document.getElementById('paymentsEnabled').checked ? '' : 'none';
   }
@@ -355,7 +401,7 @@
       const cfg  = await res.json();
       if (cfg.setup_completed) {
         _alreadySetUp = true;
-        document.getElementById('backToAdminLink').style.display = 'inline-block';
+        document.getElementById('setupTopbar').classList.add('visible');
         document.getElementById('setupWordmark').textContent = 'App setup';
         document.getElementById('setupTitle').textContent = 'Settings for this deployment';
         document.getElementById('setupSub').textContent = "These apply to this deployment only — nothing here is shared with any other facilitator's copy of this app.";
