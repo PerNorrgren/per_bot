@@ -504,6 +504,59 @@ Write a short note (under 120 words) for the client in the FELT·FIBRE plain voi
 
 This will be read by the client themselves. Write directly to them, second person, warm and plain.`;
 
+// Per Bot 15q — Step 1 of the knowledge-generation pipeline: read a whole
+// source document and propose a clean set of topics from it. Explicitly
+// asked to deduplicate and merge, since a real document (the Signal Guide,
+// Science Foundation, etc.) very often covers the same underlying idea
+// more than once from different angles — that redundancy should collapse
+// into one well-scoped topic, not become three near-identical ones. Also
+// proposes links between topics that are genuinely related, since this
+// call is the only point that ever sees the whole document at once — a
+// later per-topic call has no way to know what else exists.
+const KNOWLEDGE_EXTRACT_TOPICS_PROMPT = (docTitle, rawText) => `
+You are helping build a structured knowledge base from a source document, for an AI conversational companion (Talk) to draw on. Your job right now is ONLY to identify the topics this document contains — not to write the deep content itself, that happens in a separate step per topic.
+
+SOURCE DOCUMENT: "${docTitle}"
+
+${rawText}
+
+Read the whole document and propose a clean, well-scoped set of topics. Guidelines:
+- Each topic should be a genuinely distinct idea someone could ask about or a conversation could go deep on — not a arbitrary chapter/section split, and not so broad it's really several ideas glued together.
+- This document likely covers some ideas more than once, from different angles or at different points — merge those into ONE topic rather than producing near-duplicates. Favour fewer, well-scoped topics over many overlapping ones.
+- Give each topic a short, clear title (2–6 words) and a one-line menu_line: a single sentence, written for an AI deciding whether this topic is relevant to what's being discussed right now — specific enough to be useful, never vague ("stress and the body" is too vague; "why background stress needs grounding before anything else" is useful).
+- Propose links between topics that are genuinely, substantively related — not everything-to-everything, only real conceptual connections (e.g. a topic on the Moro Reflex Brake and a topic on Sleep as Substrate, since sleep is described as the main lever for the Brake). Reference linked topics by their exact title text.
+
+Respond with ONLY a JSON array, no preamble, no markdown fences:
+[
+  { "title": "...", "menu_line": "...", "links": ["Exact Title Of Another Topic", ...] },
+  ...
+]`;
+
+// Per Bot 15q — Step 2: for one already-identified topic, generate real
+// content at every level in the ladder, in one call (so the levels stay
+// consistent with each other rather than being generated independently
+// and drifting in framing). Levels and their descriptions are passed in
+// dynamically from knowledge_levels_config, not hardcoded, so a newly
+// added level gets picked up automatically without a prompt change.
+const KNOWLEDGE_GENERATE_LEVELS_PROMPT = (docTitle, topicTitle, menuLine, levels, rawText) => `
+You are writing the actual depth content for one topic in a structured knowledge base, for an AI conversational companion (Talk) to draw on mid-conversation when this topic comes up in real depth.
+
+SOURCE DOCUMENT: "${docTitle}"
+TOPIC: "${topicTitle}"
+ONE-LINE SUMMARY: ${menuLine}
+
+Write content for this topic at each of the following levels. Each level should stand on its own (Talk may only ever fetch one level, not all of them in sequence), be grounded in the source material below, and get progressively deeper/more technical as the levels ask for:
+
+${levels.map(l => `- ${l.id} ("${l.name}"): ${l.description}`).join('\n')}
+
+SOURCE MATERIAL (draw only from what's actually here — do not invent claims, mechanisms, or citations not present in this material):
+${rawText}
+
+Respond with ONLY a JSON object, no preamble, no markdown fences, one key per level id exactly as given above:
+{
+  ${levels.map(l => `"${l.id}": "..."`).join(',\n  ')}
+}`;
+
 const GENERATE_ARC_UPDATE = (currentArc, recentSummaries) => `
 Based on the current arc and recent session summaries, suggest an updated arc statement.
 
@@ -617,4 +670,6 @@ module.exports = {
   GENERATE_SESSION_SUMMARY,
   GENERATE_CLIENT_SUMMARY,
   GENERATE_ARC_UPDATE,
+  KNOWLEDGE_EXTRACT_TOPICS_PROMPT,
+  KNOWLEDGE_GENERATE_LEVELS_PROMPT,
 };

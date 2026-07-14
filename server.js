@@ -973,6 +973,20 @@ function emailFacilitatorRequestReceivedToAdmin(request) {
   );
 }
 
+// Per Bot 15o — this never existed at all: a new guest enquiry generated
+// no admin notification of any kind, unlike facilitator requests just
+// above. Same pattern, pointing at the People page's Enquiries section.
+function emailGuestLeadReceivedToAdmin(lead) {
+  return sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+    `New enquiry — ${lead.name}`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
+      <h2 style="font-weight:normal">New enquiry</h2>
+      <p><strong>${lead.name}</strong> · ${lead.email}</p>
+      <p><a href="${APP_URL}/admin/">Review in admin →</a></p>
+    </div>`
+  );
+}
+
 function emailFacilitatorRequestApproved(request) {
   const b = brand();
   return sendEmail(request.email, 'Your facilitator request has been approved',
@@ -2561,6 +2575,260 @@ app.delete('/api/admin/context-documents/:id', auth.requireAuthApi(['admin']), (
   res.json({ ok: true });
 });
 
+// ══════════════════════════════════════════════════════════════
+// Sectioned knowledge (Per Bot 15p/q) — replaces Context documents as
+// Talk's ongoing knowledge mechanism. See schema comments on
+// knowledge_documents in db.js for the full picture.
+// ══════════════════════════════════════════════════════════════
+
+// -- Documents (source material) --
+app.post('/api/admin/knowledge/documents', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    const title = (req.body.title || req.file.originalname || 'Untitled').trim();
+    const skinId = (req.body.skinId && db.getSkin(req.body.skinId)) ? req.body.skinId : null;
+    const origName = (req.file.originalname || '').toLowerCase();
+
+    let content;
+    try {
+      if (origName.endsWith('.docx')) {
+        const result = await mammoth.extractRawText({ path: req.file.path });
+        content = result.value;
+      } else {
+        content = fs.readFileSync(req.file.path, 'utf8');
+      }
+    } catch (e) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Could not read that file — only plain text (.txt) and Word (.docx) are supported.' });
+    }
+    fs.unlink(req.file.path, () => {});
+
+    content = content.trim();
+    if (!content) return res.status(400).json({ error: 'That file appears to be empty.' });
+
+    const id = uuidv4();
+    db.createKnowledgeDocument(id, title, req.file.originalname, content, skinId);
+    res.json({ id, charCount: content.length });
+  } catch(e) {
+    console.error('knowledge document upload error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+app.get('/api/admin/knowledge/documents', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getKnowledgeDocuments());
+});
+app.patch('/api/admin/knowledge/documents/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.archiveKnowledgeDocument(req.params.id, !!req.body.archived);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/knowledge/documents/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteKnowledgeDocument(req.params.id);
+  res.json({ ok: true });
+});
+
+// -- Levels --
+app.get('/api/admin/knowledge/levels', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getKnowledgeLevels());
+});
+app.post('/api/admin/knowledge/levels', auth.requireAuthApi(['admin']), (req, res) => {
+  const { name, sortOrder, description } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required.' });
+  const id = (req.body.id || name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (db.getKnowledgeLevels().some(l => l.id === id)) return res.status(400).json({ error: 'A level with that id already exists.' });
+  db.addKnowledgeLevel(id, name, sortOrder || 99, description || '');
+  res.json({ id });
+});
+app.patch('/api/admin/knowledge/levels/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.updateKnowledgeLevel(req.params.id, req.body);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/knowledge/levels/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteKnowledgeLevel(req.params.id);
+  res.json({ ok: true });
+});
+
+// -- Topics --
+app.get('/api/admin/knowledge/topics', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getAllKnowledgeTopicsAdmin());
+});
+app.get('/api/admin/knowledge/topics/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  const topic = db.getKnowledgeTopic(req.params.id);
+  if (!topic) return res.status(404).json({ error: 'Not found.' });
+  res.json({
+    ...topic,
+    content: db.getKnowledgeTopicAllContent(req.params.id),
+    links: db.getLinkedKnowledgeTopics(req.params.id),
+  });
+});
+app.patch('/api/admin/knowledge/topics/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.updateKnowledgeTopic(req.params.id, req.body);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/knowledge/topics/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteKnowledgeTopic(req.params.id);
+  res.json({ ok: true });
+});
+app.put('/api/admin/knowledge/topics/:id/content/:levelId', auth.requireAuthApi(['admin']), (req, res) => {
+  if (typeof req.body.content !== 'string') return res.status(400).json({ error: 'content is required.' });
+  db.setKnowledgeTopicContent(req.params.id, req.params.levelId, req.body.content);
+  res.json({ ok: true });
+});
+app.post('/api/admin/knowledge/topics/:id/links/:linkedId', auth.requireAuthApi(['admin']), (req, res) => {
+  db.linkKnowledgeTopics(req.params.id, req.params.linkedId);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/knowledge/topics/:id/links/:linkedId', auth.requireAuthApi(['admin']), (req, res) => {
+  db.unlinkKnowledgeTopics(req.params.id, req.params.linkedId);
+  res.json({ ok: true });
+});
+
+// -- Generation pipeline --
+// Two-step, per Per's ask ("auto generated at all levels... just do it,
+// no need to approve first"): (1) one call reads the whole document and
+// proposes a deduplicated, well-scoped set of topics with links between
+// them — this is the only point that ever sees the whole document at
+// once; (2) one call per topic generates real content at every level,
+// grounded back in the same source material. Everything is written
+// straight to the DB as it's generated — nothing waits for review.
+// Backgrounded (matches the epub-unpack/R2-sweep job pattern) since a
+// real document can easily produce a dozen-plus topics, each needing
+// its own API round-trip — this would time out as a synchronous request
+// long before a real document finished.
+async function runKnowledgeGeneration(doc, log) {
+  const levels = db.getKnowledgeLevels();
+  if (!levels.length) throw new Error('No knowledge levels exist yet — nothing to generate content for.');
+
+  // Defensive cap only — a whole book is still fine context-window-wise,
+  // this just stops an accidental multi-megabyte paste from becoming a
+  // silent runaway cost across every one of the per-topic calls below.
+  const MAX_CHARS = 400000;
+  const rawText = doc.raw_text.length > MAX_CHARS ? doc.raw_text.slice(0, MAX_CHARS) : doc.raw_text;
+
+  log(`Reading "${doc.title}" (${doc.raw_text.length.toLocaleString()} characters) and identifying topics...`);
+  const extractionResponse = await anthropicFetch(
+    'You are a careful, precise knowledge editor. Follow the instructions exactly and respond with valid JSON only — no preamble, no markdown fences.',
+    [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText) }],
+    8000
+  );
+  let topicStubs;
+  try {
+    topicStubs = JSON.parse(extractionResponse.replace(/^```json\s*|```\s*$/g, '').trim());
+  } catch(e) {
+    throw new Error('Could not parse the topic-extraction response: ' + e.message);
+  }
+  if (!Array.isArray(topicStubs) || !topicStubs.length) throw new Error('No topics were identified in this document.');
+  log(`Identified ${topicStubs.length} topic(s): ${topicStubs.map(t => t.title).join(', ')}`);
+
+  // Create every topic row first, so link resolution (by title) below has
+  // every id available regardless of which order topics were generated in.
+  const createdTopics = [];
+  for (const stub of topicStubs) {
+    const id = uuidv4();
+    db.createKnowledgeTopic(id, doc.id, stub.title, stub.menu_line || '', doc.skin_id, null);
+    createdTopics.push({ id, title: stub.title, menuLine: stub.menu_line || '', links: stub.links || [] });
+  }
+
+  for (const topic of createdTopics) {
+    log(`Generating depth content for "${topic.title}"...`);
+    try {
+      const levelsResponse = await anthropicFetch(
+        'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond with valid JSON only — no preamble, no markdown fences.',
+        [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(doc.title, topic.title, topic.menuLine, levels, rawText) }],
+        8000
+      );
+      const levelContent = JSON.parse(levelsResponse.replace(/^```json\s*|```\s*$/g, '').trim());
+      for (const level of levels) {
+        if (levelContent[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, levelContent[level.id]);
+      }
+    } catch(e) {
+      log(`  Could not generate content for "${topic.title}" (${e.message}) — the topic itself was still created; you can generate its content individually later.`);
+    }
+  }
+
+  log('Linking related topics...');
+  let linkCount = 0;
+  for (const topic of createdTopics) {
+    for (const linkedTitle of topic.links) {
+      const target = createdTopics.find(t => t.title.toLowerCase() === String(linkedTitle).toLowerCase());
+      if (target && target.id !== topic.id) { db.linkKnowledgeTopics(topic.id, target.id); linkCount++; }
+    }
+  }
+
+  log(`Done. ${createdTopics.length} topic(s) created, ${linkCount} link(s) made.`);
+  return { topicsCreated: createdTopics.length, linksCreated: linkCount };
+}
+
+let knowledgeGenerateJob = null;
+app.post('/api/admin/knowledge/documents/:id/generate', auth.requireAuthApi(['admin']), (req, res) => {
+  if (knowledgeGenerateJob && !knowledgeGenerateJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: knowledgeGenerateJob });
+  }
+  const doc = db.getKnowledgeDocument(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  knowledgeGenerateJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = knowledgeGenerateJob;
+  runKnowledgeGeneration(doc, (line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('knowledge generation error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/knowledge/documents/:id/generate-status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!knowledgeGenerateJob) return res.status(404).json({ error: 'No generation job has been started yet.' });
+  res.json(knowledgeGenerateJob);
+});
+
+// -- Backfill a level across every existing topic (Per: "ability to
+// re-work existing information" when a level gets added later) --
+// Uses whichever content already exists for each topic (any level, plus
+// the menu_line) as grounding, since the original source document may no
+// longer be the most accurate context once a topic's own content has
+// been hand-edited since generation.
+async function runKnowledgeLevelBackfill(level, log) {
+  const topics = db.getAllKnowledgeTopicsAdmin().filter(t => !t.archived);
+  log(`Backfilling "${level.name}" across ${topics.length} topic(s)...`);
+  let done = 0;
+  for (const topic of topics) {
+    const existing = db.getKnowledgeTopicAllContent(topic.id);
+    if (existing.some(c => c.level_id === level.id && c.content?.trim())) { done++; continue; } // already has this level
+    const groundingText = existing.length
+      ? existing.map(c => `[${c.level_name}]\n${c.content}`).join('\n\n')
+      : topic.menu_line;
+    try {
+      const response = await anthropicFetch(
+        'You are a careful, precise knowledge writer, grounded strictly in the material given. Respond with valid JSON only — no preamble, no markdown fences.',
+        [{ role: 'user', content: prompts.KNOWLEDGE_GENERATE_LEVELS_PROMPT(topic.document_title || topic.title, topic.title, topic.menu_line, [level], groundingText) }],
+        4000
+      );
+      const parsed = JSON.parse(response.replace(/^```json\s*|```\s*$/g, '').trim());
+      if (parsed[level.id]) db.setKnowledgeTopicContent(topic.id, level.id, parsed[level.id]);
+      done++;
+    } catch(e) {
+      log(`  Could not backfill "${topic.title}" (${e.message}).`);
+    }
+  }
+  log(`Done. ${done}/${topics.length} topic(s) now have "${level.name}".`);
+  return { levelId: level.id, topicsProcessed: done, totalTopics: topics.length };
+}
+
+let knowledgeBackfillJob = null;
+app.post('/api/admin/knowledge/levels/:id/backfill', auth.requireAuthApi(['admin']), (req, res) => {
+  if (knowledgeBackfillJob && !knowledgeBackfillJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: knowledgeBackfillJob });
+  }
+  const level = db.getKnowledgeLevels().find(l => l.id === req.params.id);
+  if (!level) return res.status(404).json({ error: 'Level not found.' });
+  knowledgeBackfillJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = knowledgeBackfillJob;
+  runKnowledgeLevelBackfill(level, (line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('knowledge backfill error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/knowledge/levels/:id/backfill-status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!knowledgeBackfillJob) return res.status(404).json({ error: 'No backfill job has been started yet.' });
+  res.json(knowledgeBackfillJob);
+});
+
 // ── Admin editing a user's own details directly (Per Bot 8) ──
 app.patch('/api/admin/users/:id/details', auth.requireAuthApi(['admin']), async (req, res) => {
   const user = db.getUser(req.params.id);
@@ -3602,6 +3870,87 @@ async function anthropicFetch(systemPrompt, messages, maxTokens) {
   return textBlock.text;
 }
 
+// Per Bot 15p — same shape as anthropicFetch, but with tools. Only
+// get_knowledge needs resolving here — it's a custom tool, so the API
+// pauses (stop_reason='tool_use') and hands control back to us. Native
+// tools like web_search are resolved by Anthropic's own infrastructure
+// inside the same call and never trigger this loop at all; they just
+// show up already-resolved in the response's content blocks.
+// toolResolvers is a map of { toolName: async (input) => resultString }.
+// Bounded at 6 rounds — a real conversation calling get_knowledge more
+// than a handful of times in one reply is very unlikely to be genuinely
+// still going deeper rather than looping.
+async function anthropicFetchWithTools(systemPrompt, messages, tools, toolResolvers, maxTokens) {
+  let convo = [...messages];
+  for (let round = 0; round < 6; round++) {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+        'Connection': 'close',
+      },
+      body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages: convo, tools }),
+      signal: AbortSignal.timeout(25000),
+    });
+    const data = await response.json();
+    if (!data.content) throw new Error(JSON.stringify(data));
+
+    if (data.stop_reason !== 'tool_use') {
+      const textBlock = data.content.find(b => b.type === 'text');
+      if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+      return textBlock.text;
+    }
+
+    // Custom tool_use blocks need resolving; server_tool_use/web_search
+    // blocks are already resolved and just get carried through as part
+    // of the assistant message we echo back.
+    const toolUseBlocks = data.content.filter(b => b.type === 'tool_use');
+    convo.push({ role: 'assistant', content: data.content });
+    const toolResults = await Promise.all(toolUseBlocks.map(async (block) => {
+      const resolver = toolResolvers[block.name];
+      let resultText;
+      try {
+        resultText = resolver ? await resolver(block.input) : `Unknown tool: ${block.name}`;
+      } catch (e) {
+        resultText = `Error resolving ${block.name}: ${e.message}`;
+      }
+      return { type: 'tool_result', tool_use_id: block.id, content: resultText };
+    }));
+    convo.push({ role: 'user', content: toolResults });
+  }
+  throw new Error('Too many tool-use rounds without a final answer.');
+}
+
+// Per Bot 15q — the actual get_knowledge tool Talk can reach for mid-reply.
+// Schema kept deliberately simple: a topic id (from the menu already in
+// the system prompt) and a level id (from whichever levels currently
+// exist — Talk doesn't need to know the exact level names in advance,
+// they're implied by what's in the menu's own framing).
+const KNOWLEDGE_TOOL_DEF = {
+  name: 'get_knowledge',
+  description: 'Fetch real depth on one topic from the knowledge base, at a specific level. Use when a conversation genuinely goes deep enough to need it — not for every passing mention of a related idea.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      topic_id: { type: 'string', description: 'The id of the topic, exactly as given in the knowledge menu.' },
+      level: { type: 'string', description: 'Which depth level to fetch — e.g. overview, user, teacher, scientist.' },
+    },
+    required: ['topic_id', 'level'],
+  },
+};
+async function resolveGetKnowledgeTool(input) {
+  const topic = db.getKnowledgeTopic(input.topic_id);
+  if (!topic || topic.archived) return `No such topic. Stay with what you already know rather than guessing at content.`;
+  const row = db.getKnowledgeTopicContent(input.topic_id, input.level);
+  if (!row || !row.content?.trim()) {
+    const available = db.getKnowledgeTopicAllContent(input.topic_id).map(c => c.level_name).join(', ') || 'none yet';
+    return `No content exists yet for "${topic.title}" at that level. Levels that do exist for this topic: ${available}.`;
+  }
+  return row.content;
+}
+
 // maxTokens defaults raised from 400 → 1500 (Per Bot 33h). On models with
 // adaptive thinking on by default, thinking tokens are drawn from the same
 // max_tokens budget as the visible reply — 400 was tight enough on Opus
@@ -3611,6 +3960,21 @@ async function anthropicFetch(systemPrompt, messages, maxTokens) {
 // for tokens genuinely generated — it just stops silent truncation.
 async function callClaude(systemPrompt, messages, maxTokens = 1500) {
   return stripMarkdown(await anthropicFetch(systemPrompt, messages, maxTokens));
+}
+
+// Per Bot 15q — same as callClaude, but with the get_knowledge tool
+// available. Used only by the real client Talk conversation (not the
+// facilitator co-pilot, session summaries, or guest chat — none of those
+// need or currently offer a knowledge menu at all). Harmless to call even
+// when no knowledge topics exist yet: the menu in the system prompt is
+// empty, so there's nothing for the model to reach for.
+async function callClaudeWithKnowledge(systemPrompt, messages, maxTokens = 1500) {
+  const text = await anthropicFetchWithTools(
+    systemPrompt, messages, [KNOWLEDGE_TOOL_DEF],
+    { get_knowledge: resolveGetKnowledgeTool },
+    maxTokens
+  );
+  return stripMarkdown(text);
 }
 
 // Same as callClaude but WITHOUT stripMarkdown — needed anywhere the response
@@ -3818,9 +4182,15 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
         // Both use client?.skin_id — null for anyone not on a skin, which
         // getContextDocumentsForSkin/getSignalScriptMenu already treat as
         // "universal items only", same as everywhere else skins appear.
-        sp += prompts.CLIENT_CONTEXT_DOCUMENTS(db.getContextDocumentsForSkin(client?.skin_id));
+        // Per Bot 15p — Context documents no longer injected live (see
+        // schema comment on knowledge_documents) — replaced by the
+        // sectioned knowledge menu below, which only ever costs the menu
+        // line per topic; real depth is fetched on demand via the
+        // get_knowledge tool, not carried on every turn regardless of
+        // relevance.
         sp += prompts.CLIENT_SIGNAL_MENU(db.getSignalScriptMenu(client?.skin_id));
         sp += prompts.CLIENT_BREATHING_MENU(db.getBreathingPatternMenu());
+        sp += prompts.CLIENT_KNOWLEDGE_MENU(db.getKnowledgeMenu(client?.skin_id, client?.facilitator_id));
         // Variety rotation applies to everyone, unconditionally — this is
         // about avoiding staleness across sessions, not sensitive clinical
         // context, so it doesn't need any of the gating above.
@@ -3842,7 +4212,7 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       ? session.history
       : [{ role: 'user', content: 'begin' }];
 
-    const reply = await callClaude(session.systemPrompt, messages, 1500);
+    const reply = await callClaudeWithKnowledge(session.systemPrompt, messages, 1500);
     session.history.push({ role: 'assistant', content: reply });
     session.transcript.push(`BOT: ${reply}`);
 
@@ -3959,6 +4329,8 @@ app.post('/api/guest/lead', async (req, res) => {
     const leadId = uuidv4();
 
     db.addGuestLead(leadId, trimmedName, trimmedEmail, 'guest_page');
+    emailGuestLeadReceivedToAdmin({ name: trimmedName, email: trimmedEmail })
+      .catch(e => console.error('guest lead admin email failed:', e.message));
 
     const token = auth.createGuestToken({ type: 'guest', leadId, name: trimmedName, email: trimmedEmail });
     res.cookie(auth.GUEST_COOKIE_NAME, token, auth.GUEST_COOKIE_OPTIONS);
@@ -3990,7 +4362,25 @@ app.get('/api/guest/content', auth.requireGuestIdentity(), (req, res) => {
 
 // ── /api/admin/guest-leads — view leads (admin only) ──
 app.get('/api/admin/guest-leads', auth.requireAuthApi(['admin']), (req, res) => {
-  res.json(db.getGuestLeads());
+  const leads = db.getGuestLeads();
+  // Per Bot 15o — viewing this list is what clears the "unseen enquiries"
+  // badge; marked after fetching, not before, so the response the admin
+  // is about to see still reflects what was actually new.
+  db.markGuestLeadsSeen();
+  res.json(leads);
+});
+
+// Per Bot 15o — powers the small badge on the People nav link across
+// every admin page, for facilitator requests still pending and enquiries
+// not yet viewed. Deliberately lightweight (two COUNT queries) since it's
+// called on every admin page load, not just People itself.
+app.get('/api/admin/notification-counts', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    res.json({
+      pendingFacilitatorRequests: db.getPendingFacilitatorRequestCount(),
+      unseenEnquiries: db.getUnseenGuestLeadCount(),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Facilitator requests (Per Bot 5, item 11) ──

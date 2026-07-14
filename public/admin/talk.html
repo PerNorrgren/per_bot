@@ -241,7 +241,7 @@
         <div class="card-header"><div class="card-title">Context documents</div></div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            Background knowledge Talk should be aware of — upload a plain text or Word file rather than needing it hand-written into the app. Unlike signal scripts above, this content goes in full on every single turn for that skin, so size matters here — a short, focused document costs little; a full book costs a lot, every message, for everyone on that skin. Character count is shown so this is never a silent surprise.
+            <strong style="color:rgba(255,210,140,0.85)">No longer injected into live conversations.</strong> Talk never reads this directly any more — the Knowledge Base below is what it actually draws on now. Kept here as the historical record of what was originally uploaded, and reserved for a future "search my own source material" fallback tool. To generate real Knowledge Base content, upload the source document again below, under Knowledge Base — the two lists are separate for now.
           </div>
 
           <div id="contextDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -267,6 +267,82 @@
           </div>
           <input type="file" id="cdFileInput" accept=".txt,.docx" style="display:none"/>
           <div class="msg" id="cdMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sectioned Knowledge Base (Per Bot 15q) — replaces Context documents
+         as Talk's actual ongoing knowledge mechanism. Upload a source
+         document, generate topics from it (one click, no review gate —
+         everything's editable after the fact), and Talk reaches into the
+         resulting depth ladder mid-conversation only when it's actually
+         needed, rather than carrying any of it on every single turn. -->
+    <div>
+      <div class="section-label">Knowledge Base</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Source documents</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Upload a source document, then generate — one click reads the whole thing, proposes a deduplicated set of topics, and writes real content at every depth level below, grounded in this document. Nothing waits for approval; edit anything afterward in Topics.
+          </div>
+
+          <div id="kbDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Title</label>
+              <input type="text" id="kbDocTitle" placeholder="e.g. Signal Guide v18" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"/>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Skin</label>
+              <select id="kbDocSkin" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+                <option value="">No skin — every skin, including standard</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="kbDocDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag a .txt or .docx file here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Fill in the title above first</div>
+          </div>
+          <input type="file" id="kbDocFileInput" accept=".txt,.docx" style="display:none"/>
+          <div class="msg" id="kbDocMsg" style="margin-top:8px"></div>
+
+          <div id="kbGenerateLog" style="display:none; margin-top:14px; background:rgba(0,0,0,0.25); border-radius:8px; padding:12px 14px; font-size:11.5px; color:rgba(255,255,255,0.5); max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+          <div class="card-title">Depth levels</div>
+          <button class="btn primary" onclick="openKbLevelModal()">+ Add level</button>
+        </div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            The depth ladder every topic shares — Overview through Scientist to start. Adding a level here doesn't touch existing topics; use "Backfill" on a level to generate it retroactively across everything already created.
+          </div>
+          <div id="kbLevelsTable" style="display:flex; flex-direction:column; gap:6px;">
+            <div class="loading">Loading…</div>
+          </div>
+          <div id="kbBackfillLog" style="display:none; margin-top:14px; background:rgba(0,0,0,0.25); border-radius:8px; padding:12px 14px; font-size:11.5px; color:rgba(255,255,255,0.5); max-height:200px; overflow-y:auto; font-family:monospace; white-space:pre-wrap;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Topics</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Every topic Talk can reach for. The menu_line is the only thing carried on every turn — everything else here is fetched only when a conversation actually goes deep enough to need it.
+          </div>
+          <div id="kbTopicsTable" style="display:flex; flex-direction:column; gap:6px;">
+            <div class="loading">Loading…</div>
+          </div>
         </div>
       </div>
     </div>
@@ -322,12 +398,58 @@
     </div>
   </div>
 
+  <!-- Knowledge Base: Topic editor (Per Bot 15q) -->
+  <div class="modal-overlay" id="kbTopicModal">
+    <div class="modal" style="max-width:680px">
+      <h3 id="kbTopicModalTitle">Edit topic</h3>
+      <input type="hidden" id="kbTopicId"/>
+      <div><label>Title</label><input type="text" id="kbTopicTitle" placeholder="e.g. Moro Reflex Brake"/></div>
+      <div><label>Menu line <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(the only thing carried every turn — write for an AI judging relevance, not a person reading it)</span></label>
+        <input type="text" id="kbTopicMenuLine" placeholder="e.g. why background stress needs grounding before anything else"/>
+      </div>
+      <div id="kbTopicLevelsWrap" style="display:flex; flex-direction:column; gap:10px; margin-top:6px"></div>
+      <div style="margin-top:6px">
+        <label>Related topics</label>
+        <div id="kbTopicLinksList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px"></div>
+        <select id="kbTopicLinkAdd" onchange="kbAddLink()" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+          <option value="">+ Link a related topic…</option>
+        </select>
+      </div>
+      <div class="modal-err" id="kbTopicErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('kbTopicModal')">Close</button>
+        <button class="modal-ok" onclick="saveKbTopicMeta()">Save title / menu line</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Knowledge Base: Level editor -->
+  <div class="modal-overlay" id="kbLevelModal">
+    <div class="modal">
+      <h3 id="kbLevelModalTitle">Add depth level</h3>
+      <input type="hidden" id="kbLevelId"/>
+      <div><label>Name</label><input type="text" id="kbLevelName" placeholder="e.g. Historical Context"/></div>
+      <div><label>Sort order</label><input type="number" id="kbLevelSortOrder" value="99"/></div>
+      <div><label>Description <span style="color:rgba(255,255,255,0.2);font-size:10px;letter-spacing:0">(fed to the generator as its brief for this level — be specific about depth and audience)</span></label>
+        <textarea id="kbLevelDescription" rows="3" placeholder="e.g. Full mechanistic and evidence depth — underlying science, specific pathways, supporting research."></textarea>
+      </div>
+      <div class="modal-err" id="kbLevelErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('kbLevelModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveKbLevel()">Save</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 
   // ── Utilities (shared across all admin pages) ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
   function openModal(id)  { document.getElementById(id).classList.add('open'); }
   async function logout()  { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
   function toggleAdminMenu() {
     const m = document.getElementById('adminMenu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
@@ -796,6 +918,312 @@
 
   loadSignalScripts();
   loadContextDocuments();
+
+  // ══ Knowledge Base (Per Bot 15q) ══
+  let _kbDocs = [];
+  let _kbLevels = [];
+  let _kbTopics = [];
+  let _kbEditingTopicId = null;
+  let _kbEditingLevelId = null;
+
+  async function loadKbDocs() {
+    try {
+      const [docs, skins] = await Promise.all([
+        (await fetch('/api/admin/knowledge/documents')).json(),
+        (await fetch('/api/admin/skins')).json(),
+      ]);
+      _kbDocs = docs;
+      const skinSel = document.getElementById('kbDocSkin');
+      const prevVal = skinSel.value;
+      skinSel.innerHTML = '<option value="">No skin — every skin, including standard</option>'
+        + (skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      skinSel.value = prevVal;
+      renderKbDocsTable();
+    } catch(e) {
+      document.getElementById('kbDocsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderKbDocsTable() {
+    const el = document.getElementById('kbDocsTable');
+    if (!_kbDocs.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No source documents yet — upload one below.</div>'; return; }
+    el.innerHTML = _kbDocs.map(d => {
+      const topicCount = _kbTopics.filter(t => t.document_id === d.id).length;
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${escHtml(d.title)}${d.archived ? ' <span style="color:rgba(255,160,140,0.7)">· archived</span>' : ''}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px">${topicCount} topic${topicCount===1?'':'s'} generated from this so far</div>
+        </div>
+        <button class="btn sm primary" onclick="triggerKbGenerate('${d.id}')">Generate topics</button>
+        <button class="btn sm" onclick="toggleKbDocArchive('${d.id}', ${d.archived ? 0 : 1})">${d.archived ? 'Unarchive' : 'Archive'}</button>
+        <button class="btn sm danger" onclick="deleteKbDoc('${d.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function toggleKbDocArchive(id, archived) {
+    await fetch(`/api/admin/knowledge/documents/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ archived }) });
+    loadKbDocs();
+  }
+  async function deleteKbDoc(id) {
+    if (!(await appConfirm('Delete this source document? Topics already generated from it are unaffected — this only removes the original upload.'))) return;
+    await fetch(`/api/admin/knowledge/documents/${id}`, { method: 'DELETE' });
+    loadKbDocs();
+  }
+
+  async function uploadKbDoc(file) {
+    const title = document.getElementById('kbDocTitle').value.trim();
+    const msg = document.getElementById('kbDocMsg');
+    if (!title) { msg.textContent = 'Fill in the title first.'; msg.style.color = 'rgba(255,140,120,0.85)'; return; }
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', title);
+    formData.append('skinId', document.getElementById('kbDocSkin').value);
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.4)';
+    try {
+      const res = await fetch('/api/admin/knowledge/documents', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.error) { msg.textContent = data.error; msg.style.color = 'rgba(255,140,120,0.85)'; return; }
+      msg.textContent = `Uploaded — ${data.charCount.toLocaleString()} characters.`; msg.style.color = 'rgba(180,230,200,0.85)';
+      document.getElementById('kbDocTitle').value = '';
+      loadKbDocs();
+    } catch(e) {
+      msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)';
+    }
+  }
+
+  let _kbGenerateTimer = null;
+  let _kbGeneratingDocId = null;
+  async function triggerKbGenerate(docId) {
+    _kbGeneratingDocId = docId;
+    const logEl = document.getElementById('kbGenerateLog');
+    logEl.style.display = 'block';
+    logEl.textContent = 'Starting…';
+    try {
+      const res = await fetch(`/api/admin/knowledge/documents/${docId}/generate`, { method: 'POST' });
+      const data = await res.json();
+      if (data.alreadyRunning) { logEl.textContent = 'A generation job is already running — showing its progress:'; }
+      pollKbGenerate();
+    } catch(e) {
+      logEl.textContent = 'Could not start generation: ' + e.message;
+    }
+  }
+  // Per Bot 15q — the job itself is a single global slot server-side (one
+  // generation runs at a time), so the :id in this URL is really just
+  // "which document kicked this off", not a per-document status lookup —
+  // any id resolves the same job. Kept per-document in the URL anyway to
+  // match the route shape, not because the server treats it that way.
+  async function pollKbGenerate() {
+    clearTimeout(_kbGenerateTimer);
+    try {
+      const res = await fetch(`/api/admin/knowledge/documents/${_kbGeneratingDocId}/generate-status`);
+      const job = await res.json();
+      const logEl = document.getElementById('kbGenerateLog');
+      logEl.textContent = (job.log || []).join('\n') || 'Working…';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (job.error) { logEl.textContent += '\n\nError: ' + job.error; return; }
+      if (job.done) { logEl.textContent += '\n\nDone.'; loadKbTopics(); loadKbDocs(); return; }
+      _kbGenerateTimer = setTimeout(pollKbGenerate, 2000);
+    } catch(e) {
+      _kbGenerateTimer = setTimeout(pollKbGenerate, 3000);
+    }
+  }
+
+  async function loadKbLevels() {
+    try {
+      _kbLevels = await (await fetch('/api/admin/knowledge/levels')).json();
+      renderKbLevelsTable();
+    } catch(e) {
+      document.getElementById('kbLevelsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+  function renderKbLevelsTable() {
+    const el = document.getElementById('kbLevelsTable');
+    if (!_kbLevels.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No levels configured.</div>'; return; }
+    el.innerHTML = _kbLevels.map(l => `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${escHtml(l.name)} <span style="color:rgba(255,255,255,0.3)">· order ${l.sort_order}</span></div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px">${escHtml(l.description || '')}</div>
+        </div>
+        <button class="btn sm" onclick="triggerKbBackfill('${l.id}')">Backfill across all topics</button>
+        <button class="btn sm" onclick="openKbLevelModal('${l.id}')">Edit</button>
+        <button class="btn sm danger" onclick="deleteKbLevelRow('${l.id}')">Delete</button>
+      </div>`).join('');
+  }
+  function openKbLevelModal(id) {
+    _kbEditingLevelId = id || null;
+    document.getElementById('kbLevelErr').textContent = '';
+    if (id) {
+      const l = _kbLevels.find(x => x.id === id);
+      if (!l) return;
+      document.getElementById('kbLevelModalTitle').textContent = 'Edit depth level';
+      document.getElementById('kbLevelName').value = l.name;
+      document.getElementById('kbLevelSortOrder').value = l.sort_order;
+      document.getElementById('kbLevelDescription').value = l.description || '';
+    } else {
+      document.getElementById('kbLevelModalTitle').textContent = 'Add depth level';
+      document.getElementById('kbLevelName').value = '';
+      document.getElementById('kbLevelSortOrder').value = (_kbLevels.length ? Math.max(...(_kbLevels.map(l=>l.sort_order))) + 1 : 1);
+      document.getElementById('kbLevelDescription').value = '';
+    }
+    openModal('kbLevelModal');
+  }
+  async function saveKbLevel() {
+    const name = document.getElementById('kbLevelName').value.trim();
+    const sortOrder = parseInt(document.getElementById('kbLevelSortOrder').value, 10) || 99;
+    const description = document.getElementById('kbLevelDescription').value.trim();
+    const err = document.getElementById('kbLevelErr');
+    if (!name) { err.textContent = 'Name is required.'; return; }
+    if (_kbEditingLevelId) {
+      await fetch(`/api/admin/knowledge/levels/${_kbEditingLevelId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, sort_order: sortOrder, description }) });
+    } else {
+      const res = await fetch('/api/admin/knowledge/levels', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, sortOrder, description }) });
+      const data = await res.json();
+      if (data.error) { err.textContent = data.error; return; }
+    }
+    closeModal('kbLevelModal');
+    loadKbLevels();
+  }
+  async function deleteKbLevelRow(id) {
+    if (!(await appConfirm('Delete this level from the ladder? Content already written at this level for existing topics is kept, just unreachable until the level (or an equivalent one) exists again.'))) return;
+    await fetch(`/api/admin/knowledge/levels/${id}`, { method: 'DELETE' });
+    loadKbLevels();
+  }
+
+  let _kbBackfillTimer = null;
+  async function triggerKbBackfill(levelId) {
+    const logEl = document.getElementById('kbBackfillLog');
+    logEl.style.display = 'block';
+    logEl.textContent = 'Starting…';
+    try {
+      await fetch(`/api/admin/knowledge/levels/${levelId}/backfill`, { method: 'POST' });
+      pollKbBackfill(levelId);
+    } catch(e) {
+      logEl.textContent = 'Could not start: ' + e.message;
+    }
+  }
+  async function pollKbBackfill(levelId) {
+    clearTimeout(_kbBackfillTimer);
+    try {
+      const res = await fetch(`/api/admin/knowledge/levels/${levelId}/backfill-status`);
+      const job = await res.json();
+      const logEl = document.getElementById('kbBackfillLog');
+      logEl.textContent = (job.log || []).join('\n') || 'Working…';
+      logEl.scrollTop = logEl.scrollHeight;
+      if (job.error) { logEl.textContent += '\n\nError: ' + job.error; return; }
+      if (job.done) { logEl.textContent += '\n\nDone.'; loadKbTopics(); return; }
+      _kbBackfillTimer = setTimeout(() => pollKbBackfill(levelId), 2000);
+    } catch(e) {
+      _kbBackfillTimer = setTimeout(() => pollKbBackfill(levelId), 3000);
+    }
+  }
+
+  async function loadKbTopics() {
+    try {
+      _kbTopics = await (await fetch('/api/admin/knowledge/topics')).json();
+      renderKbTopicsTable();
+      renderKbDocsTable(); // topic counts per document depend on this data too
+    } catch(e) {
+      document.getElementById('kbTopicsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+  function renderKbTopicsTable() {
+    const el = document.getElementById('kbTopicsTable');
+    if (!_kbTopics.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No topics yet — generate some from a source document above.</div>'; return; }
+    el.innerHTML = _kbTopics.map(t => `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${escHtml(t.title)}${t.archived ? ' <span style="color:rgba(255,160,140,0.7)">· archived</span>' : ''}${t.document_title ? ` <span style="color:rgba(255,255,255,0.3)">· from ${escHtml(t.document_title)}</span>` : ''}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px; font-style:italic">${escHtml(t.menu_line || '')}</div>
+        </div>
+        <button class="btn sm" onclick="openKbTopicModal('${t.id}')">Edit</button>
+        <button class="btn sm danger" onclick="deleteKbTopicRow('${t.id}')">Delete</button>
+      </div>`).join('');
+  }
+  async function deleteKbTopicRow(id) {
+    if (!(await appConfirm('Delete this topic entirely? Talk will no longer be able to reach for it, at any level.'))) return;
+    await fetch(`/api/admin/knowledge/topics/${id}`, { method: 'DELETE' });
+    loadKbTopics();
+  }
+
+  async function openKbTopicModal(id) {
+    _kbEditingTopicId = id;
+    document.getElementById('kbTopicErr').textContent = '';
+    const res = await fetch(`/api/admin/knowledge/topics/${id}`);
+    const topic = await res.json();
+    if (topic.error) return;
+    document.getElementById('kbTopicModalTitle').textContent = `Edit "${topic.title}"`;
+    document.getElementById('kbTopicTitle').value = topic.title;
+    document.getElementById('kbTopicMenuLine').value = topic.menu_line || '';
+
+    // One textarea per configured level, pre-filled with whatever content exists.
+    const contentByLevel = Object.fromEntries((topic.content || []).map(c => [c.level_id, c.content]));
+    document.getElementById('kbTopicLevelsWrap').innerHTML = _kbLevels.map(l => `
+      <div>
+        <label>${escHtml(l.name)}</label>
+        <textarea id="kbTopicLevel_${l.id}" rows="4" style="width:100%">${escHtml(contentByLevel[l.id] || '')}</textarea>
+        <button type="button" class="btn sm" style="margin-top:4px" onclick="saveKbTopicLevelContent('${l.id}')">Save ${escHtml(l.name)}</button>
+      </div>
+    `).join('');
+
+    // Linked topics + the "add a link" select (every other non-archived topic, minus already-linked ones)
+    const linked = topic.links || [];
+    document.getElementById('kbTopicLinksList').innerHTML = linked.length
+      ? linked.map(l => `<span style="display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,0.06); border-radius:14px; padding:5px 10px; font-size:12px; color:rgba(255,255,255,0.7)">${escHtml(l.title)} <button onclick="kbRemoveLink('${l.id}')" style="background:none;border:none;color:rgba(255,120,100,0.7);cursor:pointer;font-size:13px">✕</button></span>`).join('')
+      : '<span style="font-size:12px;color:rgba(255,255,255,0.25);font-style:italic">None yet</span>';
+    const linkedIds = new Set(linked.map(l => l.id));
+    const linkSel = document.getElementById('kbTopicLinkAdd');
+    linkSel.innerHTML = '<option value="">+ Link a related topic…</option>'
+      + _kbTopics.filter(t => t.id !== id && !linkedIds.has(t.id)).map(t => `<option value="${t.id}">${escHtml(t.title)}</option>`).join('');
+
+    openModal('kbTopicModal');
+  }
+  async function saveKbTopicMeta() {
+    const title = document.getElementById('kbTopicTitle').value.trim();
+    const menuLine = document.getElementById('kbTopicMenuLine').value.trim();
+    const err = document.getElementById('kbTopicErr');
+    if (!title) { err.textContent = 'Title is required.'; return; }
+    if (!menuLine) { err.textContent = 'Menu line is required — it\'s the only thing Talk sees by default.'; return; }
+    await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title, menu_line: menuLine }) });
+    loadKbTopics();
+    err.textContent = '';
+    err.style.color = 'rgba(180,230,200,0.85)';
+    err.textContent = 'Saved.';
+  }
+  async function saveKbTopicLevelContent(levelId) {
+    const content = document.getElementById(`kbTopicLevel_${levelId}`).value;
+    await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}/content/${levelId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ content }) });
+  }
+  async function kbAddLink() {
+    const sel = document.getElementById('kbTopicLinkAdd');
+    const linkedId = sel.value;
+    if (!linkedId) return;
+    await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}/links/${linkedId}`, { method: 'POST' });
+    openKbTopicModal(_kbEditingTopicId); // refresh the modal's link list
+  }
+  async function kbRemoveLink(linkedId) {
+    await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}/links/${linkedId}`, { method: 'DELETE' });
+    openKbTopicModal(_kbEditingTopicId);
+  }
+
+  const kbDocDropZone = document.getElementById('kbDocDropZone');
+  const kbDocFileInput = document.getElementById('kbDocFileInput');
+  kbDocDropZone.addEventListener('click', () => kbDocFileInput.click());
+  kbDocFileInput.addEventListener('change', () => { if (kbDocFileInput.files[0]) uploadKbDoc(kbDocFileInput.files[0]); kbDocFileInput.value = ''; });
+  kbDocDropZone.addEventListener('dragover', e => { e.preventDefault(); kbDocDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; kbDocDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  kbDocDropZone.addEventListener('dragleave', () => { kbDocDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; kbDocDropZone.style.background = 'none'; });
+  kbDocDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    kbDocDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; kbDocDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.name.endsWith('.txt') || f.name.endsWith('.docx'));
+    if (file) uploadKbDoc(file);
+  });
+
+  loadKbLevels();
+  loadKbDocs();
+  loadKbTopics();
 
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Talk & Tomte';</script>
