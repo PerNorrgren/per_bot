@@ -1440,6 +1440,37 @@ app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) 
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
+// Per Bot 15i — same shape as /api/admin/members, minus the Member-tier
+// upgrade: creates a real account with login, staying at Explorer (tier
+// 0) rather than being bumped to Member. Distinct from newsletter-only
+// contacts (no login at all) — this person can sign in immediately.
+app.post('/api/admin/explorers', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { name, email, skinId } = req.body;
+    if (!name || !email) return res.status(400).json({ error: 'Name and email required.' });
+    const emailLower = email.toLowerCase().trim();
+
+    if (db.getFacilitatorByEmail(emailLower)) return res.status(400).json({ error: 'An account with this email already exists.' });
+    if (db.getUserByEmail(emailLower))      return res.status(400).json({ error: 'An account with this email already exists.' });
+
+    const id = uuidv4();
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const passwordHash = await auth.hashPassword(tempPassword);
+
+    db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
+      consentGiven:    true,
+      consentVersion:  'admin-added-v1',
+      lawfulBasis:     'consent'
+    });
+    if (skinId && db.getSkin(skinId)) db.setUserSkin(id, skinId);
+
+    emailWelcomeClient(name.trim(), emailLower, tempPassword, null, skinId);
+    res.json({ id, name: name.trim(), email: emailLower, tempPassword });
+  } catch(e) {
+    console.error('add explorer error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
 
 // ── Bulk member import ── CSV upload, applied as one batch: every valid row
 // becomes an account at the SAME tier, with the SAME trial length, and

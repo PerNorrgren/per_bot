@@ -370,6 +370,7 @@
         <div class="card-header">
           <div class="card-title">Explorers</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn sm primary" onclick="openNewExplorerModal()">+ Add Explorer</button>
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
           </div>
@@ -709,6 +710,27 @@
     </div>
   </div>
 
+  <!-- New Explorer Modal (Per Bot 15i) — same shape as Add Member, minus
+       the Member-tier upgrade: creates a real account with login at
+       Explorer level (tier 0), rather than the newsletter-only, no-login
+       contacts that live in their own section below. -->
+  <div class="modal-overlay" id="newExplorerModal">
+    <div class="modal">
+      <h3>Add Explorer</h3>
+      <div><label>Full name</label><input type="text" id="explorerName" placeholder="e.g. Anna Lindqvist"/></div>
+      <div><label>Email address</label><input type="email" id="explorerEmail" placeholder="anna@example.com"/></div>
+      <div><label>Skin</label>
+        <select id="explorerSkin"><option value="">No skin — standard branding</option></select>
+        <div class="modal-note" style="margin-top:6px">If set, their welcome email links straight to that skin's own login page instead of the standard one.</div>
+      </div>
+      <div class="modal-err" id="explorerErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('newExplorerModal')">Cancel</button>
+        <button class="modal-ok" onclick="createExplorer()">Create</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Signal Script Modal -->
   <div class="modal-overlay" id="signalScriptModal">
     <div class="modal">
@@ -849,6 +871,20 @@
       </div>
       <div class="modal-btns">
         <button class="modal-ok" onclick="closeModal('memberCreatedModal');loadMembers()">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="explorerCreatedModal">
+    <div class="modal">
+      <h3>Explorer created</h3>
+      <div class="temp-pass-box">
+        <div class="temp-pass-label">Temporary password</div>
+        <div class="temp-pass-value" id="explorerTempPassValue"></div>
+        <div class="temp-pass-note">A welcome email has been sent. Share this password as a backup if the email doesn't arrive. They will be asked to change it on first login.</div>
+      </div>
+      <div class="modal-btns">
+        <button class="modal-ok" onclick="closeModal('explorerCreatedModal');loadUsers()">Done</button>
       </div>
     </div>
   </div>
@@ -1861,6 +1897,30 @@
     document.getElementById('memberErr').textContent = '';
     await populateSkinSelect('memberSkin');
     openModal('newMemberModal');
+  }
+
+  async function openNewExplorerModal() {
+    document.getElementById('explorerErr').textContent = '';
+    await populateSkinSelect('explorerSkin');
+    openModal('newExplorerModal');
+  }
+  async function createExplorer() {
+    const name  = document.getElementById('explorerName').value.trim();
+    const email = document.getElementById('explorerEmail').value.trim();
+    const skinId = document.getElementById('explorerSkin').value;
+    const err   = document.getElementById('explorerErr');
+    if (!name)  { err.textContent = 'Name required.'; return; }
+    if (!email) { err.textContent = 'Email required.'; return; }
+    const res  = await fetch('/api/admin/explorers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,skinId})});
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('newExplorerModal');
+    document.getElementById('explorerName').value = '';
+    document.getElementById('explorerEmail').value = '';
+    document.getElementById('explorerSkin').value = '';
+    err.textContent = '';
+    document.getElementById('explorerTempPassValue').textContent = data.tempPassword || '';
+    openModal('explorerCreatedModal');
   }
 
   async function openBulkImportModal() {

@@ -2877,6 +2877,18 @@
   function onbSetReminderStyle(style) {
     onbReminderStyle = style;
     document.getElementById('onbStep1').style.display = 'none';
+    document.getElementById('onbStep1b').style.display = '';
+  }
+  // Per Bot 15i — new step: previously the flow went straight from
+  // reminder style to birthday, and birthday was the last question asked
+  // — so anyone who set a birthday never got asked about the Message of
+  // the Day at all (there was nowhere left in the sequence for it to
+  // live). This adds that missing step in between, rather than birthday
+  // continuing to be the de facto final step by accident.
+  let onbMotdPref = null;
+  function onbSetMotdPref(pref) {
+    onbMotdPref = pref;
+    document.getElementById('onbStep1b').style.display = 'none';
     document.getElementById('onbStep2').style.display = '';
   }
 
@@ -2895,6 +2907,7 @@
     if (onbReminderStyle === 'none')           { payload.pref_email_reminders = 0; payload.pref_sms_reminders = 0; }
     else if (onbReminderStyle === 'email')     { payload.pref_email_reminders = 1; payload.pref_sms_reminders = 0; }
     else if (onbReminderStyle === 'email_sms') { payload.pref_email_reminders = 1; payload.pref_sms_reminders = 1; }
+    if (onbMotdPref !== null) payload.pref_email_motd = onbMotdPref;
     const m = document.getElementById('onbDobMonth').value;
     const d = document.getElementById('onbDobDay').value;
     if (m) payload.dob_month = m;
@@ -5057,6 +5070,15 @@
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('none')">Don't remind me</button>
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('email')">Email only</button>
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('email_sms')">Email and text message</button>
+      <div class="pl-modal-btns">
+        <button class="pl-modal-cancel" onclick="onbFinish()">Skip for now</button>
+      </div>
+    </div>
+    <div id="onbStep1b" style="display:none">
+      <h3>A daily message?</h3>
+      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">A short thought or prompt each day, by email. You can turn this off any time in Settings.</div>
+      <button type="button" class="onb-option" onclick="onbSetMotdPref(1)">Yes, send it</button>
+      <button type="button" class="onb-option" onclick="onbSetMotdPref(0)">No thanks</button>
       <div class="pl-modal-btns">
         <button class="pl-modal-cancel" onclick="onbFinish()">Skip for now</button>
       </div>
