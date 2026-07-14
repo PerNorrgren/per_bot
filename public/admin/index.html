@@ -2106,6 +2106,8 @@
       subcategoryId=document.getElementById('ncSub').value, err=document.getElementById('ncErr');
     if (!name) { err.textContent='Name required.'; return; }
     if (!facilitatorId) { err.textContent='Please assign a facilitator.'; return; }
+    if (!categoryId) { err.textContent='Please choose a programme.'; return; }
+    if (!subcategoryId) { err.textContent='Please choose a track.'; return; }
     const res=await fetch('/api/clients',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email:email||null,facilitator_id:facilitatorId,categoryId:categoryId||null,subcategoryId:subcategoryId||null})});
     const data=await res.json();
     if (data.error) { err.textContent=data.error; return; }
@@ -2403,7 +2405,12 @@
     // in here. Excluding them here also fixes a real bug the old mixed view
     // had: the Upgrade action used to set a tier on these with no password
     // at all, leaving a "Member" with no way to ever log in.
-    _userData=(await res.json()).filter(u => u.has_login !== false);
+    // Per Bot 15e — also excludes member_tier>=1: a person is exactly ONE
+    // of Newsletter contact / Explorer / Member, never counted in more
+    // than one of these three lists at once. This table used to show
+    // every logged-in user regardless of tier, so a Member appeared here
+    // AND in the Members table below — this is the fix for that.
+    _userData=(await res.json()).filter(u => u.has_login !== false && (u.member_tier||0) === 0);
     renderUsers();
   }
 

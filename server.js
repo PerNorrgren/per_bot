@@ -665,6 +665,31 @@ function emailWelcomeClient(name, email, tempPassword, language, skinId) {
   }, { brand: b.name, name, email, tempPassword, appUrl: loginUrl }, email);
 }
 
+// Per Bot 15e — someone being marked as a Client (is_client=1 + a
+// facilitator assigned) didn't generate any notification at all before —
+// they'd just quietly start seeing session/practice features next time
+// they logged in, with no idea it had happened or who their facilitator
+// now was. This fires from markAsClient's route (assign-facilitator),
+// same visual template as the other account emails.
+function emailBecameClient(name, email, facilitatorName, language) {
+  const b = brand();
+  return sendLocalizedEmail('became_client', language, {
+    subject: `You're now working with a facilitator on {{brand}}`,
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello, {{name}}</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account has been set up to work directly with a facilitator.</p>
+      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Your facilitator</div>
+        <div style="font-size:16px;color:#1a1a1a">{{facilitatorName}}</div>
+      </div>
+      <p style="font-size:14px;line-height:1.7;color:#666">Sign in as usual at {{appUrl}} to see what's new.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">{{brand}}</div>
+    </div>`
+  }, { brand: b.name, name, facilitatorName, appUrl: APP_URL }, email);
+}
+
 // ── Password reset emails (Per Bot 8) ──
 // Self-service link (1-hour token) vs an admin-triggered temp password —
 // same visual template, different content block, so the difference in
@@ -1567,7 +1592,20 @@ app.post('/api/clients', auth.requireAuthApi(['admin','facilitator']), async (re
     passwordHash = await auth.hashPassword(tempPassword);
   }
   db.createUser(id, name.trim(), facilitatorId, email?.trim() || null, passwordHash, categoryId || null, subcategoryId || null);
-  if (email && tempPassword) emailWelcomeClient(name.trim(), email.trim(), tempPassword);
+  // Per Bot 15e — createUser alone never set is_client (defaults to 0) or
+  // member_tier (defaults to 0/Explorer), so a "client" added through this
+  // admin flow existed in the users table but was invisible to the actual
+  // client list (which correctly filters on is_client=1) — created
+  // successfully every time, appeared nowhere, forever, no matter how many
+  // times the page was refreshed. Per the actual model: a Client is a
+  // Member with a facilitator relationship, not its own separate kind of
+  // signup — so this now also lifts them to Member tier.
+  db.markAsClient(id, facilitatorId);
+  db.upgradeToMember(id);
+  if (email && tempPassword) {
+    emailWelcomeClient(name.trim(), email.trim(), tempPassword)
+      .catch(e => console.error('welcome email failed for new client', id, ':', e.message));
+  }
   res.json({ id, name: name.trim(), tempPassword });
 });
 app.get('/api/clients/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
@@ -4237,7 +4275,20 @@ app.get('/api/client/history', auth.requireAuthApi(['client']), (req, res) => {
 // ── Admin user management ──
 app.patch('/api/admin/users/:id/assign-facilitator', auth.requireAuthApi(['admin']), (req, res) => {
   const { facilitatorId } = req.body;
+  const user = db.getUser(req.params.id);
+  const wasAlreadyClient = user && user.is_client === 1;
   db.markAsClient(req.params.id, facilitatorId);
+  // Per Bot 15e — this used to do nothing but the DB update. Only notify
+  // on the actual transition into being a client (not a facilitator
+  // reassignment for someone already one, and not if they have no email
+  // to send to), naming whichever facilitator they're being assigned to.
+  if (user && user.email && !wasAlreadyClient && facilitatorId) {
+    const fac = db.getFacilitatorById(facilitatorId);
+    if (fac) {
+      emailBecameClient(user.name, user.email, fac.name, user.language)
+        .catch(e => console.error('became-client email failed for', req.params.id, ':', e.message));
+    }
+  }
   res.json({ ok: true });
 });
 
