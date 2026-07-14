@@ -21,7 +21,7 @@
     .nav-tabs { display:flex; gap:4px; margin-left:24px; }
     .nav-tab { padding:7px 16px; border-radius:6px; border:none; background:none; color:rgba(255,255,255,0.4); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
     .nav-tab.active { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.85); }
-    .topbar-right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    .topbar-right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .btn { padding:7px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -169,7 +169,7 @@
     <div style="position:relative">
       <div class="logo" data-brand="name">Deeper Mindfulness</div>
       <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
-        <span class="logo-name" style="font-size:18px">Content Library</span>
+        <span class="logo-name" style="font-size:18px">Content</span>
         <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
       </button>
       <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
@@ -186,9 +186,11 @@
       <button class="nav-tab" data-tab="breathing">Breathing</button>
     </div>
     <div class="topbar-right">
-      <a href="/admin/" class="btn">Users</a>
-      <a href="/admin/content" class="btn primary">Content library</a>
+      <a href="/admin/" class="btn">People</a>
+      <a href="/admin/content" class="btn primary">Content</a>
+      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
       <a href="/admin/comms" class="btn">Communications</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
       <a href="/setup" class="btn">Settings</a>
     </div>
   </div>

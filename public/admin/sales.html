@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sales &amp; Marketing — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    /* ── Topbar ── */
+    .topbar { padding:16px 28px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .btn.warn { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.65); }
+    .btn.warn:hover { background:rgba(255,180,60,0.08); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+    /* Working-button feedback (Per Bot 8) — the base .btn text color is
+       already quite dim (0.5 opacity above); browser-default disabled
+       dimming on top of that was making "Checking…"/spinner text nearly
+       invisible against the dark background. Brightened specifically for
+       the disabled/loading state instead of relying on the default. */
+    button:disabled { cursor:default; }
+    .btn:disabled { opacity:1; color:rgba(255,255,255,0.8); }
+    .btn.primary:disabled { color:rgba(180,230,200,0.95); }
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
+    .btn:disabled, .btn.disabled { opacity:0.35; pointer-events:none; cursor:not-allowed; }
+
+    /* ── Layout ── */
+    .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:36px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+
+    /* ── Cards ── */
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .card-body { padding:20px; display:flex; flex-direction:column; gap:14px; }
+
+    /* ── Stock indicator ── */
+    .stock-bar { display:flex; align-items:center; gap:10px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.05); font-size:13px; }
+    .stock-ok  { color:rgba(180,230,200,0.65); }
+    .stock-low { color:rgba(255,200,80,0.8); }
+    .stock-dot { width:7px; height:7px; border-radius:50%; background:currentColor; flex-shrink:0; }
+
+    /* ── Message rows ── */
+    .msg-row { display:flex; align-items:flex-start; gap:12px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s; }
+    .msg-row:last-child { border-bottom:none; }
+    .msg-row:hover { background:rgba(255,255,255,0.025); }
+    .msg-body { flex:1; min-width:0; }
+    .msg-text { font-size:13px; color:rgba(255,255,255,0.72); line-height:1.6; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .msg-meta { font-size:11px; color:rgba(255,255,255,0.28); margin-top:4px; }
+    .msg-actions { display:flex; gap:6px; flex-shrink:0; align-items:center; }
+    .badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.05em; flex-shrink:0; }
+    .badge-draft    { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.35); }
+    .badge-approved { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
+    .badge-sent     { background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.2); }
+
+    /* ── MOTD scrollable list + bulk selection ── */
+    #motdList { max-height:520px; overflow-y:auto; }
+    .msg-cb { flex-shrink:0; margin-top:2px; width:15px; height:15px; accent-color:rgba(180,230,200,0.6); cursor:pointer; }
+    .motd-section-header { padding:10px 20px 4px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,0.05); }
+    .motd-section-header:first-child { border-top:none; }
+    .motd-section-title { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.2); }
+    .select-all-wrap { display:flex; align-items:center; gap:8px; font-size:11px; color:rgba(255,255,255,0.4); cursor:pointer; user-select:none; }
+    .select-all-wrap input { width:14px; height:14px; accent-color:rgba(180,230,200,0.6); cursor:pointer; }
+
+
+    /* ── Compose area ── */
+    .compose { display:flex; flex-direction:column; gap:12px; }
+    .compose textarea {
+      width:100%; min-height:100px; background:rgba(255,255,255,0.05);
+      border:1px solid rgba(255,255,255,0.1); border-radius:9px;
+      padding:12px 14px; font-size:14px; color:rgba(255,255,255,0.8);
+      font-family:'Georgia',serif; outline:none; resize:vertical;
+      line-height:1.7; transition:border-color 0.2s;
+    }
+    .compose textarea:focus { border-color:rgba(180,230,200,0.35); }
+    .compose textarea::placeholder { color:rgba(255,255,255,0.2); }
+    .compose input[type=text], .compose input[type=date] {
+      background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1);
+      border-radius:9px; padding:9px 13px; font-size:13px;
+      color:rgba(255,255,255,0.75); font-family:'Georgia',serif; outline:none;
+      transition:border-color 0.2s; width:100%;
+    }
+    .compose input:focus { border-color:rgba(180,230,200,0.35); }
+    .compose-row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+    .compose-field { display:flex; flex-direction:column; gap:5px; flex:1; min-width:160px; }
+    .compose-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.28); }
+    .feedback { font-size:12px; min-height:16px; }
+    .feedback.ok  { color:rgba(180,230,200,0.7); }
+    .feedback.err { color:rgba(255,120,100,0.8); }
+
+    /* ── Doc rows ── */
+    .doc-row { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .doc-row:last-child { border-bottom:none; }
+    .doc-title { flex:1.5; font-size:13px; color:rgba(255,255,255,0.75); }
+    .doc-version { flex:0.5; font-size:12px; color:rgba(255,255,255,0.28); }
+    .doc-consent { flex:0.8; font-size:11px; color:rgba(255,255,255,0.3); }
+    .doc-actions { display:flex; gap:6px; flex-shrink:0; }
+
+    /* ── Plan rows ── */
+    .plan-row { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .plan-row:last-child { border-bottom:none; }
+    .plan-name { flex:2; font-size:13px; color:rgba(255,255,255,0.72); }
+    .plan-price { flex:0.8; font-size:13px; color:rgba(255,255,255,0.5); }
+    .plan-trial { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
+    .plan-status { flex:0.6; }
+    .plan-actions { flex-shrink:0; }
+
+    /* ── Edit inline ── */
+    .inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:5px 9px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; width:90px; }
+    .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+
+    /* ── Modal ── */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:560px; display:flex; flex-direction:column; gap:16px; max-height:90vh; overflow-y:auto; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .modal label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
+    .modal input, .modal textarea, .modal select {
+      width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+      border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82);
+      font-family:'Georgia',serif; outline:none;
+    }
+    .modal textarea { min-height:200px; resize:vertical; line-height:1.7; }
+    .modal input:focus, .modal textarea:focus { border-color:rgba(180,230,200,0.3); }
+    .modal-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; flex-wrap:wrap; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
+    .test-send-row { display:flex; gap:8px; align-items:center; }
+
+    /* Rich/plain format toggle */
+    .format-toggle { display:flex; gap:6px; margin-bottom:10px; }
+    .format-toggle button { padding:6px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.5); font-size:12px; font-family:'Georgia',serif; cursor:pointer; }
+    .format-toggle button.active { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
+
+    /* Quill dark-theme overrides — the "snow" theme ships white/light by default */
+    #newsletterRichEditor { background:rgba(255,255,255,0.03); border-radius:0 0 8px 8px; }
+    .ql-toolbar.ql-snow { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; }
+    .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; min-height:220px; font-family:'Georgia',serif; font-size:14px; }
+    .ql-editor { color:rgba(255,255,255,0.85); min-height:220px; }
+    .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
+    .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5); }
+    .ql-snow .ql-fill { fill:rgba(255,255,255,0.5); }
+    .ql-snow .ql-picker { color:rgba(255,255,255,0.5); }
+    .ql-snow .ql-picker-options { background:#1a221e; border-color:rgba(255,255,255,0.12) !important; }
+    .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
+    .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
+    .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
+    .ql-columns-block table { border-collapse:collapse; }
+    .ql-columns-block td[data-column-cell] { border:1px dashed rgba(180,230,200,0.25); }
+    .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
+    .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-video { width:auto; padding:0 6px; font-size:14px; }
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-3 { width:auto; padding:0 8px; font-size:11px; }
+    .test-send-row input { flex:1; }
+    .modal-check { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.5); cursor:pointer; }
+    .modal-check input { width:auto; accent-color:rgba(180,230,200,0.8); }
+
+    .empty { padding:20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .loading { padding:20px; font-size:13px; color:rgba(255,255,255,0.2); }
+
+    /* ── Reminder config ── */
+    .config-row { display:flex; align-items:center; justify-content:space-between; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .config-row:last-child { border-bottom:none; }
+    .config-label { font-size:13px; color:rgba(255,255,255,0.65); }
+    .config-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; }
+    .config-val { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.4); }
+    /* Per Bot 14 — same bounded-scroll-box pattern already used for
+       Newsletter contacts (admin/index.html's .table class), applied here
+       since these lists had no height limit and just grew the page
+       indefinitely as content accumulated. */
+    #legalList, #motdList, #newsletterList, #planList, #translationsList { max-height:700px; overflow-y:auto; }
+  </style>
+</head>
+<body>
+<div class="topbar">
+  <div style="position:relative">
+    <div class="logo" data-brand="name">Deeper Mindfulness</div>
+    <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+      <span class="logo-name" style="font-size:18px">Sales &amp; Marketing</span>
+      <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+    </button>
+    <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+      <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+      <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <a href="/admin/" class="btn">People</a>
+    <a href="/admin/content" class="btn">Content</a>
+    <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+    <a href="/admin/comms" class="btn">Communications</a>
+    <a href="/admin/sales" class="btn primary">Sales &amp; Marketing</a>
+    <a href="/setup" class="btn">Settings</a>
+  </div>
+</div>
+
+<div class="page">
+
+  <!-- Membership plans -->
+  <div>
+    <div class="section-label">Membership plans</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Active plans</div>
+        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Prices are set in Stripe -- edit trial days here</div>
+      </div>
+      <div id="planList"><div class="loading">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- Locked-content upsell placeholder (Per Bot 15) -->
+  <div>
+    <div class="section-label">Promotions &amp; upgrade page</div>
+    <div class="card">
+      <div class="card-body" style="padding:20px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.4)">Not built yet -- this is where the shared "upgrade to unlock" page and any special offers will live once we get to that piece.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+
+  async function checkAuth() {
+    const res = await fetch('/api/admin/membership/plans');
+    if (res.status === 401 || res.status === 403) window.location.href = '/login';
+  }
+
+  function closeModal(id){document.getElementById(id).classList.remove('open');}
+  function openModal(id){document.getElementById(id).classList.add('open');}
+  async function logout(){await fetch('/api/logout',{method:'POST'});location.href='/login';}
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ════════════════════════════════════
+  // Membership plans
+  // ════════════════════════════════════
+  async function loadPlans() {
+    const res   = await fetch('/api/admin/membership/plans');
+    const plans = await res.json();
+    renderPlans(plans);
+  }
+
+  function renderPlans(plans) {
+    const el = document.getElementById('planList');
+    if (!plans.length) { el.innerHTML = '<div class="empty">No plans found.</div>'; return; }
+    el.innerHTML = plans.map(p => `
+      <div class="plan-row">
+        <div class="plan-name">${escHtml(p.name)}</div>
+        <div class="plan-price">£${(p.price_pence/100).toFixed(2)}</div>
+        <div class="plan-trial">
+          Trial: <input class="inline-input" type="number" min="0" max="365"
+            value="${p.trial_days}" style="width:55px"
+            onchange="savePlanTrial('${p.id}', this.value)"/>
+          days
+        </div>
+        <div class="plan-status">
+          <span class="badge ${p.active ? 'badge-approved' : 'badge-draft'}">${p.active ? 'active' : 'inactive'}</span>
+        </div>
+        <div class="plan-actions">
+          <button class="btn sm" onclick="togglePlan('${p.id}',${p.active})">${p.active ? 'Deactivate' : 'Activate'}</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function savePlanTrial(id, days) {
+    await fetch(`/api/admin/membership/plans/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trial_days: parseInt(days) || 0 })
+    });
+  }
+
+  async function togglePlan(id, currentlyActive) {
+    await fetch(`/api/admin/membership/plans/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: currentlyActive ? 0 : 1 })
+    });
+    loadPlans();
+  }
+
+
+  checkAuth().then(() => { loadPlans(); });
+</script>
+<script>window.TOMTE_PAGE = 'Admin — Sales & Marketing';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>

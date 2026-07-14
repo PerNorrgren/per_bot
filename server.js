@@ -6268,6 +6268,15 @@ app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req
 app.get('/admin/comms',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
 app.get('/admin/comms/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
 
+// Per Bot 15n — Talk & Tomte and Sales & Marketing, split out of the
+// Users/Communications pages as part of the six-area admin restructure
+// (People / Content / Talk & Tomte / Communications / Sales & Marketing /
+// Settings — Settings already existed at /setup).
+app.get('/admin/talk',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'talk.html')));
+app.get('/admin/talk/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'talk.html')));
+app.get('/admin/sales',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
+app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
+
 // ── Legal document public pages ──
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/legal/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));

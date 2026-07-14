@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Talk &amp; Tomte — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:16px 28px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:5px; animation:yy-spin 0.85s linear infinite; }
+    button:disabled { cursor:default; opacity:1; }
+    .btn:disabled { color:rgba(255,255,255,0.8); }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .btn.warn { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.65); }
+    .btn.warn:hover { background:rgba(255,180,60,0.08); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+
+    .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:32px; }
+
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    .table { width:100%; max-height:460px; overflow-y:auto; }
+    /* Per Bot 14 — same bounded-scroll-box treatment, these four never had
+       it and just grew the page indefinitely. */
+    #contextDocsTable, #signalScriptsTable, #tomteDefaultsTable, #tomteLibraryGrid { max-height:460px; overflow-y:auto; }
+    .table-row { display:flex; align-items:center; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); gap:14px; transition:background 0.15s; }
+    .table-row:last-child { border-bottom:none; }
+    .table-row:hover { background:rgba(255,255,255,0.03); }
+    .table-row.archived { opacity:0.45; }
+    .col-cb     { width:28px; flex-shrink:0; display:flex; align-items:center; }
+    .col-cb input { width:15px; height:15px; accent-color:rgba(180,230,200,0.8); cursor:pointer; }
+    .col-name   { flex:1.2; font-size:14px; color:rgba(255,255,255,0.8); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-email  { flex:1.5; font-size:12px; color:rgba(255,255,255,0.4); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-level  { flex:0.8; font-size:11px; color:rgba(255,255,255,0.35); }
+    .col-status { flex:0.6; }
+    .col-fac    { flex:1; font-size:12px; color:rgba(255,255,255,0.3); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-created { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
+    .col-actions { flex:1.1; display:flex; gap:6px; align-items:center; justify-content:flex-end; }
+    .col-actions { display:flex; gap:6px; flex-shrink:0; }
+    .table-hdr  { display:flex; align-items:center; padding:8px 20px; gap:14px; border-bottom:1px solid rgba(255,255,255,0.06); background:#141a17; position:sticky; top:0; z-index:2; }
+    .table-hdr-cell { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); cursor:pointer; user-select:none; display:flex; align-items:center; gap:4px; }
+    .table-hdr-cell:hover { color:rgba(255,255,255,0.5); }
+    .sort-ind { font-size:9px; opacity:0.5; }
+    .sort-ind.active { opacity:1; color:rgba(180,230,200,0.8); }
+    .card-search { width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); border-radius:8px; padding:8px 12px; font-size:13px; color:rgba(255,255,255,0.7); font-family:'Georgia',serif; outline:none; transition:border-color 0.2s; }
+    .card-search:focus { border-color:rgba(180,230,200,0.3); }
+    .card-search::placeholder { color:rgba(255,255,255,0.2); }
+    .card-search-wrap { padding:10px 16px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .btn.disabled { opacity:0.3; pointer-events:none; }
+    .status-badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.06em; }
+    .status-active { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.7); }
+    .status-archived { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.3); }
+    .status-pending { background:rgba(255,200,80,0.1); color:rgba(255,200,80,0.65); }
+
+    .empty { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .loading { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.2); font-style:italic; }
+
+    .show-archived-wrap { display:flex; align-items:center; gap:8px; font-size:12px; color:rgba(255,255,255,0.3); cursor:pointer; }
+    .show-archived-wrap input { accent-color:#b4e6c8; }
+
+    /* Modal */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:420px; display:flex; flex-direction:column; gap:16px; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
+    .modal label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
+    .modal input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none; }
+    .modal input:focus { border-color:rgba(180,230,200,0.3); }
+    .modal select {
+      width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+      border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82);
+      font-family:'Georgia',serif; outline:none;
+    }
+    .modal select:focus { border-color:rgba(180,230,200,0.3); }
+    .inline-select {
+      background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+      border-radius:7px; padding:7px 10px; font-size:12px; color:rgba(255,255,255,0.75);
+      font-family:'Georgia',serif; outline:none; cursor:pointer;
+    }
+    .inline-select:focus { border-color:rgba(180,230,200,0.3); }
+    .row-move-select { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:5px 7px; font-size:11px; color:rgba(255,255,255,0.6); font-family:'Georgia',serif; outline:none; cursor:pointer; }
+    .bulk-check-row { display:flex; align-items:flex-start; gap:9px; }
+    .bulk-check-row input[type=checkbox] { width:auto; margin-top:3px; }
+    .bulk-warn { font-size:12px; color:rgba(255,180,120,0.75); line-height:1.6; margin-top:6px; }
+    .bulk-summary { background:rgba(255,255,255,0.05); border-radius:9px; padding:14px 16px; font-size:13px; line-height:1.8; color:rgba(255,255,255,0.75); }
+    .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
+    .modal-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+
+    .temp-pass-box { background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.2); border-radius:10px; padding:16px; }
+    .temp-pass-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.45); margin-bottom:8px; }
+    .temp-pass-value { font-size:20px; letter-spacing:0.08em; color:rgba(180,230,200,1); font-family:monospace; }
+    .temp-pass-note { font-size:12px; color:rgba(255,255,255,0.3); margin-top:10px; line-height:1.6; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div style="position:relative">
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Talk &amp; Tomte</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <a href="/admin/" class="btn">People</a>
+      <a href="/admin/content" class="btn">Content</a>
+      <a href="/admin/talk" class="btn primary">Talk &amp; Tomte</a>
+      <a href="/admin/comms" class="btn">Communications</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+      <a href="/setup" class="btn">Settings</a>
+    </div>
+  </div>
+
+  <div class="page">
+
+
+<!-- Tomte image library (Per Bot 31) — the actual pool: a photo can
+         just sit here without being assigned to anything. Language +
+         expression assignment (card below) picks from this instead of
+         always requiring a fresh upload. -->
+    <div>
+      <div class="section-label">Tomte image library</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Photos</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Upload as many photos as you like — nothing here needs to be assigned to a language or expression yet. Give one a label to make it easier to find later, then assign it below whenever you're ready.
+          </div>
+          <div id="tomteLibraryGrid" style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+          <div id="tlDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag an image here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Just adds it to the library — assign it to something whenever you like</div>
+          </div>
+          <input type="file" id="tlFileInput" accept="image/*" style="display:none"/>
+          <div class="msg" id="tlMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tomte language + action image defaults (Per Bot 8) -->
+    <div>
+      <div class="section-label">Tomte defaults</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Language &amp; expression images</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Each row is one language + expression. "default" is both the plain neutral pose and the fallback for any expression that doesn't have its own image yet. A person's own personal Tomte photo always wins over these for their own account. Optionally scope a row to one skin (e.g. a University cohort) — that skin's own login/register pages and logged-in users show it instead of the standard image for that language + expression.
+          </div>
+
+          <div id="tomteDefaultsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Language</label>
+              <select id="tdNewLanguage" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"></select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Expression</label>
+              <select id="tdNewAction" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"></select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Skin</label>
+              <select id="tdNewSkin" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+                <option value="">No skin — standard default</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px">Pick from the library</div>
+          <div id="tdLibraryPicker" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;"></div>
+
+          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin:2px 0 6px">— or upload a new photo straight into this slot —</div>
+          <div id="tdDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag an image here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Uploads for the language + expression selected above, and adds it to the library too</div>
+          </div>
+          <input type="file" id="tdFileInput" accept="image/*" style="display:none"/>
+          <div class="msg" id="tdMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Talk signal scripts (Per Bot 33s) -->
+    <div>
+      <div class="section-label">Talk knowledge</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Signal scripts</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Short, pre-written mini-practices (under a minute) Talk can weave into a live conversation when genuinely relevant — either spoken text, or an existing library audio file. Talk only ever sees the topic and situation for each one, never the full text — so this list can grow freely without making every conversation more expensive. Leave skin blank for "every skin, including standard" — set one to scope it to just that skin (e.g. Mare).
+          </div>
+
+          <div id="signalScriptsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button class="btn primary" onclick="openSignalScriptModal()">+ Add signal script</button>
+            <button class="btn" onclick="openSignalBulkImportModal()">Bulk upload (text scripts)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Talk context documents (Per Bot 33s) -->
+    <div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Context documents</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            Background knowledge Talk should be aware of — upload a plain text or Word file rather than needing it hand-written into the app. Unlike signal scripts above, this content goes in full on every single turn for that skin, so size matters here — a short, focused document costs little; a full book costs a lot, every message, for everyone on that skin. Character count is shown so this is never a silent surprise.
+          </div>
+
+          <div id="contextDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:8px;">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Title</label>
+              <input type="text" id="cdTitle" placeholder="e.g. Mare — the full book" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none"/>
+            </div>
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.4);display:block;margin-bottom:4px">Skin</label>
+              <select id="cdSkin" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;outline:none">
+                <option value="">No skin — every skin, including standard</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="cdDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag a .txt or .docx file here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Fill in the title and skin above first</div>
+          </div>
+          <input type="file" id="cdFileInput" accept=".txt,.docx" style="display:none"/>
+          <div class="msg" id="cdMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    </div>
+
+  <!-- Signal Script Modal -->
+  <div class="modal-overlay" id="signalScriptModal">
+    <div class="modal">
+      <h3 id="ssModalTitle">Add signal script</h3>
+      <input type="hidden" id="ssId"/>
+      <div><label>Topic</label><input type="text" id="ssTopic" placeholder="e.g. Can't sleep"/></div>
+      <div><label>Situation (what Talk sees to judge fit)</label><input type="text" id="ssSituation" placeholder="e.g. Someone describes racing thoughts or trouble falling asleep"/></div>
+      <div><label>Skin</label>
+        <select id="ssSkin"><option value="">No skin — every skin, including standard</option></select>
+      </div>
+      <div><label>Type</label>
+        <select id="ssKind" onchange="toggleSignalKindFields()">
+          <option value="text">Text — Talk speaks these exact words</option>
+          <option value="audio">Audio — plays an existing library file</option>
+        </select>
+      </div>
+      <div id="ssTextField"><label>Script text</label><textarea id="ssScriptText" rows="4" placeholder="The exact words to be spoken — under a minute read aloud."></textarea></div>
+      <div id="ssAudioField" style="display:none">
+        <label>File</label>
+        <div id="ssFilePicked" style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:6px"></div>
+        <input type="text" class="file-picker-search" id="ssFileSearch" placeholder="Search library…" oninput="filterSignalFilePicker(this.value)"/>
+        <div class="file-picker-list" id="ssFilePicker" style="max-height:180px"></div>
+      </div>
+      <div class="modal-err" id="ssErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('signalScriptModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveSignalScript()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Signal Script Bulk Import Modal -->
+  <div class="modal-overlay" id="signalBulkImportModal">
+    <div class="modal">
+      <h3>Bulk upload signal scripts</h3>
+      <div class="modal-note" style="margin-bottom:14px">CSV or Excel with topic, situation, and script columns — one row per script. Text scripts only; audio ones still need adding individually so you can pick the actual file.</div>
+      <div><label>File</label><input type="file" id="ssBulkFile" accept=".csv,.xlsx,.xls"/></div>
+      <div><label>Skin</label>
+        <select id="ssBulkSkin"><option value="">No skin — every skin, including standard</option></select>
+        <div class="modal-note" style="margin-top:6px">Applies to every row in this file.</div>
+      </div>
+      <div class="modal-err" id="ssBulkErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('signalBulkImportModal')">Cancel</button>
+        <button class="modal-ok" id="ssBulkBtn" onclick="runSignalBulkImport()">Import</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+
+  // ── Utilities (shared across all admin pages) ──
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  async function logout()  { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
+
+  // ── Tomte language + action image defaults (Per Bot 8) ──
+  let _tomteDefaultsActions = [];
+  let _tomteDefaultsLanguages = {};
+
+  async function loadTomteDefaults() {
+    try {
+      const [res, skinRes] = await Promise.all([
+        fetch('/api/admin/tomte-defaults'),
+        fetch('/api/admin/tomte-skin-defaults'),
+      ]);
+      const data = await res.json();
+      const skinData = await skinRes.json();
+      _tomteDefaultsActions = data.actions || [];
+      _tomteDefaultsLanguages = data.languages || {};
+
+      const langSel = document.getElementById('tdNewLanguage');
+      langSel.innerHTML = Object.entries(_tomteDefaultsLanguages).map(([code, name]) => `<option value="${code}">${name}</option>`).join('');
+
+      const actionSel = document.getElementById('tdNewAction');
+      actionSel.innerHTML = _tomteDefaultsActions.map(a => `<option value="${a}">${a.charAt(0).toUpperCase() + a.slice(1)}</option>`).join('');
+
+      const skinSel = document.getElementById('tdNewSkin');
+      const prevSkinVal = skinSel.value;
+      skinSel.innerHTML = '<option value="">No skin — standard default</option>'
+        + (skinData.skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      skinSel.value = prevSkinVal;
+
+      // Combined for display — a skin-scoped row and the standard row for
+      // the same language+expression are two different things (see the
+      // resolution order note on tomte_skin_defaults in db.js), so both
+      // show, distinguished by the skin name tag.
+      const globalRows = (data.rows || []).map(r => ({ ...r, skin_id: null, skin_name: null }));
+      const skinRows = skinData.rows || [];
+      renderTomteDefaultsTable([...globalRows, ...skinRows]);
+    } catch(e) {
+      document.getElementById('tomteDefaultsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderTomteDefaultsTable(rows) {
+    const el = document.getElementById('tomteDefaultsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No images uploaded yet — add one below.</div>'; return; }
+    el.innerHTML = rows.map(r => {
+      const langName = _tomteDefaultsLanguages[r.language] || r.language;
+      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
+      const delOnclick = r.skin_id
+        ? `deleteTomteSkinDefault('${r.skin_id}','${r.language}','${r.action}')`
+        : `deleteTomteDefault('${r.language}','${r.action}')`;
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <img src="${r.imageUrl || '/assets/tomte.png'}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+        <div style="flex:1; font-size:13px; color:rgba(255,255,255,0.75)">${langName} <span style="color:rgba(255,255,255,0.35)">·</span> ${r.action.charAt(0).toUpperCase() + r.action.slice(1)}${skinTag}</div>
+        <button class="btn sm danger" onclick="${delOnclick}">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteTomteDefault(language, action) {
+    if (!(await appConfirm(`Remove the ${action} image for this language?`))) return;
+    await fetch(`/api/admin/tomte-defaults/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
+    loadTomteDefaults();
+  }
+
+  async function deleteTomteSkinDefault(skinId, language, action) {
+    if (!(await appConfirm(`Remove this skin's ${action} image for this language? It'll fall back to the standard default.`))) return;
+    await fetch(`/api/admin/tomte-skin-defaults/${encodeURIComponent(skinId)}/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
+    loadTomteDefaults();
+  }
+
+  // ══ Talk signal scripts (Per Bot 33s) ══
+  let _signalSkins = [];
+  let _signalLibraryFiles = null; // lazy-loaded, only when the audio picker is actually opened
+  let _ssSelectedFileId = null;
+
+  async function loadSignalScripts() {
+    try {
+      const data = await (await fetch('/api/admin/signal-scripts')).json();
+      _signalSkins = data.skins || [];
+      ['ssSkin', 'ssBulkSkin'].forEach(id => {
+        const el = document.getElementById(id);
+        el.innerHTML = '<option value="">No skin — every skin, including standard</option>'
+          + _signalSkins.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      });
+      renderSignalScriptsTable(data.rows || []);
+    } catch(e) {
+      document.getElementById('signalScriptsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderSignalScriptsTable(rows) {
+    const el = document.getElementById('signalScriptsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
+    el.innerHTML = rows.map(r => {
+      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
+      const kindTag = r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text';
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${r.topic}${skinTag}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${r.situation} · ${kindTag}</div>
+        </div>
+        <button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button>
+        <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteSignalScriptRow(id) {
+    if (!(await appConfirm('Delete this signal script? Talk will no longer be able to offer it.'))) return;
+    await fetch(`/api/admin/signal-scripts/${id}`, { method: 'DELETE' });
+    loadSignalScripts();
+  }
+
+  function toggleSignalKindFields() {
+    const isAudio = document.getElementById('ssKind').value === 'audio';
+    document.getElementById('ssTextField').style.display = isAudio ? 'none' : '';
+    document.getElementById('ssAudioField').style.display = isAudio ? '' : 'none';
+    if (isAudio && !_signalLibraryFiles) loadSignalLibraryFiles();
+  }
+
+  async function loadSignalLibraryFiles() {
+    document.getElementById('ssFilePicker').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      _signalLibraryFiles = await (await fetch('/api/content/library')).json();
+      renderSignalFilePicker(_signalLibraryFiles);
+    } catch(e) {
+      document.getElementById('ssFilePicker').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load library.</div>';
+    }
+  }
+
+  function renderSignalFilePicker(files) {
+    document.getElementById('ssFilePicker').innerHTML = files.map(f => `
+      <div class="picker-item${_ssSelectedFileId===f.id?' sel':''}" data-id="${f.id}" onclick="pickSignalFile('${f.id}','${f.title.replace(/'/g,"\\'")}')">
+        <span style="font-size:16px">${f.file_type?.startsWith('audio')?'🎵':'📄'}</span>
+        <div class="picker-item-info"><div class="picker-item-title">${f.title}</div></div>
+      </div>`).join('');
+  }
+
+  function filterSignalFilePicker(q) {
+    if (!_signalLibraryFiles) return;
+    const ql = q.toLowerCase();
+    renderSignalFilePicker(_signalLibraryFiles.filter(f => f.title.toLowerCase().includes(ql)));
+  }
+
+  function pickSignalFile(id, title) {
+    _ssSelectedFileId = id;
+    document.getElementById('ssFilePicked').textContent = `Selected: ${title}`;
+    renderSignalFilePicker(_signalLibraryFiles);
+  }
+
+  function openSignalScriptModal(id) {
+    document.getElementById('ssErr').textContent = '';
+    document.getElementById('ssId').value = id || '';
+    _ssSelectedFileId = null;
+    document.getElementById('ssFilePicked').textContent = '';
+    if (id) {
+      fetch('/api/admin/signal-scripts').then(r => r.json()).then(data => {
+        const row = (data.rows || []).find(r => r.id === id);
+        if (!row) return;
+        document.getElementById('ssModalTitle').textContent = 'Edit signal script';
+        document.getElementById('ssTopic').value = row.topic;
+        document.getElementById('ssSituation').value = row.situation;
+        document.getElementById('ssSkin').value = row.skin_id || '';
+        document.getElementById('ssKind').value = row.kind;
+        document.getElementById('ssScriptText').value = row.script_text || '';
+        _ssSelectedFileId = row.file_id || null;
+        if (row.file_id) document.getElementById('ssFilePicked').textContent = `Selected: ${row.file_title || row.file_id}`;
+        toggleSignalKindFields();
+      });
+    } else {
+      document.getElementById('ssModalTitle').textContent = 'Add signal script';
+      document.getElementById('ssTopic').value = '';
+      document.getElementById('ssSituation').value = '';
+      document.getElementById('ssSkin').value = '';
+      document.getElementById('ssKind').value = 'text';
+      document.getElementById('ssScriptText').value = '';
+      toggleSignalKindFields();
+    }
+    openModal('signalScriptModal');
+  }
+
+  async function saveSignalScript() {
+    const id = document.getElementById('ssId').value;
+    const topic = document.getElementById('ssTopic').value.trim();
+    const situation = document.getElementById('ssSituation').value.trim();
+    const skinId = document.getElementById('ssSkin').value;
+    const kind = document.getElementById('ssKind').value;
+    const scriptText = document.getElementById('ssScriptText').value.trim();
+    const err = document.getElementById('ssErr');
+    const body = { topic, situation, skinId, kind, scriptText, fileId: _ssSelectedFileId };
+    const res = id
+      ? await fetch(`/api/admin/signal-scripts/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      : await fetch('/api/admin/signal-scripts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.error) { err.textContent = data.error; return; }
+    closeModal('signalScriptModal');
+    loadSignalScripts();
+  }
+
+  function openSignalBulkImportModal() {
+    document.getElementById('ssBulkFile').value = '';
+    document.getElementById('ssBulkErr').textContent = '';
+    document.getElementById('ssBulkBtn').disabled = false;
+    document.getElementById('ssBulkBtn').textContent = 'Import';
+    openModal('signalBulkImportModal');
+  }
+
+  async function runSignalBulkImport() {
+    const fileInput = document.getElementById('ssBulkFile');
+    const err = document.getElementById('ssBulkErr');
+    if (!fileInput.files.length) { err.textContent = 'Choose a file first.'; return; }
+    const btn = document.getElementById('ssBulkBtn');
+    btn.disabled = true; btn.textContent = 'Importing…'; err.textContent = '';
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('skinId', document.getElementById('ssBulkSkin').value);
+    try {
+      const res = await fetch('/api/admin/signal-scripts/bulk-import', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!data.ok) { err.textContent = data.error || 'Import failed.'; btn.disabled = false; btn.textContent = 'Import'; return; }
+      closeModal('signalBulkImportModal');
+      loadSignalScripts();
+    } catch(e) {
+      err.textContent = 'Network error.'; btn.disabled = false; btn.textContent = 'Import';
+    }
+  }
+
+  // ══ Talk context documents (Per Bot 33s) ══
+  async function loadContextDocuments() {
+    try {
+      const data = await (await fetch('/api/admin/context-documents')).json();
+      const skinSel = document.getElementById('cdSkin');
+      skinSel.innerHTML = '<option value="">No skin — every skin, including standard</option>'
+        + (data.skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+      renderContextDocsTable(data.rows || []);
+    } catch(e) {
+      document.getElementById('contextDocsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+    }
+  }
+
+  function renderContextDocsTable(rows) {
+    const el = document.getElementById('contextDocsTable');
+    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — upload one below.</div>'; return; }
+    el.innerHTML = rows.map(d => {
+      const skinTag = d.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${d.skin_name || d.skin_id}</span>` : ' <span style="color:rgba(255,255,255,0.3)">· every skin</span>';
+      // Rough guide, not a hard cutoff — ~4 characters per token is the
+      // usual ballpark, so this is close enough to give a sense of scale
+      // without pretending to be an exact count.
+      const approxTokens = Math.round(d.char_count / 4);
+      return `
+      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
+        <div style="flex:1">
+          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${d.title}${skinTag}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${d.char_count.toLocaleString()} characters (~${approxTokens.toLocaleString()} tokens, sent on every turn for this skin)</div>
+        </div>
+        <button class="btn sm danger" onclick="deleteContextDocumentRow('${d.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+
+  async function deleteContextDocumentRow(id) {
+    if (!(await appConfirm('Delete this context document? Talk will lose this knowledge immediately.'))) return;
+    await fetch(`/api/admin/context-documents/${id}`, { method: 'DELETE' });
+    loadContextDocuments();
+  }
+
+  async function uploadContextDocument(file) {
+    const msg = document.getElementById('cdMsg');
+    const title = document.getElementById('cdTitle').value.trim() || file.name;
+    const skinId = document.getElementById('cdSkin').value;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('title', title);
+    formData.append('skinId', skinId);
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.5)';
+    try {
+      const res = await fetch('/api/admin/context-documents', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.ok) {
+        msg.textContent = `Saved — ${data.charCount.toLocaleString()} characters.`;
+        msg.style.color = 'rgba(180,230,200,0.85)';
+        document.getElementById('cdTitle').value = '';
+        loadContextDocuments();
+      } else {
+        msg.textContent = data.error || 'Could not upload.';
+        msg.style.color = 'rgba(255,140,120,0.85)';
+      }
+    } catch(e) {
+      msg.textContent = 'Could not upload — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    }
+  }
+
+  async function uploadTomteDefault(file) {
+    const msg = document.getElementById('tdMsg');
+    const language = document.getElementById('tdNewLanguage').value;
+    const action = document.getElementById('tdNewAction').value;
+    const skinId = document.getElementById('tdNewSkin').value;
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('language', language);
+      fd.append('action', action);
+      let res;
+      if (skinId) {
+        fd.append('skinId', skinId);
+        res = await fetch('/api/admin/tomte-skin-defaults', { method: 'POST', body: fd });
+      } else {
+        res = await fetch('/api/admin/tomte-defaults', { method: 'POST', body: fd });
+      }
+      const data = await res.json();
+      if (data.ok) {
+        msg.textContent = 'Saved.';
+        msg.style.color = 'rgba(180,230,200,0.85)';
+        loadTomteDefaults();
+      } else {
+        msg.textContent = data.error || 'Could not upload.';
+        msg.style.color = 'rgba(255,140,120,0.85)';
+      }
+    } catch(e) {
+      msg.textContent = 'Could not upload — please try again.';
+      msg.style.color = 'rgba(255,140,120,0.85)';
+    }
+  }
+
+  // ── Tomte image library (Per Bot 31) ──
+  let _tomteLibrary = [];
+  async function loadTomteLibrary() {
+    try {
+      const res = await fetch('/api/admin/tomte-library');
+      _tomteLibrary = await res.json();
+      if (!Array.isArray(_tomteLibrary)) _tomteLibrary = [];
+    } catch(e) { _tomteLibrary = []; }
+    renderTomteLibraryGrid();
+    renderTdLibraryPicker();
+  }
+  function renderTomteLibraryGrid() {
+    const el = document.getElementById('tomteLibraryGrid');
+    if (!_tomteLibrary.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No photos yet — add one below.</div>'; return; }
+    el.innerHTML = _tomteLibrary.map(img => `
+      <div style="width:110px; display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <img src="${img.url}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
+        <input type="text" value="${(img.label || '').replace(/"/g,'&quot;')}" placeholder="Label (optional)" onchange="updateTomteLibraryLabel('${img.id}', this.value)" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:5px 6px; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:11px; text-align:center;"/>
+        <button class="btn sm danger" style="font-size:10.5px; padding:4px 8px" onclick="deleteTomteLibraryImage('${img.id}')">Remove</button>
+      </div>
+    `).join('');
+  }
+  // The picker inside the language+expression card — same photos, click
+  // to assign directly (no upload involved).
+  function renderTdLibraryPicker() {
+    const el = document.getElementById('tdLibraryPicker');
+    if (!el) return;
+    if (!_tomteLibrary.length) { el.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3);font-style:italic">Nothing in the library yet.</div>'; return; }
+    el.innerHTML = _tomteLibrary.map(img => `
+      <img src="${img.url}" title="${(img.label || '').replace(/"/g,'&quot;')}" onclick="assignTomteLibraryImage('${img.filename.replace(/'/g,"\\'")}')"
+        style="width:40px;height:40px;border-radius:50%;object-fit:cover;object-position:50% 15%;cursor:pointer;border:2px solid rgba(255,255,255,0.12)"/>
+    `).join('');
+  }
+  async function assignTomteLibraryImage(filename) {
+    const msg = document.getElementById('tdMsg');
+    const language = document.getElementById('tdNewLanguage').value;
+    const action = document.getElementById('tdNewAction').value;
+    const skinId = document.getElementById('tdNewSkin').value;
+    try {
+      const res = skinId
+        ? await fetch('/api/admin/tomte-skin-defaults/assign', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skinId, language, action, filename }),
+          })
+        : await fetch('/api/admin/tomte-defaults/assign', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ language, action, filename }),
+          });
+      const data = await res.json();
+      if (data.ok) { msg.textContent = 'Saved.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTomteDefaults(); }
+      else { msg.textContent = data.error || 'Could not assign.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+    } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+  }
+  async function uploadTomteLibraryImage(file) {
+    const msg = document.getElementById('tlMsg');
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.4)';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/tomte-library', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) { msg.textContent = 'Added.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTomteLibrary(); }
+      else { msg.textContent = data.error || 'Could not upload.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+    } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+  }
+  async function updateTomteLibraryLabel(id, label) {
+    await fetch(`/api/admin/tomte-library/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) });
+  }
+  async function deleteTomteLibraryImage(id) {
+    if (!(await appConfirm('Remove this photo from the library? Anywhere it\'s already assigned keeps working — this just removes it from the library gallery.'))) return;
+    await fetch(`/api/admin/tomte-library/${id}`, { method: 'DELETE' });
+    loadTomteLibrary();
+  }
+  const tlDropZone = document.getElementById('tlDropZone');
+  const tlFileInput = document.getElementById('tlFileInput');
+  tlDropZone.addEventListener('click', () => tlFileInput.click());
+  tlFileInput.addEventListener('change', () => { if (tlFileInput.files[0]) uploadTomteLibraryImage(tlFileInput.files[0]); tlFileInput.value = ''; });
+  tlDropZone.addEventListener('dragover', e => { e.preventDefault(); tlDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; tlDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  tlDropZone.addEventListener('dragleave', () => { tlDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tlDropZone.style.background = 'none'; });
+  tlDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    tlDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tlDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+    if (file) uploadTomteLibraryImage(file);
+  });
+  loadTomteLibrary();
+
+  const tdDropZone = document.getElementById('tdDropZone');
+  const tdFileInput = document.getElementById('tdFileInput');
+  tdDropZone.addEventListener('click', () => tdFileInput.click());
+  tdFileInput.addEventListener('change', () => { if (tdFileInput.files[0]) uploadTomteDefault(tdFileInput.files[0]); tdFileInput.value = ''; });
+  tdDropZone.addEventListener('dragover', e => { e.preventDefault(); tdDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; tdDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  tdDropZone.addEventListener('dragleave', () => { tdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tdDropZone.style.background = 'none'; });
+  tdDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    tdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tdDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+    if (file) uploadTomteDefault(file);
+  });
+
+  loadTomteDefaults();
+
+  // ── Talk context documents drop zone (Per Bot 33s) ──
+  const cdDropZone = document.getElementById('cdDropZone');
+  const cdFileInput = document.getElementById('cdFileInput');
+  cdDropZone.addEventListener('click', () => cdFileInput.click());
+  cdFileInput.addEventListener('change', () => { if (cdFileInput.files[0]) uploadContextDocument(cdFileInput.files[0]); cdFileInput.value = ''; });
+  cdDropZone.addEventListener('dragover', e => { e.preventDefault(); cdDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; cdDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  cdDropZone.addEventListener('dragleave', () => { cdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; cdDropZone.style.background = 'none'; });
+  cdDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    cdDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; cdDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.name.endsWith('.txt') || f.name.endsWith('.docx'));
+    if (file) uploadContextDocument(file);
+  });
+
+  loadSignalScripts();
+  loadContextDocuments();
+
+</script>
+<script>window.TOMTE_PAGE = 'Admin — Talk & Tomte';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>

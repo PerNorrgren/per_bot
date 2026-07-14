@@ -20,7 +20,7 @@
     .topbar { padding:16px 28px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:10px; align-items:center; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -210,9 +210,11 @@
     </div>
   </div>
   <div class="topbar-right">
-    <a href="/admin/" class="btn">Users</a>
-    <a href="/admin/content" class="btn">Content library</a>
+    <a href="/admin/" class="btn">People</a>
+    <a href="/admin/content" class="btn">Content</a>
+    <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
     <a href="/admin/comms" class="btn primary">Communications</a>
+    <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
     <a href="/setup" class="btn">Settings</a>
   </div>
 </div>
@@ -480,18 +482,6 @@
       <div class="card-body" style="padding:16px 20px">
         <div style="font-size:13px;color:rgba(255,255,255,0.45)">Moved to <a href="/setup" style="color:rgba(180,230,200,0.8)">Settings</a> — now scopable per skin (e.g. a different jurisdiction's Terms for a skin serving a different market).</div>
       </div>
-    </div>
-  </div>
-
-  <!-- ── Membership plans ── -->
-  <div>
-    <div class="section-label">Membership plans</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Active plans</div>
-        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Prices are set in Stripe — edit trial days here</div>
-      </div>
-      <div id="planList"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -2114,55 +2104,6 @@
   }
 
   // ════════════════════════════════════
-  // Membership plans
-  // ════════════════════════════════════
-  async function loadPlans() {
-    const res   = await fetch('/api/admin/membership/plans');
-    const plans = await res.json();
-    renderPlans(plans);
-  }
-
-  function renderPlans(plans) {
-    const el = document.getElementById('planList');
-    if (!plans.length) { el.innerHTML = '<div class="empty">No plans found.</div>'; return; }
-    el.innerHTML = plans.map(p => `
-      <div class="plan-row">
-        <div class="plan-name">${escHtml(p.name)}</div>
-        <div class="plan-price">£${(p.price_pence/100).toFixed(2)}</div>
-        <div class="plan-trial">
-          Trial: <input class="inline-input" type="number" min="0" max="365"
-            value="${p.trial_days}" style="width:55px"
-            onchange="savePlanTrial('${p.id}', this.value)"/>
-          days
-        </div>
-        <div class="plan-status">
-          <span class="badge ${p.active ? 'badge-approved' : 'badge-draft'}">${p.active ? 'active' : 'inactive'}</span>
-        </div>
-        <div class="plan-actions">
-          <button class="btn sm" onclick="togglePlan('${p.id}',${p.active})">${p.active ? 'Deactivate' : 'Activate'}</button>
-        </div>
-      </div>
-    `).join('');
-  }
-
-  async function savePlanTrial(id, days) {
-    await fetch(`/api/admin/membership/plans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trial_days: parseInt(days) || 0 })
-    });
-  }
-
-  async function togglePlan(id, currentlyActive) {
-    await fetch(`/api/admin/membership/plans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active: currentlyActive ? 0 : 1 })
-    });
-    loadPlans();
-  }
-
-  // ════════════════════════════════════
   // Reminders
   // ════════════════════════════════════
   async function loadReminderConfig() {
@@ -2443,7 +2384,6 @@
   // ── Boot ──
   checkAuth().then(() => {
     loadMotd();
-    loadPlans();
     loadTestDestination();
     loadReminderConfig();
     loadRenewalConfig();

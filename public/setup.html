@@ -22,7 +22,7 @@
     .topbar.visible { display:flex; }
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:10px; align-items:center; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -88,9 +88,11 @@
     </div>
   </div>
   <div class="topbar-right">
-    <a href="/admin/" class="btn">Users</a>
-    <a href="/admin/content" class="btn">Content library</a>
+    <a href="/admin/" class="btn">People</a>
+    <a href="/admin/content" class="btn">Content</a>
+    <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
     <a href="/admin/comms" class="btn">Communications</a>
+    <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
     <a href="/setup" class="btn primary">Settings</a>
   </div>
 </div>
@@ -753,7 +755,7 @@
   loadLegalDocs();
 </script>
 
-<script>window.TOMTE_PAGE = 'Setup';</script>
+<script>window.TOMTE_PAGE = 'Admin — Settings';</script>
 <script src="/tomte-widget.js" defer></script>
 </body>
 </html>
