@@ -561,7 +561,7 @@
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
     .chooser-tick { float:right; color:rgba(140,220,170,0.9); font-weight:bold; }
     .chooser-mandatory-badge { float:right; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:rgba(220,90,80,0.85); color:#fff; font-size:11px; font-weight:bold; }
-    .chooser-locked { opacity:0.4; cursor:not-allowed; }
+    .chooser-locked { opacity:0.4; cursor:pointer; }
     .text-doc-reader {
       max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
       max-width:560px; margin:0 auto; padding:4px 12px 12px;
@@ -1009,6 +1009,13 @@
         <div id="courseDetailHeader"></div>
         <div id="courseLessonsList"></div>
       </div>
+    </div>
+
+    <!-- Per Bot 15k — friendly notice for tapping a locked item, naming what
+         needs to be completed first, rather than the tap just doing nothing
+         (which is what a disabled button gives you). Auto-dismisses. -->
+    <div id="lockedNotice" style="display:none; position:fixed; left:50%; bottom:100px; transform:translateX(-50%); z-index:600; max-width:min(90vw,380px); background:#1a2420; border:1px solid rgba(255,210,140,0.3); border-radius:14px; padding:14px 18px; font-family:Georgia,serif; font-size:13.5px; color:rgba(255,220,170,0.9); text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); line-height:1.5;">
+      <span id="lockedNoticeText"></span>
     </div>
 
     <!-- Player -->
@@ -4866,6 +4873,18 @@
   // day's Read and Listen sit next to each other (rather than every Read
   // first, then every Listen) and scrollable for long lists on mobile.
   let _lessonChooserFiles = [];
+  // Per Bot 15k — friendly popup for tapping a locked item. Auto-dismisses
+  // after a few seconds; tapping it again just restarts the timer rather
+  // than stacking multiple notices.
+  let _lockedNoticeTimer = null;
+  function showLockedNotice(message) {
+    const el = document.getElementById('lockedNotice');
+    document.getElementById('lockedNoticeText').textContent = message;
+    el.style.display = 'block';
+    clearTimeout(_lockedNoticeTimer);
+    _lockedNoticeTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
   function openLessonChooser(lesson, files, lessonLocked) {
     // Preserve whatever lock state was already known (from the initial API
     // response) across re-renders that don't pass it explicitly — e.g. the
@@ -4884,10 +4903,18 @@
     _inChooserView = true;
     _showingNowPlaying = false;
     document.getElementById('playerTitle').textContent = lesson.title;
+    // Per Bot 15k — names the actual previous lesson rather than a generic
+    // "the previous lesson", when we know which course/lesson order this is
+    // (cached from the last openCourseDetail call).
+    const lessonIdx = _currentCourseLessons.findIndex(l => l.id === lesson.id);
+    const prevLesson = lessonIdx > 0 ? _currentCourseLessons[lessonIdx - 1] : null;
+    const lockedBannerText = prevLesson
+      ? `🔒 Lesson content locked until you complete Lesson ${prevLesson.lesson_number}: ${prevLesson.title}.`
+      : '🔒 Complete the previous lesson to unlock this one.';
     const descHtml = lesson.description ? `<div style="margin-bottom:10px">${lesson.description}</div>` : '';
-    document.getElementById('playerText').innerHTML = descHtml + (lessonLocked
-      ? "🔒 Complete the previous lesson to unlock this one."
-      : "Choose how you'd like to experience this:");
+    document.getElementById('playerText').innerHTML = lessonLocked
+      ? `<div style="background:rgba(255,210,140,0.08); border:1px solid rgba(255,210,140,0.25); border-radius:10px; padding:10px 14px; margin-bottom:10px; font-size:13px; color:rgba(255,220,170,0.9)">${lockedBannerText}</div>${descHtml}`
+      : descHtml + "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
@@ -4897,7 +4924,12 @@
             ? '<span class="chooser-tick">✓</span>'
             : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');
           if (locked) {
-            return `<button class="doc-link chooser-locked" disabled title="Open the previous item first">🔒 ${label}${tick}</button>`;
+            // Per Bot 15k — was a disabled button, which meant tapping it did
+            // nothing at all. Now clickable, showing a friendly popup naming
+            // specifically what needs to happen first: the previous lesson,
+            // if that's what's blocking it, or otherwise the specific
+            // previous file in this same lesson that hasn't been opened yet.
+            return `<button class="doc-link chooser-locked" onclick="showLockedFileNotice(${i}, ${lessonLocked ? 'true' : 'false'})">🔒 ${label}${tick}</button>`;
           }
           return `<button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">${label}${tick}</button>`;
         }).join('')}
@@ -4935,6 +4967,25 @@
       }
     });
   }
+  // Per Bot 15k — figures out exactly what's blocking this specific file:
+  // the whole lesson (if lessonLocked), or otherwise the specific previous
+  // file in this same lesson that hasn't been opened yet — named directly
+  // rather than a generic "the previous item".
+  function showLockedFileNotice(index, lessonLocked) {
+    if (lessonLocked) {
+      const lessonIdx = _currentCourseLessons.findIndex(l => l.id === _lessonCtx?.lessonId);
+      const prevLesson = lessonIdx > 0 ? _currentCourseLessons[lessonIdx - 1] : null;
+      showLockedNotice(prevLesson
+        ? `Complete Lesson ${prevLesson.lesson_number}: ${prevLesson.title} first to unlock this.`
+        : 'Complete the previous lesson first to unlock this.');
+      return;
+    }
+    const prevFile = index > 0 ? _lessonChooserFiles[index - 1] : null;
+    showLockedNotice(prevFile
+      ? `Open "${prevFile.title}" first to unlock this.`
+      : 'Complete the previous item first to unlock this.');
+  }
+
   function chooseLessonFile(index) {
     const file = _lessonChooserFiles[index];
     const locked = _lessonCtx?.lessonLocked || file.locked;

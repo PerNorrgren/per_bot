@@ -2004,9 +2004,11 @@ function getFileUsage(fileId) {
 // freshly built course now defaults to enforced sequence throughout,
 // matching how it's actually meant to be used day to day; existing
 // courses are unaffected and can still be toggled per-course as before.
+// Per Bot 15k — enforce_lesson_sequence defaults on too now, for the same
+// reason: without it, nothing stopped starting straight at Lesson 2.
 function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
-  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence) VALUES (?,?,?,?,?,?,?,?)',
-    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1]); save();
+  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence,enforce_lesson_sequence) VALUES (?,?,?,?,?,?,?,?,?)',
+    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1, 1]); save();
 }
 function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
   getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=? WHERE id=?',
