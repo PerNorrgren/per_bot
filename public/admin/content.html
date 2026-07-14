@@ -1864,7 +1864,11 @@ async function openCourseDetail(courseId){
         <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center">
           Mandatory: <button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',true)">All</button><button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',false)">None</button>
         </span>
-        ${files.map(f=>`<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border-radius:6px;padding:4px 8px;font-size:12px;color:rgba(255,255,255,0.55)">
+        ${files.map((f,i)=>`<div style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border-radius:6px;padding:4px 8px;font-size:12px;color:rgba(255,255,255,0.55)">
+          <span style="display:flex;flex-direction:column;line-height:0.7;margin-right:2px">
+            <button onclick="moveLessonFile('${f.ref_id}','up')" ${i===0?'disabled':''} style="background:none;border:none;color:rgba(255,255,255,${i===0?'0.15':'0.4'});cursor:${i===0?'default':'pointer'};font-size:10px;padding:1px 2px" title="Move up">▲</button>
+            <button onclick="moveLessonFile('${f.ref_id}','down')" ${i===files.length-1?'disabled':''} style="background:none;border:none;color:rgba(255,255,255,${i===files.length-1?'0.15':'0.4'});cursor:${i===files.length-1?'default':'pointer'};font-size:10px;padding:1px 2px" title="Move down">▼</button>
+          </span>
           ${ficon(f.file_type)} ${f.title}
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
@@ -1897,6 +1901,11 @@ async function setLessonFileSequence(lessonId,value){
 async function toggleFileMandatory(refId,checked){
   await fetch(`/api/content/lesson-file-refs/${refId}/mandatory`,{method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mandatory:checked})});
+}
+async function moveLessonFile(refId,direction){
+  await fetch(`/api/content/lesson-file-refs/${refId}/move`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({direction})});
+  openCourseDetail(curCourseId); // re-render to reflect the new order
 }
 async function setLessonMandatoryAll(lessonId,mandatory){
   await fetch(`/api/content/lessons/${lessonId}/mandatory-all`,{method:'POST',headers:{'Content-Type':'application/json'},

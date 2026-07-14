@@ -5855,6 +5855,16 @@ app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['a
   db.setLessonFileRefMandatory(req.params.id, !!req.body.mandatory);
   res.json({ ok: true });
 });
+// Per Bot 15f — reorder a file within its lesson, one step at a time
+// (up/down), rather than a full drag-and-drop reorder — the file list is
+// a wrapped chip row, not a natural drag target, so simple step buttons
+// are both easier to build reliably and easier to use precisely.
+app.patch('/api/content/lesson-file-refs/:id/move', auth.requireAuthApi(['admin']), (req, res) => {
+  const { direction } = req.body;
+  if (direction !== 'up' && direction !== 'down') return res.status(400).json({ error: "direction must be 'up' or 'down'." });
+  db.moveLessonFileRef(req.params.id, direction);
+  res.json({ ok: true });
+});
 // "All" / "None" bulk toggles — set every file in one lesson, or every
 // file across the whole course, in a single call.
 app.post('/api/content/lessons/:id/mandatory-all', auth.requireAuthApi(['admin']), (req, res) => {

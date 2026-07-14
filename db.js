@@ -2100,6 +2100,25 @@ function getFilesForLesson(lessonId) {
 function removeLessonFileRef(refId) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE id=?', [refId]); save();
 }
+// Per Bot 15f — moves one file up or down within its lesson. Existing
+// refs default to sort_order=0 (never set individually before now), so
+// rather than trying to swap two possibly-identical values, this always
+// re-numbers every ref in the lesson 0..n-1 in the new order — clean and
+// distinct going forward regardless of what was there before. Ties in
+// the current order break on id, just to be deterministic.
+function moveLessonFileRef(refId, direction) {
+  const ref = queryOne('SELECT * FROM lesson_file_refs WHERE id=?', [refId]);
+  if (!ref) return;
+  const all = queryAll('SELECT * FROM lesson_file_refs WHERE lesson_id=? ORDER BY sort_order ASC, id ASC', [ref.lesson_id]);
+  const idx = all.findIndex(r => r.id === refId);
+  if (idx === -1) return;
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= all.length) return; // already at the top/bottom — nothing to do
+  [all[idx], all[swapIdx]] = [all[swapIdx], all[idx]];
+  const dbc = getDbSync();
+  all.forEach((r, i) => dbc.run('UPDATE lesson_file_refs SET sort_order=? WHERE id=?', [i, r.id]));
+  save();
+}
 
 // ── Lesson file opens / progress tracking (Per Bot 13) ──
 function logFileOpen(id, userId, lessonId, fileId) {
@@ -4226,7 +4245,7 @@ module.exports = {
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,
   // Lesson file refs
-  addLessonFileRef, getFilesForLesson, removeLessonFileRef, setLessonFileRefMandatory,
+  addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, setLessonFileRefMandatory,
   setAllFileRefsMandatoryForLesson, setAllFileRefsMandatoryForCourse,
   // Lesson file opens / progress (Per Bot 13)
   logFileOpen, getOpenedFileIds, getLessonFileProgress,
