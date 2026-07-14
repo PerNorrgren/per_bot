@@ -159,6 +159,13 @@
   let paymentsEnabled = true; // safe default until /api/config responds
   let brandName = 'Deeper Mindfulness';
   let checkoutInFlight = false;
+  // Skin context (Per Bot 16) — used so the Cancellation Policy/Terms/
+  // Clinical Disclaimer links below resolve to a skin's own version if one
+  // exists, instead of always linking to the global document.
+  let legalSkinId = null;
+  function legalHref(slug) {
+    return '/legal/' + slug + (legalSkinId ? '?skin=' + encodeURIComponent(legalSkinId) : '');
+  }
 
   // ── Load account ──
   async function init() {
@@ -167,6 +174,7 @@
       try {
         const cfg = await configRes.json();
         paymentsEnabled = cfg.paymentsEnabled !== false;
+        legalSkinId = cfg.skinId || null;
         if (cfg.brandName) {
           brandName = cfg.brandName;
           document.querySelectorAll('[data-brand="name"]').forEach(el => el.textContent = cfg.brandName);
@@ -276,9 +284,9 @@
             <input type="checkbox" id="cancelConsent" style="margin-top:3px;accent-color:rgba(180,230,200,0.8);flex-shrink:0;width:16px;height:16px;cursor:pointer" onchange="toggleCta()"/>
             <span style="font-size:12px;color:rgba(255,255,255,0.38);line-height:1.6">
               I have read and agree to the
-              <a href="/legal/cancellation-policy" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Cancellation Policy</a>,
-              <a href="/legal/terms-of-service" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Terms of Service</a>, and
-              <a href="/legal/clinical-disclaimer" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Clinical Disclaimer</a>.
+              <a href="${legalHref('cancellation-policy')}" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Cancellation Policy</a>,
+              <a href="${legalHref('terms-of-service')}" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Terms of Service</a>, and
+              <a href="${legalHref('clinical-disclaimer')}" target="_blank" style="color:rgba(180,230,200,0.55);text-decoration:none">Clinical Disclaimer</a>.
             </span>
           </label>
           <button class="cta-btn" id="ctaBtn" onclick="startCheckout()" disabled style="opacity:0.4">

@@ -146,14 +146,40 @@
   let allDocs  = [];
   let userLoggedIn = false;
   let userConsents = {};
+  // Skin context (Per Bot 16) — an explicit ?skin= in the URL always wins
+  // (so a link from a skin-specific page, e.g. setup.html's admin preview,
+  // is authoritative); otherwise fall back to the logged-in user's own
+  // skin, resolved server-side by /api/config the same way it already is
+  // for brand name/colour. Anonymous visitors with no ?skin= simply see
+  // the global documents, same as today.
+  let skinParam = null;
+
+  // Appends ?skin=/&skin= to a URL if a skin is in play, leaving it
+  // untouched otherwise. Used for both fetch() calls and rendered hrefs
+  // so navigating within the page (sidebar, doc index, version history)
+  // never loses the skin context after the first load.
+  function withSkin(url) {
+    if (!skinParam) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'skin=' + encodeURIComponent(skinParam);
+  }
 
   // ── Init ──
   async function init() {
     // Determine slug from URL
     const slug = location.pathname.replace(/^\/legal\/?/, '') || '';
 
+    const urlSkin = new URLSearchParams(location.search).get('skin');
+    if (urlSkin) {
+      skinParam = urlSkin;
+    } else {
+      try {
+        const cfg = await window.brandReady;
+        skinParam = cfg.skinId || null;
+      } catch(e) { /* no skin context available — show global docs */ }
+    }
+
     // Load all docs for sidebar
-    const docsRes = await fetch('/api/legal');
+    const docsRes = await fetch(withSkin('/api/legal'));
     allDocs = docsRes.ok ? await docsRes.json() : [];
     renderSidebar(slug);
 
@@ -177,7 +203,7 @@
   function renderSidebar(activeSlug) {
     const links = allDocs.map(d => `
       <a class="sidebar-link ${d.slug === activeSlug ? 'active' : ''}"
-         href="/legal/${d.slug}">${d.title}</a>
+         href="${withSkin('/legal/' + d.slug)}">${d.title}</a>
     `).join('');
     document.getElementById('sidebarLinks').innerHTML = links ||
       '<div style="padding:6px 20px;font-size:12px;color:rgba(255,255,255,0.2)">No documents yet.</div>';
@@ -199,7 +225,7 @@
       </div>
       <div class="doc-index">
         ${allDocs.map(d => `
-          <a class="doc-card" href="/legal/${d.slug}">
+          <a class="doc-card" href="${withSkin('/legal/' + d.slug)}">
             <div>
               <div class="doc-card-title">${d.title}</div>
               <div class="doc-card-meta">Version ${d.version} · ${d.published_at ? fmtDate(d.published_at) : ''}</div>
@@ -216,7 +242,7 @@
     main.innerHTML = '<div class="loading">Loading…</div>';
 
     try {
-      const res = await fetch(`/api/legal/${slug}`);
+      const res = await fetch(withSkin(`/api/legal/${slug}`));
       if (!res.ok) {
         main.innerHTML = '<p style="color:rgba(255,140,120,0.7);padding:40px 0">Document not found.</p>';
         return;
@@ -230,12 +256,12 @@
       main.innerHTML = `
         <div class="doc-header">
           <div class="doc-breadcrumb">
-            <a href="/legal">Legal</a> › ${doc.title}
+            <a href="${withSkin('/legal')}">Legal</a> › ${doc.title}
           </div>
           <div class="doc-title">${doc.title}</div>
           <div class="doc-meta">Version ${doc.version} · ${doc.published_at ? fmtDate(doc.published_at) : ''} · ${cfg.legalEntityName || 'Per Norrgren trading as Deeper Mindfulness'}</div>
           <div class="doc-version-history" style="margin-top:8px">
-            <a class="doc-version-link" href="/legal/${doc.slug}/history" onclick="loadHistory('${doc.slug}');return false;">View version history</a>
+            <a class="doc-version-link" href="${withSkin('/legal/' + doc.slug + '/history')}" onclick="loadHistory('${doc.slug}');return false;">View version history</a>
           </div>
         </div>
 
@@ -299,12 +325,12 @@
     const docs = await res.json();
     main.innerHTML = `
       <div class="doc-header">
-        <div class="doc-breadcrumb"><a href="/legal">Legal</a> › <a href="/legal/${slug}">${docs[0]?.title || slug}</a> › Version history</div>
+        <div class="doc-breadcrumb"><a href="${withSkin('/legal')}">Legal</a> › <a href="${withSkin('/legal/' + slug)}">${docs[0]?.title || slug}</a> › Version history</div>
         <div class="doc-title">Version history</div>
       </div>
       <div class="doc-index">
         ${docs.map(d => `
-          <a class="doc-card" href="/legal/${d.slug}?version=${d.version}">
+          <a class="doc-card" href="${withSkin('/legal/' + d.slug + '?version=' + d.version)}">
             <div>
               <div class="doc-card-title">Version ${d.version} ${d.published ? '' : '<span style="font-size:11px;color:rgba(255,180,60,0.6);margin-left:6px">Draft</span>'}</div>
               <div class="doc-card-meta">${d.published_at ? fmtDate(d.published_at) : 'Not yet published'}</div>
