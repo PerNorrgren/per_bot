@@ -1248,6 +1248,14 @@
         btnEl.textContent = origText;
         return;
       }
+      // Per Bot 15y — a response can come back with SOME levels missing
+      // without erroring at all (the model just didn't write every
+      // marker) — this is exactly how a topic could silently sit at
+      // "1/4 levels" with no error ever shown. Surface it plainly rather
+      // than quietly reloading as if it fully succeeded.
+      if (data.missingLevels && data.missingLevels.length) {
+        appAlert(`Generated ${data.levelsGenerated.length} of ${data.levelsGenerated.length + data.missingLevels.length} levels. Missing: ${data.missingLevels.join(', ')}. Click Regenerate again to try filling in the rest.`);
+      }
       loadKbTopics(); // re-render the whole row with the updated status
     } catch(e) {
       appAlert('Network error — try again.');
@@ -1317,8 +1325,13 @@
       const res = await fetch(`/api/admin/knowledge/topics/${_kbEditingTopicId}/generate-content`, { method: 'POST' });
       const data = await res.json();
       if (data.error) { status.textContent = data.error; status.style.color = 'rgba(255,140,120,0.85)'; return; }
-      status.textContent = `Done — generated: ${data.levelsGenerated.join(', ')}.`;
-      status.style.color = 'rgba(180,230,200,0.85)';
+      if (data.missingLevels && data.missingLevels.length) {
+        status.textContent = `Generated ${data.levelsGenerated.join(', ')} — missing ${data.missingLevels.join(', ')}. Click Regenerate again to fill in the rest.`;
+        status.style.color = 'rgba(255,200,120,0.85)';
+      } else {
+        status.textContent = `Done — generated: ${data.levelsGenerated.join(', ')}.`;
+        status.style.color = 'rgba(180,230,200,0.85)';
+      }
       openKbTopicModal(_kbEditingTopicId); // refresh the modal to show the new content
     } catch(e) {
       status.textContent = 'Network error — try again.';

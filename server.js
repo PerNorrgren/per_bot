@@ -2701,8 +2701,8 @@ app.post('/api/admin/knowledge/topics/:id/generate-content', auth.requireAuthApi
       sourceText = existing.length ? existing.map(c => `[${c.level_name}]\n${c.content}`).join('\n\n') : topic.menu_line;
     }
 
-    const levelContent = await generateContentForTopic(topic.id, sourceTitle, topic.title, topic.menu_line, levels, sourceText);
-    res.json({ ok: true, levelsGenerated: Object.keys(levelContent) });
+    const { generated, missingLevels } = await generateContentForTopic(topic.id, sourceTitle, topic.title, topic.menu_line, levels, sourceText);
+    res.json({ ok: true, levelsGenerated: Object.keys(generated), missingLevels });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
@@ -2764,6 +2764,14 @@ function parseLevelDelimitedResponse(text, levels) {
 // during a full run (see the delimiter-format comment above) shouldn't
 // require re-running the whole document and duplicating every topic that
 // already succeeded.
+//
+// Per Bot 15y — now reports which levels were actually found, not just
+// whether *any* were. Before this, a response missing one or more level
+// markers (as opposed to being malformed) silently "succeeded" with
+// whatever partial content it had — no error, no warning, nothing in the
+// log to show it wasn't complete. That's exactly how a topic could end up
+// stuck at "1/4 levels" indefinitely: the call technically worked, it
+// just never finished the job, and nothing said so.
 async function generateContentForTopic(topicId, docTitle, topicTitle, menuLine, levels, rawText) {
   const levelsResponse = await anthropicFetch(
     'You are a careful, precise knowledge writer, grounded strictly in the source material given. Respond in the exact delimiter format requested — no JSON, no markdown fences, no commentary.',
@@ -2775,7 +2783,8 @@ async function generateContentForTopic(topicId, docTitle, topicTitle, menuLine, 
   for (const level of levels) {
     if (levelContent[level.id]) db.setKnowledgeTopicContent(topicId, level.id, levelContent[level.id]);
   }
-  return levelContent;
+  const missing = levels.filter(l => !levelContent[l.id]).map(l => l.name);
+  return { generated: levelContent, missingLevels: missing };
 }
 
 async function runKnowledgeGeneration(doc, log) {
@@ -2794,6 +2803,16 @@ async function runKnowledgeGeneration(doc, log) {
   const rawText = doc.raw_text.length > MAX_CHARS ? doc.raw_text.slice(0, MAX_CHARS) : doc.raw_text;
 
   log(`Reading "${doc.title}" (${doc.raw_text.length.toLocaleString()} characters) and identifying topics...`);
+  // Per Bot 15x — existing topics fetched across every skin/facilitator
+  // scope (not just this document's own scope) since the point is
+  // cross-document dedup regardless of who a topic happens to be scoped
+  // to. See the prompt's own comment for why this matters — without it,
+  // a second overlapping document reliably recreated the same concepts
+  // under different names.
+  const existingTopics = db.getAllKnowledgeTopicsAdmin()
+    .filter(t => !t.archived && t.document_id !== doc.id)
+    .map(t => ({ title: t.title, menu_line: t.menu_line }));
+
   // Per Bot 15u — widened again: the Signal Guide (172k chars) needed the
   // Per Bot 15t fix; the very next document (Science Foundation, 305k
   // chars) is nearly double that. max_tokens only costs money for tokens
@@ -2802,7 +2821,7 @@ async function runKnowledgeGeneration(doc, log) {
   // real margin than keep reactively bumping it document by document.
   const extractionResponse = await anthropicFetch(
     'You are a careful, precise knowledge editor. Follow the instructions exactly and respond with valid JSON only — no preamble, no markdown fences.',
-    [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText) }],
+    [{ role: 'user', content: prompts.KNOWLEDGE_EXTRACT_TOPICS_PROMPT(doc.title, rawText, existingTopics) }],
     32000, 300000, true
   );
   let topicStubs;
@@ -2826,17 +2845,27 @@ async function runKnowledgeGeneration(doc, log) {
   for (const topic of createdTopics) {
     log(`Generating depth content for "${topic.title}"...`);
     try {
-      await generateContentForTopic(topic.id, doc.title, topic.title, topic.menuLine, levels, rawText);
+      const { missingLevels } = await generateContentForTopic(topic.id, doc.title, topic.title, topic.menuLine, levels, rawText);
+      if (missingLevels.length) {
+        log(`  Partial — missing ${missingLevels.join(', ')}. Use "Regenerate" on this topic to fill in the rest.`);
+      }
     } catch(e) {
       log(`  Could not generate content for "${topic.title}" (${e.message}) — the topic itself was still created; you can generate its content individually later.`);
     }
   }
 
   log('Linking related topics...');
+  // Per Bot 15x — links can now point at a topic from a PREVIOUS document
+  // too (the model was told it can reference the existing-topics list by
+  // title), so resolution checks both this batch and every existing
+  // topic, not just createdTopics.
+  const allExisting = db.getAllKnowledgeTopicsAdmin().filter(t => !t.archived);
   let linkCount = 0;
   for (const topic of createdTopics) {
     for (const linkedTitle of topic.links) {
-      const target = createdTopics.find(t => t.title.toLowerCase() === String(linkedTitle).toLowerCase());
+      const lower = String(linkedTitle).toLowerCase();
+      const target = createdTopics.find(t => t.title.toLowerCase() === lower)
+        || allExisting.find(t => t.title.toLowerCase() === lower);
       if (target && target.id !== topic.id) { db.linkKnowledgeTopics(topic.id, target.id); linkCount++; }
     }
   }
@@ -2844,6 +2873,57 @@ async function runKnowledgeGeneration(doc, log) {
   log(`Done. ${createdTopics.length} topic(s) created, ${linkCount} link(s) made.`);
   return { topicsCreated: createdTopics.length, linksCreated: linkCount };
 }
+
+// Per Bot 15x — review-only scan for duplicates already sitting in the
+// knowledge base (from before cross-document dedup existed). Returns
+// groups for Per to review and act on individually — see the prompt's
+// own comment for why this doesn't auto-delete anything.
+async function runKnowledgeDuplicateScan(log) {
+  const topics = db.getAllKnowledgeTopicsAdmin().filter(t => !t.archived);
+  if (topics.length < 2) { log('Fewer than two topics exist — nothing to compare.'); return { groups: [] }; }
+  log(`Comparing ${topics.length} topic(s) for genuine duplicates...`);
+  const response = await anthropicFetch(
+    'You are a careful, precise reviewer. Respond with valid JSON only — no preamble, no markdown fences.',
+    [{ role: 'user', content: prompts.KNOWLEDGE_FIND_DUPLICATES_PROMPT(topics.map(t => ({ id: t.id, title: t.title, menu_line: t.menu_line }))) }],
+    8000, 120000, true
+  );
+  let groups;
+  try {
+    groups = JSON.parse(response.replace(/^```json\s*|```\s*$/g, '').trim());
+  } catch(e) {
+    throw new Error('Could not parse the duplicate-scan response: ' + e.message);
+  }
+  if (!Array.isArray(groups)) throw new Error('Unexpected response shape from the duplicate scan.');
+  // Enrich each group with the actual topic rows (title, menu_line, document_title)
+  // so the admin UI has everything it needs without a second round-trip per group.
+  const byId = Object.fromEntries(topics.map(t => [t.id, t]));
+  const enriched = groups
+    .map(g => ({
+      topics: (g.topic_ids || []).map(id => byId[id]).filter(Boolean),
+      recommendedKeepId: g.recommended_keep_id,
+      reason: g.reason || '',
+    }))
+    .filter(g => g.topics.length >= 2); // guard against a hallucinated id collapsing a group to one real topic
+  log(`Found ${enriched.length} duplicate group(s).`);
+  return { groups: enriched };
+}
+
+let knowledgeDuplicateScanJob = null;
+app.post('/api/admin/knowledge/scan-duplicates', auth.requireAuthApi(['admin']), (req, res) => {
+  if (knowledgeDuplicateScanJob && !knowledgeDuplicateScanJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: knowledgeDuplicateScanJob });
+  }
+  knowledgeDuplicateScanJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = knowledgeDuplicateScanJob;
+  runKnowledgeDuplicateScan((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('duplicate scan error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/knowledge/scan-duplicates/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!knowledgeDuplicateScanJob) return res.status(404).json({ error: 'No scan has been started yet.' });
+  res.json(knowledgeDuplicateScanJob);
+});
 
 let knowledgeGenerateJob = null;
 app.post('/api/admin/knowledge/documents/:id/generate', auth.requireAuthApi(['admin']), (req, res) => {
