@@ -1396,6 +1396,12 @@ async function getDb() {
     // usefully — viewing the list shouldn't clear that badge, only acting
     // on it should.
     "ALTER TABLE guest_leads ADD COLUMN seen_at TEXT",
+    // Per Bot 16 — courses gets its own visibility column (matching
+    // lessons, which already had one). Schema/cascade-default only in this
+    // pass, deliberately not wired into any actual enforcement yet — see
+    // the handover note on why courses/lessons need a design decision
+    // before this touches the existing per-instance Stripe paywall.
+    "ALTER TABLE courses ADD COLUMN visibility TEXT DEFAULT 'client'",
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
@@ -2212,6 +2218,11 @@ function suppressAccessiblePreviews(files, userLevel) {
 // inaccessible or suppressed rows AFTER a SQL-level LIMIT could silently
 // hand back fewer than `limit` items even when enough visible ones exist
 // further down the list.
+// Per Bot 16 — tags rather than filters, same reasoning as
+// getAllLibraryFilesWithAccess: Home shelves are one of the "every file
+// listing everywhere" surfaces the locked-but-visible design covers, so a
+// hard filter here would have quietly left this one place still hiding
+// higher-tier content while everywhere else showed it locked.
 function getRecentStandaloneFiles(contentType, limit, userFlags, userId) {
   const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
@@ -2221,7 +2232,7 @@ function getRecentStandaloneFiles(contentType, limit, userFlags, userId) {
   let visible = files;
   if (userFlags) {
     const level = userMaxLevel(userFlags);
-    visible = suppressAccessiblePreviews(files.filter(f => canSeeFile(f, level, userId)), level);
+    visible = suppressAccessiblePreviews(files, level).map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
   }
   return limit ? visible.slice(0, limit) : visible;
 }
@@ -2232,7 +2243,7 @@ function getFeaturedLibraryFiles(userFlags, userId) {
   let visible = files;
   if (userFlags) {
     const level = userMaxLevel(userFlags);
-    visible = suppressAccessiblePreviews(files.filter(f => canSeeFile(f, level, userId)), level);
+    visible = suppressAccessiblePreviews(files, level).map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
   }
   return visible;
 }
@@ -2272,13 +2283,13 @@ function getFileUsage(fileId) {
 // courses are unaffected and can still be toggled per-course as before.
 // Per Bot 15k — enforce_lesson_sequence defaults on too now, for the same
 // reason: without it, nothing stopped starting straight at Lesson 2.
-function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
-  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence,enforce_lesson_sequence) VALUES (?,?,?,?,?,?,?,?,?)',
-    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1, 1]); save();
+function createCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility) {
+  getDbSync().run('INSERT INTO courses (id,title,description,category_id,subcategory_id,guest_visible,skin_id,enforce_file_sequence,enforce_lesson_sequence,visibility) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [id, title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, 1, 1, visibility||'client']); save();
 }
-function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId) {
-  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=? WHERE id=?',
-    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, id]); save();
+function updateCourse(id, title, description, categoryId, subcategoryId, guestVisible, skinId, visibility) {
+  getDbSync().run('UPDATE courses SET title=?,description=?,category_id=?,subcategory_id=?,guest_visible=?,skin_id=?,visibility=? WHERE id=?',
+    [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, visibility||'client', id]); save();
 }
 function getCourse(id) { return queryOne('SELECT * FROM courses WHERE id=?', [id]); }
 function getAllCourses(filters = {}) {

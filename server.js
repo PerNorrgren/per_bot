@@ -4872,16 +4872,20 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
   try {
     const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
     const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
-    // Facilitators/admins previewing content should see everything regardless of tier,
-    // but a logged-in Explorer/Member/Client only ever sees what their own tier permits —
-    // getAllLibraryFilesWithAccess tags every file with `accessible`; we filter on it here
-    // rather than relying on the frontend to respect that flag (it previously didn't).
+    // Facilitators/admins previewing content should see everything regardless of tier.
+    // Per Bot 16 — a logged-in Explorer/Member now sees locked-but-visible content
+    // too, same as the guest content endpoint already did: everything is listed,
+    // tagged with `accessible`, and the frontend renders a lock + upgrade prompt
+    // for anything a person's tier doesn't reach yet, rather than hiding it. The
+    // actual gate that matters is still enforced server-side at
+    // /api/content/library/:id/playback-url regardless of what this list says,
+    // so this is a presentation change only — nothing becomes newly accessible.
     // Per Bot 15 — a real client also never sees a preview edition once their own tier
     // already qualifies for its linked full edition (suppressAccessiblePreviews); admin/
     // facilitator keep seeing both, deliberately, since they're managing the content.
     const files = req.user.role === 'facilitator' || req.user.role === 'admin'
       ? db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
-      : db.suppressAccessiblePreviews(db.getAllLibraryFilesWithAccess(userFlags, req.user.id).filter(f => f.accessible), db.userMaxLevel(userFlags));
+      : db.suppressAccessiblePreviews(db.getAllLibraryFilesWithAccess(userFlags, req.user.id), db.userMaxLevel(userFlags));
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -6481,11 +6485,13 @@ app.post('/api/content/library/bulk-visibility', auth.requireAuthApi(['admin']),
 
 app.get('/api/content/courses', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getAllCourses(req.query)));
 app.post('/api/content/courses', auth.requireAuthApi(['admin']), (req, res) => {
-  const { title, description, categoryId, subcategoryId, lessons, skinId } = req.body;
+  const { title, description, categoryId, subcategoryId, lessons, skinId, visibility } = req.body;
   if (!title || !categoryId) return res.status(400).json({ error: 'Title and category required.' });
   const courseId = uuidv4();
-  db.createCourse(courseId, title, description, categoryId, subcategoryId, false, skinId || null);
-  if (lessons?.length) lessons.forEach(l => db.createLesson(uuidv4(), courseId, l.number, l.title, l.description || '', l.visibility || 'client'));
+  db.createCourse(courseId, title, description, categoryId, subcategoryId, false, skinId || null, visibility || 'client');
+  // Per Bot 16 — a lesson's own visibility (if given) still wins; the
+  // course's visibility is only the default a new lesson pre-fills with.
+  if (lessons?.length) lessons.forEach(l => db.createLesson(uuidv4(), courseId, l.number, l.title, l.description || '', l.visibility || visibility || 'client'));
   res.json({ id: courseId });
 });
 app.get('/api/content/courses/:id', auth.requireAuthApi(['admin','facilitator']), (req, res) => {
@@ -6497,9 +6503,9 @@ app.get('/api/content/courses/:id', auth.requireAuthApi(['admin','facilitator'])
 // change a course's title/description/category after the fact.
 app.patch('/api/content/courses/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { title, description, categoryId, subcategoryId, guestVisible, skinId } = req.body;
+    const { title, description, categoryId, subcategoryId, guestVisible, skinId, visibility } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
-    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible, skinId || null);
+    db.updateCourse(req.params.id, title.trim(), description, categoryId || null, subcategoryId || null, !!guestVisible, skinId || null, visibility);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

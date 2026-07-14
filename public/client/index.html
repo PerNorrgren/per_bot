@@ -219,6 +219,7 @@
     .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
     .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 6px; scroll-snap-type:x proximity; }
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
+    .shelf-card.locked { opacity:0.45; }
     .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
     .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.4); }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; text-align:center; }
@@ -1016,6 +1017,15 @@
          (which is what a disabled button gives you). Auto-dismisses. -->
     <div id="lockedNotice" style="display:none; position:fixed; left:50%; bottom:100px; transform:translateX(-50%); z-index:600; max-width:min(90vw,380px); background:#1a2420; border:1px solid rgba(255,210,140,0.3); border-radius:14px; padding:14px 18px; font-family:Georgia,serif; font-size:13.5px; color:rgba(255,220,170,0.9); text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); line-height:1.5;">
       <span id="lockedNoticeText"></span>
+    </div>
+    <!-- Per Bot 16 — separate from lockedNotice above (which is the plain,
+         non-actionable sequence-lock toast): this one is for tier-locked
+         content and needs a real path forward, not just a message, so it
+         carries a link through to Membership rather than auto-dismissing
+         before someone can act on it. -->
+    <div id="upgradeNotice" style="display:none; position:fixed; left:50%; bottom:100px; transform:translateX(-50%); z-index:600; max-width:min(90vw,380px); background:#1a2420; border:1px solid rgba(180,230,200,0.3); border-radius:14px; padding:14px 18px; font-family:Georgia,serif; font-size:13.5px; color:rgba(220,255,235,0.9); text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); line-height:1.5;">
+      <div id="upgradeNoticeText" style="margin-bottom:10px"></div>
+      <a href="/membership" style="display:inline-block; padding:7px 16px; border-radius:8px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.35); color:rgba(180,230,200,0.9); text-decoration:none; font-size:12px; letter-spacing:0.05em; text-transform:uppercase;">Upgrade to unlock</a>
     </div>
 
     <!-- Player -->
@@ -2510,6 +2520,12 @@
   // its event listeners do anything.
   let _mpToken = 0;
   async function mpPlay(file) {
+    // Per Bot 16 — a locked file reaching here (e.g. via a stale button, or
+    // a caller that doesn't pre-filter) would previously hit the network,
+    // get a 403 from playback-url, and just quietly reset the play button
+    // with no explanation. Short-circuit with the same upgrade prompt used
+    // everywhere else instead of a silent failure.
+    if (file && file.accessible === false) { showUpgradeNotice(file.title); return; }
     const myToken = ++_mpToken;
     // Tapping the same file again while it's already playing should just
     // do nothing, rather than restart it from zero.
@@ -2664,19 +2680,29 @@
   }
 
   function contentItemHTML(f) {
+    // Per Bot 16 — tier-locked content is now included in the list (not
+    // hidden server-side) so it can show up with a lock, matching the
+    // guest page's existing treatment. f.accessible is only ever present
+    // on library files; lesson files (which use their own `locked` field
+    // for sequence-locking) are untouched by this since that field is
+    // simply absent there.
+    const locked = f.accessible === false;
     const icon  = isAudio(f) ? '🎵' : f.file_type?.startsWith('video') ? '🎬' : '📄';
     const heart = `<button class="heart-btn ${f.is_favourite?'active':''}" onclick="event.stopPropagation();toggleFavourite('${f.id}',this)" title="Favourite">♥</button>`;
-    const play  = isAudio(f)
+    const play  = isAudio(f) && !locked
       ? `<button class="play-btn" data-file-id="${f.id}" onclick="event.stopPropagation();mpPlayById('${f.id}')" title="Play">▶</button>`
       : '';
-    const addPl = `<button class="play-btn" style="font-size:9px" onclick="event.stopPropagation();openAddToPlaylist('${f.id}')" title="Add to playlist">＋</button>`;
-    return `<div class="content-item" onclick="event.stopPropagation();openContentFileById('${f.id}')">
-      <span class="content-icon">${icon}</span>
+    const addPl = locked ? '' : `<button class="play-btn" style="font-size:9px" onclick="event.stopPropagation();openAddToPlaylist('${f.id}')" title="Add to playlist">＋</button>`;
+    const onClick = locked
+      ? `event.stopPropagation();showUpgradeNotice('${(f.title||'').replace(/'/g,"\\'")}')`
+      : `event.stopPropagation();openContentFileById('${f.id}')`;
+    return `<div class="content-item ${locked ? 'locked' : ''}" onclick="${onClick}">
+      <span class="content-icon">${locked ? '🔒' : icon}</span>
       <div style="flex:1;min-width:0">
         <div class="content-title">${f.title}</div>
         ${f.description?`<div class="content-desc">${f.description}</div>`:''}
       </div>
-      ${play}${addPl}${heart}
+      ${play}${addPl}${locked ? '' : heart}
     </div>`;
   }
 
@@ -3064,6 +3090,7 @@
 
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
+    if (f && f.accessible === false) { showUpgradeNotice(f.title); return; }
     if (isAudio(f)) { mpPlay(f); return; }
     _showingNowPlaying = false;
 
@@ -4157,8 +4184,8 @@
     }
 
     const miniCard = (f) => `
-      <div class="shelf-card" onclick="openFeaturedContentById('${f.id}')">
-        <div class="shelf-card-title">${f.title}</div>
+      <div class="shelf-card ${f.accessible === false ? 'locked' : ''}" onclick="openFeaturedContentById('${f.id}')">
+        <div class="shelf-card-title">${f.accessible === false ? '🔒 ' : ''}${f.title}</div>
         <div class="shelf-card-meta">${f.category_name || ''}</div>
       </div>
     `;
@@ -4241,7 +4268,7 @@
   function openFeaturedContentById(id) {
     const f = _featuredContentData.find(x => x.id === id);
     if (!f) return;
-    openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '', content_type: f.content_type });
+    openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '', content_type: f.content_type, accessible: f.accessible });
   }
 
   async function loadCalmLandingContent() {
@@ -4883,6 +4910,20 @@
     el.style.display = 'block';
     clearTimeout(_lockedNoticeTimer);
     _lockedNoticeTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  // Per Bot 16 — tier-locked content (an Explorer tapping Member-only
+  // content, etc.), as opposed to the sequence-lock above. Longer dwell
+  // time than showLockedNotice since there's an actual link to read and
+  // tap here, not just a message to register.
+  let _upgradeNoticeTimer = null;
+  function showUpgradeNotice(itemTitle) {
+    const el = document.getElementById('upgradeNotice');
+    document.getElementById('upgradeNoticeText').textContent =
+      itemTitle ? `"${itemTitle}" is Member content.` : 'This is Member content.';
+    el.style.display = 'block';
+    clearTimeout(_upgradeNoticeTimer);
+    _upgradeNoticeTimer = setTimeout(() => { el.style.display = 'none'; }, 7000);
   }
 
   function openLessonChooser(lesson, files, lessonLocked) {
