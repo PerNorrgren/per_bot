@@ -26,6 +26,8 @@
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
     .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    /* Per Bot 15o -- notification badge on the People nav link */
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
     .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
     .btn.danger:hover { background:rgba(255,100,80,0.08); }
     .btn.sm { padding:5px 10px; font-size:10px; }
@@ -186,7 +188,7 @@
       <button class="nav-tab" data-tab="breathing">Breathing</button>
     </div>
     <div class="topbar-right">
-      <a href="/admin/" class="btn">People</a>
+      <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
       <a href="/admin/content" class="btn primary">Content</a>
       <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
       <a href="/admin/comms" class="btn">Communications</a>
@@ -801,6 +803,22 @@ document.addEventListener('click', e => {
   const m = document.getElementById('adminMenu');
   if (m && !e.target.closest('.topbar')) m.style.display = 'none';
 });
+
+  // Per Bot 15o -- badge on the People nav link: pending facilitator
+  // requests + unseen enquiries. Called on every admin page load, not
+  // just People itself, so it's visible no matter where you are.
+  async function loadPeopleNavBadge() {
+    try {
+      const res = await fetch('/api/admin/notification-counts');
+      const data = await res.json();
+      const total = (data.pendingFacilitatorRequests||0) + (data.unseenEnquiries||0);
+      const badge = document.getElementById('peopleNavBadge');
+      if (!badge) return;
+      if (total > 0) { badge.textContent = total > 9 ? '9+' : total; badge.style.display = 'inline-flex'; }
+      else { badge.style.display = 'none'; }
+    } catch(e) { /* quiet -- decorative */ }
+  }
+  loadPeopleNavBadge();
 
 function ficon(t=''){
   if(t.includes('audio')||t.includes('mp3')||t.includes('mpeg'))return'🎵';
