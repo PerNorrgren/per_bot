@@ -2568,7 +2568,13 @@
     }
   }
   function openContentFileById(id) {
-    const f = _contentData.find(x => x.id === id);
+    // Per Bot 16 — contentItemHTML's click handler is shared across
+    // several different lists, but they're backed by different arrays:
+    // Library uses _contentData, while Home shelves and "More poems/
+    // posts" (openThemeDetail) only ever populate _featuredContentData.
+    // A file that's only in the latter used to silently do nothing on
+    // click, since this only ever checked the former.
+    const f = _contentData.find(x => x.id === id) || _featuredContentData.find(x => x.id === id);
     if (f) openContentFile(f);
   }
 
