@@ -523,7 +523,7 @@
 <div class="modal-overlay" id="mojibakeModal">
   <div class="modal" style="max-width:720px">
     <h3>Scan for encoding issues</h3>
-    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:8px">Looks for the classic WordPress-export corruption (curly quotes, dashes, and spaces that got mangled into things like â€™ and â€"). Nothing is changed until you click Fix below — this is a preview.</div>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:8px">Looks for the classic WordPress-export corruption (curly quotes, dashes, and spaces that got mangled into things like â€™ and â€"), and strips known leftover boilerplate (mailing-list prompts, "Try Deeper Mindfulness Community" links, etc). Nothing is changed until you click Fix below — this is a preview.</div>
     <div id="mjBody" style="max-height:480px;overflow-y:auto"></div>
     <div class="modal-err" id="mjErr"></div>
     <div class="modal-btns">
@@ -1606,25 +1606,35 @@ async function openMojibakeScan() {
     const res = await fetch('/api/admin/library/mojibake-scan');
     const data = await res.json();
     if (!res.ok) { document.getElementById('mjErr').textContent = data.error || 'Scan failed.'; document.getElementById('mjBody').innerHTML = ''; return; }
-    renderMojibakeResults(data.files || []);
+    renderMojibakeResults(data.files || [], data.errors || [], data.scannedCount || 0);
   } catch (e) {
     document.getElementById('mjErr').textContent = 'Scan failed — network error.';
     document.getElementById('mjBody').innerHTML = '';
   }
 }
-function renderMojibakeResults(files) {
+function renderMojibakeResults(files, errors, scannedCount) {
   const body = document.getElementById('mjBody');
+  // Per Bot 16 — a read error on every candidate file used to look
+  // identical to "genuinely found nothing" (both showed an empty list),
+  // which is exactly what happened the first time this ran. Surfacing
+  // the scanned count and any errors makes that distinction visible.
+  const errorBlock = errors.length ? `<div style="background:rgba(255,140,120,0.1);border:1px solid rgba(255,140,120,0.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:rgba(255,160,140,0.9)">
+    Could not read ${errors.length} file${errors.length!==1?'s':''} — these were skipped, not confirmed clean:<br>
+    ${errors.map(e => `${escHtml(e.title)}: ${escHtml(e.error)}`).join('<br>')}
+  </div>` : '';
   if (!files.length) {
-    body.innerHTML = '<div style="padding:20px;color:rgba(180,230,200,0.6);font-size:13px">No encoding issues found.</div>';
+    body.innerHTML = errorBlock + `<div style="padding:20px;color:rgba(180,230,200,0.6);font-size:13px">Scanned ${scannedCount} file${scannedCount!==1?'s':''} — no encoding issues found${errors.length?' among the ones that could be read':''}.</div>`;
     document.getElementById('mjFixBtn').style.display = 'none';
     return;
   }
-  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${files.length} file${files.length!==1?'s':''} affected — everything is checked by default; untick anything you don't want touched.</div>` +
+  body.innerHTML = errorBlock +
+    `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${files.length} of ${scannedCount} files affected — everything is checked by default; untick anything you don't want touched.</div>` +
     files.map(f => `
       <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;margin-bottom:8px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.8)">
           <input type="checkbox" class="mj-check" value="${f.id}" checked/> ${f.title}
         </label>
+        ${f.removedPhrases?.length ? `<div style="font-size:11px;color:rgba(180,230,200,0.6);margin-top:4px">Removes: ${f.removedPhrases.map(escHtml).join(' · ')}</div>` : ''}
         <div style="font-family:monospace;font-size:11px;margin-top:6px;padding:8px;background:rgba(0,0,0,0.25);border-radius:6px;color:rgba(255,140,120,0.75)">${escHtml(f.before)}</div>
         <div style="font-family:monospace;font-size:11px;margin-top:4px;padding:8px;background:rgba(0,0,0,0.25);border-radius:6px;color:rgba(180,230,200,0.8)">${escHtml(f.after)}</div>
       </div>

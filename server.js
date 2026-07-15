@@ -6002,6 +6002,50 @@ function fixMojibake(text) {
     return decoded.includes('\uFFFD') ? null : decoded;
   } catch (e) { return null; }
 }
+
+// Per Bot 16 — strips the specific leftover WordPress-export boilerplate
+// Per identified (the "Try Deeper Mindfulness Community" header links,
+// mailing-list prompts, "Click here for more Poems" footer). Only ever
+// removes a whole <p>/<div> block whose ENTIRE text content, once tags
+// are stripped, matches one of these phrases exactly — never a block
+// that merely contains one of these phrases alongside other content,
+// since that's exactly the kind of guess that could quietly eat real
+// material along with the boilerplate.
+const BOILERPLATE_PHRASES = [
+  'try deeper mindfulness community here',
+  'free live and recorded mindfulness courses here',
+  'join our mailing list',
+  'click here for more poems',
+  'free live and recorded courses',
+  'free live and recorded course',
+].map(s => s.toLowerCase());
+function stripKnownBoilerplate(html) {
+  const removed = [];
+  const plainText = (fragment) => fragment.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const blockRe = /<(p|div)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  const result = html.replace(blockRe, (whole, tag, inner) => {
+    // Whole-block match first — a block that's just one bare phrase.
+    const wholeText = plainText(inner);
+    if (BOILERPLATE_PHRASES.includes(wholeText)) { removed.push(wholeText); return ''; }
+    // Otherwise check line-by-line (split on <br>) — a block can hold
+    // several distinct lines (e.g. two links stacked with <br> between
+    // them, as in the actual imported files), and only some of those
+    // lines may be boilerplate.
+    const lines = inner.split(/<br\s*\/?>/i);
+    if (lines.length < 2) return whole;
+    const kept = [];
+    let anyRemoved = false;
+    for (const line of lines) {
+      const lineText = plainText(line);
+      if (BOILERPLATE_PHRASES.includes(lineText)) { removed.push(lineText); anyRemoved = true; }
+      else kept.push(line);
+    }
+    if (!anyRemoved) return whole;
+    if (!plainText(kept.join(' '))) return ''; // every line was boilerplate — drop the whole block
+    return `<${tag}>${kept.join('<br/>')}</${tag}>`;
+  });
+  return removed.length ? { html: result, removed } : null;
+}
 // A quick, cheap pre-check before doing the full per-character pass —
 // every mojibake instance seen in practice contains at least one of
 // these three telltale sequences (curly-quote/dash/nbsp corruption).
@@ -6017,27 +6061,43 @@ app.get('/api/admin/library/mojibake-scan', auth.requireAuthApi(['admin']), asyn
   try {
     const candidates = db.getAllTextHtmlFiles();
     const results = [];
+    const errors = [];
     for (const file of candidates) {
       try {
         const original = await readTextFileContent(file);
-        if (!MOJIBAKE_HINT.test(original)) continue;
-        const fixed = fixMojibake(original);
-        if (fixed === null || fixed === original) continue;
-        // Find roughly where the first change is, for a readable snippet
+        let working = original;
+        let mojibakeApplied = false;
+        if (MOJIBAKE_HINT.test(working)) {
+          const fixed = fixMojibake(working);
+          if (fixed !== null && fixed !== working) { working = fixed; mojibakeApplied = true; }
+        }
+        const stripped = stripKnownBoilerplate(working);
+        const removedPhrases = stripped ? stripped.removed : [];
+        if (stripped) working = stripped.html;
+        if (!mojibakeApplied && !removedPhrases.length) continue;
+        // Find roughly where the first character-level change is (from the
+        // mojibake fix), for a readable snippet — boilerplate removals are
+        // reported separately below since they're whole blocks, not a
+        // single point in the text a snippet view suits well.
         let diffAt = 0;
-        while (diffAt < original.length && original[diffAt] === fixed[diffAt]) diffAt++;
+        while (diffAt < original.length && diffAt < working.length && original[diffAt] === working[diffAt]) diffAt++;
         const start = Math.max(0, diffAt - 60);
         results.push({
           id: file.id,
           title: file.title,
           before: original.slice(start, diffAt + 80),
-          after: fixed.slice(start, diffAt + 80),
+          after: working.slice(start, diffAt + 80),
+          removedPhrases,
         });
       } catch (e) {
+        // Per Bot 16 — this used to only go to console.error, invisible
+        // to the admin, so a read failure on every single file looked
+        // identical to "genuinely found nothing." Now surfaced properly.
         console.error(`mojibake scan: could not read ${file.id} (${file.title}):`, e.message);
+        errors.push({ id: file.id, title: file.title, error: e.message });
       }
     }
-    res.json({ files: results });
+    res.json({ files: results, errors, scannedCount: candidates.length });
   } catch (e) {
     console.error('mojibake scan error:', e.message);
     res.status(500).json({ error: e.message });
@@ -6058,9 +6118,16 @@ app.post('/api/admin/library/mojibake-fix', auth.requireAuthApi(['admin']), asyn
       if (!file || file.file_type !== 'text/html') continue;
       try {
         const original = await readTextFileContent(file);
-        const fixed = fixMojibake(original);
-        if (fixed === null || fixed === original) continue;
-        await writeTextFileContent(file, fixed);
+        let working = original;
+        let changed = false;
+        if (MOJIBAKE_HINT.test(working)) {
+          const fixed = fixMojibake(working);
+          if (fixed !== null && fixed !== working) { working = fixed; changed = true; }
+        }
+        const stripped = stripKnownBoilerplate(working);
+        if (stripped) { working = stripped.html; changed = true; }
+        if (!changed) continue;
+        await writeTextFileContent(file, working);
         fixedCount++;
       } catch (e) {
         errors.push(`${file.title}: ${e.message}`);
