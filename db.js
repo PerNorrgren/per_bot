@@ -1903,6 +1903,14 @@ function addLibraryFile(id, title, description, filename, originalName, fileType
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
+// Per Bot 16 — every text/html file (blog posts, poems, whitepapers —
+// anything whose actual content lives in a real HTML file rather than a
+// PDF/docx/audio blob), for the mojibake scan/fix tool. Includes
+// archived files too, deliberately — an archived piece with corrupted
+// text is still worth fixing if it ever gets unarchived later.
+function getAllTextHtmlFiles() {
+  return queryAll("SELECT * FROM library_files WHERE file_type='text/html'");
+}
 function getLibraryFiles(filters = {}) {
   let sql = `SELECT f.*,
     cat.name as category_name, sub.name as subcategory_name,
@@ -4622,7 +4630,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile,
+  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,

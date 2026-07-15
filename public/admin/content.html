@@ -237,6 +237,7 @@
             <button id="viewBtnCards" onclick="setLibView('cards')">Cards</button>
             <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
+          <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
           <button class="btn primary" onclick="openUpload()">↑ Upload files</button>
         </div>
         <div class="bulk-bar" id="bulkBar">
@@ -511,6 +512,23 @@
     <div class="modal-err" id="epErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeEpubPreview()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 16 — mojibake scan/fix: dry-run scan first (never writes
+     anything), shows a before/after snippet per affected file so it's
+     obvious the fix is doing the right thing before committing to it,
+     then applies only to whatever's left checked. -->
+<div class="modal-overlay" id="mojibakeModal">
+  <div class="modal" style="max-width:720px">
+    <h3>Scan for encoding issues</h3>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:8px">Looks for the classic WordPress-export corruption (curly quotes, dashes, and spaces that got mangled into things like â€™ and â€"). Nothing is changed until you click Fix below — this is a preview.</div>
+    <div id="mjBody" style="max-height:480px;overflow-y:auto"></div>
+    <div class="modal-err" id="mjErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('mojibakeModal')">Close</button>
+      <button class="modal-ok" id="mjFixBtn" onclick="applyMojibakeFix()" style="display:none">Fix selected</button>
     </div>
   </div>
 </div>
@@ -894,6 +912,11 @@ function ficon(t=''){
   if(t.includes('word')||t.includes('document'))return'📝';
   if(t.includes('presentation')||t.includes('powerpoint'))return'📊';
   return'📄';
+}
+// Per Bot 16 — needed for the mojibake preview, which displays raw file
+// content (not something to trust as safe markup) inside the page.
+function escHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // Per Bot 16 — click a lesson file to open/play it right there, for a
@@ -1570,6 +1593,63 @@ function closeEpubPreview() {
   closeModal('epubPreviewModal');
   if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
   _epPreviewRendition = null;
+}
+
+// Per Bot 16 — mojibake scan/fix UI. escHtml on the before/after snippets
+// since they're raw file content, not something to trust as safe markup.
+async function openMojibakeScan() {
+  document.getElementById('mjBody').innerHTML = '<div style="padding:20px;color:rgba(255,255,255,0.4);font-size:13px">Scanning every blog post and poem — this reads each file, so it may take a moment…</div>';
+  document.getElementById('mjErr').textContent = '';
+  document.getElementById('mjFixBtn').style.display = 'none';
+  openModal('mojibakeModal');
+  try {
+    const res = await fetch('/api/admin/library/mojibake-scan');
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('mjErr').textContent = data.error || 'Scan failed.'; document.getElementById('mjBody').innerHTML = ''; return; }
+    renderMojibakeResults(data.files || []);
+  } catch (e) {
+    document.getElementById('mjErr').textContent = 'Scan failed — network error.';
+    document.getElementById('mjBody').innerHTML = '';
+  }
+}
+function renderMojibakeResults(files) {
+  const body = document.getElementById('mjBody');
+  if (!files.length) {
+    body.innerHTML = '<div style="padding:20px;color:rgba(180,230,200,0.6);font-size:13px">No encoding issues found.</div>';
+    document.getElementById('mjFixBtn').style.display = 'none';
+    return;
+  }
+  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${files.length} file${files.length!==1?'s':''} affected — everything is checked by default; untick anything you don't want touched.</div>` +
+    files.map(f => `
+      <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.8)">
+          <input type="checkbox" class="mj-check" value="${f.id}" checked/> ${f.title}
+        </label>
+        <div style="font-family:monospace;font-size:11px;margin-top:6px;padding:8px;background:rgba(0,0,0,0.25);border-radius:6px;color:rgba(255,140,120,0.75)">${escHtml(f.before)}</div>
+        <div style="font-family:monospace;font-size:11px;margin-top:4px;padding:8px;background:rgba(0,0,0,0.25);border-radius:6px;color:rgba(180,230,200,0.8)">${escHtml(f.after)}</div>
+      </div>
+    `).join('');
+  document.getElementById('mjFixBtn').style.display = '';
+}
+async function applyMojibakeFix() {
+  const ids = [...document.querySelectorAll('.mj-check:checked')].map(el => el.value);
+  if (!ids.length) { document.getElementById('mjErr').textContent = 'Nothing selected.'; return; }
+  const btn = document.getElementById('mjFixBtn');
+  btn.disabled = true; btn.textContent = 'Fixing…';
+  try {
+    const res = await fetch('/api/admin/library/mojibake-fix', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileIds: ids }),
+    });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('mjErr').textContent = data.error || 'Fix failed.'; return; }
+    document.getElementById('mjBody').innerHTML = `<div style="padding:20px;color:rgba(180,230,200,0.7);font-size:13px">Fixed ${data.fixedCount} file${data.fixedCount!==1?'s':''}.${data.errors?.length ? ' Some files had errors: '+data.errors.join('; ') : ''}</div>`;
+    document.getElementById('mjFixBtn').style.display = 'none';
+  } catch (e) {
+    document.getElementById('mjErr').textContent = 'Fix failed — network error.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Fix selected';
+  }
 }
 
 // Per Bot 16 — reuses the same playback-url + fetch pattern as openFile

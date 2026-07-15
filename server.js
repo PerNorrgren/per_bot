@@ -5946,6 +5946,133 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
   }
 });
 
+// Per Bot 16 — shared by the quick text editor, and the mojibake
+// scan/fix below, so both read and write the underlying file the exact
+// same way regardless of which storage backend it's actually on.
+async function readTextFileContent(file) {
+  if (file.storage_type === 'r2') {
+    const obj = await media.getPublicObject(file.filename);
+    const chunks = [];
+    for await (const chunk of obj.Body) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf-8');
+  }
+  return fs.readFileSync(path.join(__dirname, 'uploads', file.filename), 'utf-8');
+}
+async function writeTextFileContent(file, content) {
+  const buffer = Buffer.from(content, 'utf-8');
+  if (file.storage_type === 'r2') {
+    await media.putObject(file.filename, buffer, 'text/html');
+  } else {
+    fs.writeFileSync(path.join(__dirname, 'uploads', file.filename), buffer);
+  }
+}
+
+// Per Bot 16 — fixes the classic WordPress-export mojibake: real UTF-8
+// bytes (curly quotes, em-dashes, non-breaking spaces) that got
+// misread as Windows-1252 somewhere in the export/import pipeline and
+// re-saved that way. The 0x80–0x9F range is the only place Windows-1252
+// actually differs from true Latin-1 (real Latin-1 has no printable
+// characters there) — CP1252_HIGH is that specific mapping. Re-encoding
+// each character back to its original CP1252 byte value and decoding
+// that byte sequence as UTF-8 reverses the corruption exactly. Returns
+// null (leave untouched) for any text that isn't actually this kind of
+// corruption — either a character outside what CP1252 can represent at
+// all, or a "fix" that would introduce replacement characters — so this
+// only ever touches text it's confident about, never guesses.
+const CP1252_HIGH = {
+  0x80: 0x20AC, 0x82: 0x201A, 0x83: 0x0192, 0x84: 0x201E, 0x85: 0x2026,
+  0x86: 0x2020, 0x87: 0x2021, 0x88: 0x02C6, 0x89: 0x2030, 0x8A: 0x0160,
+  0x8B: 0x2039, 0x8C: 0x0152, 0x8E: 0x017D, 0x91: 0x2018, 0x92: 0x2019,
+  0x93: 0x201C, 0x94: 0x201D, 0x95: 0x2022, 0x96: 0x2013, 0x97: 0x2014,
+  0x98: 0x02DC, 0x99: 0x2122, 0x9A: 0x0161, 0x9B: 0x203A, 0x9C: 0x0153,
+  0x9E: 0x017E, 0x9F: 0x0178,
+};
+const CP1252_HIGH_REV = {};
+for (const k in CP1252_HIGH) CP1252_HIGH_REV[CP1252_HIGH[k]] = parseInt(k);
+function fixMojibake(text) {
+  const bytes = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    if (CP1252_HIGH_REV[cp] !== undefined) bytes.push(CP1252_HIGH_REV[cp]);
+    else if (cp < 0x100) bytes.push(cp);
+    else return null;
+  }
+  try {
+    const decoded = Buffer.from(bytes).toString('utf-8');
+    return decoded.includes('\uFFFD') ? null : decoded;
+  } catch (e) { return null; }
+}
+// A quick, cheap pre-check before doing the full per-character pass —
+// every mojibake instance seen in practice contains at least one of
+// these three telltale sequences (curly-quote/dash/nbsp corruption).
+// Any file that doesn't even contain these can't need fixing, so this
+// lets the scan skip straight past the large majority of files quickly.
+const MOJIBAKE_HINT = /â€|Â /;
+
+// Per Bot 16 — dry run: never writes anything. Scopes to text/html only,
+// same reasoning as the text editor above. Returns a snippet of context
+// around the first actual change per file, not the whole document, so
+// the admin preview stays readable regardless of how long the piece is.
+app.get('/api/admin/library/mojibake-scan', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const candidates = db.getAllTextHtmlFiles();
+    const results = [];
+    for (const file of candidates) {
+      try {
+        const original = await readTextFileContent(file);
+        if (!MOJIBAKE_HINT.test(original)) continue;
+        const fixed = fixMojibake(original);
+        if (fixed === null || fixed === original) continue;
+        // Find roughly where the first change is, for a readable snippet
+        let diffAt = 0;
+        while (diffAt < original.length && original[diffAt] === fixed[diffAt]) diffAt++;
+        const start = Math.max(0, diffAt - 60);
+        results.push({
+          id: file.id,
+          title: file.title,
+          before: original.slice(start, diffAt + 80),
+          after: fixed.slice(start, diffAt + 80),
+        });
+      } catch (e) {
+        console.error(`mojibake scan: could not read ${file.id} (${file.title}):`, e.message);
+      }
+    }
+    res.json({ files: results });
+  } catch (e) {
+    console.error('mojibake scan error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Per Bot 16 — actually applies the fix, only to the file ids given
+// (whatever the admin left checked in the preview), re-running the exact
+// same transform rather than trusting anything cached from the scan.
+app.post('/api/admin/library/mojibake-fix', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    if (!Array.isArray(fileIds) || !fileIds.length) return res.status(400).json({ error: 'No files specified.' });
+    let fixedCount = 0;
+    const errors = [];
+    for (const id of fileIds) {
+      const file = db.getLibraryFile(id);
+      if (!file || file.file_type !== 'text/html') continue;
+      try {
+        const original = await readTextFileContent(file);
+        const fixed = fixMojibake(original);
+        if (fixed === null || fixed === original) continue;
+        await writeTextFileContent(file, fixed);
+        fixedCount++;
+      } catch (e) {
+        errors.push(`${file.title}: ${e.message}`);
+      }
+    }
+    res.json({ fixedCount, errors });
+  } catch (e) {
+    console.error('mojibake fix error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Per Bot 16 — quick text-content editor (admin only): overwrites the
 // underlying file in place, for stripping leftover header/footer
 // boilerplate from content imported off the old website. Deliberately
@@ -5959,12 +6086,7 @@ app.patch('/api/content/library/:id/text-content', auth.requireAuthApi(['admin']
     if (file.file_type !== 'text/html') return res.status(400).json({ error: 'This quick editor only works for HTML text content (blog posts, poems).' });
     const { content } = req.body;
     if (typeof content !== 'string' || !content.trim()) return res.status(400).json({ error: 'Content is required.' });
-    const buffer = Buffer.from(content, 'utf-8');
-    if (file.storage_type === 'r2') {
-      await media.putObject(file.filename, buffer, 'text/html');
-    } else {
-      fs.writeFileSync(path.join(__dirname, 'uploads', file.filename), buffer);
-    }
+    await writeTextFileContent(file, content);
     res.json({ ok: true });
   } catch (e) {
     console.error('text-content save error:', e.message);
