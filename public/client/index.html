@@ -2852,8 +2852,20 @@
   }
   function openMeditationCategory(catId) { _medCatId = catId; _medSubId = null; renderMeditations(); }
   function openMeditationSubcategory(subId) { _medSubId = subId; renderMeditations(); }
+  // Per Bot 16 — tracks whether the category grid and/or sub-bucket grid
+  // got auto-skipped (see below) purely so backMeditations() can unwind
+  // in one tap rather than landing back on a screen that was never
+  // actually shown.
+  let _medAutoSkippedCat = false;
+  let _medAutoSkippedSub = false;
   function backMeditations() {
-    if (_medSubId) _medSubId = null; else _medCatId = null;
+    if (_medSubId) {
+      _medSubId = null;
+      if (_medAutoSkippedSub) { _medAutoSkippedSub = false; _medCatId = null; _medAutoSkippedCat = false; }
+    } else {
+      _medCatId = null;
+      _medAutoSkippedCat = false;
+    }
     renderMeditations();
   }
   function renderMeditations() {
@@ -2867,6 +2879,28 @@
       .filter(c => !c.parent_id && c.id !== 'cat-appfiles')
       .filter(c => files.some(f => f.category_id === c.id));
 
+    // Per Bot 16 — once course-linked files stopped showing up here
+    // (previous fix), a category can easily end up with only one real
+    // thing inside it — one subcategory, or just the General bucket, or
+    // even just one category total. Making someone tap through "pick a
+    // category" then "pick a sub-bucket" when there's nothing to actually
+    // choose between was the exact complaint, so skip straight past any
+    // screen that only has one option, landing directly on the file list.
+    if (!_medCatId && topCats.length === 1) {
+      _medCatId = topCats[0].id;
+      _medAutoSkippedCat = true;
+    }
+
+    if (!_medSubId && _medCatId) {
+      const realSubs = _medCategories.filter(c => c.parent_id === _medCatId).filter(s => files.some(f => f.subcategory_id === s.id));
+      const uncategorizedCount = files.filter(f => f.category_id === _medCatId && !f.subcategory_id).length;
+      const totalOptions = realSubs.length + (uncategorizedCount ? 1 : 0);
+      if (totalOptions === 1) {
+        _medSubId = realSubs.length ? realSubs[0].id : '__none__';
+        _medAutoSkippedSub = true;
+      }
+    }
+
     if (!_medCatId) {
       el.innerHTML = `<div class="med-cat-grid">` + topCats.map(c => {
         const count = files.filter(f => f.category_id === c.id).length;
@@ -2879,7 +2913,9 @@
     }
     const cat = _medCategories.find(c => c.id === _medCatId);
     if (!_medSubId) {
-      const subs = _medCategories.filter(c => c.parent_id === _medCatId);
+      // Per Bot 16 — only ever shows subcategories that actually have
+      // content, same reasoning as the top-level filter above.
+      const subs = _medCategories.filter(c => c.parent_id === _medCatId).filter(s => files.some(f => f.subcategory_id === s.id));
       // Per Bot 16 — a file tagged with this category but no subcategory
       // was counted in the top-level total (all files under category_id)
       // but then vanished once you drilled in, since this subcategory grid
@@ -2892,8 +2928,12 @@
         <div class="med-cat-name">General</div>
         <div class="med-cat-count">${uncategorized.length} practice${uncategorized.length!==1?'s':''}</div>
       </div>` : '';
-      el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; All categories</button>
-        <div class="content-section-hdr">${cat ? cat.name : ''}</div>
+      // Nothing was auto-skipped as far as this screen goes back to — if
+      // the category itself was auto-picked (only one existed), there's
+      // no "All categories" grid to return to either, so no back button.
+      const backBtn = _medAutoSkippedCat ? '' : `<button class="courses-back-btn" onclick="backMeditations()">&larr; All categories</button>`;
+      el.innerHTML = backBtn +
+        `<div class="content-section-hdr">${cat ? cat.name : ''}</div>
         <div class="med-cat-grid">` + subs.map(s => {
         const count = files.filter(f => f.subcategory_id === s.id).length;
         return `<div class="med-cat-card" onclick="openMeditationSubcategory('${s.id}')">
@@ -2907,8 +2947,17 @@
     const list = _medSubId === '__none__'
       ? files.filter(f => f.category_id === _medCatId && !f.subcategory_id)
       : files.filter(f => f.subcategory_id === _medSubId);
-    el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; ${cat ? cat.name : ''}</button>
-      <div class="content-section-hdr">${_medSubId === '__none__' ? 'General' : (sub ? sub.name : '')}</div>` +
+    // Per Bot 16 — the label needs to match where backMeditations() will
+    // actually land: if the sub-bucket screen was auto-skipped, back skips
+    // straight past it to "All categories" too, not to the category name.
+    // If both levels were auto-skipped (only one category, only one
+    // bucket in it — nothing left to choose between anywhere), there's
+    // truly nowhere to go back to, so no button at all rather than one
+    // that goes nowhere useful.
+    const backBtn = (_medAutoSkippedCat && _medAutoSkippedSub) ? ''
+      : `<button class="courses-back-btn" onclick="backMeditations()">&larr; ${_medAutoSkippedSub ? 'All categories' : (cat ? cat.name : '')}</button>`;
+    el.innerHTML = backBtn +
+      `<div class="content-section-hdr">${_medSubId === '__none__' ? 'General' : (sub ? sub.name : '')}</div>` +
       (list.length ? list.map(f => contentItemHTML(f)).join('') : '<div class="no-poems">No practices here yet.</div>');
   }
 
