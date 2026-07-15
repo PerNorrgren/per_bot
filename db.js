@@ -1912,18 +1912,20 @@ function getAllTextHtmlFiles() {
   return queryAll("SELECT * FROM library_files WHERE file_type='text/html'");
 }
 // Per Bot 16 — finds likely-duplicate library files: same content_type,
-// same title once trimmed/lowercased. Built after a rocky poem import
-// (Per Bot 14) may have left some pieces uploaded twice — this is a
-// read-only scan; nothing gets deleted here, it just groups candidates
-// so an admin can review and choose what to remove via the existing
-// bulk-delete route.
+// same title once trimmed/lowercased, AND same file size. Title alone
+// wasn't reliable — a course's video and its companion transcript can
+// share the exact same display title while being genuinely different
+// files, and matching on title alone flagged those as false duplicates.
+// File size matching too is a much stronger signal that two rows are
+// actually the same content uploaded twice (the failure mode from the
+// rocky Per Bot 14 poem import), not just similarly named.
 function findDuplicateLibraryFiles() {
   const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
     WHERE f.archived=0`);
   const groups = {};
   files.forEach(f => {
-    const key = f.content_type + '::' + (f.title || '').trim().toLowerCase();
+    const key = f.content_type + '::' + (f.title || '').trim().toLowerCase() + '::' + (f.file_size || 0);
     if (!groups[key]) groups[key] = [];
     groups[key].push(f);
   });
