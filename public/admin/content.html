@@ -844,6 +844,36 @@ function ficon(t=''){
   if(t.includes('presentation')||t.includes('powerpoint'))return'📊';
   return'📄';
 }
+
+// Per Bot 16 — click a lesson file to open/play it right there, for a
+// quick check while building a course, rather than needing to leave the
+// course builder to verify content. Audio/video play inline, right below
+// the row that was clicked; everything else (PDF, doc, image) opens in a
+// new tab since there's no sensible inline player for those here.
+async function toggleLessonFilePreview(refId, fileId, fileType) {
+  const existingId = 'lfPreview-' + refId;
+  const existing = document.getElementById(existingId);
+  if (existing) { existing.remove(); return; }
+  const row = document.querySelector(`.lesson-file-row[data-ref-id="${refId}"]`);
+  if (!row) return;
+  const isAudio = fileType.includes('audio') || fileType.includes('mpeg');
+  const isVideo = fileType.includes('video') || fileType.includes('mp4');
+  let url;
+  try {
+    const res = await fetch(`/api/content/library/${fileId}/playback-url`);
+    const data = await res.json();
+    url = data.url;
+  } catch(e) { /* falls through to the no-url error below */ }
+  if (!url) { alert('Could not load that file right now.'); return; }
+  if (!isAudio && !isVideo) { window.open(url, '_blank'); return; }
+  const wrap = document.createElement('div');
+  wrap.id = existingId;
+  wrap.style.cssText = 'padding:4px 10px 6px 28px';
+  wrap.innerHTML = isVideo
+    ? `<video controls autoplay style="max-width:100%;max-height:220px;border-radius:6px" src="${url}"></video>`
+    : `<audio controls autoplay style="width:100%" src="${url}"></audio>`;
+  row.insertAdjacentElement('afterend', wrap);
+}
 function fsize(b){if(!b)return'';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
 async function updateVisibility(fileId, vis) {
   await fetch(`/api/content/library/${fileId}`, {
@@ -1983,7 +2013,7 @@ async function openCourseDetail(courseId){
             ondragstart="lfDragStart(event)" ondragover="lfDragOver(event)" ondrop="lfDrop(event)" ondragend="lfDragEnd(event)"
             style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:6px;padding:6px 10px;font-size:12px;color:rgba(255,255,255,0.55)">
           <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
-          ${ficon(f.file_type)} <span style="flex:1">${f.title}</span>
+          <span style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLessonFilePreview('${f.ref_id}','${f.id}','${f.file_type||''}')" title="Click to open/play">${ficon(f.file_type)} ${f.title}</span>
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>

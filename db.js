@@ -1627,7 +1627,8 @@ function seedContentKinds() {
     { id:'kind-book',         value:'book',         label:'Book (excerpt or full)',              sort_order:7 },
     { id:'kind-timer-bell',   value:'timer_bell',   label:'Timer — bell sound',                  sort_order:8 },
     { id:'kind-timer-music',  value:'timer_music',  label:'Timer — background sound (loops)',    sort_order:9 },
-    { id:'kind-other',        value:'other',        label:'Other',                               sort_order:10 },
+    { id:'kind-calming-sound',value:'calming_sound',label:'Calming sound (Home page)',            sort_order:10 },
+    { id:'kind-other',        value:'other',        label:'Other',                               sort_order:11 },
   ];
   kinds.forEach(k => {
     db.run('INSERT OR IGNORE INTO content_kinds (id,value,label,sort_order) VALUES (?,?,?,?)',

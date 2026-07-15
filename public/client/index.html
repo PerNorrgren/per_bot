@@ -20,7 +20,7 @@
     .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
     .slide.active { opacity:1; }
     .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.38); }
-    .panel { position:fixed; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; }
+    .panel { position:fixed; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:14px; }
 
     .glass {
       width:100%; max-width:500px;
@@ -347,6 +347,17 @@
       font-family:Georgia,serif; cursor:pointer;
     }
     .btn.sm:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.85); }
+    /* Per Bot 16 — three more classes found with no CSS rule at all,
+       falling back to the browser default (black text, grey button) on
+       the dark background — same underlying issue as .no-content above. */
+    .btn-primary {
+      padding:9px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3);
+      background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:13px;
+      font-family:Georgia,serif; cursor:pointer;
+    }
+    .btn-primary:hover { background:rgba(180,230,200,0.16); color:rgba(180,230,200,0.95); }
+    .msg { font-size:12.5px; color:rgba(255,255,255,0.5); margin-top:6px; }
+    .timer-section { color:rgba(255,255,255,0.7); }
     .history-body { flex:1; min-width:0; }
     .history-title { font-size:13px; color:rgba(255,255,255,0.75); line-height:1.4; }
     .history-meta { font-size:11px; color:rgba(255,255,255,0.3); margin-top:3px; }
@@ -463,6 +474,10 @@
     .poem-play-btn.playing { background:rgba(180,230,200,0.22); border-color:rgba(180,230,200,0.5); }
     .poem-play-btn.loading { opacity:0.5; cursor:wait; }
     .no-poems { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+    /* Per Bot 16 — had no rule at all, so empty-state messages ("Nothing
+       new to enrol in right now.", etc.) fell back to the browser's
+       default black text, invisible against the dark glass background. */
+    .no-content { text-align:center; padding:24px 20px; color:rgba(255,255,255,0.35); font-size:14px; }
     .voice-list { display:flex; flex-direction:column; gap:8px; }
     .voice-row { display:flex; align-items:center; gap:10px; padding:10px 13px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; cursor:pointer; transition:all 0.2s; }
     .voice-row:hover { background:rgba(255,255,255,0.08); }
@@ -653,7 +668,10 @@
   <div class="glass" style="position:relative">
 
     <div class="header">
-      <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.4);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
+        <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
+      </div>
     </div>
 
     <!-- Talk -->
@@ -683,7 +701,7 @@
             <button type="button" onclick="playQuickPractice('calm-breath', QUICK_PRACTICE_SCRIPTS.breath)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the breath</button>
           </div>
         </div>
-        <button type="button" id="calmSoundsBtn" onclick="toggleCalmingSounds()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
+        <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
 
         <!-- Curated shelves (Per Bot 28) — horizontally-scrollable rows,
              one per featured category, only ever showing what's been
@@ -1064,7 +1082,7 @@
     </div>
 
     <div class="bottom-nav">
-      <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">🏠</span><span id="navTalkLabel">Home</span></button>
+      <button class="bnav-btn active" id="navTalk"     onclick="toggleFacMenu()"><span class="bnav-icon" id="navTalkIcon">💬</span><span id="navTalkLabel">Talk</span></button>
       <button class="bnav-btn"        id="navLibrary"  onclick="switchTab('library')"><span class="bnav-icon">📚</span>Library</button>
       <button class="bnav-btn"        id="navCourses"  onclick="switchTab('courses')"><span class="bnav-icon">🎓</span>Courses</button>
       <button class="bnav-btn"        id="navYou"      onclick="switchTab('you')"><span class="bnav-icon">🧘</span>You</button>
@@ -1089,6 +1107,20 @@
 
 <!-- Per Bot 15d — "see all" window for Talk sessions, since the Practices
      tab itself only ever shows the single most recent one inline now. -->
+<!-- Per Bot 16 — Hear Calming Sounds popup: lets the person choose from a
+     list rather than getting a random pick, and loops whichever track is
+     selected for as long as the popup stays open. -->
+<div class="pw-overlay" id="calmingSoundsModal">
+  <div class="pw-modal" style="max-width:380px">
+    <h3>Calming Sounds</h3>
+    <div id="calmingSoundsList" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:8px"></div>
+    <audio id="calmingSoundsPlayer" style="display:none"></audio>
+    <div class="pw-btns">
+      <button class="pw-cancel" onclick="closeCalmingSoundsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="pw-overlay" id="talkSessionsModal">
   <div class="pw-modal" style="max-width:480px">
     <h3>Sessions with Talk</h3>
@@ -2245,7 +2277,8 @@
         // blind before any conversation has happened would just be a
         // guess. Same reasoning as the onboarding stepper design above:
         // ask each thing at the point it's actually relevant.
-        if (userMsg === '[START]') maybeShowVoiceHint();
+        // Per Bot 16 — voice hint removed per Per's request (no longer
+        // prompting people to try other voices after the default plays).
         else maybeShowKeepHistoryPrompt();
       } else {
         busy = false;
@@ -2813,7 +2846,13 @@
   function renderMeditations() {
     const el = document.getElementById('meditationsScroll');
     const files = meditationFiles();
-    const topCats = _medCategories.filter(c => !c.parent_id && c.id !== 'cat-appfiles');
+    // Per Bot 16 — was showing every top-level category (Writing,
+    // University, Therapy, etc.) even when empty, since this just listed
+    // whatever existed in the categories table. Per only wants the ones
+    // that actually have meditation content in them to show up here.
+    const topCats = _medCategories
+      .filter(c => !c.parent_id && c.id !== 'cat-appfiles')
+      .filter(c => files.some(f => f.category_id === c.id));
 
     if (!_medCatId) {
       el.innerHTML = `<div class="med-cat-grid">` + topCats.map(c => {
@@ -2877,23 +2916,6 @@
   }
   function hideTalkHint() {
     document.getElementById('talkHintBanner').style.display = 'none';
-  }
-
-  let voiceHintShownThisPage = false;
-  async function maybeShowVoiceHint() {
-    if (voiceHintShownThisPage) return;
-    const a = await getFullAccount();
-    if (a.voice_hint_shown) return;
-    voiceHintShownThisPage = true;
-    showTalkHint(`<div>That was the default voice — <a href="/account">tap here to try others</a>.</div>
-      <div class="thb-actions"><button class="thb-no" onclick="dismissVoiceHint()">Got it</button></div>`);
-  }
-  async function dismissVoiceHint() {
-    hideTalkHint();
-    try {
-      await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice_hint_shown: 1 }) });
-    } catch(e) { /* best effort */ }
-    if (fullAccount) fullAccount.voice_hint_shown = 1;
   }
 
   let keepHistoryPromptShownThisPage = false;
@@ -4310,40 +4332,65 @@
       if (Array.isArray(list) && list.length) document.getElementById('calmMotdText').textContent = list[0].body;
     } catch(e) {}
   }
-  // Per Bot 25 — reuses the SAME admin-uploaded music library the Timer
-  // already plays from (content_type 'timer_music'), rather than linking
-  // to some external royalty-free track with its own licensing question —
-  // whatever Per has already put in the content library for the Timer is
-  // already his to use. Picks one at random each time; toggling again
-  // (or starting a real Talk conversation) stops it.
-  let _calmingSoundsPlaying = false;
-  async function toggleCalmingSounds() {
-    const musicAudio = document.getElementById('timerMusicAudio');
-    const btn = document.getElementById('calmSoundsBtn');
-    if (_calmingSoundsPlaying) {
-      musicAudio.pause();
-      _calmingSoundsPlaying = false;
-      btn.textContent = '♪ Calming sounds';
-      return;
-    }
-    btn.textContent = '♪ Loading…';
+  // Per Bot 16 — replaced the old random-pick toggle with a proper popup:
+  // a list of everything tagged content_type 'calming_sound' (a new, real
+  // Type of its own now, rather than piggybacking on the Timer's
+  // background-music library), letting the person choose rather than
+  // getting whatever track came up at random. Whichever track is
+  // currently selected loops for as long as the popup stays open — this
+  // is a player scoped to the popup, not a persistent background player,
+  // so closing it stops playback.
+  let _calmingSoundsList = [];
+  let _currentCalmingSoundId = null;
+  async function openCalmingSoundsModal() {
+    document.getElementById('calmingSoundsModal').classList.add('visible');
+    const listEl = document.getElementById('calmingSoundsList');
+    listEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">Loading…</div>';
     try {
       const res = await fetch('/api/client/content');
       const files = await res.json();
-      const musicFiles = (Array.isArray(files) ? files : []).filter(f => f.content_type === 'timer_music');
-      if (!musicFiles.length) { appAlert('No calming tracks have been added yet.'); btn.textContent = '♪ Calming sounds'; return; }
-      const pick = musicFiles[Math.floor(Math.random() * musicFiles.length)];
-      const url = await getTimerPlaybackUrl(pick.id);
-      if (!url) { appAlert('Could not play that right now.'); btn.textContent = '♪ Calming sounds'; return; }
-      musicAudio.src = url;
-      musicAudio.currentTime = 0;
-      await musicAudio.play();
-      _calmingSoundsPlaying = true;
-      btn.textContent = '⏸ Stop calming sounds';
+      _calmingSoundsList = (Array.isArray(files) ? files : []).filter(f => f.content_type === 'calming_sound');
+      renderCalmingSoundsList();
     } catch(e) {
-      appAlert('Could not play calming sounds right now.');
-      btn.textContent = '♪ Calming sounds';
+      listEl.innerHTML = '<div style="color:rgba(255,140,120,0.7);font-size:13px;padding:8px 0">Could not load calming sounds.</div>';
     }
+  }
+  function renderCalmingSoundsList() {
+    const listEl = document.getElementById('calmingSoundsList');
+    if (!_calmingSoundsList.length) {
+      listEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No calming sounds added yet.</div>';
+      return;
+    }
+    listEl.innerHTML = _calmingSoundsList.map(f => `
+      <button onclick="playCalmingSound('${f.id}')" style="text-align:left;width:100%;padding:11px 14px;border-radius:8px;border:1px solid ${f.id===_currentCalmingSoundId?'rgba(180,230,200,0.4)':'rgba(255,255,255,0.12)'};background:${f.id===_currentCalmingSoundId?'rgba(180,230,200,0.1)':'none'};color:${f.id===_currentCalmingSoundId?'rgba(180,230,200,0.9)':'rgba(255,255,255,0.75)'};font-family:Georgia,serif;font-size:13.5px;cursor:pointer;display:flex;align-items:center;gap:8px">
+        ${f.id===_currentCalmingSoundId ? '⏸' : '♪'} ${f.title}
+      </button>
+    `).join('');
+  }
+  async function playCalmingSound(fileId) {
+    const player = document.getElementById('calmingSoundsPlayer');
+    if (_currentCalmingSoundId === fileId) {
+      player.pause();
+      _currentCalmingSoundId = null;
+      renderCalmingSoundsList();
+      return;
+    }
+    const url = await getTimerPlaybackUrl(fileId);
+    if (!url) { appAlert('Could not play that right now.'); return; }
+    player.src = url;
+    player.currentTime = 0;
+    player.loop = true;
+    try { await player.play(); _currentCalmingSoundId = fileId; } catch(e) { /* blocked until a user gesture unlocks audio — this click itself counts, so a second tap resolves it */ }
+    renderCalmingSoundsList();
+  }
+  function closeCalmingSoundsModal() {
+    document.getElementById('calmingSoundsModal').classList.remove('visible');
+    stopCalmingSoundsIfPlaying();
+  }
+  function stopCalmingSoundsIfPlaying() {
+    if (!_currentCalmingSoundId) return;
+    document.getElementById('calmingSoundsPlayer').pause();
+    _currentCalmingSoundId = null;
   }
   // Per Bot 30 — a real scripted grounding practice, not an AI
   // conversation. Deliberately never touches /api/chat: a fixed script
@@ -4362,7 +4409,7 @@
   // from the new landing instead of the legacy #start screen.
   async function startLiveTalk() {
     if (busy) return;
-    if (_calmingSoundsPlaying) toggleCalmingSounds();
+    stopCalmingSoundsIfPlaying();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'flex';
@@ -4375,7 +4422,7 @@
 
   async function startGroundingPractice() {
     if (busy) return;
-    if (_calmingSoundsPlaying) toggleCalmingSounds();
+    stopCalmingSoundsIfPlaying();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'flex';
@@ -4395,18 +4442,22 @@
     document.getElementById('shareTalkBtn').style.display = '';
   }
 
-  // Drafts — worth a listen and an edit before they're treated as final,
-  // since re-recording later just means clearing the cached audio, not a
-  // code change. Deliberately short and un-paced (no [[PAUSE]] markers,
-  // unlike GROUNDING_SCRIPT) — these are quick, in-the-moment resets, not
-  // a longer guided practice.
+  // Per Bot 16 — these used to play as one flat, unpaced clip ("Deliberately
+  // short and un-paced" per the original note below), but Per found that
+  // read as rushed with no room to actually settle between lines. Now
+  // split per-sentence and played in sequence with a fixed alternating
+  // 2s/3s pause between each — not the content-aware range speak() uses
+  // elsewhere, since Per asked for a specific, exact alternating rhythm
+  // here rather than a scaled one. Each sentence still gets its own cached
+  // clip (keyed off the script's cacheKey + its index), so this remains
+  // just as cheap on repeat plays as the old single-clip version was.
   const QUICK_PRACTICE_SCRIPTS = {
     body: "Let's settle the body for a moment. Feel your feet on the floor. Let your shoulders drop, just a little. Breathe in, and let it out slowly — longer than you took it in. Notice your hands. Let them rest, heavy and still. One more breath like that. In. And a long, slow release. That's it. You're a little steadier now.",
     mind: "If your mind's been looping, let's give it somewhere else to land for a moment. Notice three sounds around you right now, near or far. Now notice one thing you can feel — your clothes on your skin, or the chair beneath you. The loop doesn't need to stop all at once. Just for this moment, you're here, not there. That's enough.",
     breath: "No need to do anything except breathe. Breathe in, and out, slowly. In again, and out, even slower this time. One more. In. And let it go completely. However that felt, it's exactly enough.",
   };
   async function playQuickPractice(cacheKey, script) {
-    if (_calmingSoundsPlaying) toggleCalmingSounds();
+    stopCalmingSoundsIfPlaying();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'flex';
@@ -4414,21 +4465,28 @@
     setState('speaking');
     transcriptEl.textContent = script;
     transcriptEl.className = 'transcript-text';
+    const sentences = splitIntoSentences(script);
     try {
-      const r = await fetch('/api/speak-cached', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cacheKey, text: script }),
-      });
-      const data = await r.json();
-      if (!data.url) throw new Error(data.error || 'No audio URL returned.');
-      await new Promise((resolve, reject) => {
-        currentAudio = document.getElementById('ttsPlayer');
-        currentAudio.pause();
-        currentAudio.src = data.url;
-        currentAudio.onended = () => resolve();
-        currentAudio.onerror = () => reject(new Error('audio playback error'));
-        currentAudio.play().catch(reject);
-      });
+      for (let i = 0; i < sentences.length; i++) {
+        const r = await fetch('/api/speak-cached', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cacheKey: `${cacheKey}_${i}`, text: sentences[i] }),
+        });
+        const data = await r.json();
+        if (!data.url) throw new Error(data.error || 'No audio URL returned.');
+        await new Promise((resolve, reject) => {
+          currentAudio = document.getElementById('ttsPlayer');
+          currentAudio.pause();
+          currentAudio.src = data.url;
+          currentAudio.onended = () => resolve();
+          currentAudio.onerror = () => reject(new Error('audio playback error'));
+          currentAudio.play().catch(reject);
+        });
+        if (i < sentences.length - 1) {
+          const pauseMs = i % 2 === 0 ? 2000 : 3000;
+          await new Promise(r => setTimeout(r, pauseMs));
+        }
+      }
     } catch (e) {
       console.error('quick practice playback error:', e);
     }
@@ -4469,17 +4527,20 @@
         _facList = [talkEntry, ...list.filter(f => !f.isTalk)];
       }
     } catch(e) { /* keep the Per-only default */ }
-    document.getElementById('navTalkLabel').textContent = _facList[0].name;
     renderFacMenu();
     selectFacilitator('talk');
   }
-  // Home (Per Bot 14) — renamed from the old "Per" nav slot. For the
-  // common case (no real facilitator assigned, just "Talk to Per" in
-  // _facList) this button should just go straight Home rather than
-  // popping a one-item dropdown with nothing to actually choose between.
-  // Facilitator-switching itself is untouched for anyone who does have
-  // one — same dropdown as before, just reached via this now
-  // differently-labelled button.
+  // Per Bot 16 — reverted the Per Bot 14 rename: this button had been
+  // relabelled "Home" with a house icon, but its actual job was always
+  // opening/switching the Talk area — for someone with more than one
+  // facilitator, tapping it just opened a picker rather than truly going
+  // home, which read as a bug. Back to "Talk" with a conversation icon;
+  // real Home navigation is the dedicated icon in the header (goHome(),
+  // same function as the wordmark). For the common case (no real
+  // facilitator assigned, just "Talk to Per" in _facList) this button
+  // still lands straight on the calm landing rather than popping a
+  // one-item dropdown with nothing to actually choose between —
+  // facilitator-switching itself is untouched for anyone who does have one.
   function goHome() {
     closeFacMenu();
     switchTab('talk');
@@ -4490,7 +4551,6 @@
     // Per" from here picks back up normally.
     _activeFacilitatorId = 'talk';
     renderFacMenu();
-    document.getElementById('navTalkLabel').textContent = 'Home';
     document.getElementById('calmLanding').style.display = 'flex';
     document.getElementById('talkChatContent').style.display = 'none';
     document.getElementById('facDetailPane').style.display = 'none';
@@ -4577,7 +4637,6 @@
     renderFacMenu();
     const entry = _facList.find(f => f.id === id);
     const isTalk = !entry || entry.isTalk;
-    document.getElementById('navTalkLabel').textContent = (entry && !entry.isTalk) ? entry.name : 'Home';
     document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? 'flex' : 'none';
     document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? 'flex' : 'none';
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
