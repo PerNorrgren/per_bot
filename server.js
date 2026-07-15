@@ -6058,7 +6058,12 @@ function plainTextOf(fragment) {
   return fragment.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 function isOwnSiteLinkOnly(rawFragment) {
-  const m = rawFragment.trim().match(/^<a\s+[^>]*href="([^"]*)"[^>]*>[\s\S]*?<\/a>$/i);
+  // Per Bot 16 — allows up to a few trailing plain-text characters after
+  // the closing </a> (no tags, just letters) since real examples split a
+  // word right at the link boundary — "...RECORDED Course</a>s" for
+  // "Courses" being the one that surfaced. Still counts as "just a link"
+  // for removal purposes; the href match is what actually gates this.
+  const m = rawFragment.trim().match(/^<a\s+[^>]*href="([^"]*)"[^>]*>[\s\S]*?<\/a>\s*[a-z]{0,3}$/i);
   return !!(m && /deepermindfulness\.org/i.test(m[1]));
 }
 function isBoilerplateFragment(rawFragment) {
@@ -6180,6 +6185,7 @@ app.post('/api/admin/library/mojibake-fix', auth.requireAuthApi(['admin']), asyn
     if (!Array.isArray(fileIds) || !fileIds.length) return res.status(400).json({ error: 'No files specified.' });
     let fixedCount = 0;
     const errors = [];
+    const unverified = [];
     for (const id of fileIds) {
       const file = db.getLibraryFile(id);
       if (!file || file.file_type !== 'text/html') continue;
@@ -6193,12 +6199,24 @@ app.post('/api/admin/library/mojibake-fix', auth.requireAuthApi(['admin']), asyn
         if (stripped) { working = stripped.html; changed = true; }
         if (!changed) continue;
         await writeTextFileContent(file, working);
-        fixedCount++;
+        // Per Bot 16 — a claimed success here previously didn't actually
+        // mean the file changed (Per hit this directly: told the fix
+        // worked, but the mojibake was still there on re-checking).
+        // Reading straight back after the write and comparing against
+        // what was intended, rather than just trusting putObject/
+        // writeFileSync didn't throw, catches that failure mode instead
+        // of reporting a false success.
+        const reread = await readTextFileContent(file);
+        if (reread === working) {
+          fixedCount++;
+        } else {
+          unverified.push(`${file.title}: write completed without error, but reading it back shows the old content — likely a caching layer in front of storage, or the write went somewhere other than what gets served.`);
+        }
       } catch (e) {
         errors.push(`${file.title}: ${e.message}`);
       }
     }
-    res.json({ fixedCount, errors });
+    res.json({ fixedCount, errors, unverified });
   } catch (e) {
     console.error('mojibake fix error:', e.message);
     res.status(500).json({ error: e.message });

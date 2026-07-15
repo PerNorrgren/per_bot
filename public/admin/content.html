@@ -1653,7 +1653,11 @@ async function applyMojibakeFix() {
     });
     const data = await res.json();
     if (!res.ok) { document.getElementById('mjErr').textContent = data.error || 'Fix failed.'; return; }
-    document.getElementById('mjBody').innerHTML = `<div style="padding:20px;color:rgba(180,230,200,0.7);font-size:13px">Fixed ${data.fixedCount} file${data.fixedCount!==1?'s':''}.${data.errors?.length ? ' Some files had errors: '+data.errors.join('; ') : ''}</div>`;
+    const unverifiedBlock = data.unverified?.length ? `<div style="background:rgba(255,200,100,0.1);border:1px solid rgba(255,200,100,0.3);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:12px;color:rgba(255,210,140,0.9)">
+      ${data.unverified.length} file${data.unverified.length!==1?'s':''} didn't verify after writing — the fix ran, but reading the file straight back afterward still showed the old content:<br>
+      ${data.unverified.map(escHtml).join('<br>')}
+    </div>` : '';
+    document.getElementById('mjBody').innerHTML = `<div style="padding:20px;color:rgba(180,230,200,0.7);font-size:13px">Fixed ${data.fixedCount} file${data.fixedCount!==1?'s':''}.${data.errors?.length ? ' Some files had errors: '+data.errors.map(escHtml).join('; ') : ''}</div>` + unverifiedBlock;
     document.getElementById('mjFixBtn').style.display = 'none';
   } catch (e) {
     document.getElementById('mjErr').textContent = 'Fix failed — network error.';
