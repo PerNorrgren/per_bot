@@ -499,7 +499,11 @@
 <div class="modal-overlay" id="epubPreviewModal">
   <div class="modal" style="max-width:520px">
     <h3 id="epTitle">Book preview</h3>
-    <div id="epBox" style="width:100%;height:520px;background:rgba(255,255,255,0.03);border-radius:8px;position:relative"></div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <button class="btn sm" onclick="epubPreviewFontSize(-1)">A-</button>
+      <button class="btn sm" onclick="epubPreviewFontSize(1)">A+</button>
+    </div>
+    <div id="epBox" style="width:100%;height:520px;background:#f5f0e8;border-radius:8px;position:relative"></div>
     <div style="display:flex;justify-content:space-between;margin-top:8px">
       <button class="btn sm" onclick="epubPreviewNav(-1)">‹ Previous</button>
       <button class="btn sm" onclick="epubPreviewNav(1)">Next ›</button>
@@ -1518,10 +1522,12 @@ async function openFile(id, fileType) {
 // browser can render EPUB natively.
 let _epPreviewBook = null;
 let _epPreviewRendition = null;
+let _epPreviewFontPct = 100;
 async function openEpubPreview(id) {
   document.getElementById('epTitle').textContent = 'Book preview';
   document.getElementById('epErr').textContent = '';
-  document.getElementById('epBox').innerHTML = '<div style="padding:16px;color:rgba(255,255,255,0.4);font-size:13px">Loading…</div>';
+  document.getElementById('epBox').innerHTML = '<div style="padding:16px;color:rgba(0,0,0,0.4);font-size:13px">Loading…</div>';
+  _epPreviewFontPct = 100;
   openModal('epubPreviewModal');
   try {
     const res = await fetch(`/api/content/library/${id}/playback-url`);
@@ -1531,6 +1537,18 @@ async function openEpubPreview(id) {
     if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
     const book = data.epubReaderUrl ? ePub(data.epubReaderUrl) : ePub(data.url);
     const rendition = book.renderTo('epBox', { width: '100%', height: '100%', flow: 'paginated' });
+    // Per Bot 16 — forces a consistent, legible light page (dark text on
+    // a warm off-white background) regardless of what the source book's
+    // own stylesheet does. Without this, a book with no explicit page
+    // background renders transparent, and its ordinary black body text —
+    // completely normal on the white page it was written for — reads as
+    // black-on-black against this modal's dark backdrop.
+    rendition.themes.register('preview', {
+      body: { background: '#f5f0e8 !important', color: '#2a2a2a !important' },
+      'p, div, span, li, h1, h2, h3, h4': { color: '#2a2a2a !important' },
+    });
+    rendition.themes.select('preview');
+    rendition.themes.fontSize(_epPreviewFontPct + '%');
     await rendition.display();
     _epPreviewBook = book;
     _epPreviewRendition = rendition;
@@ -1538,6 +1556,11 @@ async function openEpubPreview(id) {
     console.error('epub preview error:', e);
     document.getElementById('epErr').textContent = 'Could not render this book — the file may not have uploaded correctly.';
   }
+}
+function epubPreviewFontSize(delta) {
+  if (!_epPreviewRendition) return;
+  _epPreviewFontPct = Math.max(60, Math.min(200, _epPreviewFontPct + delta * 10));
+  _epPreviewRendition.themes.fontSize(_epPreviewFontPct + '%');
 }
 function epubPreviewNav(dir) {
   if (!_epPreviewRendition) return;
