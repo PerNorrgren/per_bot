@@ -598,7 +598,10 @@
 <!-- Course Detail Modal -->
 <div class="modal-overlay" id="courseDetailModal">
   <div class="modal" style="max-width:660px">
-    <h3 id="cdTitle"></h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <h3 id="cdTitle" style="margin:0"></h3>
+      <button class="btn sm" onclick="closeModal('courseDetailModal')" title="Close">✕ Close</button>
+    </div>
     <div id="cdSequenceRow" style="display:flex;gap:18px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="cdEnforceLessonSeq" onchange="saveCourseSequence()"/> Enforce lesson sequence
@@ -2325,6 +2328,7 @@ async function openCourseDetail(courseId){
     const seqVal = l.file_sequence_override===null||l.file_sequence_override===undefined ? '' : (l.file_sequence_override?'1':'0');
     h+=`<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:9px;overflow:hidden">
       <div style="padding:11px 14px;display:flex;align-items:center;gap:10px">
+        <button onclick="toggleLessonCollapse('${l.id}')" title="Show/hide files" style="background:none;border:none;color:rgba(255,255,255,0.35);font-size:12px;cursor:pointer;padding:2px 4px" id="lesson-chevron-${l.id}">▶</button>
         <div style="font-size:16px;color:rgba(255,255,255,0.2);min-width:22px">${l.lesson_number}</div>
         <div style="flex:1"><div style="font-size:13px;color:rgba(255,255,255,0.78)">${l.title}${l.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${l.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}</div><div style="margin-top:3px">${vbadge(l.visibility)}</div></div>
         <select style="font-size:11px" title="File sequence for this lesson" onchange="setLessonFileSequence('${l.id}',this.value)">
@@ -2337,7 +2341,7 @@ async function openCourseDetail(courseId){
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
       </div>
-      ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" style="border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;display:flex;flex-direction:column;gap:6px">
+      ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" id="lesson-files-${l.id}" style="display:none;border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;flex-direction:column;gap:6px">
         <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center;margin-bottom:2px">
           Mandatory: <button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',true)">All</button><button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',false)">None</button>
         </span>
@@ -2356,6 +2360,20 @@ async function openCourseDetail(courseId){
   }
   h+='</div>';
   el.innerHTML=h;openModal('courseDetailModal');
+}
+
+// Per Bot 16 — every lesson's file list used to render fully expanded
+// at once, so a course with several lessons each holding many files
+// meant a very long scroll just to find the Close button at the bottom
+// (now also duplicated at the top — see the modal header). Collapsed by
+// default; toggling one lesson doesn't affect the others.
+function toggleLessonCollapse(lessonId) {
+  const listEl = document.getElementById('lesson-files-' + lessonId);
+  const chevron = document.getElementById('lesson-chevron-' + lessonId);
+  if (!listEl) return;
+  const isOpen = listEl.style.display === 'flex';
+  listEl.style.display = isOpen ? 'none' : 'flex';
+  if (chevron) chevron.textContent = isOpen ? '▶' : '▼';
 }
 
 async function saveCourseSequence(){
