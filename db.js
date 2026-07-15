@@ -2251,7 +2251,9 @@ function getRecentStandaloneFiles(contentType, limit, userFlags, userId) {
 function getFeaturedLibraryFiles(userFlags, userId) {
   const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
-    WHERE f.featured=1 AND f.archived=0 ORDER BY f.title`);
+    WHERE f.featured=1 AND f.archived=0
+      AND f.id NOT IN (SELECT file_id FROM lesson_file_refs)
+    ORDER BY f.title`);
   let visible = files;
   if (userFlags) {
     const level = userMaxLevel(userFlags);
@@ -3238,9 +3240,19 @@ function getLibraryFilesForUser(userFlags) {
   return files.filter(f => canSeeFile(f, level)).map(f => ({ ...f, accessible: true }));
 }
 
+// Per Bot 16 — excludes anything already attached to a lesson via
+// lesson_file_refs, same reasoning as getRecentStandaloneFiles below: a
+// file that belongs to a course shouldn't also surface in general
+// browsing (Practices, Meditations, Read & Watch) — it should only be
+// reachable from within its course. This is the function behind
+// /api/client/content, so the fix here covers all three of those tabs at
+// once. Doesn't touch /api/content/library (the admin management list),
+// which is a completely separate query — admin still needs to see and
+// manage every file regardless of what it's attached to.
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
-  const files = queryAll('SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0 ORDER BY title ASC');
+  const files = queryAll(`SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0
+    AND id NOT IN (SELECT file_id FROM lesson_file_refs) ORDER BY title ASC`);
   return files.map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
 }
 
