@@ -164,6 +164,12 @@
     .add-lesson-row button { background:none; border:none; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; }
     .add-lesson-row button:hover { color:rgba(180,230,200,0.7); }
   </style>
+  <!-- Per Bot 16 — lets "Open" actually render an EPUB inline for a quick
+       check, instead of the browser trying (and failing) to open it as a
+       raw file and prompting a download. Same library, same version, as
+       the client reader already uses. -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -481,6 +487,26 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('textEditorModal')">Cancel</button>
       <button class="modal-ok" id="teSaveBtn" onclick="saveTextEditor()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 16 — quick EPUB preview so "Open" actually shows the book
+     instead of triggering a download the browser can't do anything with.
+     Read-only, no TOC/font controls — this is for "did the upload work,
+     does it look right", not a full reading experience (that's the client
+     app's job). -->
+<div class="modal-overlay" id="epubPreviewModal">
+  <div class="modal" style="max-width:520px">
+    <h3 id="epTitle">Book preview</h3>
+    <div id="epBox" style="width:100%;height:520px;background:rgba(255,255,255,0.03);border-radius:8px;position:relative"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:8px">
+      <button class="btn sm" onclick="epubPreviewNav(-1)">‹ Previous</button>
+      <button class="btn sm" onclick="epubPreviewNav(1)">Next ›</button>
+    </div>
+    <div class="modal-err" id="epErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeEpubPreview()">Close</button>
     </div>
   </div>
 </div>
@@ -1069,7 +1095,7 @@ function renderLibCards(files){
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
-        <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
+        <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
       </div>
     </div>
@@ -1112,7 +1138,7 @@ function renderLibList(files){
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
-        <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
+        <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
       </span>
     </div>
@@ -1471,7 +1497,8 @@ async function uploadOneFile(it, cat, sub) {
 // an R2 object key, not a path that exists on the Railway disk, so the old direct-link
 // approach only ever worked for legacy disk files and breaks silently for anything
 // uploaded since the R2 migration.
-async function openFile(id) {
+async function openFile(id, fileType) {
+  if (fileType === 'application/epub+zip') { openEpubPreview(id); return; }
   try {
     const res = await fetch(`/api/content/library/${id}/playback-url`);
     const data = await res.json();
@@ -1483,6 +1510,43 @@ async function openFile(id) {
   } catch {
     appAlert('Could not open this file — network error.');
   }
+}
+
+// Per Bot 16 — mirrors the client reader's own epub.js setup (same
+// version, same "just hand it the signed URL directly" approach for a
+// packed .epub) rather than window.open, which just downloads it since no
+// browser can render EPUB natively.
+let _epPreviewBook = null;
+let _epPreviewRendition = null;
+async function openEpubPreview(id) {
+  document.getElementById('epTitle').textContent = 'Book preview';
+  document.getElementById('epErr').textContent = '';
+  document.getElementById('epBox').innerHTML = '<div style="padding:16px;color:rgba(255,255,255,0.4);font-size:13px">Loading…</div>';
+  openModal('epubPreviewModal');
+  try {
+    const res = await fetch(`/api/content/library/${id}/playback-url`);
+    const data = await res.json();
+    if (!res.ok || !data.url) { document.getElementById('epErr').textContent = data.error || 'Could not load this book.'; return; }
+    document.getElementById('epBox').innerHTML = '';
+    if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
+    const book = data.epubReaderUrl ? ePub(data.epubReaderUrl) : ePub(data.url);
+    const rendition = book.renderTo('epBox', { width: '100%', height: '100%', flow: 'paginated' });
+    await rendition.display();
+    _epPreviewBook = book;
+    _epPreviewRendition = rendition;
+  } catch (e) {
+    console.error('epub preview error:', e);
+    document.getElementById('epErr').textContent = 'Could not render this book — the file may not have uploaded correctly.';
+  }
+}
+function epubPreviewNav(dir) {
+  if (!_epPreviewRendition) return;
+  if (dir < 0) _epPreviewRendition.prev(); else _epPreviewRendition.next();
+}
+function closeEpubPreview() {
+  closeModal('epubPreviewModal');
+  if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
+  _epPreviewRendition = null;
 }
 
 // Per Bot 16 — reuses the same playback-url + fetch pattern as openFile
