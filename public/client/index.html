@@ -526,12 +526,14 @@
     .player-overlay.video-mode { justify-content:flex-start; overflow-y:auto; }
     .player-overlay.video-mode .player-media { max-width:min(90vw, 1100px); }
     .player-overlay.video-mode .player-media video { max-height:80vh; }
-    /* EPUB reader (Per Bot 14) — full-screen like video-mode, but the
-       book itself needs a fixed-height box for epub.js to render pages
-       into (it manages its own internal pagination/scroll, so the outer
-       page must not also scroll or the two fight each other), plus its
-       own small toolbar for page turning and font size. */
-    .player-overlay.reader-mode { justify-content:flex-start; overflow-y:hidden; }
+    /* Per Bot 16 — reader-mode now covers any long-form document (EPUB,
+       whitepapers, PDFs, blog/poem HTML), not just EPUB. overflow-y:auto
+       lets the outer overlay actually scroll for plain documents, whose
+       content goes straight into .player-media with no fixed height.
+       EPUB itself is unaffected — its content renders into .reader-box
+       below, which has its own fixed height and manages its own internal
+       pagination/scroll regardless of what the outer overlay does. */
+    .player-overlay.reader-mode { justify-content:flex-start; overflow-y:auto; }
     .player-overlay.reader-mode .player-text { display:none; }
     .reader-box { width:100%; max-width:700px; height:70vh; background:#fdfaf3; border-radius:10px; margin:0 auto; }
     .reader-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; max-width:700px; margin:10px auto 0; }
@@ -3236,7 +3238,18 @@
     mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.toggle('video-mode', type === 'video');
-    overlayEl.classList.toggle('reader-mode', isEpub);
+    // Per Bot 16 — was `isEpub` only, so every other kind of document
+    // (whitepapers, PDFs, blog posts, poems) got none of this: no
+    // overflow handling on the outer overlay, no floating close button,
+    // no title padding to keep it clear of anything. The base mode
+    // just centers title+text+media+buttons as one flex column with no
+    // scroll — harmless when it's short, but once content is tall enough
+    // to overflow, the whole block pushes outward equally in both
+    // directions, shoving the title off the top and the buttons off the
+    // bottom with nothing to scroll back to them — exactly the same
+    // failure already identified and fixed for video-mode, just never
+    // extended to plain document reading.
+    overlayEl.classList.toggle('reader-mode', type === 'document');
     overlayEl.classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = type === 'video' ? '' : 'none';
 
@@ -4352,6 +4365,7 @@
   async function openThemeDetail(group, index) {
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.remove('video-mode');
+    document.getElementById('playerOverlay').classList.add('reader-mode');
     document.getElementById('fullscreenBtn').style.display = 'none';
     document.getElementById('playerOverlay').classList.add('visible');
 
@@ -5217,6 +5231,8 @@
       })()}
     `;
     pushPlayerHistoryState();
+    document.getElementById('playerOverlay').classList.remove('video-mode');
+    document.getElementById('playerOverlay').classList.add('reader-mode');
     document.getElementById('playerOverlay').classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = 'none';
     // Mobile Safari/WebKit-specific: replacing this list's innerHTML while
