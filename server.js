@@ -5946,6 +5946,32 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
   }
 });
 
+// Per Bot 16 — quick text-content editor (admin only): overwrites the
+// underlying file in place, for stripping leftover header/footer
+// boilerplate from content imported off the old website. Deliberately
+// narrow — only ever touches text/html files (blog posts, poems), since
+// that's a real, single-source-of-truth text file rather than something
+// like a PDF or docx where "the text" isn't the same thing as "the file."
+app.patch('/api/content/library/:id/text-content', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (file.file_type !== 'text/html') return res.status(400).json({ error: 'This quick editor only works for HTML text content (blog posts, poems).' });
+    const { content } = req.body;
+    if (typeof content !== 'string' || !content.trim()) return res.status(400).json({ error: 'Content is required.' });
+    const buffer = Buffer.from(content, 'utf-8');
+    if (file.storage_type === 'r2') {
+      await media.putObject(file.filename, buffer, 'text/html');
+    } else {
+      fs.writeFileSync(path.join(__dirname, 'uploads', file.filename), buffer);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('text-content save error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── EPUB resource proxy (Per Bot 14) — same tier check as playback-url
 // above, but serves one internal file at a time from an unpacked book
 // rather than a single presigned URL to the whole archive. Same-origin,

@@ -464,6 +464,27 @@
   </div>
 </div>
 
+<!-- Per Bot 16 — quick raw-HTML editor for blog/poem/whitepaper content,
+     mainly for stripping the leftover header/footer boilerplate a lot of
+     the imported-from-the-old-website content still carries (old mailing
+     list links, "Try Deeper Mindfulness Community" etc). This edits the
+     actual underlying HTML file directly — plain source, not a rich
+     editor — since the ask was specifically "just remove lines", not a
+     full authoring tool. -->
+<div class="modal-overlay" id="textEditorModal">
+  <div class="modal" style="max-width:820px">
+    <h3 id="teTitle">Edit text content</h3>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:4px">This is the raw HTML source — delete whole lines to remove leftover header/footer content, then Save. There's no undo once saved, so it's worth a quick look at the file with Open first if you're unsure.</div>
+    <input type="hidden" id="teFileId"/>
+    <textarea id="teContent" style="width:100%;min-height:420px;font-family:monospace;font-size:12.5px;white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
+    <div class="modal-err" id="teErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('textEditorModal')">Cancel</button>
+      <button class="modal-ok" id="teSaveBtn" onclick="saveTextEditor()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Usage Modal -->
 <div class="modal-overlay" id="usageModal">
   <div class="modal"><h3>Where used</h3><div id="usageBody"></div>
@@ -1046,6 +1067,7 @@ function renderLibCards(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★ Unfeature':'☆ Feature'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})">${f.talk_practice?'🗣️ Remove from Talk':'🗣️ Add to Talk'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
@@ -1089,6 +1111,7 @@ function renderLibList(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
       </span>
@@ -1459,6 +1482,51 @@ async function openFile(id) {
     window.open(data.url, '_blank');
   } catch {
     appAlert('Could not open this file — network error.');
+  }
+}
+
+// Per Bot 16 — reuses the same playback-url + fetch pattern as openFile
+// above and the client reader, just to pull the raw text rather than open
+// it in a new tab. Saving goes through a dedicated endpoint that
+// overwrites the same file in place (R2 or disk, whichever it's actually
+// stored on) — there's no versioning on this, so the modal itself warns
+// before saving.
+async function openTextEditor(id, title) {
+  document.getElementById('teFileId').value = id;
+  document.getElementById('teTitle').textContent = 'Edit text content — ' + title;
+  document.getElementById('teContent').value = 'Loading…';
+  document.getElementById('teErr').textContent = '';
+  openModal('textEditorModal');
+  try {
+    const res = await fetch(`/api/content/library/${id}/playback-url`);
+    const data = await res.json();
+    if (!res.ok || !data.url) { document.getElementById('teContent').value = ''; document.getElementById('teErr').textContent = data.error || 'Could not load this file.'; return; }
+    const htmlRes = await fetch(data.url);
+    document.getElementById('teContent').value = await htmlRes.text();
+  } catch(e) {
+    document.getElementById('teContent').value = '';
+    document.getElementById('teErr').textContent = 'Could not load this file — network error.';
+  }
+}
+
+async function saveTextEditor() {
+  const id = document.getElementById('teFileId').value;
+  const content = document.getElementById('teContent').value;
+  const err = document.getElementById('teErr');
+  const btn = document.getElementById('teSaveBtn');
+  btn.disabled = true; err.textContent = '';
+  try {
+    const res = await fetch(`/api/content/library/${id}/text-content`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { err.textContent = data.error || 'Could not save.'; return; }
+    closeModal('textEditorModal');
+  } catch(e) {
+    err.textContent = 'Could not save — network error.';
+  } finally {
+    btn.disabled = false;
   }
 }
 
