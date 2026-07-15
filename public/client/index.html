@@ -814,7 +814,7 @@
     <div class="library-view" id="libraryView">
       <div class="lib-subnav">
         <button class="lib-subnav-btn active" id="libSubPractices" onclick="switchLibrarySub('practices')">Practices</button>
-        <button class="lib-subnav-btn" id="libSubMeditations" onclick="switchLibrarySub('meditations')">Meditations</button>
+        <button class="lib-subnav-btn" id="libSubMeditations" onclick="meditationsTabClicked()">Meditations</button>
         <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
         <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
       </div>
@@ -1369,6 +1369,19 @@
 
   // ── Library sub-nav ──
   let _currentLibSub = 'practices';
+  // Per Bot 16 — re-tapping "Meditations" while already drilled into a
+  // category (or subcategory) used to just re-render that same drilled-in
+  // view, which read as the tap doing nothing. Kept separate from
+  // switchLibrarySub itself, since that function is also called generically
+  // whenever the Library tab regains focus — this back-step should only
+  // happen from an actual tap on the Meditations button.
+  function meditationsTabClicked() {
+    if (_currentLibSub === 'meditations' && (_medCatId || _medSubId)) {
+      backMeditations();
+      return;
+    }
+    switchLibrarySub('meditations');
+  }
   function switchLibrarySub(sub) {
     _currentLibSub = sub;
     ['practices','meditations','readwatch'].forEach(s => {
@@ -2867,6 +2880,18 @@
     const cat = _medCategories.find(c => c.id === _medCatId);
     if (!_medSubId) {
       const subs = _medCategories.filter(c => c.parent_id === _medCatId);
+      // Per Bot 16 — a file tagged with this category but no subcategory
+      // was counted in the top-level total (all files under category_id)
+      // but then vanished once you drilled in, since this subcategory grid
+      // only ever matched on subcategory_id. That's the gap Per hit: 124
+      // at the top level, but the subcategories only added up to 84. This
+      // "General" card surfaces whatever's left uncategorized within the
+      // category, using the same file-list view as a real subcategory.
+      const uncategorized = files.filter(f => f.category_id === _medCatId && !f.subcategory_id);
+      const generalCard = uncategorized.length ? `<div class="med-cat-card" onclick="openMeditationSubcategory('__none__')">
+        <div class="med-cat-name">General</div>
+        <div class="med-cat-count">${uncategorized.length} practice${uncategorized.length!==1?'s':''}</div>
+      </div>` : '';
       el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; All categories</button>
         <div class="content-section-hdr">${cat ? cat.name : ''}</div>
         <div class="med-cat-grid">` + subs.map(s => {
@@ -2875,13 +2900,15 @@
           <div class="med-cat-name">${s.name}</div>
           <div class="med-cat-count">${count} practice${count!==1?'s':''}</div>
         </div>`;
-      }).join('') + `</div>`;
+      }).join('') + generalCard + `</div>`;
       return;
     }
     const sub = _medCategories.find(c => c.id === _medSubId);
-    const list = files.filter(f => f.subcategory_id === _medSubId);
+    const list = _medSubId === '__none__'
+      ? files.filter(f => f.category_id === _medCatId && !f.subcategory_id)
+      : files.filter(f => f.subcategory_id === _medSubId);
     el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; ${cat ? cat.name : ''}</button>
-      <div class="content-section-hdr">${sub ? sub.name : ''}</div>` +
+      <div class="content-section-hdr">${_medSubId === '__none__' ? 'General' : (sub ? sub.name : '')}</div>` +
       (list.length ? list.map(f => contentItemHTML(f)).join('') : '<div class="no-poems">No practices here yet.</div>');
   }
 
