@@ -68,9 +68,21 @@ async function getUploadUrl(key, contentType) {
 // Presigned GET URL — only ever called AFTER the caller has already checked the
 // requester's tier against the file's visibility. Short-lived so a copied/shared
 // link goes stale quickly rather than working forever.
-async function getPlaybackUrl(key) {
+// Per Bot 16 — noCache forces the response to carry headers telling any
+// browser or CDN sitting in front of R2 not to cache it, overriding
+// whatever Cache-Control the object was originally uploaded with. Only
+// used for text/html library content, which — unlike audio/video that's
+// essentially static once uploaded — can get edited in place afterward
+// (the quick text editor, the mojibake fix). Without this, a stale
+// cached copy can keep being served even after the underlying object in
+// R2 has genuinely been corrected, which is exactly what Per hit: the
+// fix verified as written correctly on direct re-read, but the reading
+// experience kept showing the old, uncorrected version.
+async function getPlaybackUrl(key, options = {}) {
   if (!client) throw new Error('R2 is not configured.');
-  const cmd = new GetObjectCommand({ Bucket: R2_BUCKET, Key: key });
+  const params = { Bucket: R2_BUCKET, Key: key };
+  if (options.noCache) params.ResponseCacheControl = 'no-cache, no-store, must-revalidate';
+  const cmd = new GetObjectCommand(params);
   return getSignedUrl(client, cmd, { expiresIn: 600 });
 }
 
