@@ -4360,13 +4360,25 @@
         const type = group === 'poems' ? 'poem' : 'blog';
         const res = await fetch(`/api/client/library/${type}`);
         const items = await res.json();
+        // Per Bot 16 — a non-array response (an auth/role error object,
+        // a malformed payload) used to reach the .forEach() below and
+        // throw there, landing in the catch and showing the exact same
+        // generic message regardless of what actually went wrong. Now
+        // checked explicitly, and the real server-provided error (if
+        // any) is shown instead of a generic one.
+        if (!res.ok || !Array.isArray(items)) {
+          const msg = (items && items.error) ? items.error : `Could not load the list (server said: ${res.status}).`;
+          document.getElementById('playerMedia').innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">${msg}</div>`;
+          return;
+        }
         // Merge into _featuredContentData (rather than replace) so the
         // original 5 Home-card items — and anything else already
         // loaded — stay openable too.
         items.forEach(f => { if (!_featuredContentData.find(x => x.id === f.id)) _featuredContentData.push(f); });
         renderThemeDetailList(group === 'poems' ? 'Poems' : 'Posts', items);
-      } catch {
-        document.getElementById('playerMedia').innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not load the list.</div>';
+      } catch (e) {
+        console.error('More poems/posts list error:', e);
+        document.getElementById('playerMedia').innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not load the list — network error.</div>';
       }
       return;
     }
