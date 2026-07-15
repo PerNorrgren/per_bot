@@ -1911,6 +1911,24 @@ function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE
 function getAllTextHtmlFiles() {
   return queryAll("SELECT * FROM library_files WHERE file_type='text/html'");
 }
+// Per Bot 16 — finds likely-duplicate library files: same content_type,
+// same title once trimmed/lowercased. Built after a rocky poem import
+// (Per Bot 14) may have left some pieces uploaded twice — this is a
+// read-only scan; nothing gets deleted here, it just groups candidates
+// so an admin can review and choose what to remove via the existing
+// bulk-delete route.
+function findDuplicateLibraryFiles() {
+  const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    WHERE f.archived=0`);
+  const groups = {};
+  files.forEach(f => {
+    const key = f.content_type + '::' + (f.title || '').trim().toLowerCase();
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(f);
+  });
+  return Object.values(groups).filter(g => g.length > 1);
+}
 function getLibraryFiles(filters = {}) {
   let sql = `SELECT f.*,
     cat.name as category_name, sub.name as subcategory_name,
@@ -4630,7 +4648,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles,
+  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,

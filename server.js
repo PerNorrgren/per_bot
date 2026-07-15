@@ -6132,6 +6132,23 @@ function stripKnownBoilerplate(html) {
 // same reasoning as the text editor above. Returns a snippet of context
 // around the first actual change per file, not the whole document, so
 // the admin preview stays readable regardless of how long the piece is.
+// Per Bot 16 — read-only duplicate scan, same "review before touching
+// anything" pattern as the mojibake scan above. Groups are ordered
+// oldest-first within each cluster so the admin UI can default to
+// recommending "keep the first, remove the rest" without guessing —
+// though the actual choice is always left to whoever's reviewing it.
+app.get('/api/admin/library/duplicates-scan', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const groups = db.findDuplicateLibraryFiles().map(g =>
+      g.slice().sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+    );
+    res.json({ groups });
+  } catch (e) {
+    console.error('duplicates scan error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/library/mojibake-scan', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const candidates = db.getAllTextHtmlFiles();

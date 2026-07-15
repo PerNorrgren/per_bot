@@ -238,6 +238,7 @@
             <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
+          <button class="btn" onclick="openDuplicatesScan()">Scan for duplicate files</button>
           <button class="btn primary" onclick="openUpload()">↑ Upload files</button>
         </div>
         <div class="bulk-bar" id="bulkBar">
@@ -529,6 +530,24 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('mojibakeModal')">Close</button>
       <button class="modal-ok" id="mjFixBtn" onclick="applyMojibakeFix()" style="display:none">Fix selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 16 — duplicate-files scan, same review-first pattern as the
+     encoding scan: nothing deletes until the admin picks which copies to
+     remove and confirms. Defaults to recommending the oldest copy be
+     kept (a reasonable guess after a rocky import left things uploaded
+     twice), but every checkbox is adjustable before anything happens. -->
+<div class="modal-overlay" id="duplicatesModal">
+  <div class="modal" style="max-width:720px">
+    <h3>Scan for duplicate files</h3>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:8px">Groups files with the same content type and the same title. Nothing is deleted until you tick which copies to remove and click Delete below — this is a preview.</div>
+    <div id="dupBody" style="max-height:480px;overflow-y:auto"></div>
+    <div class="modal-err" id="dupErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('duplicatesModal')">Close</button>
+      <button class="modal-ok" id="dupDeleteBtn" onclick="applyDuplicatesDelete()" style="display:none;background:rgba(255,100,80,0.12);border-color:rgba(255,100,80,0.4);color:rgba(255,140,120,0.9)">Delete checked copies</button>
     </div>
   </div>
 </div>
@@ -1593,6 +1612,70 @@ function closeEpubPreview() {
   closeModal('epubPreviewModal');
   if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
   _epPreviewRendition = null;
+}
+
+// Per Bot 16 — duplicate-files scan/delete UI. Each group defaults to
+// the oldest copy unchecked (kept) and every later one checked (marked
+// for removal) — a reasonable starting guess, not a rule; every
+// checkbox is freely adjustable before Delete is ever clicked.
+async function openDuplicatesScan() {
+  document.getElementById('dupBody').innerHTML = '<div style="padding:20px;color:rgba(255,255,255,0.4);font-size:13px">Scanning…</div>';
+  document.getElementById('dupErr').textContent = '';
+  document.getElementById('dupDeleteBtn').style.display = 'none';
+  openModal('duplicatesModal');
+  try {
+    const res = await fetch('/api/admin/library/duplicates-scan');
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('dupErr').textContent = data.error || 'Scan failed.'; document.getElementById('dupBody').innerHTML = ''; return; }
+    renderDuplicatesResults(data.groups || []);
+  } catch (e) {
+    document.getElementById('dupErr').textContent = 'Scan failed — network error.';
+    document.getElementById('dupBody').innerHTML = '';
+  }
+}
+function renderDuplicatesResults(groups) {
+  const body = document.getElementById('dupBody');
+  if (!groups.length) {
+    body.innerHTML = '<div style="padding:20px;color:rgba(180,230,200,0.6);font-size:13px">No duplicate titles found.</div>';
+    document.getElementById('dupDeleteBtn').style.display = 'none';
+    return;
+  }
+  const totalCopies = groups.reduce((sum, g) => sum + g.length - 1, 0);
+  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${groups.length} duplicate title${groups.length!==1?'s':''} found, ${totalCopies} extra cop${totalCopies!==1?'ies':'y'} checked by default (oldest of each group left unchecked, to keep). Adjust anything before deleting.</div>` +
+    groups.map((g, gi) => `
+      <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.85);margin-bottom:6px">${escHtml(g[0].title)} <span style="color:rgba(255,255,255,0.35);font-size:11px">(${escHtml(g[0].content_type||'—')} · ${g.length} copies)</span></div>
+        ${g.map((f, fi) => `
+          <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:rgba(255,255,255,0.6);cursor:pointer">
+            <input type="checkbox" class="dup-check" data-group="${gi}" value="${f.id}" ${fi === 0 ? '' : 'checked'}/>
+            ${f.created_at||'—'} · ${escHtml(f.category_name||'no category')} · ${fsize(f.file_size)} ${fi === 0 ? '<span style="color:rgba(180,230,200,0.6)">(oldest — unchecked by default)</span>' : ''}
+          </label>
+        `).join('')}
+      </div>
+    `).join('');
+  document.getElementById('dupDeleteBtn').style.display = '';
+}
+async function applyDuplicatesDelete() {
+  const ids = [...document.querySelectorAll('.dup-check:checked')].map(el => el.value);
+  if (!ids.length) { document.getElementById('dupErr').textContent = 'Nothing checked.'; return; }
+  if (!(await appConfirm(`Delete ${ids.length} file${ids.length!==1?'s':''}? This can't be undone.`))) return;
+  const btn = document.getElementById('dupDeleteBtn');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  try {
+    const res = await fetch('/api/content/library/bulk-delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('dupErr').textContent = data.error || 'Delete failed.'; return; }
+    document.getElementById('dupBody').innerHTML = `<div style="padding:20px;color:rgba(180,230,200,0.7);font-size:13px">Deleted ${ids.length} file${ids.length!==1?'s':''}.</div>`;
+    document.getElementById('dupDeleteBtn').style.display = 'none';
+    loadAll();
+  } catch (e) {
+    document.getElementById('dupErr').textContent = 'Delete failed — network error.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Delete checked copies';
+  }
 }
 
 // Per Bot 16 — mojibake scan/fix UI. escHtml on the before/after snippets
