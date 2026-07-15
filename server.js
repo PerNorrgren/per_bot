@@ -5972,13 +5972,15 @@ async function writeTextFileContent(file, content) {
 // misread as Windows-1252 somewhere in the export/import pipeline and
 // re-saved that way. The 0x80–0x9F range is the only place Windows-1252
 // actually differs from true Latin-1 (real Latin-1 has no printable
-// characters there) — CP1252_HIGH is that specific mapping. Re-encoding
-// each character back to its original CP1252 byte value and decoding
-// that byte sequence as UTF-8 reverses the corruption exactly. Returns
-// null (leave untouched) for any text that isn't actually this kind of
-// corruption — either a character outside what CP1252 can represent at
-// all, or a "fix" that would introduce replacement characters — so this
-// only ever touches text it's confident about, never guesses.
+// characters there) — CP1252_HIGH is that specific mapping.
+//
+// Works per contiguous run of "suspicious" characters, not on the whole
+// document at once — an earlier version processed the entire file as one
+// atomic transform, which meant a single genuine non-Latin1 character
+// anywhere in a long poem (a real accented letter, an intentional
+// symbol) made the whole fix bail out silently, leaving every actual
+// corruption in that file untouched. Scoping to runs means one
+// unrelated character elsewhere can't block fixing the rest.
 const CP1252_HIGH = {
   0x80: 0x20AC, 0x82: 0x201A, 0x83: 0x0192, 0x84: 0x201E, 0x85: 0x2026,
   0x86: 0x2020, 0x87: 0x2021, 0x88: 0x02C6, 0x89: 0x2030, 0x8A: 0x0160,
@@ -5989,28 +5991,59 @@ const CP1252_HIGH = {
 };
 const CP1252_HIGH_REV = {};
 for (const k in CP1252_HIGH) CP1252_HIGH_REV[CP1252_HIGH[k]] = parseInt(k);
-function fixMojibake(text) {
+const MOJIBAKE_SUSPICIOUS_CPS = [
+  ...Array.from({ length: 0x100 - 0x80 }, (_, i) => 0x80 + i),
+  ...Object.values(CP1252_HIGH),
+];
+const MOJIBAKE_RUN_RE = new RegExp(
+  `[${MOJIBAKE_SUSPICIOUS_CPS.map(cp => '\\u' + cp.toString(16).padStart(4, '0')).join('')}]{1,}`, 'g'
+);
+function fixMojibakeRun(run) {
   const bytes = [];
-  for (const ch of text) {
+  for (const ch of run) {
     const cp = ch.codePointAt(0);
     if (CP1252_HIGH_REV[cp] !== undefined) bytes.push(CP1252_HIGH_REV[cp]);
     else if (cp < 0x100) bytes.push(cp);
-    else return null;
+    else return null; // a genuine character CP1252 can't represent at all — leave this run untouched
   }
   try {
     const decoded = Buffer.from(bytes).toString('utf-8');
-    return decoded.includes('\uFFFD') ? null : decoded;
+    return decoded.includes('\uFFFD') ? null : decoded; // replacement chars mean this run wasn't real double-encoding
   } catch (e) { return null; }
 }
+function fixMojibake(text) {
+  let changed = false;
+  let result = text.replace(MOJIBAKE_RUN_RE, (run) => {
+    const fixed = fixMojibakeRun(run);
+    if (fixed !== null && fixed !== run) { changed = true; return fixed; }
+    return run;
+  });
+  // Orphaned "Â" — the lead byte of what was originally a two-byte UTF-8
+  // sequence (almost always a non-breaking space), but whose second byte
+  // was separately lost or normalised to a plain space somewhere
+  // upstream, before this corruption even happened — there's no byte
+  // sequence left to recover. Â never appears as genuine standalone
+  // content in English prose, so it's safe to just drop it.
+  const orphanRe = /\u00C2(?=[\s.,;:!?)]|$)/g;
+  if (orphanRe.test(result)) { result = result.replace(orphanRe, ''); changed = true; }
+  return changed ? result : null;
+}
 
-// Per Bot 16 — strips the specific leftover WordPress-export boilerplate
-// Per identified (the "Try Deeper Mindfulness Community" header links,
-// mailing-list prompts, "Click here for more Poems" footer). Only ever
-// removes a whole <p>/<div> block whose ENTIRE text content, once tags
-// are stripped, matches one of these phrases exactly — never a block
-// that merely contains one of these phrases alongside other content,
-// since that's exactly the kind of guess that could quietly eat real
-// material along with the boilerplate.
+// Per Bot 16 — strips leftover WordPress-export boilerplate. Two ways a
+// block/line can match:
+//  1. Its whole text, once tags are stripped, is exactly one of the
+//     known phrases Per identified.
+//  2. It's structurally just a single link back to deepermindfulness.org
+//     — whatever the link text actually says. This is what catches
+//     wording variants ("Join our community" vs "Come join us" vs
+//     whatever else was used across different export batches) without
+//     needing every phrasing enumerated by hand — a standalone line
+//     that's nothing but a link to their own site is essentially always
+//     a nav/promo link, never genuine prose.
+// Either way, this only ever removes a block/line whose ENTIRE content
+// matches — never a block that merely contains a match alongside other
+// content, since that's exactly the kind of guess that could quietly
+// eat real material along with the boilerplate.
 const BOILERPLATE_PHRASES = [
   'try deeper mindfulness community here',
   'free live and recorded mindfulness courses here',
@@ -6018,15 +6051,26 @@ const BOILERPLATE_PHRASES = [
   'click here for more poems',
   'free live and recorded courses',
   'free live and recorded course',
+  'see more blogs here',
+  'download the deeper mindfulness app',
 ].map(s => s.toLowerCase());
+function plainTextOf(fragment) {
+  return fragment.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function isOwnSiteLinkOnly(rawFragment) {
+  const m = rawFragment.trim().match(/^<a\s+[^>]*href="([^"]*)"[^>]*>[\s\S]*?<\/a>$/i);
+  return !!(m && /deepermindfulness\.org/i.test(m[1]));
+}
+function isBoilerplateFragment(rawFragment) {
+  return BOILERPLATE_PHRASES.includes(plainTextOf(rawFragment)) || isOwnSiteLinkOnly(rawFragment);
+}
 function stripKnownBoilerplate(html) {
   const removed = [];
-  const plainText = (fragment) => fragment.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-  const blockRe = /<(p|div)\b[^>]*>([\s\S]*?)<\/\1>/gi;
-  const result = html.replace(blockRe, (whole, tag, inner) => {
-    // Whole-block match first — a block that's just one bare phrase.
-    const wholeText = plainText(inner);
-    if (BOILERPLATE_PHRASES.includes(wholeText)) { removed.push(wholeText); return ''; }
+  // Per Bot 16 — now also matches h1-h6, for headings like "Download the
+  // Deeper Mindfulness App" that aren't inside a <p> or <div> at all.
+  const blockRe = /<(p|div|h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let result = html.replace(blockRe, (whole, tag, inner) => {
+    if (isBoilerplateFragment(inner)) { removed.push(plainTextOf(inner) || '[link]'); return ''; }
     // Otherwise check line-by-line (split on <br>) — a block can hold
     // several distinct lines (e.g. two links stacked with <br> between
     // them, as in the actual imported files), and only some of those
@@ -6036,22 +6080,47 @@ function stripKnownBoilerplate(html) {
     const kept = [];
     let anyRemoved = false;
     for (const line of lines) {
-      const lineText = plainText(line);
-      if (BOILERPLATE_PHRASES.includes(lineText)) { removed.push(lineText); anyRemoved = true; }
+      if (isBoilerplateFragment(line)) { removed.push(plainTextOf(line) || '[link]'); anyRemoved = true; }
       else kept.push(line);
     }
     if (!anyRemoved) return whole;
-    if (!plainText(kept.join(' '))) return ''; // every line was boilerplate — drop the whole block
+    if (!plainTextOf(kept.join(' '))) return ''; // every line was boilerplate — drop the whole block
     return `<${tag}>${kept.join('<br/>')}</${tag}>`;
   });
-  return removed.length ? { html: result, removed } : null;
+
+  // Per Bot 16 — WordPress "button block" wrappers (Download the App,
+  // etc). Needs real depth-counting rather than a simple regex: these are
+  // nested divs (wp-block-buttons > wp-block-button > a), and a naive
+  // non-greedy match would stop at the FIRST </div> — the inner one — 
+  // leaving the outer wrapper's closing tag dangling and unmatched in
+  // the document. This walks forward counting opens/closes to find the
+  // actual matching close, however deep the nesting goes.
+  const openTagRe = /<div\s+class="wp-block-buttons"[^>]*>/gi;
+  let out = '', lastIndex = 0, buttonBlocksRemoved = 0, m;
+  while ((m = openTagRe.exec(result))) {
+    const start = m.index;
+    const tagRe = /<div\b[^>]*>|<\/div>/gi;
+    tagRe.lastIndex = m.index + m[0].length;
+    let depth = 1, endIdx = null, m2;
+    while ((m2 = tagRe.exec(result))) {
+      if (m2[0].toLowerCase().startsWith('<div')) depth++; else depth--;
+      if (depth === 0) { endIdx = tagRe.lastIndex; break; }
+    }
+    if (endIdx === null) continue; // unbalanced — leave alone, don't guess
+    out += result.slice(lastIndex, start);
+    lastIndex = endIdx;
+    buttonBlocksRemoved++;
+    openTagRe.lastIndex = endIdx;
+  }
+  out += result.slice(lastIndex);
+  if (buttonBlocksRemoved) result = out;
+
+  if (removed.length || buttonBlocksRemoved) {
+    if (buttonBlocksRemoved) removed.push(`${buttonBlocksRemoved} button block(s)`);
+    return { html: result, removed };
+  }
+  return null;
 }
-// A quick, cheap pre-check before doing the full per-character pass —
-// every mojibake instance seen in practice contains at least one of
-// these three telltale sequences (curly-quote/dash/nbsp corruption).
-// Any file that doesn't even contain these can't need fixing, so this
-// lets the scan skip straight past the large majority of files quickly.
-const MOJIBAKE_HINT = /â€|Â /;
 
 // Per Bot 16 — dry run: never writes anything. Scopes to text/html only,
 // same reasoning as the text editor above. Returns a snippet of context
@@ -6067,10 +6136,8 @@ app.get('/api/admin/library/mojibake-scan', auth.requireAuthApi(['admin']), asyn
         const original = await readTextFileContent(file);
         let working = original;
         let mojibakeApplied = false;
-        if (MOJIBAKE_HINT.test(working)) {
-          const fixed = fixMojibake(working);
-          if (fixed !== null && fixed !== working) { working = fixed; mojibakeApplied = true; }
-        }
+        const fixed = fixMojibake(working);
+        if (fixed !== null && fixed !== working) { working = fixed; mojibakeApplied = true; }
         const stripped = stripKnownBoilerplate(working);
         const removedPhrases = stripped ? stripped.removed : [];
         if (stripped) working = stripped.html;
@@ -6120,10 +6187,8 @@ app.post('/api/admin/library/mojibake-fix', auth.requireAuthApi(['admin']), asyn
         const original = await readTextFileContent(file);
         let working = original;
         let changed = false;
-        if (MOJIBAKE_HINT.test(working)) {
-          const fixed = fixMojibake(working);
-          if (fixed !== null && fixed !== working) { working = fixed; changed = true; }
-        }
+        const fixed = fixMojibake(working);
+        if (fixed !== null && fixed !== working) { working = fixed; changed = true; }
         const stripped = stripKnownBoilerplate(working);
         if (stripped) { working = stripped.html; changed = true; }
         if (!changed) continue;
