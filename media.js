@@ -70,18 +70,26 @@ async function getUploadUrl(key, contentType) {
 // link goes stale quickly rather than working forever.
 // Per Bot 16 — noCache forces the response to carry headers telling any
 // browser or CDN sitting in front of R2 not to cache it, overriding
-// whatever Cache-Control the object was originally uploaded with. Only
-// used for text/html library content, which — unlike audio/video that's
-// essentially static once uploaded — can get edited in place afterward
-// (the quick text editor, the mojibake fix). Without this, a stale
-// cached copy can keep being served even after the underlying object in
-// R2 has genuinely been corrected, which is exactly what Per hit: the
-// fix verified as written correctly on direct re-read, but the reading
-// experience kept showing the old, uncorrected version.
+// whatever Cache-Control the object was originally uploaded with.
+//
+// Also forces the correct charset on the Content-Type. The object was
+// originally stored as bare "text/html" with no charset — harmless for
+// the app's own reader (it fetches the text in JS, which always decodes
+// as UTF-8 by spec regardless of headers), but a real problem for
+// anything that navigates the browser directly to the raw URL (e.g.
+// window.open): with no charset to go on, the browser has to guess, and
+// a common guess is Windows-1252 — which would take perfectly correct
+// UTF-8 bytes and misread them into exactly the "â€™"-style mojibake
+// pattern, as a pure display artifact with the underlying bytes never
+// actually being wrong. This is what most likely explains the whole
+// saga: the fix was probably correct in storage the entire time; only
+// direct-navigation viewing (not the app's own reader) ever showed it
+// wrong.
 async function getPlaybackUrl(key, options = {}) {
   if (!client) throw new Error('R2 is not configured.');
   const params = { Bucket: R2_BUCKET, Key: key };
   if (options.noCache) params.ResponseCacheControl = 'no-cache, no-store, must-revalidate';
+  if (options.forceUtf8) params.ResponseContentType = 'text/html; charset=utf-8';
   const cmd = new GetObjectCommand(params);
   return getSignedUrl(client, cmd, { expiresIn: 600 });
 }

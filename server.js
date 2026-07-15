@@ -5928,7 +5928,8 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     if (!allowed) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
-      const url = await media.getPlaybackUrl(file.filename, { noCache: file.file_type === 'text/html' });
+      const isTextHtml = file.file_type === 'text/html';
+      const url = await media.getPlaybackUrl(file.filename, { noCache: isTextHtml, forceUtf8: isTextHtml });
       const response = { url, expiresIn: 600 };
       // Unpacked books (see unpack_epub_book.js) get a second URL pointing
       // at the per-resource proxy below — the reader prefers this one so
