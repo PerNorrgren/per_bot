@@ -584,6 +584,12 @@
         <option value="hidden">Hidden</option>
       </select>
     </div>
+    <div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal;font-size:14px;color:rgba(255,255,255,0.8)">
+        <input type="checkbox" id="cFeatured" style="width:auto"/> Add to Home carousel
+      </label>
+      <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px">Also needs an open instance under Instances for this course to actually show up — the carousel only lists courses someone can currently enrol in.</div>
+    </div>
     <div id="lessonBuilderWrap"><label>Lessons (files assigned after saving)</label>
       <div class="lesson-builder">
         <div class="lesson-builder-hdr">Add lessons</div>
@@ -2278,6 +2284,7 @@ function openNewCourse(){
   document.getElementById('cCat').value='';document.getElementById('cSub').innerHTML='<option value="">Select…</option>';
   document.getElementById('cSkin').value='';
   document.getElementById('cAccessStatus').value='visible';
+  document.getElementById('cFeatured').checked=false;
   document.getElementById('lessonEntries').innerHTML='';document.getElementById('cErr').textContent='';
   addLE();openModal('newCourseModal');
 }
@@ -2299,6 +2306,7 @@ function editCourse(courseId){
   document.getElementById('cSub').value=c.subcategory_id||'';
   document.getElementById('cSkin').value=c.skin_id||'';
   document.getElementById('cAccessStatus').value=c.access_status||'visible';
+  document.getElementById('cFeatured').checked=!!c.featured;
   document.getElementById('cErr').textContent='';
   openModal('newCourseModal');
 }
@@ -2308,6 +2316,7 @@ async function saveCourse(){
   const catId=document.getElementById('cCat').value;
   const err=document.getElementById('cErr');
   const editId=document.getElementById('editCourseId').value;
+  const featured=document.getElementById('cFeatured').checked;
   if(!title||!catId){err.textContent='Title and category required.';return;}
 
   if(editId){
@@ -2318,6 +2327,11 @@ async function saveCourse(){
         accessStatus:document.getElementById('cAccessStatus').value})});
     const d=await res.json();
     if(d.error){err.textContent=d.error;return;}
+    // Featured/carousel is its own dedicated route (setCourseFeatured),
+    // same one the row-level "★ Feature" button already uses — kept as a
+    // separate call rather than folded into the main PATCH body so both
+    // entry points keep working identically.
+    await fetch(`/api/content/courses/${editId}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});
     closeModal('newCourseModal');loadAll();
     return;
   }
@@ -2334,6 +2348,7 @@ async function saveCourse(){
       accessStatus:document.getElementById('cAccessStatus').value,lessons})});
   const d=await res.json();
   if(d.error){err.textContent=d.error;return;}
+  if(featured) await fetch(`/api/content/courses/${d.id}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured:true})});
   closeModal('newCourseModal');loadAll();openCourseDetail(d.id);
 }
 
