@@ -1387,7 +1387,7 @@
   // whenever the Library tab regains focus — this back-step should only
   // happen from an actual tap on the Meditations button.
   function meditationsTabClicked() {
-    if (_currentLibSub === 'meditations' && (_medCatId || _medSubId)) {
+    if (_currentLibSub === 'meditations' && _medTheme) {
       backMeditations();
       return;
     }
@@ -2853,128 +2853,65 @@
     el.innerHTML = html;
   }
 
-  // ── Meditations (Library) — category drill-down over content_type='meditation' ──
-  let _medCategories = [];
-  let _medCatId = null;
-  let _medSubId = null;
-
-  async function loadLibraryMeditations() {
-    if (!_medCategories.length) {
-      try { _medCategories = await (await fetch('/api/content/categories')).json(); } catch(e) { _medCategories = []; }
-    }
-    renderMeditations();
-  }
+  // ── Meditations (Library) ──
+  // Per Bot 16 — was a category → subcategory drill-down, but most files
+  // only ever had a category and no subcategory, so almost everything
+  // piled into a single "General" list sorted by plain alphabetical
+  // title — which is also where Chapter-numbered titles sorted oddly
+  // (string order puts "Chapter 19" before "Chapter 21" before
+  // "Chapter 9"). Replaced with the same tag-based theme grouping the
+  // Splash page's Practices shelf already uses — one card per theme,
+  // tap it to see that theme's files. _medTheme holds the currently
+  // open theme's tag (or the sentinel '__general__' for untagged files);
+  // null means the theme grid itself is showing.
+  let _medTheme = null;
+  function loadLibraryMeditations() { renderMeditations(); }
   function meditationFiles() {
     return (_contentData || []).filter(f => f.content_type === 'meditation');
   }
-  function openMeditationCategory(catId) { _medCatId = catId; _medSubId = null; renderMeditations(); }
-  function openMeditationSubcategory(subId) { _medSubId = subId; renderMeditations(); }
-  // Per Bot 16 — tracks whether the category grid and/or sub-bucket grid
-  // got auto-skipped (see below) purely so backMeditations() can unwind
-  // in one tap rather than landing back on a screen that was never
-  // actually shown.
-  let _medAutoSkippedCat = false;
-  let _medAutoSkippedSub = false;
-  function backMeditations() {
-    if (_medSubId) {
-      _medSubId = null;
-      if (_medAutoSkippedSub) { _medAutoSkippedSub = false; _medCatId = null; _medAutoSkippedCat = false; }
-    } else {
-      _medCatId = null;
-      _medAutoSkippedCat = false;
-    }
-    renderMeditations();
+  function openMeditationTheme(themeKey) { _medTheme = themeKey; renderMeditations(); }
+  function backMeditations() { _medTheme = null; renderMeditations(); }
+
+  // Per Bot 16 — numeric-aware sort: Intl.Collator's `numeric: true`
+  // compares embedded numbers by value ("Chapter 2" before "Chapter 19"),
+  // falling back to ordinary full-string comparison for anything that
+  // isn't a number difference — exactly "number as number, then the
+  // whole title string" as asked. Blogs/poems deliberately keep plain
+  // alphabetical (unchanged, still the database's own ORDER BY title) —
+  // this collator is only used for Meditations.
+  const _naturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  function naturalTitleSort(files) {
+    return files.slice().sort((a, b) => _naturalCollator.compare(a.title || '', b.title || ''));
   }
+
   function renderMeditations() {
     const el = document.getElementById('meditationsScroll');
     const files = meditationFiles();
-    // Per Bot 16 — was showing every top-level category (Writing,
-    // University, Therapy, etc.) even when empty, since this just listed
-    // whatever existed in the categories table. Per only wants the ones
-    // that actually have meditation content in them to show up here.
-    const topCats = _medCategories
-      .filter(c => !c.parent_id && c.id !== 'cat-appfiles')
-      .filter(c => files.some(f => f.category_id === c.id));
 
-    // Per Bot 16 — once course-linked files stopped showing up here
-    // (previous fix), a category can easily end up with only one real
-    // thing inside it — one subcategory, or just the General bucket, or
-    // even just one category total. Making someone tap through "pick a
-    // category" then "pick a sub-bucket" when there's nothing to actually
-    // choose between was the exact complaint, so skip straight past any
-    // screen that only has one option, landing directly on the file list.
-    if (!_medCatId && topCats.length === 1) {
-      _medCatId = topCats[0].id;
-      _medAutoSkippedCat = true;
-    }
+    const byTag = {};
+    const untagged = [];
+    files.forEach(f => {
+      if (f.tags && f.tags.length) f.tags.forEach(tag => { (byTag[tag] = byTag[tag] || []).push(f); });
+      else untagged.push(f);
+    });
+    const themeCards = Object.keys(byTag).sort().map(tag => ({ key: tag, label: titleCaseTag(tag), items: byTag[tag] }));
+    if (untagged.length) themeCards.push({ key: '__general__', label: 'General', items: untagged });
 
-    if (!_medSubId && _medCatId) {
-      const realSubs = _medCategories.filter(c => c.parent_id === _medCatId).filter(s => files.some(f => f.subcategory_id === s.id));
-      const uncategorizedCount = files.filter(f => f.category_id === _medCatId && !f.subcategory_id).length;
-      const totalOptions = realSubs.length + (uncategorizedCount ? 1 : 0);
-      if (totalOptions === 1) {
-        _medSubId = realSubs.length ? realSubs[0].id : '__none__';
-        _medAutoSkippedSub = true;
-      }
-    }
-
-    if (!_medCatId) {
-      el.innerHTML = `<div class="med-cat-grid">` + topCats.map(c => {
-        const count = files.filter(f => f.category_id === c.id).length;
-        return `<div class="med-cat-card" onclick="openMeditationCategory('${c.id}')">
-          <div class="med-cat-name">${c.name}</div>
-          <div class="med-cat-count">${count} practice${count!==1?'s':''}</div>
-        </div>`;
-      }).join('') + `</div>`;
+    if (!_medTheme) {
+      if (!themeCards.length) { el.innerHTML = '<div class="no-poems">No meditations here yet.</div>'; return; }
+      el.innerHTML = `<div class="med-cat-grid">` + themeCards.map(t => `
+        <div class="med-cat-card" onclick="openMeditationTheme('${t.key}')">
+          <div class="med-cat-name">${t.label}</div>
+          <div class="med-cat-count">${t.items.length} practice${t.items.length!==1?'s':''}</div>
+        </div>
+      `).join('') + `</div>`;
       return;
     }
-    const cat = _medCategories.find(c => c.id === _medCatId);
-    if (!_medSubId) {
-      // Per Bot 16 — only ever shows subcategories that actually have
-      // content, same reasoning as the top-level filter above.
-      const subs = _medCategories.filter(c => c.parent_id === _medCatId).filter(s => files.some(f => f.subcategory_id === s.id));
-      // Per Bot 16 — a file tagged with this category but no subcategory
-      // was counted in the top-level total (all files under category_id)
-      // but then vanished once you drilled in, since this subcategory grid
-      // only ever matched on subcategory_id. That's the gap Per hit: 124
-      // at the top level, but the subcategories only added up to 84. This
-      // "General" card surfaces whatever's left uncategorized within the
-      // category, using the same file-list view as a real subcategory.
-      const uncategorized = files.filter(f => f.category_id === _medCatId && !f.subcategory_id);
-      const generalCard = uncategorized.length ? `<div class="med-cat-card" onclick="openMeditationSubcategory('__none__')">
-        <div class="med-cat-name">General</div>
-        <div class="med-cat-count">${uncategorized.length} practice${uncategorized.length!==1?'s':''}</div>
-      </div>` : '';
-      // Nothing was auto-skipped as far as this screen goes back to — if
-      // the category itself was auto-picked (only one existed), there's
-      // no "All categories" grid to return to either, so no back button.
-      const backBtn = _medAutoSkippedCat ? '' : `<button class="courses-back-btn" onclick="backMeditations()">&larr; All categories</button>`;
-      el.innerHTML = backBtn +
-        `<div class="content-section-hdr">${cat ? cat.name : ''}</div>
-        <div class="med-cat-grid">` + subs.map(s => {
-        const count = files.filter(f => f.subcategory_id === s.id).length;
-        return `<div class="med-cat-card" onclick="openMeditationSubcategory('${s.id}')">
-          <div class="med-cat-name">${s.name}</div>
-          <div class="med-cat-count">${count} practice${count!==1?'s':''}</div>
-        </div>`;
-      }).join('') + generalCard + `</div>`;
-      return;
-    }
-    const sub = _medCategories.find(c => c.id === _medSubId);
-    const list = _medSubId === '__none__'
-      ? files.filter(f => f.category_id === _medCatId && !f.subcategory_id)
-      : files.filter(f => f.subcategory_id === _medSubId);
-    // Per Bot 16 — the label needs to match where backMeditations() will
-    // actually land: if the sub-bucket screen was auto-skipped, back skips
-    // straight past it to "All categories" too, not to the category name.
-    // If both levels were auto-skipped (only one category, only one
-    // bucket in it — nothing left to choose between anywhere), there's
-    // truly nowhere to go back to, so no button at all rather than one
-    // that goes nowhere useful.
-    const backBtn = (_medAutoSkippedCat && _medAutoSkippedSub) ? ''
-      : `<button class="courses-back-btn" onclick="backMeditations()">&larr; ${_medAutoSkippedSub ? 'All categories' : (cat ? cat.name : '')}</button>`;
-    el.innerHTML = backBtn +
-      `<div class="content-section-hdr">${_medSubId === '__none__' ? 'General' : (sub ? sub.name : '')}</div>` +
+
+    const theme = themeCards.find(t => t.key === _medTheme);
+    const list = theme ? naturalTitleSort(theme.items) : [];
+    el.innerHTML = `<button class="courses-back-btn" onclick="backMeditations()">&larr; All themes</button>
+      <div class="content-section-hdr">${theme ? theme.label : ''}</div>` +
       (list.length ? list.map(f => contentItemHTML(f)).join('') : '<div class="no-poems">No practices here yet.</div>');
   }
 

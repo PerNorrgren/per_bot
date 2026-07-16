@@ -4931,7 +4931,7 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
       ? db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
       : db.suppressAccessiblePreviews(db.getAllLibraryFilesWithAccess(userFlags, req.user.id), db.userMaxLevel(userFlags));
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
-    res.json(files.map(f => ({ ...f, is_favourite: favIds.has(f.id) })));
+    res.json(files.map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) })));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
