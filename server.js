@@ -1031,6 +1031,16 @@ function emailFacilitatorRequestDeferred(request) {
 
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
+
+// Per Bot 17 — short promo link. Redirects to /register with the code
+// attached as a query param; register.html reads it and sends it through
+// to /api/register as promoCode, which resolveOfferForSignup() validates
+// properly server-side (this route doesn't check validity itself — an
+// expired/unknown code just falls through to the standing default offer
+// or the hard 14-day fallback, same as any other invalid code would).
+// Placeholder until the full marketing landing page (Sales & Marketing
+// phase 3) exists — at that point this should redirect there instead.
+app.get('/promo/:code', (req, res) => res.redirect('/register?promoCode=' + encodeURIComponent(req.params.code)));
 // Multi-skin branding (Per Bot 20) — same files, same everything, just a
 // slug in the URL for the page's own JS to notice and brand itself
 // against (see skin-inject.js). The slug isn't validated here — an
@@ -1224,6 +1234,36 @@ app.patch('/api/admin/facilitators/:id/reset-password', auth.requireAuthApi(['ad
   }
 });
 
+// ── Offers (Per Bot 17) ── Resolves what trial length + attribution a
+// self-registration should get: an explicit, currently-valid promo code
+// wins; otherwise the standing default offer if one exists and is valid;
+// otherwise the pre-Offers hardcoded fallback (14 days, no attribution) so
+// registration never breaks even if the offers table is ever empty.
+function resolveOfferForSignup(promoCode) {
+  if (promoCode) {
+    const offer = db.getOfferByCode(promoCode);
+    if (offer && db.isOfferCurrentlyValid(offer)) return { trialDays: offer.trial_days, offerId: offer.id };
+  }
+  const def = db.getDefaultOffer();
+  if (def && db.isOfferCurrentlyValid(def)) return { trialDays: def.trial_days, offerId: def.id };
+  return { trialDays: 14, offerId: null };
+}
+
+// Public lookup — used by the promo/signup page (and safe to hit directly
+// for testing) to show an offer's headline/trial length before anyone
+// registers. Returns only what's safe to show publicly; never the admin
+// fields (cloned_from, active flag internals) or offers that have expired
+// or aren't active, since those shouldn't be advertised even if someone
+// still has the old link.
+app.get('/api/public/offers/:code', (req, res) => {
+  const offer = db.getOfferByCode(req.params.code);
+  if (!offer || !db.isOfferCurrentlyValid(offer)) return res.status(404).json({ error: 'This offer is no longer available.' });
+  res.json({
+    code: offer.code, name: offer.name, headline: offer.headline,
+    description: offer.description, trial_days: offer.trial_days,
+  });
+});
+
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
@@ -1250,11 +1290,13 @@ app.post('/api/register', async (req, res) => {
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
+    const { promoCode } = req.body;
+    const { trialDays, offerId } = resolveOfferForSignup(promoCode);
     db.registerUser(id, name.trim(), emailLower, hash, safeLanguage, {
       consentGiven: !!consent,
       consentVersion: 'self-registration-v2',
       marketingOptIn: !!marketingOptIn,
-    });
+    }, trialDays, offerId);
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;
@@ -1515,6 +1557,17 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
     if (!isNewsletterOnly && ![0, 1, 2, 3].includes(tier)) return res.status(400).json({ error: 'Invalid tier.' });
 
     const trialWeeks = Math.max(0, parseInt(req.body.trialWeeks, 10) || 0);
+    // Per Bot 17 — optional Offer for the whole batch. When set, its
+    // trial_days wins over the manual trialWeeks field (so a batch tied to
+    // a named campaign always reflects that campaign's actual trial
+    // length, not whatever was left in the weeks box) and every real
+    // account created in this run is tagged with signup_offer_id for
+    // reporting. Silently ignored if the id doesn't resolve to a real,
+    // currently-valid offer — the batch still imports at the manually
+    // specified tier/trialWeeks rather than failing outright.
+    const batchOfferId = req.body.offerId || null;
+    const batchOffer = batchOfferId ? db.getOffer(batchOfferId) : null;
+    const offerTrialDays = (batchOffer && db.isOfferCurrentlyValid(batchOffer)) ? batchOffer.trial_days : null;
     const sendWelcomeEmail = !isNewsletterOnly && (req.body.sendWelcomeEmail === 'true' || req.body.sendWelcomeEmail === '1');
     // Per Bot 33r — only applies to real accounts (a newsletter-only
     // contact never logs in at all, so a skin's login link is meaningless
@@ -1584,9 +1637,15 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
         consentGiven: true, consentVersion: 'admin-bulk-import-v1', lawfulBasis: 'consent'
       });
       if (skinId) db.setUserSkin(id, skinId);
+      if (offerTrialDays !== null) db.setSignupOfferId(id, batchOfferId);
 
       if (tier > 0) {
-        const trialEndsAt = trialWeeks > 0 ? new Date(Date.now() + trialWeeks * 7 * 24 * 60 * 60 * 1000).toISOString() : null;
+        // Offer's trial length wins over the manual field when a valid
+        // offer is set for this batch — see the comment on offerTrialDays
+        // above. A batch offer with trial_days=0 still means "no trial",
+        // same as leaving trialWeeks at 0 would.
+        const effectiveDays = offerTrialDays !== null ? offerTrialDays : trialWeeks * 7;
+        const trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
         db.setMemberTier(id, tier, null, trialEndsAt, null, null);
       }
 
@@ -7246,6 +7305,54 @@ app.get('/api/admin/membership/plans', auth.requireAuthApi(['admin']), (req, res
 app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     db.updateMembershipPlan(req.params.id, req.body);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Offers (Per Bot 17) — Sales & Marketing "Promotions & upgrade page" ──
+// Named, dated promotional campaigns. `code` must be unique — checked here
+// rather than relying only on the DB's UNIQUE constraint, so a clash comes
+// back as a normal, readable error instead of a raw SQLite exception.
+app.get('/api/admin/offers', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllOffers()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/offers', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { name, code, headline, description, trial_days, launch_date, expiry_date, is_default, cloned_from } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!code || !code.trim()) return res.status(400).json({ error: 'Code is required.' });
+    const safeCode = code.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!safeCode) return res.status(400).json({ error: 'Code must contain at least one letter or number.' });
+    if (db.getOfferByCode(safeCode)) return res.status(400).json({ error: `An offer with the code "${safeCode}" already exists.` });
+    const id = db.createOffer({
+      name: name.trim(), code: safeCode,
+      headline: headline || null, description: description || null,
+      trial_days: parseInt(trial_days, 10) || 14,
+      launch_date: launch_date || null, expiry_date: expiry_date || null,
+      is_default: !!is_default, cloned_from: cloned_from || null,
+    });
+    res.json({ ok: true, id, code: safeCode });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/offers/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const fields = { ...req.body };
+    if (fields.code) {
+      const safeCode = fields.code.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+      if (!safeCode) return res.status(400).json({ error: 'Code must contain at least one letter or number.' });
+      const clash = db.getOfferByCode(safeCode);
+      if (clash && clash.id !== req.params.id) return res.status(400).json({ error: `An offer with the code "${safeCode}" already exists.` });
+      fields.code = safeCode;
+    }
+    if (fields.trial_days != null) fields.trial_days = parseInt(fields.trial_days, 10) || 14;
+    db.updateOffer(req.params.id, fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/offers/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.deleteOffer(req.params.id);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

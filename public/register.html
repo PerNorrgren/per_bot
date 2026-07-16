@@ -131,10 +131,27 @@
     const inviteToken = urlParams.get('invite') || '';
     const refCode = urlParams.get('ref') || '';
     const inviteEmail = urlParams.get('email') || '';
+    const promoCode = urlParams.get('promoCode') || '';
     if (inviteEmail) {
       document.getElementById('email').value = inviteEmail;
       document.getElementById('email').readOnly = true;
       document.getElementById('email').style.opacity = '0.6';
+    }
+    // Per Bot 17 — swap the standing subhead for the offer's own headline
+    // when someone arrives via a promo link. Fails silently (keeps the
+    // default copy) on an expired/unknown code — the actual trial length
+    // is still resolved correctly server-side in /api/register regardless
+    // of whether this fetch succeeds, so a stale/broken headline never
+    // blocks or misrepresents what account someone actually gets.
+    if (promoCode) {
+      fetch('/api/public/offers/' + encodeURIComponent(promoCode))
+        .then(r => r.ok ? r.json() : null)
+        .then(offer => {
+          if (offer && offer.headline) {
+            document.querySelector('.wordmark-desc').textContent = offer.headline;
+          }
+        })
+        .catch(() => {});
     }
 
     const defaultSlides = [
@@ -202,7 +219,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined, promoCode: promoCode || undefined })
       });
       const data = await res.json();
 

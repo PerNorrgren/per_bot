@@ -230,12 +230,63 @@
     </div>
   </div>
 
-  <!-- Locked-content upsell placeholder (Per Bot 15) -->
+  <!-- Offers (Per Bot 17) -->
   <div>
     <div class="section-label">Promotions &amp; upgrade page</div>
     <div class="card">
-      <div class="card-body" style="padding:20px">
-        <div style="font-size:13px;color:rgba(255,255,255,0.4)">Not built yet -- this is where the shared "upgrade to unlock" page and any special offers will live once we get to that piece.</div>
+      <div class="card-header">
+        <div class="card-title">Offers</div>
+        <button class="btn sm primary" onclick="openOfferModal()">+ New offer</button>
+      </div>
+      <div id="offerList"><div class="loading">Loading...</div></div>
+    </div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
+      Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration. The public marketing landing page these link to is a separate, later piece; for now the link goes straight to the signup form with the offer applied.
+    </div>
+  </div>
+
+  <!-- Offer modal -->
+  <div class="modal-overlay" id="offerModalOverlay">
+    <div class="modal">
+      <h3 id="offerModalTitle">New offer</h3>
+      <div>
+        <label>Name (internal label)</label>
+        <input type="text" id="offerName" placeholder="e.g. Instagram Launch Week"/>
+      </div>
+      <div>
+        <label>Link code</label>
+        <input type="text" id="offerCode" placeholder="e.g. insta-launch"/>
+      </div>
+      <div>
+        <label>Headline (shown to the visitor)</label>
+        <input type="text" id="offerHeadline" placeholder="e.g. 14 Days Free — No Card Needed"/>
+      </div>
+      <div>
+        <label>Description (optional, shown under the headline)</label>
+        <textarea id="offerDescription" style="min-height:70px" placeholder="A line or two of supporting copy..."></textarea>
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:100px">
+          <label>Trial days</label>
+          <input type="number" id="offerTrialDays" min="0" max="365" value="14"/>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label>Launch date (optional)</label>
+          <input type="date" id="offerLaunchDate"/>
+        </div>
+        <div style="flex:1;min-width:140px">
+          <label>Expiry date (optional)</label>
+          <input type="date" id="offerExpiryDate"/>
+        </div>
+      </div>
+      <label class="modal-check">
+        <input type="checkbox" id="offerIsDefault"/>
+        Make this the standing default offer (used whenever no specific promo link is given)
+      </label>
+      <div class="modal-err" id="offerModalErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('offerModalOverlay')">Cancel</button>
+        <button class="modal-ok" id="offerModalSaveBtn" onclick="saveOffer()">Save offer</button>
       </div>
     </div>
   </div>
@@ -330,7 +381,147 @@
   }
 
 
-  checkAuth().then(() => { loadPlans(); });
+  // ════════════════════════════════════
+  // Offers (Per Bot 17)
+  // ════════════════════════════════════
+  let offersData = [];
+  let editingOfferId = null;
+
+  async function loadOffers() {
+    const res = await fetch('/api/admin/offers');
+    offersData = await res.json();
+    renderOffers();
+  }
+
+  function offerStatus(o) {
+    if (!o.active) return { label: 'inactive', cls: 'badge-draft' };
+    const now = new Date();
+    if (o.launch_date && now < new Date(o.launch_date)) return { label: 'upcoming', cls: 'badge-sent' };
+    if (o.expiry_date && now > new Date(o.expiry_date)) return { label: 'expired', cls: 'badge-draft' };
+    return { label: 'active', cls: 'badge-approved' };
+  }
+
+  function renderOffers() {
+    const el = document.getElementById('offerList');
+    if (!offersData.length) { el.innerHTML = '<div class="empty">No offers yet.</div>'; return; }
+    el.innerHTML = offersData.map(o => {
+      const status = offerStatus(o);
+      const dateBits = [
+        o.launch_date ? `from ${o.launch_date}` : null,
+        o.expiry_date ? `until ${o.expiry_date}` : null,
+      ].filter(Boolean).join(' · ') || 'no date limits';
+      return `
+        <div class="plan-row" style="flex-wrap:wrap">
+          <div class="plan-name" style="flex:1.6">
+            ${escHtml(o.name)}${o.is_default ? ' <span class="badge badge-approved" style="margin-left:6px">default</span>' : ''}
+            <div style="font-size:11px;color:rgba(255,255,255,0.28);margin-top:2px">/promo/${escHtml(o.code)} · ${dateBits}</div>
+          </div>
+          <div class="plan-trial" style="flex:0.6">${o.trial_days} day${o.trial_days === 1 ? '' : 's'}</div>
+          <div class="plan-status" style="flex:0.5"><span class="badge ${status.cls}">${status.label}</span></div>
+          <div class="plan-actions" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn sm" onclick="copyOfferLink('${o.code}')">Copy link</button>
+            <button class="btn sm" onclick="openOfferModal(null, '${o.id}')">Edit</button>
+            <button class="btn sm" onclick="openOfferModal('${o.id}')">Clone</button>
+            <button class="btn sm" onclick="toggleOfferActive('${o.id}', ${o.active})">${o.active ? 'Deactivate' : 'Activate'}</button>
+            <button class="btn sm danger" onclick="deleteOfferConfirm('${o.id}')">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function copyOfferLink(code) {
+    const link = location.origin + '/promo/' + code;
+    navigator.clipboard.writeText(link).then(() => appAlert('Copied: ' + link)).catch(() => appAlert(link));
+  }
+
+  // openOfferModal(cloneFromId, editId) — pass editId to edit an existing
+  // offer in place, or cloneFromId to prefill a new offer's fields from an
+  // existing one (code cleared, dates cleared, default checkbox cleared —
+  // a clone should never silently inherit "this is the standing default"
+  // or an old campaign's now-stale window).
+  function openOfferModal(cloneFromId, editId) {
+    editingOfferId = editId || null;
+    document.getElementById('offerModalErr').textContent = '';
+    const source = editId
+      ? offersData.find(o => o.id === editId)
+      : (cloneFromId ? offersData.find(o => o.id === cloneFromId) : null);
+
+    document.getElementById('offerModalTitle').textContent = editId ? 'Edit offer' : (cloneFromId ? 'Clone offer' : 'New offer');
+    document.getElementById('offerName').value        = source ? (editId ? source.name : source.name + ' (copy)') : '';
+    document.getElementById('offerCode').value         = (source && editId) ? source.code : '';
+    document.getElementById('offerHeadline').value     = source ? (source.headline || '') : '';
+    document.getElementById('offerDescription').value  = source ? (source.description || '') : '';
+    document.getElementById('offerTrialDays').value    = source ? source.trial_days : 14;
+    document.getElementById('offerLaunchDate').value   = (source && editId) ? (source.launch_date || '') : '';
+    document.getElementById('offerExpiryDate').value   = (source && editId) ? (source.expiry_date || '') : '';
+    document.getElementById('offerIsDefault').checked  = (source && editId) ? !!source.is_default : false;
+    // Stash which offer this clone came from, purely for lineage — read by
+    // saveOffer() below, never shown in the UI.
+    document.getElementById('offerModalOverlay').dataset.clonedFrom = (cloneFromId && !editId) ? cloneFromId : '';
+
+    openModal('offerModalOverlay');
+  }
+
+  async function saveOffer() {
+    const name        = document.getElementById('offerName').value.trim();
+    const code        = document.getElementById('offerCode').value.trim();
+    const headline    = document.getElementById('offerHeadline').value.trim();
+    const description = document.getElementById('offerDescription').value.trim();
+    const trial_days  = parseInt(document.getElementById('offerTrialDays').value, 10) || 0;
+    const launch_date = document.getElementById('offerLaunchDate').value || null;
+    const expiry_date = document.getElementById('offerExpiryDate').value || null;
+    const is_default  = document.getElementById('offerIsDefault').checked;
+    const err = document.getElementById('offerModalErr');
+
+    if (!name)                       { err.textContent = 'Please name this offer.'; return; }
+    if (!editingOfferId && !code)    { err.textContent = 'Please give this offer a link code.'; return; }
+    if (launch_date && expiry_date && launch_date > expiry_date) { err.textContent = 'Expiry date is before the launch date.'; return; }
+
+    const btn = document.getElementById('offerModalSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default };
+      let res;
+      if (editingOfferId) {
+        if (code) body.code = code;
+        res = await fetch(`/api/admin/offers/${editingOfferId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+      } else {
+        body.code = code;
+        const clonedFrom = document.getElementById('offerModalOverlay').dataset.clonedFrom;
+        if (clonedFrom) body.cloned_from = clonedFrom;
+        res = await fetch('/api/admin/offers', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+      }
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not save offer.');
+      closeModal('offerModalOverlay');
+      loadOffers();
+    } catch (e) {
+      err.textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save offer';
+    }
+  }
+
+  async function toggleOfferActive(id, currentlyActive) {
+    await fetch(`/api/admin/offers/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: currentlyActive ? 0 : 1 })
+    });
+    loadOffers();
+  }
+
+  async function deleteOfferConfirm(id) {
+    if (!(await appConfirm('Delete this offer? Existing accounts that signed up through it keep their trial — this only removes the offer itself and its link.'))) return;
+    await fetch(`/api/admin/offers/${id}`, { method: 'DELETE' });
+    loadOffers();
+  }
+
+  checkAuth().then(() => { loadPlans(); loadOffers(); });
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Sales & Marketing';</script>
 <script src="/tomte-widget.js" defer></script>

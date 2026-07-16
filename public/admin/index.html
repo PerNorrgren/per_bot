@@ -618,6 +618,12 @@
         <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry (an admin-granted membership, not a trial). Otherwise it behaves exactly like a normal trial and quietly reverts to Explorer if it lapses with no active subscription.</div>
       </div>
 
+      <div style="margin-top:14px" id="bulkOfferField">
+        <label>Offer (optional)</label>
+        <select id="bulkOffer" onchange="toggleBulkOfferOverride()"><option value="">No offer — use the weeks above</option></select>
+        <div class="modal-note" style="margin-top:6px">Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
+      </div>
+
       <div style="margin-top:14px" id="bulkSkinField">
         <label>Skin</label>
         <select id="bulkSkin"><option value="">No skin — standard branding</option></select>
@@ -1172,9 +1178,30 @@
     document.getElementById('bulkImportForm').style.display = '';
     document.getElementById('bulkImportResult').style.display = 'none';
     await populateSkinSelect('bulkSkin');
+    await populateOfferSelect('bulkOffer');
     toggleBulkTrialField();
+    toggleBulkOfferOverride();
     toggleBulkWelcomeWarning();
     openModal('bulkImportModal');
+  }
+
+  let _offersForBulkImport = null;
+  async function populateOfferSelect(selectId) {
+    // Not cached across modal opens like _skinsForMemberForms — offers get
+    // created/edited far more often during an active campaign push, so a
+    // stale list here is more likely to bite than the extra fetch costs.
+    try { _offersForBulkImport = await (await fetch('/api/admin/offers')).json(); }
+    catch(e) { _offersForBulkImport = []; }
+    const el = document.getElementById(selectId);
+    if (!el) return;
+    el.innerHTML = '<option value="">No offer — use the weeks above</option>'
+      + _offersForBulkImport.map(o => `<option value="${o.id}" data-trial-days="${o.trial_days}">${escHtml(o.name)} (${o.trial_days}d)</option>`).join('');
+  }
+
+  function toggleBulkOfferOverride() {
+    const sel = document.getElementById('bulkOffer');
+    const hasOffer = !!sel.value;
+    document.getElementById('bulkTrialWeeks').disabled = hasOffer;
   }
 
   function toggleBulkTrialField() {
@@ -1183,6 +1210,7 @@
     const isExplorer = tier === '0';
     document.getElementById('bulkNewsletterOnlyNote').style.display = isNewsletterOnly ? '' : 'none';
     document.getElementById('bulkTrialField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
+    document.getElementById('bulkOfferField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
     document.getElementById('bulkSkinField').style.display = isNewsletterOnly ? 'none' : '';
     // No password is ever created for newsletter-only contacts, so there's
     // nothing for a welcome email to contain — hide that whole row rather
@@ -1216,6 +1244,7 @@
     formData.append('trialWeeks', trialWeeks);
     formData.append('sendWelcomeEmail', sendWelcomeEmail ? '1' : '0');
     formData.append('skinId', isNewsletterOnly ? '' : document.getElementById('bulkSkin').value);
+    formData.append('offerId', (isNewsletterOnly || tier === '0') ? '' : document.getElementById('bulkOffer').value);
 
     try {
       const res  = await fetch('/api/admin/members/bulk-import', { method: 'POST', body: formData });

@@ -582,6 +582,31 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Offers (Per Bot 17) ── Named, dated promotional campaigns. Each has a
+  // unique `code` a promo link/register call can reference. `is_default`
+  // marks the one standing evergreen offer used when no code is given (only
+  // one row should ever have is_default=1 — enforced in the helper
+  // functions below, not by a DB constraint, since sql.js doesn't easily
+  // support a partial unique index). `active` is a manual kill-switch,
+  // independent of the launch/expiry date window — an offer can be within
+  // its dates but toggled off, or have live dates but not yet be turned on.
+  // `cloned_from` is lineage-only (which offer this was built from), never
+  // read for any access logic.
+  db.run(`CREATE TABLE IF NOT EXISTS offers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    code TEXT UNIQUE NOT NULL,
+    headline TEXT,
+    description TEXT,
+    trial_days INTEGER NOT NULL DEFAULT 14,
+    launch_date TEXT,
+    expiry_date TEXT,
+    is_default INTEGER DEFAULT 0,
+    active INTEGER DEFAULT 1,
+    cloned_from TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Message of the day ──
   // status: 'draft' | 'approved' | 'sent'
   // scheduled_date: ISO date string (YYYY-MM-DD). NULL = send next available day.
@@ -1416,6 +1441,9 @@ async function getDb() {
     // ── clients → users rename migration ──
     // SQLite cannot rename tables in older versions, so we use a copy-and-rename
     // approach via the migration block below. Handled separately after this list.
+    // Per Bot 17 — Offers (promotions/campaign links). Nullable, attribution-only —
+    // doesn't drive any access logic itself; setMemberTier/trial_ends_at still do that.
+    "ALTER TABLE users ADD COLUMN signup_offer_id TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -1562,6 +1590,19 @@ async function getDb() {
   // Seed default membership plans if empty
   const existingPlans = queryAll('SELECT id FROM membership_plans LIMIT 1');
   if (!existingPlans.length) seedMembershipPlans();
+
+  // Seed the standing default offer if none exists (Per Bot 17) — formalises
+  // the 14-day trial that registerUser() already granted every self-signup
+  // before offers existed, so nothing changes for existing behaviour on
+  // deployments that never touch the Offers admin at all.
+  const existingOffers = queryAll('SELECT id FROM offers LIMIT 1');
+  if (!existingOffers.length) {
+    db.run(
+      `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from)
+       VALUES ('offer-default-14day','Standing 14-day trial','standing-trial','14 days full access — free, no card needed','Everything unlocked for two weeks. No payment details required.',14,NULL,NULL,1,1,NULL)`
+    );
+    save();
+  }
 
   // Seed legal documents if empty
   const existingLegal = queryAll('SELECT id FROM legal_documents LIMIT 1');
@@ -3018,13 +3059,17 @@ function deleteClient(id) {
 // governs the countdown; member_expires_at stays NULL until/unless they subscribe
 // via Stripe. checkTrialExpiry() (called on login) drops them to Explorer if the
 // trial lapses with no active subscription.
-function registerUser(id, name, email, passwordHash, language, consent) {
+// Per Bot 17 — trialDays/signupOfferId added as optional trailing params.
+// Both default to the pre-Offers behaviour (14 days, no attribution) so
+// every existing call site (and any deployment that never touches Offers)
+// keeps working exactly as before.
+function registerUser(id, name, email, passwordHash, language, consent, trialDays = 14, signupOfferId = null) {
   const c = consent || {};
-  const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
   getDbSync().run(
     `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client,language,
-       consent_given,consent_date,consent_version,lawful_basis,pref_email_news)
-     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?,?,?,?,?,?)`,
+       consent_given,consent_date,consent_version,lawful_basis,pref_email_news,signup_offer_id)
+     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?,?,?,?,?,?,?)`,
     [
       id, name, email.toLowerCase(), trialEndsAt, language || 'en',
       c.consentGiven ? 1 : 0,
@@ -3032,6 +3077,7 @@ function registerUser(id, name, email, passwordHash, language, consent) {
       c.consentGiven ? (c.consentVersion || 'self-registration-v1') : null,
       c.consentGiven ? 'consent' : null,
       c.marketingOptIn ? 1 : 0,
+      signupOfferId,
     ]
   );
   getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
@@ -3714,6 +3760,73 @@ function updateMembershipPlan(id, fields) {
   if (!sets) return;
   getDbSync().run(`UPDATE membership_plans SET ${sets} WHERE id=?`,
     [...Object.keys(fields).filter(k => allowed.includes(k)).map(k => fields[k]), id]);
+  save();
+}
+
+// ── Offers (Per Bot 17) ── Named, dated promotional campaigns; see the
+// table comment in getDb() for the field meanings. `is_default` is enforced
+// as single-row here (not by a DB constraint) — createOffer/updateOffer
+// clear any existing default before setting a new one.
+function getAllOffers() {
+  return queryAll('SELECT * FROM offers ORDER BY created_at DESC');
+}
+function getOffer(id) {
+  return queryAll('SELECT * FROM offers WHERE id=?', [id])[0] || null;
+}
+function getOfferByCode(code) {
+  return queryAll('SELECT * FROM offers WHERE code=?', [code])[0] || null;
+}
+function getDefaultOffer() {
+  return queryAll('SELECT * FROM offers WHERE is_default=1 LIMIT 1')[0] || null;
+}
+// Pure check, no DB access — active flag AND within the launch/expiry
+// window (either bound can be null/open-ended). Used both server-side
+// before granting anything and to decide what the promo page itself shows.
+function isOfferCurrentlyValid(offer) {
+  if (!offer || !offer.active) return false;
+  const now = new Date();
+  if (offer.launch_date && now < new Date(offer.launch_date)) return false;
+  if (offer.expiry_date && now > new Date(offer.expiry_date)) return false;
+  return true;
+}
+function createOffer(fields) {
+  const id = crypto.randomUUID();
+  if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1');
+  getDbSync().run(
+    `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      id, fields.name, fields.code,
+      fields.headline || null, fields.description || null,
+      Number.isFinite(fields.trial_days) ? fields.trial_days : 14,
+      fields.launch_date || null, fields.expiry_date || null,
+      fields.is_default ? 1 : 0,
+      fields.active === false ? 0 : 1,
+      fields.cloned_from || null,
+    ]
+  );
+  save();
+  return id;
+}
+function updateOffer(id, fields) {
+  const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active'];
+  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!keys.length) return;
+  if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1 AND id!=?', [id]);
+  const sets = keys.map(k => `${k}=?`).join(', ');
+  getDbSync().run(`UPDATE offers SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+function deleteOffer(id) {
+  getDbSync().run('UPDATE users SET signup_offer_id=NULL WHERE signup_offer_id=?', [id]);
+  getDbSync().run('DELETE FROM offers WHERE id=?', [id]);
+  save();
+}
+// Attribution-only — used by bulk-import to tag which offer a whole
+// imported batch was assigned, and by /api/register for self-signups that
+// came in via a promo code. Never read by any access-control logic.
+function setSignupOfferId(userId, offerId) {
+  getDbSync().run('UPDATE users SET signup_offer_id=? WHERE id=?', [offerId, userId]);
   save();
 }
 
@@ -4738,6 +4851,9 @@ module.exports = {
   getLatestFacilitatorRequestForUser, getPendingFacilitatorRequestCount,
   // Membership plans
   getMembershipPlans, updateMembershipPlan,
+  // Offers (Per Bot 17)
+  getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid,
+  createOffer, updateOffer, deleteOffer, setSignupOfferId,
   // MOTD
   addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd,
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
