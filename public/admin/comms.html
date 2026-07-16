@@ -327,6 +327,50 @@
     </div>
   </div>
 
+  <!-- Video generator (Per Bot 17 phase 5) -->
+  <div>
+    <div class="section-label">Video generator</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Calming message video</div>
+      </div>
+      <div style="padding:16px 20px 8px">
+        <div class="config-desc" style="margin-bottom:8px">Renders a short vertical video right in this browser — calming background, the message as animated text, narration in your own voice. Nothing is posted anywhere; download it and upload manually, same as the message builder above.</div>
+        <textarea class="inline-input" id="vgSource" rows="4" style="width:100%;resize:vertical" placeholder="Paste the message to narrate…"></textarea>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="vgPullTodayMotd()">Pull today's MOTD</button>
+        </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div class="config-label">Background</div>
+        <select id="vgBackground" class="inline-input" style="width:100%" onchange="vgToggleCustomUrl()">
+          <option value="0">Forest light</option>
+          <option value="1">Still water</option>
+          <option value="2">Quiet shoreline</option>
+          <option value="3">Soft hillside</option>
+          <option value="4">Warm horizon</option>
+          <option value="custom">Custom image URL…</option>
+        </select>
+        <input type="text" class="inline-input" id="vgCustomUrl" style="width:100%;display:none" placeholder="https://…"/>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div class="config-desc" style="max-width:340px">Rendering plays in real time — a 60-second message takes about 60 seconds to render.</div>
+        <div class="config-val">
+          <button class="btn primary" id="vgGenerateBtn" onclick="vgGenerate()">🎬 Render video</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="vgFeedback"></div></div>
+      <div id="vgPreviewWrap" style="padding:0 20px 20px;display:none;text-align:center">
+        <video id="vgResultVideo" controls style="width:100%;max-width:260px;border-radius:10px;background:#000"></video>
+        <div style="margin-top:10px">
+          <a class="btn sm primary" id="vgDownloadLink" download="deeper-mindfulness-video.webm">Download video</a>
+        </div>
+      </div>
+      <canvas id="vgCanvas" width="1080" height="1920" style="display:none"></canvas>
+      <audio id="vgAudio" style="display:none"></audio>
+    </div>
+  </div>
+
   <!-- ── Reminders ── -->
   <div>
     <div class="section-label">Practice reminders</div>
@@ -1224,6 +1268,216 @@
     await fetch(`/api/admin/social-posts/${id}`, { method: 'DELETE' });
     mbHistoryData = mbHistoryData.filter(p => p.id !== id);
     mbRenderHistory();
+  }
+
+  // ════════════════════════════════════
+  // Video generator (Per Bot 17 phase 5)
+  // ════════════════════════════════════
+  // Renders entirely in this browser tab — Canvas draws the background +
+  // animated text, MediaRecorder captures it combined with narration audio
+  // from the existing /api/speak endpoint (Per's own ElevenLabs voice,
+  // same one Talk/lessons already use). Chosen over a hosted rendering API
+  // or self-hosted ffmpeg specifically to avoid any new server dependency,
+  // ongoing per-render cost, or third-party service seeing the content —
+  // see the "video creation options" discussion. Trade-off: it renders in
+  // real time (a 60s message takes ~60s to render) and produces WebM, not
+  // mp4 — accepted by every mainstream upload tool in practice, but worth
+  // knowing if something downstream specifically demands mp4.
+  const VG_BACKGROUNDS = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+    'https://images.unsplash.com/photo-1448375240586-882707db888b?w=1600&q=80',
+    'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=1600&q=80',
+  ];
+  let _vgBrandName = 'Deeper Mindfulness';
+  fetch('/api/config').then(r => r.json()).then(cfg => { if (cfg.brandName) _vgBrandName = cfg.brandName; }).catch(() => {});
+
+  function vgPullTodayMotd() {
+    if (!motdData.length) { showFeedback('vgFeedback', 'No messages loaded yet — try again in a moment.', 'err'); return; }
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const pick = motdData.find(m => m.scheduled_date === todayStr)
+      || motdData.find(m => m.status === 'approved')
+      || motdData.find(m => m.status === 'sent')
+      || motdData[0];
+    if (!pick) { showFeedback('vgFeedback', 'Nothing in the queue to pull from.', 'err'); return; }
+    document.getElementById('vgSource').value = pick.body;
+  }
+
+  function vgToggleCustomUrl() {
+    document.getElementById('vgCustomUrl').style.display = document.getElementById('vgBackground').value === 'custom' ? '' : 'none';
+  }
+
+  // Splits into readable on-screen lines — prefers the source's own line
+  // breaks (MOTD stanzas already come as 5 short lines); falls back to
+  // splitting on sentence punctuation for a plain paragraph pasted in.
+  function vgSplitLines(text) {
+    const byBreaks = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    if (byBreaks.length > 1) return byBreaks;
+    return text.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  // Canvas has no built-in word-wrap — measures and breaks manually.
+  function vgWrapText(ctx, text, maxWidth) {
+    const words = text.split(/\s+/);
+    const lines = [];
+    let current = '';
+    words.forEach(w => {
+      const test = current ? current + ' ' + w : w;
+      if (ctx.measureText(test).width > maxWidth && current) { lines.push(current); current = w; }
+      else current = test;
+    });
+    if (current) lines.push(current);
+    return lines;
+  }
+
+  function vgLoadImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous'; // needed for captureStream to read canvas pixels drawn from a cross-origin image
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Could not load that background image.'));
+      img.src = url;
+    });
+  }
+
+  async function vgGenerate() {
+    const sourceText = document.getElementById('vgSource').value.trim();
+    if (!sourceText) { showFeedback('vgFeedback', 'Paste a message to narrate first.', 'err'); return; }
+    const bgSel = document.getElementById('vgBackground').value;
+    const bgUrl = bgSel === 'custom' ? document.getElementById('vgCustomUrl').value.trim() : VG_BACKGROUNDS[parseInt(bgSel, 10)];
+    if (!bgUrl) { showFeedback('vgFeedback', 'Enter a background image URL.', 'err'); return; }
+
+    const btn = document.getElementById('vgGenerateBtn');
+    btn.disabled = true; const origHtml = btn.innerHTML;
+    try {
+      btn.innerHTML = 'Loading narration…';
+      const speakRes = await fetch('/api/speak', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: sourceText })
+      });
+      if (!speakRes.ok) throw new Error('Could not generate narration audio.');
+      const audioBlob = await speakRes.blob();
+      const audioEl = document.getElementById('vgAudio');
+      audioEl.src = URL.createObjectURL(audioBlob);
+      await new Promise((resolve, reject) => {
+        audioEl.onloadedmetadata = resolve;
+        audioEl.onerror = () => reject(new Error('Could not load the narration audio.'));
+      });
+      const duration = audioEl.duration;
+
+      btn.innerHTML = 'Loading background…';
+      const img = await vgLoadImage(bgUrl);
+
+      const lines = vgSplitLines(sourceText);
+      const totalChars = lines.reduce((s, l) => s + l.length, 0) || 1;
+      // Proportional to length, with a floor so a very short line still
+      // gets enough time to actually be read rather than flashing past.
+      const minSlice = Math.min(1.6, duration / lines.length);
+      let slices = lines.map(l => Math.max(minSlice, duration * (l.length / totalChars)));
+      const sliceScale = duration / slices.reduce((a, b) => a + b, 0);
+      slices = slices.map(s => s * sliceScale);
+      const lineStarts = []; let acc = 0;
+      slices.forEach(s => { lineStarts.push(acc); acc += s; });
+
+      const canvas = document.getElementById('vgCanvas');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+
+      const videoStream = canvas.captureStream(30);
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const srcNode = audioCtx.createMediaElementSource(audioEl);
+      const destNode = audioCtx.createMediaStreamDestination();
+      srcNode.connect(destNode);
+      srcNode.connect(audioCtx.destination); // also audible while rendering
+      const combined = new MediaStream([...videoStream.getVideoTracks(), ...destNode.stream.getAudioTracks()]);
+
+      const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+        .find(t => MediaRecorder.isTypeSupported(t)) || '';
+      const recorder = new MediaRecorder(combined, mimeType ? { mimeType } : undefined);
+      const chunks = [];
+      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+
+      const donePromise = new Promise(resolve => { recorder.onstop = resolve; });
+
+      btn.innerHTML = 'Rendering…';
+      audioEl.currentTime = 0;
+      recorder.start();
+      await audioEl.play();
+
+      const startTime = performance.now();
+      let rafId;
+      function draw() {
+        const elapsed = (performance.now() - startTime) / 1000;
+        const t = Math.min(1, elapsed / duration);
+
+        // Background, slow Ken Burns zoom (1.0 -> 1.06) — cover-fit crop.
+        const scale = 1 + 0.06 * t;
+        const iw = img.width, ih = img.height;
+        const canvasRatio = W / H, imgRatio = iw / ih;
+        let drawW, drawH;
+        if (imgRatio > canvasRatio) { drawH = H * scale; drawW = drawH * imgRatio; }
+        else { drawW = W * scale; drawH = drawW / imgRatio; }
+        ctx.drawImage(img, (W - drawW) / 2, (H - drawH) / 2, drawW, drawH);
+
+        // Legibility veil — darker band through the middle where text sits.
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, 'rgba(6,10,8,0.45)');
+        grad.addColorStop(0.5, 'rgba(6,10,8,0.6)');
+        grad.addColorStop(1, 'rgba(6,10,8,0.45)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+
+        // Current line, fading in/out at its slice boundaries.
+        let idx = lineStarts.findIndex((s, i) => elapsed >= s && (i === lineStarts.length - 1 || elapsed < lineStarts[i + 1]));
+        if (idx === -1) idx = lines.length - 1;
+        const sliceStart = lineStarts[idx], sliceEnd = idx < slices.length - 1 ? lineStarts[idx + 1] : duration;
+        const fadeDur = 0.4;
+        let alpha = 1;
+        if (elapsed - sliceStart < fadeDur) alpha = (elapsed - sliceStart) / fadeDur;
+        else if (sliceEnd - elapsed < fadeDur) alpha = (sliceEnd - elapsed) / fadeDur;
+        alpha = Math.max(0, Math.min(1, alpha));
+
+        ctx.font = '600 58px Georgia, serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = `rgba(255,255,255,${0.94 * alpha})`;
+        const wrapped = vgWrapText(ctx, lines[idx], W - 160);
+        const lineHeight = 78;
+        const blockH = wrapped.length * lineHeight;
+        wrapped.forEach((wl, i) => {
+          ctx.fillText(wl, W / 2, H / 2 - blockH / 2 + lineHeight / 2 + i * lineHeight);
+        });
+
+        // Brand wordmark, bottom of frame.
+        ctx.font = '400 30px Georgia, serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillText(_vgBrandName, W / 2, H - 90);
+
+        if (elapsed < duration && !audioEl.ended) {
+          rafId = requestAnimationFrame(draw);
+        } else {
+          cancelAnimationFrame(rafId);
+          recorder.stop();
+        }
+      }
+      draw();
+
+      audioEl.onended = () => { if (rafId) cancelAnimationFrame(rafId); recorder.stop(); };
+
+      await donePromise;
+      audioCtx.close();
+
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      document.getElementById('vgResultVideo').src = url;
+      document.getElementById('vgDownloadLink').href = url;
+      document.getElementById('vgPreviewWrap').style.display = 'block';
+      showFeedback('vgFeedback', 'Rendered — preview above, or download to post manually.', 'ok');
+    } catch (e) {
+      showFeedback('vgFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.innerHTML = origHtml;
+    }
   }
 
   // ════════════════════════════════════
