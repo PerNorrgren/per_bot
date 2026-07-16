@@ -38,8 +38,13 @@
          showing around it. height (not just max-height) keeps every
          page the same size regardless of how much content it happens to
          have; the inner content area already scrolls independently. */
-      height:90vh;
-      height:90dvh; /* Per Bot 15 — dvh tracks the real available viewport
+      /* Per Bot 17 — was 90vh, leaving a visibly large gap above/below on
+         tall/wide windows (the side margins are controlled separately by
+         max-width and were already fine). Bumped up so there's more
+         glass and less background showing top/bottom, without touching
+         the side margins at all. */
+      height:96vh;
+      height:96dvh; /* Per Bot 15 — dvh tracks the real available viewport
         directly from the browser on every layout pass, no JS or resize
         listener needed at all; browsers without dvh support just ignore
         this line and keep the vh value above. */
@@ -71,7 +76,7 @@
       .bnav-icon { font-size: 40px; }
     }
     @media (min-width: 1000px) {
-      .glass { max-width: min(92vw, 1600px); height: 85vh; height: 85dvh; }
+      .glass { max-width: min(92vw, 1600px); height: 96vh; height: 96dvh; }
       .header { padding: 28px 40px 20px; }
       .wordmark { font-size: 14px; }
       .tab { font-size: 15px; padding: 17px; }
