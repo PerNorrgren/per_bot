@@ -278,6 +278,7 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title">Reformat for social</div>
+        <button class="btn sm" onclick="mbOpenHistory()">History</button>
       </div>
       <div style="padding:16px 20px 8px">
         <div class="config-desc" style="margin-bottom:8px">Paste a message, poem excerpt, or blog snippet — get platform-ready versions to copy and post by hand. No posting integration exists; nothing is sent anywhere automatically.</div>
@@ -295,6 +296,15 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformThreads"/> Threads</label>
         </div>
       </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.65);cursor:pointer">
+          <input type="checkbox" id="mbIncludeCta" checked onchange="mbToggleCtaFields()"/> Include a catchy headline + signup footer
+        </label>
+        <div id="mbOfferRow" style="display:flex;align-items:center;gap:10px">
+          <div class="config-label" style="flex-shrink:0">Offer to promote</div>
+          <select id="mbOfferSelect" class="inline-input" style="width:auto;flex:1"><option value="">Use the standing default offer</option></select>
+        </div>
+      </div>
       <div class="config-row" style="border-bottom:none">
         <div></div>
         <div class="config-val">
@@ -303,6 +313,17 @@
       </div>
       <div style="padding:0 20px 14px"><div class="feedback" id="mbFeedback"></div></div>
       <div id="mbResults" style="padding:0 20px 20px;display:none"></div>
+    </div>
+  </div>
+
+  <!-- Message builder history modal -->
+  <div class="modal-overlay" id="mbHistoryModalOverlay">
+    <div class="modal" style="max-width:640px">
+      <h3>Past posts</h3>
+      <div id="mbHistoryList" style="max-height:60vh;overflow-y:auto"><div class="loading">Loading…</div></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('mbHistoryModalOverlay')">Close</button>
+      </div>
     </div>
   </div>
 
@@ -995,6 +1016,34 @@
   // produces text for Per to copy and paste by hand.
   const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
   const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  const mbQuillInstances = {}; // platform -> Quill instance, rebuilt every generate/duplicate
+
+  // ── Custom audio embed for the per-platform rich editors (Per Bot 17
+  // phase 4) — Quill has no audio blot built in (only its 'video' format,
+  // which is iframe-embed-only). Registered once, same BlockEmbed pattern
+  // as VideoBlot above. Per's own final copy/paste text is always plain
+  // (see mbCopy below) — this is for attaching/previewing a reference
+  // clip alongside the caption while assembling a post, not something
+  // that travels with the pasted text itself.
+  (function() {
+    if (Quill.imports['formats/mbAudioBlock']) return; // already registered
+    const BlockEmbed = Quill.import('blots/block/embed');
+    class MbAudioBlot extends BlockEmbed {
+      static create(url) {
+        const node = super.create();
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:8px 0';
+        node.innerHTML = `<audio controls style="width:100%" src="${url}"></audio>`;
+        node.dataset.src = url;
+        return node;
+      }
+      static value(node) { return node.dataset.src; }
+    }
+    MbAudioBlot.blotName = 'mbAudioBlock';
+    MbAudioBlot.tagName = 'DIV';
+    MbAudioBlot.className = 'ql-mb-audio-block';
+    Quill.register(MbAudioBlot);
+  })();
 
   function mbCheckboxId(p) { return 'mbPlatform' + p[0].toUpperCase() + p.slice(1); }
 
@@ -1012,18 +1061,38 @@
     document.getElementById('mbSource').value = pick.body;
   }
 
+  function mbToggleCtaFields() {
+    document.getElementById('mbOfferRow').style.display = document.getElementById('mbIncludeCta').checked ? 'flex' : 'none';
+  }
+  mbToggleCtaFields();
+
+  let _mbOffersLoaded = false;
+  async function mbLoadOffers() {
+    if (_mbOffersLoaded) return;
+    _mbOffersLoaded = true;
+    try {
+      const offers = await (await fetch('/api/admin/offers')).json();
+      const sel = document.getElementById('mbOfferSelect');
+      sel.innerHTML = '<option value="">Use the standing default offer</option>'
+        + offers.map(o => `<option value="${o.id}">${escHtml(o.name)} (${o.trial_days}d, /promo/${escHtml(o.code)})</option>`).join('');
+    } catch(e) { /* dropdown just keeps its default option */ }
+  }
+  mbLoadOffers();
+
   async function mbGenerate() {
     const sourceText = document.getElementById('mbSource').value.trim();
     if (!sourceText) { showFeedback('mbFeedback', 'Paste some source content first.', 'err'); return; }
     const platforms = MB_PLATFORMS.filter(p => document.getElementById(mbCheckboxId(p))?.checked);
     if (!platforms.length) { showFeedback('mbFeedback', 'Select at least one platform.', 'err'); return; }
+    const includeCta = document.getElementById('mbIncludeCta').checked;
+    const offerId = document.getElementById('mbOfferSelect').value || undefined;
 
     const btn = document.getElementById('mbGenerateBtn');
     btn.disabled = true; const origHtml = btn.innerHTML; btn.innerHTML = 'Generating…';
     try {
       const res  = await fetch('/api/admin/message-builder/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceText, platforms })
+        body: JSON.stringify({ sourceText, platforms, includeCta, offerId })
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Could not generate posts.');
@@ -1036,29 +1105,125 @@
     }
   }
 
+  // Shared toolbar for every platform editor — bold/italic/underline and
+  // link cover ordinary emphasis and the signup link itself; image/video/
+  // mb-audio cover Per's ask for attaching media alongside a caption while
+  // assembling a post. Deliberately no headers/lists/columns — none of
+  // that means anything on Facebook/LinkedIn/Instagram/Threads.
+  function mbToolbarConfig() {
+    return [
+      ['bold', 'italic', 'underline'],
+      ['link', 'image', 'video', 'mb-audio'],
+    ];
+  }
+
   function mbRenderResults(results, platforms) {
+    // Tear down any previous instances — the container gets fully
+    // rebuilt below, so stale Quill objects would otherwise leak and
+    // point at detached DOM nodes.
+    Object.keys(mbQuillInstances).forEach(k => delete mbQuillInstances[k]);
+
     const container = document.getElementById('mbResults');
     container.innerHTML = platforms.map(p => `
       <div style="margin-top:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div class="config-label">${MB_LABELS[p] || p}</div>
-          <button class="btn sm" onclick="mbCopy('${p}')">Copy</button>
+          <button class="btn sm" onclick="mbCopy('${p}')">Copy text</button>
         </div>
-        <textarea class="inline-input" id="mbOut_${p}" rows="6" style="width:100%;resize:vertical" readonly>${escHtml(results[p] || '')}</textarea>
+        <div id="mbEditorWrap_${p}"></div>
       </div>
     `).join('');
     container.style.display = 'block';
+
+    platforms.forEach(p => {
+      const q = new Quill(`#mbEditorWrap_${p}`, {
+        theme: 'snow',
+        modules: { toolbar: mbToolbarConfig() },
+      });
+      // Custom toolbar icon/handler for the audio button — Quill's toolbar
+      // module only auto-wires formats it already knows about; a genuinely
+      // new one needs its handler set explicitly.
+      const toolbar = q.getModule('toolbar');
+      const audioBtn = q.container.previousSibling?.querySelector('.ql-mb-audio');
+      if (audioBtn) audioBtn.innerHTML = '♪';
+      toolbar.addHandler('mb-audio', () => {
+        const url = prompt('Audio file URL (e.g. from the library):');
+        if (!url) return;
+        const range = q.getSelection(true);
+        q.insertEmbed(range ? range.index : q.getLength(), 'mbAudioBlock', url, 'user');
+      });
+      q.setText(results[p] || '');
+      mbQuillInstances[p] = q;
+    });
   }
 
   function mbCopy(platform) {
-    const el = document.getElementById('mbOut_' + platform);
-    if (!el) return;
-    el.select();
-    navigator.clipboard.writeText(el.value).then(() => {
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    // Plain text, deliberately — Facebook/LinkedIn/Instagram/Threads
+    // composers don't accept rich formatting pasted in, so bold/links
+    // here are for Per's own reference while assembling the post, not
+    // part of what actually gets copied out.
+    const text = q.getText().replace(/\n$/, '');
+    navigator.clipboard.writeText(text).then(() => {
       showFeedback('mbFeedback', (MB_LABELS[platform] || platform) + ' copied.', 'ok');
     }).catch(() => {
       showFeedback('mbFeedback', 'Could not copy — select the text manually.', 'err');
     });
+  }
+
+  // ── History (Per Bot 17 phase 4) ──
+  let mbHistoryData = [];
+
+  async function mbOpenHistory() {
+    openModal('mbHistoryModalOverlay');
+    document.getElementById('mbHistoryList').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      mbHistoryData = await (await fetch('/api/admin/social-posts')).json();
+      mbRenderHistory();
+    } catch(e) {
+      document.getElementById('mbHistoryList').innerHTML = '<div class="empty">Could not load history.</div>';
+    }
+  }
+
+  function mbRenderHistory() {
+    const el = document.getElementById('mbHistoryList');
+    if (!mbHistoryData.length) { el.innerHTML = '<div class="empty">No posts generated yet.</div>'; return; }
+    el.innerHTML = mbHistoryData.map(p => `
+      <div class="msg-row" style="align-items:center">
+        <div class="msg-body">
+          <div class="msg-text" style="-webkit-line-clamp:2">${escHtml(p.source_text)}</div>
+          <div class="msg-meta">${fmtDate(p.created_at)} · ${p.platforms.map(pl => MB_LABELS[pl] || pl).join(', ')}</div>
+        </div>
+        <div class="msg-actions">
+          <button class="btn sm" onclick="mbDuplicatePost('${p.id}')">Duplicate</button>
+          <button class="btn sm danger" onclick="mbDeleteHistoryPost('${p.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Pulls a past generation back into the builder as an editable draft —
+  // source text, platform checkboxes, and each platform's saved text all
+  // restored, so it can be tweaked and re-copied without regenerating (or
+  // used as a starting point and regenerated fresh). Doesn't call the API
+  // again — this is purely local, no new Claude call, no new history row
+  // until Generate is pressed again.
+  function mbDuplicatePost(id) {
+    const p = mbHistoryData.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('mbSource').value = p.source_text;
+    MB_PLATFORMS.forEach(pl => { document.getElementById(mbCheckboxId(pl)).checked = p.platforms.includes(pl); });
+    mbRenderResults(p.results, p.platforms);
+    closeModal('mbHistoryModalOverlay');
+    showFeedback('mbFeedback', 'Loaded — edit and copy, or hit Generate for a fresh pass.', 'ok');
+  }
+
+  async function mbDeleteHistoryPost(id) {
+    if (!(await appConfirm('Delete this from history? This only removes it from the list — nothing was ever posted anywhere.'))) return;
+    await fetch(`/api/admin/social-posts/${id}`, { method: 'DELETE' });
+    mbHistoryData = mbHistoryData.filter(p => p.id !== id);
+    mbRenderHistory();
   }
 
   // ════════════════════════════════════

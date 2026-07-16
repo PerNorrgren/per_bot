@@ -607,6 +607,21 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Social posts (Per Bot 17 phase 4) ── History of message-builder
+  // generations, so a past run can be revisited or duplicated into a new
+  // editable draft rather than being lost the moment the page reloads.
+  // `results` is a JSON blob keyed by platform (facebook/linkedin/...) —
+  // one row per generation batch, not per platform, since a batch is
+  // conceptually one "post" even though it produced several variants.
+  db.run(`CREATE TABLE IF NOT EXISTS social_posts (
+    id TEXT PRIMARY KEY,
+    source_text TEXT NOT NULL,
+    platforms TEXT NOT NULL,
+    results TEXT NOT NULL,
+    offer_id TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Message of the day ──
   // status: 'draft' | 'approved' | 'sent'
   // scheduled_date: ISO date string (YYYY-MM-DD). NULL = send next available day.
@@ -3830,6 +3845,32 @@ function setSignupOfferId(userId, offerId) {
   save();
 }
 
+// ── Social posts (Per Bot 17 phase 4) ── History for the message builder.
+// platforms/results are stored as JSON text and parsed back out on read —
+// sql.js has no native JSON column type.
+function addSocialPost(sourceText, platforms, results, offerId) {
+  const id = crypto.randomUUID();
+  getDbSync().run(
+    'INSERT INTO social_posts (id,source_text,platforms,results,offer_id) VALUES (?,?,?,?,?)',
+    [id, sourceText, JSON.stringify(platforms), JSON.stringify(results), offerId || null]
+  );
+  save();
+  return id;
+}
+function getAllSocialPosts(limit = 100) {
+  return queryAll('SELECT * FROM social_posts ORDER BY created_at DESC LIMIT ?', [limit])
+    .map(p => ({ ...p, platforms: JSON.parse(p.platforms), results: JSON.parse(p.results) }));
+}
+function getSocialPost(id) {
+  const row = queryAll('SELECT * FROM social_posts WHERE id=?', [id])[0];
+  if (!row) return null;
+  return { ...row, platforms: JSON.parse(row.platforms), results: JSON.parse(row.results) };
+}
+function deleteSocialPost(id) {
+  getDbSync().run('DELETE FROM social_posts WHERE id=?', [id]);
+  save();
+}
+
 // ── Messages of the day ──
 function addMotd(id, body, scheduledDate) {
   getDbSync().run(
@@ -4854,6 +4895,8 @@ module.exports = {
   // Offers (Per Bot 17)
   getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid,
   createOffer, updateOffer, deleteOffer, setSignupOfferId,
+  // Social posts (Per Bot 17 phase 4)
+  addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,
   // MOTD
   addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd,
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,

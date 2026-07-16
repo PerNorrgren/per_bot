@@ -7897,6 +7897,15 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
 // returns text for Per to copy and paste manually. Same JSON-parse-with-
 // markdown-fence-fallback pattern as generateMotdChunk above, since the
 // model occasionally wraps JSON in ```json fences despite being told not to.
+//
+// Per Bot 17 phase 4 — includeCta + offerId added. When includeCta is on,
+// the model is told to write a hook line and a closing invitation with a
+// literal {{SIGNUP_LINK}} token (see MESSAGE_BUILDER_CTA_INSTRUCTIONS in
+// prompts.js for why the model never writes the actual URL itself); the
+// real link is substituted in below, after generation, so it's always
+// correct even if the offer/trial length changes later. Every generation
+// is saved to social_posts for the History panel, whether or not the CTA
+// was included.
 app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const sourceText = (req.body?.sourceText || '').trim();
@@ -7906,8 +7915,20 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
     if (!sourceText) return res.status(400).json({ error: 'Source content is required.' });
     if (!platforms.length) return res.status(400).json({ error: 'Select at least one platform.' });
 
+    const includeCta = req.body?.includeCta !== false; // default on
+    let offer = null;
+    if (includeCta) {
+      offer = req.body?.offerId ? db.getOffer(req.body.offerId) : db.getDefaultOffer();
+      if (offer && !db.isOfferCurrentlyValid(offer)) offer = null; // don't promote a dead/expired offer
+    }
+
+    const ctaInstructions = (includeCta && offer)
+      ? prompts.MESSAGE_BUILDER_CTA_INSTRUCTIONS.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days)
+      : 'Do not add any signup hook, closing invitation, or link — produce only the reformatted message itself, per the platform shapes above.';
+    const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
+
     const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.`;
-    const raw = await callClaudeRaw(prompts.MESSAGE_BUILDER_PROMPT, [{ role: 'user', content: userMessage }], 1500);
+    const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1500);
     let parsed;
     try {
       parsed = JSON.parse(raw);
@@ -7915,13 +7936,32 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
       const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
       parsed = JSON.parse(cleaned);
     }
-    res.json({ ok: true, results: parsed });
+
+    if (includeCta && offer) {
+      const link = `${APP_URL}/promo/${offer.code}`;
+      Object.keys(parsed).forEach(k => {
+        if (typeof parsed[k] === 'string') parsed[k] = parsed[k].split('{{SIGNUP_LINK}}').join(link);
+      });
+    }
+
+    const postId = db.addSocialPost(sourceText, platforms, parsed, offer ? offer.id : null);
+    res.json({ ok: true, results: parsed, postId });
   } catch (e) {
     console.error('message builder generate error:', e);
     // Admin-only endpoint — surface the real error rather than a generic
     // message, same reasoning as the MOTD generate route above.
     res.status(500).json({ error: 'Could not generate posts: ' + (e.message || 'unknown error') });
   }
+});
+
+// ── Message builder history (Per Bot 17 phase 4) ──
+app.get('/api/admin/social-posts', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllSocialPosts()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/social-posts/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteSocialPost(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 function maybeSendMotdLowStockAlert(remaining) {

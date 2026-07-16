@@ -737,12 +737,27 @@ WHAT CHANGES PER PLATFORM — the underlying message and voice stay the same; on
 - instagram: short, broken into short lines with natural line breaks (like the source stanza itself), roughly 30-60 words, ends with 4-6 lowercase hashtags relevant to nervous-system-based mindfulness content (e.g. #mindfulness #nervoussystem #selfregulation) — never generic spam tags, never trending tags unrelated to the content.
 - threads: same register as Instagram but as a single short paragraph (no line-break formatting), roughly 30-50 words, at most 1-2 hashtags, conversational tone.
 
+{{CTA_INSTRUCTIONS}}
+
 INPUT: you will be given the source content and a list of platforms to produce.
 OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform names requested (lowercase, e.g. "facebook", "linkedin", "instagram", "threads"). Values are the finished post text as a single string (use \\n for any line breaks within a value). No preamble, no markdown fences, no commentary — just the raw JSON object.`;
+
+// Per Bot 17 (phase 4) — appended into MESSAGE_BUILDER_PROMPT in place of
+// {{CTA_INSTRUCTIONS}} when the "include headline & signup footer" option
+// is on. The model writes a hook line and a closing invitation but NEVER
+// the actual link — it's told to write the literal token {{SIGNUP_LINK}}
+// and the server substitutes the real, current offer link afterward. This
+// keeps the URL always correct even if the offer/trial length changes
+// later, and guarantees the model can never hallucinate or mangle it.
+const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a close, on top of the platform-specific shape above:
+- OPENING HOOK: the very first line should be a short, catchy line that sells the message itself and the Deeper Mindfulness name — enough to stop a scroll — before moving into the reformatted message content. Still bound by every voice rule above: no hype words, no clinical terms, no evangelical promises. "Catchy" here means sharp and specific, not loud.
+- CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
+- On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
 module.exports = {
   MOTD_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
+  MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,
