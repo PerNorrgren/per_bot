@@ -2819,12 +2819,27 @@
   function renderContentScroll() {
     const el   = document.getElementById('contentScroll');
     const visible = _contentData.filter(f => READ_WATCH_KINDS.includes(f.content_type) || !f.content_type);
-    const favs = visible.filter(f => f.is_favourite);
+    // Per Bot 16 — favourites used to always show every favourited item
+    // regardless of which type tab (Blog/Video/Poems/...) was selected,
+    // while the list below it correctly filtered by type — so switching
+    // to "Blog" still showed a video favourite sitting up top. Now
+    // filtered the same way as the rest of the list; "All" still shows
+    // every favourite, same as before.
+    const typeFilter = f => _contentFilter === 'all' || f.content_type === _contentFilter;
+    const favs = visible.filter(f => f.is_favourite).filter(typeFilter)
+      .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 
+    // Per Bot 16 — was sorted by created_at (upload date) descending,
+    // not by title at all — that's why the order looked unrelated to
+    // either the title or the "Originally published" date shown under
+    // each one (a different date, from the original WordPress post,
+    // not when it was uploaded here). Title, plain alphabetical, as
+    // asked — Blogs/poems keep straightforward string order rather than
+    // the numeric-aware sort Meditations uses.
     const rest = visible
       .filter(f => !f.is_favourite)
-      .filter(f => _contentFilter === 'all' || f.content_type === _contentFilter)
-      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      .filter(typeFilter)
+      .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 
     let html = '';
     html += `<div class="content-section">
