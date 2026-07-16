@@ -2406,14 +2406,25 @@ function setCourseFeatured(id, featured) {
   getDbSync().run('UPDATE courses SET featured=? WHERE id=?', [featured ? 1 : 0, id]);
   save();
 }
+// Per Bot 17 — repurposes the existing (previously unused anywhere else)
+// courses.sort_order column to drive carousel order specifically. Lower
+// numbers show first — see the ORDER BY in getFeaturedCourses below, which
+// already sorted by this column; nothing was ever setting it before now.
+function setCourseSortOrder(id, sortOrder) {
+  getDbSync().run('UPDATE courses SET sort_order=? WHERE id=?', [sortOrder, id]);
+  save();
+}
 // Curated courses shelf on the calm landing screen (Per Bot 28) — only
-// ever what's explicitly marked, ordered the same way the course list
-// itself is (category/sort_order/title) rather than by when it was
-// featured, so the shelf doesn't reorder itself unexpectedly each time
-// something new gets flagged. Joined through to an actual OPEN instance
-// (what a client can actually enrol in — courses themselves are just the
-// template) since a featured course with nothing currently open isn't
-// something a client could do anything with if it showed up.
+// ever what's explicitly marked. Ordered purely by c.sort_order/title —
+// deliberately NOT grouped by category first (unlike the plain course
+// list's own ordering) since the carousel itself is a flat row with no
+// category headings shown to the client; sorting by category first would
+// make the up/down reorder panel silently do nothing whenever two
+// adjacent courses happened to be in different categories. Joined
+// through to an actual OPEN instance (what a client can actually enrol
+// in — courses themselves are just the template) since a featured course
+// with nothing currently open isn't something a client could do anything
+// with if it showed up.
 function getFeaturedCourses() {
   return queryAll(`SELECT c.*, cat.name as category_name, ci.id as instance_id
     FROM courses c
@@ -2421,7 +2432,7 @@ function getFeaturedCourses() {
     JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open'
     WHERE c.featured=1
     GROUP BY c.id
-    ORDER BY cat.sort_order, c.sort_order, c.title`);
+    ORDER BY c.sort_order, c.title`);
 }
 function deleteCourse(id) {
   const lessons = queryAll('SELECT id FROM lessons WHERE course_id=?', [id]);
@@ -4817,7 +4828,7 @@ module.exports = {
   setKnowledgeTopicContent, getKnowledgeTopicContent, getKnowledgeTopicAllContent,
   linkKnowledgeTopics, unlinkKnowledgeTopics, getLinkedKnowledgeTopics,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,

@@ -6955,6 +6955,20 @@ app.patch('/api/content/courses/:id/featured', auth.requireAuthApi(['admin']), (
   db.setCourseFeatured(req.params.id, !!req.body.featured);
   res.json({ ok: true });
 });
+// Per Bot 17 — carousel ordering. sortOrder is a plain integer, lower
+// shows first; the up/down reorder panel swaps two courses' values at a
+// time rather than renumbering the whole list, so this stays a single
+// small write per click rather than a bulk operation.
+app.patch('/api/content/courses/:id/sort-order', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setCourseSortOrder(req.params.id, parseInt(req.body.sortOrder, 10) || 0);
+  res.json({ ok: true });
+});
+// Same query the Home carousel itself uses (db.getFeaturedCourses) — so
+// this panel is always showing exactly what would actually appear, in
+// the order it would actually appear, not a separate approximation of it.
+app.get('/api/admin/courses/carousel-order', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getFeaturedCourses());
+});
 // Sequencing (Per Bot 13) — enforceLessonSequence locks Lesson N+1 until
 // Lesson N is complete; enforceFileSequence is the course-wide default for
 // file-order locking within a lesson (individual lessons can override it,

@@ -268,6 +268,7 @@
         <div class="toolbar">
           <div class="toolbar-title">Courses</div>
           <select class="filter" id="courseCatF" onchange="filterCourses()"><option value="">All categories</option></select>
+          <button class="btn" onclick="openCarouselOrder()">Carousel order</button>
           <button class="btn primary" onclick="openNewCourse()">+ New course</button>
         </div>
         <div class="item-list" id="courseList"></div>
@@ -601,6 +602,18 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newCourseModal')">Cancel</button>
       <button class="modal-ok" onclick="saveCourse()">Save course</button>
+    </div>
+  </div>
+</div>
+
+<!-- Carousel order modal -->
+<div class="modal-overlay" id="carouselOrderModal">
+  <div class="modal" style="max-width:520px">
+    <h3>Home carousel order</h3>
+    <p class="modal-note">Only courses that are both featured and have an open instance show up here — same list, same order, the Home carousel actually uses.</p>
+    <div id="carouselOrderList" style="display:flex;flex-direction:column;gap:8px;margin-top:8px"><div class="loading">Loading…</div></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('carouselOrderModal')">Close</button>
     </div>
   </div>
 </div>
@@ -2430,6 +2443,61 @@ async function openCourseDetail(courseId){
   }
   h+='</div>';
   el.innerHTML=h;openModal('courseDetailModal');
+}
+
+// ── Home carousel order (Per Bot 17) ──
+// Up/down swap rather than drag-and-drop — a plain button click is far
+// less fragile to build and use correctly than wiring drag events, and
+// for a handful of curated courses (never going to be dozens) there's no
+// real benefit to dragging over just clicking an arrow a couple of times.
+let _carouselOrderData = [];
+async function openCarouselOrder(){
+  openModal('carouselOrderModal');
+  await loadCarouselOrder(true);
+}
+async function loadCarouselOrder(normalizeIfNeeded){
+  const el = document.getElementById('carouselOrderList');
+  el.innerHTML = '<div class="loading">Loading…</div>';
+  const list = await (await fetch('/api/admin/courses/carousel-order')).json();
+  // The sort_order column was sitting unused until this panel existed, so
+  // the very first time it's opened every featured course likely still
+  // has sort_order=0 — swapping two zeros wouldn't visibly move anything.
+  // Normalise to the order already being shown once, so every course has
+  // a distinct value and the first up/down click actually does something.
+  const needsNormalising = normalizeIfNeeded && list.length>1 && list.every(c=>(c.sort_order||0)===(list[0].sort_order||0));
+  if(needsNormalising){
+    for(let i=0;i<list.length;i++){
+      await fetch(`/api/content/courses/${list[i].id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:i})});
+      list[i].sort_order=i;
+    }
+  }
+  _carouselOrderData = list;
+  renderCarouselOrderList();
+}
+function renderCarouselOrderList(){
+  const el = document.getElementById('carouselOrderList');
+  if(!_carouselOrderData.length){
+    el.innerHTML='<div class="empty">Nothing qualifies yet — a course needs to be both featured and have an open instance to show up here.</div>';
+    return;
+  }
+  el.innerHTML = _carouselOrderData.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px">
+      <div style="flex:1;font-size:14px;color:rgba(255,255,255,0.8)">${escHtml(c.title)}</div>
+      <button class="btn sm" onclick="moveCarouselCourse(${i},-1)" ${i===0?'disabled':''}>↑</button>
+      <button class="btn sm" onclick="moveCarouselCourse(${i},1)" ${i===_carouselOrderData.length-1?'disabled':''}>↓</button>
+    </div>
+  `).join('');
+}
+async function moveCarouselCourse(index,dir){
+  const j=index+dir;
+  if(j<0||j>=_carouselOrderData.length)return;
+  const a=_carouselOrderData[index], b=_carouselOrderData[j];
+  const aOrder=a.sort_order||0, bOrder=b.sort_order||0;
+  await Promise.all([
+    fetch(`/api/content/courses/${a.id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:bOrder})}),
+    fetch(`/api/content/courses/${b.id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:aOrder})}),
+  ]);
+  await loadCarouselOrder(false);
 }
 
 // Per Bot 16 — every lesson's file list used to render fully expanded
