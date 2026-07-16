@@ -25,7 +25,13 @@
       border:1px solid rgba(255,255,255,0.13);
       border-radius:22px; overflow:hidden;
       display:flex; flex-direction:column;
-      max-height:90vh;
+      /* Per Bot 17 — was max-height only (a ceiling, not a floor), so the
+         panel shrank to fit whatever content a given tab actually had —
+         same bug already fixed in client/index.html's own .glass last
+         session, just never ported here. Explicit height (with a dvh
+         fallback for mobile browser chrome) makes every tab hold the
+         same panel size regardless of how sparse its content is. */
+      height:90vh; height:90dvh; max-height:90vh;
     }
 
     .header { padding:18px 24px 14px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }

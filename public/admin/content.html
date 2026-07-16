@@ -1003,8 +1003,16 @@ function populateCatSels(...ids){
     const el=document.getElementById(id);if(!el)return;
     const isFilter=id.includes('F')||id.includes('Filter');
     const isParent=id==='catParent';
+    // Per Bot 17 — preserve whatever was selected before the rebuild.
+    // Previously this always reset to the first option, which is harmless
+    // for a "new item" modal select (those explicitly set their own value
+    // right after, e.g. openNewCourse's cCat.value='') but silently threw
+    // away the Library category filter on every refresh — including after
+    // a delete, edit-save, or any other action that calls loadAll().
+    const curVal=el.value;
     el.innerHTML=isFilter?'<option value="">All categories</option>':isParent?'<option value="">Top level</option>':'<option value="">Select…</option>';
     tops.forEach(c=>{el.innerHTML+=`<option value="${c.id}">${c.name}</option>`;});
+    if(tops.some(c=>c.id===curVal))el.value=curVal;
   });
 }
 
@@ -1020,7 +1028,12 @@ function populateSub(catSelId,subSelId,selectedId=''){
 function populateKindSels(...ids){
   ids.forEach(id=>{
     const el=document.getElementById(id);if(!el)return;
+    // Per Bot 17 — same fix as populateCatSels above: preserve the
+    // current value across a rebuild rather than silently resetting to
+    // "All types" every time loadAll() runs.
+    const curVal=el.value;
     el.innerHTML='<option value="">All types</option>'+contentKindOptions('').replace('<option value="">Not set</option>','');
+    if(el.querySelector(`option[value="${curVal}"]`))el.value=curVal;
   });
 }
 
@@ -1058,7 +1071,14 @@ async function loadAll(){
   const prevKindVal = libKindSel.value;
   libKindSel.innerHTML = '<option value="">All types</option>' + contentKindOptions('').replace('<option value="">Not set</option>','');
   libKindSel.value = prevKindVal;
-  renderLib(files);renderCourses(courses);renderPlaylists(pls);renderCats(cats);renderKinds(kinds);renderInstances();
+  // Per Bot 17 — was renderLib(files) directly, which always rendered the
+  // FULL unfiltered list regardless of whatever was selected in the
+  // category/subcategory/visibility/kind/file-type/search filters — so
+  // even once those selects correctly kept their value (see
+  // populateCatSels above), the list itself still ignored it. filterLib()
+  // reads the live filter values and calls renderLib with the filtered
+  // set, same as it does on every other filter change.
+  filterLib();renderCourses(courses);renderPlaylists(pls);renderCats(cats);renderKinds(kinds);renderInstances();
 }
 
 function populateInstanceCourseSels(){
