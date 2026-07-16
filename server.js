@@ -7769,6 +7769,40 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
   }
 });
 
+// Per Bot 17 — Message builder: reformats a piece of source content into
+// platform-ready social copy. No posting integration exists (checked the
+// MCP registry — nothing available for direct social posting; closest
+// matches were analytics tools, not publishing ones), so this only ever
+// returns text for Per to copy and paste manually. Same JSON-parse-with-
+// markdown-fence-fallback pattern as generateMotdChunk above, since the
+// model occasionally wraps JSON in ```json fences despite being told not to.
+app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const sourceText = (req.body?.sourceText || '').trim();
+    const platforms = Array.isArray(req.body?.platforms)
+      ? req.body.platforms.filter(p => typeof p === 'string' && p.trim())
+      : [];
+    if (!sourceText) return res.status(400).json({ error: 'Source content is required.' });
+    if (!platforms.length) return res.status(400).json({ error: 'Select at least one platform.' });
+
+    const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.`;
+    const raw = await callClaudeRaw(prompts.MESSAGE_BUILDER_PROMPT, [{ role: 'user', content: userMessage }], 1500);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      parsed = JSON.parse(cleaned);
+    }
+    res.json({ ok: true, results: parsed });
+  } catch (e) {
+    console.error('message builder generate error:', e);
+    // Admin-only endpoint — surface the real error rather than a generic
+    // message, same reasoning as the MOTD generate route above.
+    res.status(500).json({ error: 'Could not generate posts: ' + (e.message || 'unknown error') });
+  }
+});
+
 function maybeSendMotdLowStockAlert(remaining) {
   if (remaining > 5) return;
   const b = brand();

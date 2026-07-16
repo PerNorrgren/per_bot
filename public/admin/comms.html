@@ -272,6 +272,40 @@
     </div>
   </div>
 
+  <!-- ── Message builder (Per Bot 17) ── -->
+  <div>
+    <div class="section-label">Message builder</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Reformat for social</div>
+      </div>
+      <div style="padding:16px 20px 8px">
+        <div class="config-desc" style="margin-bottom:8px">Paste a message, poem excerpt, or blog snippet — get platform-ready versions to copy and post by hand. No posting integration exists; nothing is sent anywhere automatically.</div>
+        <textarea class="inline-input" id="mbSource" rows="5" style="width:100%;resize:vertical" placeholder="Paste source content here…"></textarea>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn sm" onclick="mbPullTodayMotd()">Pull today's MOTD</button>
+        </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div class="config-label">Platforms</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformFacebook" checked/> Facebook</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformLinkedin" checked/> LinkedIn</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformInstagram" checked/> Instagram</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformThreads"/> Threads</label>
+        </div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div></div>
+        <div class="config-val">
+          <button class="btn primary" id="mbGenerateBtn" onclick="mbGenerate()">✨ Generate</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="mbFeedback"></div></div>
+      <div id="mbResults" style="padding:0 20px 20px;display:none"></div>
+    </div>
+  </div>
+
   <!-- ── Reminders ── -->
   <div>
     <div class="section-label">Practice reminders</div>
@@ -950,6 +984,81 @@
       appAlert('Could not generate messages. Please try again.');
     }
     btn.disabled = false; btn.textContent = '✨ Generate batch';
+  }
+
+  // ════════════════════════════════════
+  // Message builder (Per Bot 17)
+  // ════════════════════════════════════
+  // No posting integration — checked the MCP registry, nothing available
+  // for direct social posting yet (closest matches were analytics tools
+  // like Meltwater/Supermetrics, not publishing ones). This only ever
+  // produces text for Per to copy and paste by hand.
+  const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
+  const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+
+  function mbCheckboxId(p) { return 'mbPlatform' + p[0].toUpperCase() + p.slice(1); }
+
+  function mbPullTodayMotd() {
+    if (!motdData.length) { showFeedback('mbFeedback', 'No messages loaded yet — try again in a moment.', 'err'); return; }
+    // Prefer today's scheduled message, then the next approved one, then
+    // the most recently sent one, then whatever's first — always something
+    // usable rather than an empty pull.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const pick = motdData.find(m => m.scheduled_date === todayStr)
+      || motdData.find(m => m.status === 'approved')
+      || motdData.find(m => m.status === 'sent')
+      || motdData[0];
+    if (!pick) { showFeedback('mbFeedback', 'Nothing in the queue to pull from.', 'err'); return; }
+    document.getElementById('mbSource').value = pick.body;
+  }
+
+  async function mbGenerate() {
+    const sourceText = document.getElementById('mbSource').value.trim();
+    if (!sourceText) { showFeedback('mbFeedback', 'Paste some source content first.', 'err'); return; }
+    const platforms = MB_PLATFORMS.filter(p => document.getElementById(mbCheckboxId(p))?.checked);
+    if (!platforms.length) { showFeedback('mbFeedback', 'Select at least one platform.', 'err'); return; }
+
+    const btn = document.getElementById('mbGenerateBtn');
+    btn.disabled = true; const origHtml = btn.innerHTML; btn.innerHTML = 'Generating…';
+    try {
+      const res  = await fetch('/api/admin/message-builder/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceText, platforms })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not generate posts.');
+      mbRenderResults(data.results, platforms);
+      showFeedback('mbFeedback', 'Generated — copy whichever version you need.', 'ok');
+    } catch (e) {
+      showFeedback('mbFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.innerHTML = origHtml;
+    }
+  }
+
+  function mbRenderResults(results, platforms) {
+    const container = document.getElementById('mbResults');
+    container.innerHTML = platforms.map(p => `
+      <div style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="config-label">${MB_LABELS[p] || p}</div>
+          <button class="btn sm" onclick="mbCopy('${p}')">Copy</button>
+        </div>
+        <textarea class="inline-input" id="mbOut_${p}" rows="6" style="width:100%;resize:vertical" readonly>${escHtml(results[p] || '')}</textarea>
+      </div>
+    `).join('');
+    container.style.display = 'block';
+  }
+
+  function mbCopy(platform) {
+    const el = document.getElementById('mbOut_' + platform);
+    if (!el) return;
+    el.select();
+    navigator.clipboard.writeText(el.value).then(() => {
+      showFeedback('mbFeedback', (MB_LABELS[platform] || platform) + ' copied.', 'ok');
+    }).catch(() => {
+      showFeedback('mbFeedback', 'Could not copy — select the text manually.', 'err');
+    });
   }
 
   // ════════════════════════════════════
