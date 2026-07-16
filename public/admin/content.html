@@ -644,6 +644,7 @@
         <option value="member">Member</option>
         <option value="client">Client</option>
         <option value="facilitator">Facilitator</option>
+        <option value="admin">Admin</option>
       </select>
     </div>
     <div><label>Access <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(Locked — still shows up, can't be opened. Hidden — doesn't show up at all.)</span></label>
@@ -2341,7 +2342,7 @@ function addLE(){
   const d=document.createElement('div');d.className='lesson-entry';d.id=`le-${n}`;
   d.innerHTML=`<div class="lesson-entry-num">${n}</div>
     <input type="text" placeholder="Lesson title" id="le-t-${n}"/>
-    <select id="le-v-${n}"><option value="client">Client</option><option value="facilitator">Facilitator</option><option value="guest">Guest</option></select>
+    <select id="le-v-${n}"><option value="registered">Explorer</option><option value="member">Member</option><option value="client" selected>Client</option><option value="facilitator">Facilitator</option><option value="admin">Admin</option></select>
     <button class="lesson-entry-rm" onclick="document.getElementById('le-${n}').remove()">×</button>`;
   document.getElementById('lessonEntries').appendChild(d);
 }

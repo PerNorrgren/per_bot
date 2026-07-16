@@ -1032,15 +1032,15 @@ function emailFacilitatorRequestDeferred(request) {
 app.get('/login',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 
-// Per Bot 17 — short promo link. Redirects to /register with the code
-// attached as a query param; register.html reads it and sends it through
-// to /api/register as promoCode, which resolveOfferForSignup() validates
-// properly server-side (this route doesn't check validity itself — an
-// expired/unknown code just falls through to the standing default offer
-// or the hard 14-day fallback, same as any other invalid code would).
-// Placeholder until the full marketing landing page (Sales & Marketing
-// phase 3) exists — at that point this should redirect there instead.
-app.get('/promo/:code', (req, res) => res.redirect('/register?promoCode=' + encodeURIComponent(req.params.code)));
+// Per Bot 17 (phase 3) — public marketing landing page. Reads ?promoCode=
+// itself client-side (same pattern as register.html) to show the right
+// offer copy before anyone commits to signing up.
+app.get('/promotions', (req, res) => res.sendFile(path.join(__dirname, 'public', 'promotions.html')));
+
+// Short promo link. Now points at the real landing page instead of
+// jumping straight to the form — the page's own CTA carries the code
+// through to /register from there.
+app.get('/promo/:code', (req, res) => res.redirect('/promotions?promoCode=' + encodeURIComponent(req.params.code)));
 // Multi-skin branding (Per Bot 20) — same files, same everything, just a
 // slug in the URL for the page's own JS to notice and brand itself
 // against (see skin-inject.js). The slug isn't validated here — an
@@ -1258,6 +1258,20 @@ function resolveOfferForSignup(promoCode) {
 app.get('/api/public/offers/:code', (req, res) => {
   const offer = db.getOfferByCode(req.params.code);
   if (!offer || !db.isOfferCurrentlyValid(offer)) return res.status(404).json({ error: 'This offer is no longer available.' });
+  res.json({
+    code: offer.code, name: offer.name, headline: offer.headline,
+    description: offer.description, trial_days: offer.trial_days,
+  });
+});
+
+// Public lookup for the standing default offer (no code) — used by the
+// promotions landing page when someone arrives with no specific campaign
+// link, so the page still has real headline/trial copy to show rather
+// than a hardcoded fallback that could drift out of sync with whatever
+// the default offer actually says in the admin UI.
+app.get('/api/public/default-offer', (req, res) => {
+  const offer = db.getDefaultOffer();
+  if (!offer || !db.isOfferCurrentlyValid(offer)) return res.status(404).json({ error: 'No active default offer.' });
   res.json({
     code: offer.code, name: offer.name, headline: offer.headline,
     description: offer.description, trial_days: offer.trial_days,
