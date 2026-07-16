@@ -481,13 +481,17 @@
      full authoring tool. -->
 <div class="modal-overlay" id="textEditorModal">
   <div class="modal" style="max-width:820px">
-    <h3 id="teTitle">Edit text content</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <h3 id="teTitle" style="margin:0">Edit text content</h3>
+      <button onclick="closeModal('textEditorModal')" title="Close" aria-label="Close" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:22px;cursor:pointer;line-height:1;padding:0 4px">✕</button>
+    </div>
     <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:4px">This is the raw HTML source — delete whole lines to remove leftover header/footer content, then Save. There's no undo once saved, so it's worth a quick look at the file with Open first if you're unsure.</div>
     <input type="hidden" id="teFileId"/>
     <textarea id="teContent" style="width:100%;min-height:420px;font-family:monospace;font-size:12.5px;white-space:pre;overflow-wrap:normal;overflow-x:auto"></textarea>
     <div class="modal-err" id="teErr"></div>
     <div class="modal-btns">
-      <button class="modal-cancel" onclick="closeModal('textEditorModal')">Cancel</button>
+      <button class="modal-cancel" onclick="closeModal('textEditorModal')">Close</button>
+      <button class="btn sm" id="teNextBtn" onclick="nextTextEditor()">Next →</button>
       <button class="modal-ok" id="teSaveBtn" onclick="saveTextEditor()">Save</button>
     </div>
   </div>
@@ -1105,7 +1109,13 @@ function filterLib(){
   ));
 }
 
+// Per Bot 16 — captured here rather than only inside filterLib, since
+// loadAll's initial render calls renderLib directly without going
+// through filterLib. This is what the text editor's Next button walks
+// through — whatever's currently filtered/visible, in the same order.
+let _currentLibFiltered = [];
 function renderLib(files){
+  _currentLibFiltered = files;
   if (_libView === 'cards') renderLibCards(files); else renderLibList(files);
   updateBulkBar();
 }
@@ -1763,6 +1773,7 @@ async function openTextEditor(id, title) {
   document.getElementById('teTitle').textContent = 'Edit text content — ' + title;
   document.getElementById('teContent').value = 'Loading…';
   document.getElementById('teErr').textContent = '';
+  document.getElementById('teSaveBtn').textContent = 'Save';
   openModal('textEditorModal');
   try {
     const res = await fetch(`/api/content/library/${id}/playback-url`);
@@ -1781,20 +1792,43 @@ async function saveTextEditor() {
   const content = document.getElementById('teContent').value;
   const err = document.getElementById('teErr');
   const btn = document.getElementById('teSaveBtn');
-  btn.disabled = true; err.textContent = '';
+  btn.disabled = true; err.textContent = ''; btn.textContent = 'Saving…';
   try {
     const res = await fetch(`/api/content/library/${id}/text-content`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
     const data = await res.json();
-    if (!res.ok || data.error) { err.textContent = data.error || 'Could not save.'; return; }
-    closeModal('textEditorModal');
+    if (!res.ok || data.error) { err.textContent = data.error || 'Could not save.'; btn.textContent = 'Save'; return; }
+    // Per Bot 16 — used to close the modal on a successful save, which
+    // meant reopening the next file by hand every time when working
+    // through a long list of blogs one by one. Stays open now; the
+    // button just confirms it saved, and Next moves on to the next file.
+    btn.textContent = 'Saved';
+    setTimeout(() => { if (btn.textContent === 'Saved') btn.textContent = 'Save'; }, 2000);
   } catch(e) {
     err.textContent = 'Could not save — network error.';
+    btn.textContent = 'Save';
   } finally {
     btn.disabled = false;
   }
+}
+
+// Per Bot 16 — walks the same filtered/ordered list currently showing in
+// the admin Library view (_currentLibFiltered, captured by renderLib
+// regardless of how it got filtered), restricted to the text/html files
+// this editor actually works on. Lets Per work down a long list of blog
+// posts one after another without closing and reopening each one by hand.
+function nextTextEditor() {
+  const currentId = document.getElementById('teFileId').value;
+  const textFiles = (_currentLibFiltered || []).filter(f => f.file_type === 'text/html');
+  const idx = textFiles.findIndex(f => f.id === currentId);
+  if (idx === -1 || idx === textFiles.length - 1) {
+    document.getElementById('teErr').textContent = 'No more files in this list.';
+    return;
+  }
+  const next = textFiles[idx + 1];
+  openTextEditor(next.id, next.title);
 }
 
 async function doUpload(){

@@ -1374,7 +1374,21 @@
     if (tab === 'timer')   loadTimerSounds();
     if (tab === 'breathing') loadBreathingPatterns();
     if (tab === 'courses') { closeCourseDetail(); loadCourses(); }
-    if (tab === 'library') { loadContent().then(() => { loadPractices(); loadLibraryMeditations(); }); switchLibrarySub(_currentLibSub); }
+    // Per Bot 16 — pressing Library again used to just reload whatever
+    // sub-tab/drill-down state was already active (a theme's file list
+    // still open, a Read & Watch filter still applied, a reader overlay
+    // still showing) rather than resetting to the top, unlike Courses
+    // which always snaps back to its own top list. Now resets the same
+    // way: closes anything open and clears the drill-down state before
+    // reloading, landing back at the top of whichever sub-tab was
+    // selected rather than wherever it was left.
+    if (tab === 'library') {
+      if (document.getElementById('playerOverlay').classList.contains('visible')) closePlayerOverlay();
+      _medTheme = null;
+      _contentFilter = 'all';
+      loadContent().then(() => { loadPractices(); loadLibraryMeditations(); });
+      switchLibrarySub(_currentLibSub);
+    }
     if (tab === 'you')     switchYouSub(_currentYouSub);
   }
 
