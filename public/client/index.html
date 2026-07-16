@@ -29,8 +29,17 @@
       border:1px solid rgba(255,255,255,0.13);
       border-radius:22px; overflow:hidden;
       display:flex; flex-direction:column;
-      max-height:90vh;
-      max-height:90dvh; /* Per Bot 15 — dvh tracks the real available viewport
+      /* Per Bot 16 — was max-height only, so the glass shrank to fit
+         whatever the current tab's content needed rather than
+         consistently filling the space available to it. Fine for a tab
+         with a long list (it naturally grows tall anyway), but a
+         sparser view — the document reader being the one Per hit —
+         ended up as a noticeably smaller box with a lot of background
+         showing around it. height (not just max-height) keeps every
+         page the same size regardless of how much content it happens to
+         have; the inner content area already scrolls independently. */
+      height:90vh;
+      height:90dvh; /* Per Bot 15 — dvh tracks the real available viewport
         directly from the browser on every layout pass, no JS or resize
         listener needed at all; browsers without dvh support just ignore
         this line and keep the vh value above. */
@@ -62,7 +71,7 @@
       .bnav-icon { font-size: 40px; }
     }
     @media (min-width: 1000px) {
-      .glass { max-width: min(92vw, 1600px); max-height: 85vh; max-height: 85dvh; }
+      .glass { max-width: min(92vw, 1600px); height: 85vh; height: 85dvh; }
       .header { padding: 28px 40px 20px; }
       .wordmark { font-size: 14px; }
       .tab { font-size: 15px; padding: 17px; }
