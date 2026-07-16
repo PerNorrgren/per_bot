@@ -343,18 +343,21 @@
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div class="config-label">Background</div>
-        <select id="vgBackground" class="inline-input" style="width:100%" onchange="vgToggleCustomUrl()">
-          <option value="0">Forest light</option>
-          <option value="1">Still water</option>
-          <option value="2">Quiet shoreline</option>
-          <option value="3">Soft hillside</option>
-          <option value="4">Warm horizon</option>
-          <option value="custom">Custom image URL…</option>
+        <select id="vgBackgroundMode" class="inline-input" style="width:100%" onchange="vgToggleCustomUrls()">
+          <option value="default">App photo set — soft crossfade (same as the sign-in screens)</option>
+          <option value="custom">Custom images — paste URLs, one per line</option>
         </select>
-        <input type="text" class="inline-input" id="vgCustomUrl" style="width:100%;display:none" placeholder="https://…"/>
+        <textarea class="inline-input" id="vgCustomUrls" rows="3" style="width:100%;display:none;resize:vertical" placeholder="https://…&#10;https://…"></textarea>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div class="config-label">Length</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" id="vgLengthSec" class="inline-input" style="width:120px" min="5" max="600" placeholder="auto"/>
+          <span style="font-size:12px;color:rgba(255,255,255,0.35)">seconds — leave blank to match the narration exactly</span>
+        </div>
       </div>
       <div class="config-row" style="border-bottom:none">
-        <div class="config-desc" style="max-width:340px">Rendering plays in real time — a 60-second message takes about 60 seconds to render.</div>
+        <div class="config-desc" style="max-width:340px">Rendering plays in real time — a 60-second video takes about 60 seconds to render.</div>
         <div class="config-val">
           <button class="btn primary" id="vgGenerateBtn" onclick="vgGenerate()">🎬 Render video</button>
         </div>
@@ -1304,8 +1307,8 @@
     document.getElementById('vgSource').value = pick.body;
   }
 
-  function vgToggleCustomUrl() {
-    document.getElementById('vgCustomUrl').style.display = document.getElementById('vgBackground').value === 'custom' ? '' : 'none';
+  function vgToggleCustomUrls() {
+    document.getElementById('vgCustomUrls').style.display = document.getElementById('vgBackgroundMode').value === 'custom' ? '' : 'none';
   }
 
   // Splits into readable on-screen lines — prefers the source's own line
@@ -1336,17 +1339,34 @@
       const img = new Image();
       img.crossOrigin = 'anonymous'; // needed for captureStream to read canvas pixels drawn from a cross-origin image
       img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Could not load that background image.'));
+      img.onerror = () => reject(new Error('Could not load background image: ' + url));
       img.src = url;
     });
+  }
+
+  // cover-fit draw at a given opacity — shared by every slide so the
+  // crossfade below is just two calls with different alpha/scale.
+  function vgDrawCoverImage(ctx, img, W, H, scale, alpha) {
+    const iw = img.width, ih = img.height;
+    const canvasRatio = W / H, imgRatio = iw / ih;
+    let drawW, drawH;
+    if (imgRatio > canvasRatio) { drawH = H * scale; drawW = drawH * imgRatio; }
+    else { drawW = W * scale; drawH = drawW / imgRatio; }
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(img, (W - drawW) / 2, (H - drawH) / 2, drawW, drawH);
+    ctx.globalAlpha = 1;
   }
 
   async function vgGenerate() {
     const sourceText = document.getElementById('vgSource').value.trim();
     if (!sourceText) { showFeedback('vgFeedback', 'Paste a message to narrate first.', 'err'); return; }
-    const bgSel = document.getElementById('vgBackground').value;
-    const bgUrl = bgSel === 'custom' ? document.getElementById('vgCustomUrl').value.trim() : VG_BACKGROUNDS[parseInt(bgSel, 10)];
-    if (!bgUrl) { showFeedback('vgFeedback', 'Enter a background image URL.', 'err'); return; }
+    const bgMode = document.getElementById('vgBackgroundMode').value;
+    let bgUrls = VG_BACKGROUNDS;
+    if (bgMode === 'custom') {
+      bgUrls = document.getElementById('vgCustomUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+      if (!bgUrls.length) { showFeedback('vgFeedback', 'Paste at least one image URL.', 'err'); return; }
+    }
+    const requestedLength = parseInt(document.getElementById('vgLengthSec').value, 10) || 0;
 
     const btn = document.getElementById('vgGenerateBtn');
     btn.disabled = true; const origHtml = btn.innerHTML;
@@ -1363,18 +1383,31 @@
         audioEl.onloadedmetadata = resolve;
         audioEl.onerror = () => reject(new Error('Could not load the narration audio.'));
       });
-      const duration = audioEl.duration;
+      const narrationDuration = audioEl.duration;
+      // The requested length is a target, never a way to cut narration
+      // short — if it's shorter than the actual voice-over, the video
+      // runs the full narration length anyway and just says so.
+      const duration = Math.max(requestedLength || 0, narrationDuration);
+      if (requestedLength && requestedLength < narrationDuration) {
+        showFeedback('vgFeedback', `Narration runs ${narrationDuration.toFixed(0)}s — using that instead of the shorter length requested, rather than cutting it off.`, 'ok');
+      }
+      // Any extra time beyond the narration plays out as background +
+      // brand mark only, once the last line has faded — see the tail
+      // handling in draw() below.
+      const tailStart = narrationDuration;
 
       btn.innerHTML = 'Loading background…';
-      const img = await vgLoadImage(bgUrl);
+      const images = await Promise.all(bgUrls.map(vgLoadImage));
 
       const lines = vgSplitLines(sourceText);
       const totalChars = lines.reduce((s, l) => s + l.length, 0) || 1;
       // Proportional to length, with a floor so a very short line still
       // gets enough time to actually be read rather than flashing past.
-      const minSlice = Math.min(1.6, duration / lines.length);
-      let slices = lines.map(l => Math.max(minSlice, duration * (l.length / totalChars)));
-      const sliceScale = duration / slices.reduce((a, b) => a + b, 0);
+      // Timed against the narration itself, not the padded-out total —
+      // text should always track the voice, never the requested length.
+      const minSlice = Math.min(1.6, narrationDuration / lines.length);
+      let slices = lines.map(l => Math.max(minSlice, narrationDuration * (l.length / totalChars)));
+      const sliceScale = narrationDuration / slices.reduce((a, b) => a + b, 0);
       slices = slices.map(s => s * sliceScale);
       const lineStarts = []; let acc = 0;
       slices.forEach(s => { lineStarts.push(acc); acc += s; });
@@ -1382,6 +1415,16 @@
       const canvas = document.getElementById('vgCanvas');
       const ctx = canvas.getContext('2d');
       const W = canvas.width, H = canvas.height;
+
+      // Slideshow timing — same soft-crossfade feel as the sign-in
+      // screens, just compressed to fit however long this video actually
+      // runs rather than the app's fixed 9s-per-slide pace (a 20s video
+      // cycling through 5 slides at 9s each would barely get past slide
+      // two). Each slide gets an even share of the total duration, with a
+      // fixed 1.5s crossfade into the next — capped so the crossfade
+      // itself never eats more than a third of a very short slide.
+      const perSlide = duration / images.length;
+      const crossfadeDur = Math.min(1.5, perSlide / 3);
 
       const videoStream = canvas.captureStream(30);
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1408,16 +1451,18 @@
       let rafId;
       function draw() {
         const elapsed = (performance.now() - startTime) / 1000;
-        const t = Math.min(1, elapsed / duration);
 
-        // Background, slow Ken Burns zoom (1.0 -> 1.06) — cover-fit crop.
-        const scale = 1 + 0.06 * t;
-        const iw = img.width, ih = img.height;
-        const canvasRatio = W / H, imgRatio = iw / ih;
-        let drawW, drawH;
-        if (imgRatio > canvasRatio) { drawH = H * scale; drawW = drawH * imgRatio; }
-        else { drawW = W * scale; drawH = drawW / imgRatio; }
-        ctx.drawImage(img, (W - drawW) / 2, (H - drawH) / 2, drawW, drawH);
+        // Background slideshow — current slide plus a soft crossfade into
+        // the next, each slide also carrying its own slow Ken Burns zoom
+        // (1.0 -> 1.06) the same way the single-image version did.
+        const slidePos = (elapsed % duration) / perSlide;
+        const idx = Math.floor(slidePos) % images.length;
+        const nextIdx = (idx + 1) % images.length;
+        const withinSlide = (slidePos - Math.floor(slidePos)) * perSlide;
+        const fadeAlpha = withinSlide > perSlide - crossfadeDur ? (withinSlide - (perSlide - crossfadeDur)) / crossfadeDur : 0;
+        const zoomFor = frac => 1 + 0.06 * frac;
+        vgDrawCoverImage(ctx, images[idx], W, H, zoomFor(withinSlide / perSlide), 1);
+        if (fadeAlpha > 0) vgDrawCoverImage(ctx, images[nextIdx], W, H, zoomFor(0), fadeAlpha);
 
         // Legibility veil — darker band through the middle where text sits.
         const grad = ctx.createLinearGradient(0, 0, 0, H);
@@ -1427,33 +1472,40 @@
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, W, H);
 
-        // Current line, fading in/out at its slice boundaries.
-        let idx = lineStarts.findIndex((s, i) => elapsed >= s && (i === lineStarts.length - 1 || elapsed < lineStarts[i + 1]));
-        if (idx === -1) idx = lines.length - 1;
-        const sliceStart = lineStarts[idx], sliceEnd = idx < slices.length - 1 ? lineStarts[idx + 1] : duration;
-        const fadeDur = 0.4;
-        let alpha = 1;
-        if (elapsed - sliceStart < fadeDur) alpha = (elapsed - sliceStart) / fadeDur;
-        else if (sliceEnd - elapsed < fadeDur) alpha = (sliceEnd - elapsed) / fadeDur;
-        alpha = Math.max(0, Math.min(1, alpha));
+        // Text only plays out across the narration itself; once elapsed
+        // passes tailStart there's no more line to show, and the frame
+        // is just background + brand mark for whatever's left of the
+        // requested length.
+        if (elapsed < tailStart) {
+          let idx2 = lineStarts.findIndex((s, i) => elapsed >= s && (i === lineStarts.length - 1 || elapsed < lineStarts[i + 1]));
+          if (idx2 === -1) idx2 = lines.length - 1;
+          const sliceStart = lineStarts[idx2], sliceEnd = idx2 < slices.length - 1 ? lineStarts[idx2 + 1] : narrationDuration;
+          const fadeDur = 0.4;
+          let alpha = 1;
+          if (elapsed - sliceStart < fadeDur) alpha = (elapsed - sliceStart) / fadeDur;
+          else if (sliceEnd - elapsed < fadeDur) alpha = (sliceEnd - elapsed) / fadeDur;
+          alpha = Math.max(0, Math.min(1, alpha));
 
-        ctx.font = '600 58px Georgia, serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = `rgba(255,255,255,${0.94 * alpha})`;
-        const wrapped = vgWrapText(ctx, lines[idx], W - 160);
-        const lineHeight = 78;
-        const blockH = wrapped.length * lineHeight;
-        wrapped.forEach((wl, i) => {
-          ctx.fillText(wl, W / 2, H / 2 - blockH / 2 + lineHeight / 2 + i * lineHeight);
-        });
+          ctx.font = '600 58px Georgia, serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = `rgba(255,255,255,${0.94 * alpha})`;
+          const wrapped = vgWrapText(ctx, lines[idx2], W - 160);
+          const lineHeight = 78;
+          const blockH = wrapped.length * lineHeight;
+          wrapped.forEach((wl, i) => {
+            ctx.fillText(wl, W / 2, H / 2 - blockH / 2 + lineHeight / 2 + i * lineHeight);
+          });
+        }
 
-        // Brand wordmark, bottom of frame.
+        // Brand wordmark, bottom of frame — present throughout, including
+        // the silent tail if there is one.
         ctx.font = '400 30px Georgia, serif';
         ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.textAlign = 'center';
         ctx.fillText(_vgBrandName, W / 2, H - 90);
 
-        if (elapsed < duration && !audioEl.ended) {
+        if (elapsed < duration) {
           rafId = requestAnimationFrame(draw);
         } else {
           cancelAnimationFrame(rafId);
@@ -1461,8 +1513,6 @@
         }
       }
       draw();
-
-      audioEl.onended = () => { if (rafId) cancelAnimationFrame(rafId); recorder.stop(); };
 
       await donePromise;
       audioCtx.close();
