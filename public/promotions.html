@@ -47,6 +47,8 @@
 
     .hero-inner { position:relative; z-index:1; max-width:720px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:22px; }
     .hero-eyebrow { font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:rgba(180,230,200,0.65); }
+    .hero-logo { height:64px; width:auto; margin-bottom:6px; opacity:0.96; }
+    .hero-tagline { font-size:19px; color:rgba(216,140,105,0.92); font-style:italic; letter-spacing:0.01em; margin-bottom:2px; }
     .hero-signal-line { font-size:15px; color:rgba(200,240,220,0.7); font-style:italic; max-width:480px; }
     .hero-title { font-size:clamp(34px, 6vw, 58px); line-height:1.15; color:rgba(255,255,255,0.95); font-weight:normal; }
     .hero-title em { font-style:normal; color:rgba(180,230,200,0.85); }
@@ -94,6 +96,12 @@
        replacing the teal accent wholesale. */
     .included-free-tag { display:inline-block; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(216,140,105,0.9); border:1px solid rgba(200,105,74,0.45); border-radius:20px; padding:4px 12px; margin-bottom:24px; }
 
+    /* ── Three Truths Told (Per Bot 17 session 3) ── */
+    .truths-section { text-align:center; padding:70px 28px 20px; }
+    .truths-eyebrow { font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:rgba(216,140,105,0.65); margin-bottom:28px; }
+    .truths-lines { display:flex; flex-direction:column; gap:18px; max-width:700px; margin:0 auto; }
+    .truths-line { font-size:clamp(19px, 2.6vw, 26px); line-height:1.5; color:rgba(255,255,255,0.88); font-family:Georgia, serif; }
+
     /* ── Final CTA ── */
     .final-cta { text-align:center; padding:100px 28px 60px; display:flex; flex-direction:column; align-items:center; gap:18px; }
     .final-title { font-size:clamp(24px, 3.6vw, 36px); font-weight:normal; color:rgba(255,255,255,0.92); max-width:560px; line-height:1.3; }
@@ -123,12 +131,22 @@
     <div class="veil"></div>
     <div class="breath-wrap"><div class="breath-ring r2"></div><div class="breath-ring"></div><div class="breath-ring r3"></div></div>
     <div class="hero-inner">
+      <img class="hero-logo" src="/assets/mmpm-mark.png" alt=""/>
       <div class="hero-eyebrow">FELT · FIBRE</div>
-      <div class="hero-signal-line" id="heroSignalLine" style="display:none"></div>
+      <div class="hero-tagline">The practice of being enough</div>
       <h1 class="hero-title" id="heroTitle">A practice that meets your body — <em>not the other way round</em></h1>
       <p class="hero-sub" id="heroSub">Guided practices, a daily message from Per, and a companion that's actually there when you need it — built on how your nervous system really works.</p>
       <a class="hero-cta" id="heroCta" href="/register">Begin exploring — free</a>
       <div class="hero-trust">No card needed to start · Cancel any time</div>
+    </div>
+  </section>
+
+  <section class="truths-section">
+    <div class="truths-eyebrow">Three Truths Told</div>
+    <div class="truths-lines">
+      <div class="truths-line">You don't have to earn the right to rest.</div>
+      <div class="truths-line">You don't have to keep doing this alone.</div>
+      <div class="truths-line">You don't have to prove you matter.</div>
     </div>
   </section>
 
@@ -259,17 +277,12 @@
   function stripHtmlLocal(s) { return (s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
   function escHtmlLocal(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  // Per Bot 17 phase 6 — rotating line from the line bank, shown above
-  // the main headline. Purely additive: if none are active yet, or the
-  // fetch fails, the line just stays hidden and the page reads fine
-  // without it — this was never load-bearing copy.
-  fetch('/api/public/signal-line').then(r => r.ok ? r.json() : null).then(line => {
-    if (line && line.text) {
-      const el = document.getElementById('heroSignalLine');
-      el.textContent = line.text;
-      el.style.display = 'block';
-    }
-  }).catch(() => {});
+  // Per Bot 17 session 3 — the hero now carries a fixed tagline and the
+  // dedicated Three Truths Told section below it, so the random rotating
+  // line-bank line was removed from here to avoid two different taglines
+  // competing for attention. The line bank itself is untouched — still
+  // feeds the message builder and could come back here later behind a
+  // toggle if a rotating hero is wanted again.
 
   // ── Slideshow (same pattern as register.html/join.html) ──
   const defaultSlides = [
