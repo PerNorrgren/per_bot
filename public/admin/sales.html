@@ -384,6 +384,19 @@
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
+  // Was missing entirely from this file — copied from comms.html/content.html
+  // where it already existed. This is the actual bug behind "Re-check
+  // current trends" appearing to hang: the scan was running and finishing
+  // correctly server-side the whole time, but the very first line of
+  // runTrendScan() (showFeedback('lineFeedback', 'Running a live search…'))
+  // threw immediately because this function didn't exist yet, so nothing
+  // after it — including the fetch that actually starts the scan — ever ran.
+  function showFeedback(id, msg, type) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg; el.className = 'feedback ' + type;
+    setTimeout(() => { el.textContent = ''; el.className = 'feedback'; }, 4000);
+  }
 
   // ════════════════════════════════════
   // Membership plans
