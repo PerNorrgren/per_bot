@@ -570,7 +570,7 @@
     <h3 id="ncTitle">New course</h3>
     <input type="hidden" id="editCourseId"/>
     <div><label>Title</label><input type="text" id="cTitle" placeholder="e.g. Finding Joy — 10 Sessions"/></div>
-    <div><label>Description</label><textarea id="cDesc" rows="2"></textarea></div>
+    <div><label>Description <button type="button" class="btn sm" style="margin-left:8px;vertical-align:middle" onclick="rewriteCourseDescForSelling()" id="rewriteDescBtn">✨ Rewrite for selling</button></label><textarea id="cDesc" rows="2"></textarea></div>
     <div class="modal-row">
       <div><label>Category</label><select id="cCat" onchange="populateSub('cCat','cSub')"><option value="">Select…</option></select></div>
       <div><label>Subcategory</label><select id="cSub"><option value="">Select…</option></select></div>
@@ -891,6 +891,35 @@ function setRichEditorContent(textareaId, html) {
 // ── AI Help (Per Bot 8) — same shared endpoint as every other editor in
 // the app; full rewrite applied directly, no accept/discard step, easy to
 // amend afterward if it's not quite right.
+// Per Bot 17 (session 2) — "Rewrite for selling", using the house
+// standard written this session (Voice Guide Section 19 / Writing
+// Methodology Part Thirteen) rather than the generic ai-polish endpoint
+// above, which has no opinion about selling copy specifically. Reads
+// whatever's actually in the editor right now — works on a brand new
+// course with nothing written yet, or an existing clinical-sounding one.
+async function rewriteCourseDescForSelling() {
+  const btn = document.getElementById('rewriteDescBtn');
+  const title = document.getElementById('cTitle').value.trim();
+  if (!title) { appAlert('Give the course a title first — the rewrite needs it.'); return; }
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try {
+    const html = document.getElementById('cDesc').value;
+    const res = await fetch('/api/admin/course-description-polish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, html })
+    });
+    const data = await res.json();
+    if (data.error) { appAlert(data.error); return; }
+    const paras = data.text.split(/\n{2,}/).map(p => `<p>${escHtml(p.trim())}</p>`).join('');
+    setRichEditorContent('cDesc', paras);
+  } catch(e) {
+    appAlert('Something went wrong — please try again.');
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
 async function runAiPolish(quill, btn) {
   if (!btn) return;
   if (!quill.getText().trim()) { appAlert('Write something first.'); return; }

@@ -1278,6 +1278,14 @@ app.get('/api/public/default-offer', (req, res) => {
   });
 });
 
+// Public — every free, currently open course, for the /promotions
+// "what's included" section. See getPublicOpenCourses for why this is
+// broader than the featured-courses carousel.
+app.get('/api/public/open-courses', (req, res) => {
+  try { res.json(db.getPublicOpenCourses()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
@@ -4402,6 +4410,26 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     res.json({ html: reply.trim() });
   } catch(e) {
     console.error('ai-polish error:', e.message);
+    res.status(500).json({ error: 'Could not get a suggestion right now. Please try again.' });
+  }
+});
+
+// Per Bot 17 (session 2) — "Rewrite for selling" on the course editor.
+// Separate from /api/ai-polish above (that one's a generic clarity pass
+// shared by every rich editor and has no opinion about selling copy).
+// Reads the description live from whatever's in the editor when clicked,
+// so it always works from the actual current text — no separate database
+// export/import step needed.
+app.post('/api/admin/course-description-polish', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { title, html } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'Give the course a title first.' });
+    const plain = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const userMessage = `COURSE TITLE: ${title.trim()}\n\nCURRENT DESCRIPTION: ${plain || '(none yet — write one from the title alone)'}`;
+    const reply = await callClaudeRaw(prompts.COURSE_DESCRIPTION_SELLING_PROMPT, [{ role: 'user', content: userMessage }], 500);
+    res.json({ text: reply.trim() });
+  } catch(e) {
+    console.error('course-description-polish error:', e.message);
     res.status(500).json({ error: 'Could not get a suggestion right now. Please try again.' });
   }
 });

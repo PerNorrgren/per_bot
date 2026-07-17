@@ -16,7 +16,9 @@
     a { color:inherit; }
 
     /* ── Top nav ── */
-    .topnav { position:fixed; top:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:20px 28px; }
+    .topnav { position:fixed; top:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:16px 28px; }
+    .topnav-brand { display:flex; align-items:center; gap:10px; }
+    .topnav-mark { height:34px; width:auto; opacity:0.95; }
     .topnav-word { font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.75); }
     .topnav-login { font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); text-decoration:none; border:1px solid rgba(255,255,255,0.18); border-radius:20px; padding:8px 18px; transition:all 0.2s; }
     .topnav-login:hover { color:rgba(255,255,255,0.8); border-color:rgba(255,255,255,0.35); }
@@ -56,7 +58,7 @@
     /* ── Trial banner ── */
     .banner { position:relative; z-index:1; margin:-40px auto 0; max-width:900px; padding:26px 32px; border-radius:18px; background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.25); text-align:center; display:flex; flex-direction:column; gap:6px; }
     .banner-days { font-size:15px; letter-spacing:0.06em; color:rgba(200,240,220,0.95); }
-    .banner-days b { font-size:19px; }
+    .banner-days b { font-size:19px; color:rgba(216,140,105,0.95); }
     .banner-sub { font-size:13px; color:rgba(255,255,255,0.4); }
 
     /* ── Section shell ── */
@@ -80,6 +82,18 @@
     .step-title { font-size:16px; color:rgba(255,255,255,0.82); }
     .step-text { font-size:13.5px; line-height:1.6; color:rgba(255,255,255,0.42); max-width:260px; }
 
+    /* ── What's included (Per Bot 17 session 2) ── */
+    .included-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:18px; }
+    .included-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:20px 22px; }
+    .included-card-title { font-size:15px; color:rgba(255,255,255,0.85); margin-bottom:6px; }
+    .included-card-cat { font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(180,230,200,0.5); margin-bottom:8px; }
+    .included-card-desc { font-size:13px; line-height:1.55; color:rgba(255,255,255,0.42); }
+    /* Orange trial (Per Bot 17 session 2) — Per's own established
+       secondary accent from the Voice Guide document design (C8694A),
+       tried here on two small, easily-compared elements rather than
+       replacing the teal accent wholesale. */
+    .included-free-tag { display:inline-block; font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(216,140,105,0.9); border:1px solid rgba(200,105,74,0.45); border-radius:20px; padding:4px 12px; margin-bottom:24px; }
+
     /* ── Final CTA ── */
     .final-cta { text-align:center; padding:100px 28px 60px; display:flex; flex-direction:column; align-items:center; gap:18px; }
     .final-title { font-size:clamp(24px, 3.6vw, 36px); font-weight:normal; color:rgba(255,255,255,0.92); max-width:560px; line-height:1.3; }
@@ -94,7 +108,13 @@
 <body>
 
   <div class="topnav">
-    <span class="topnav-word" data-brand="name">Deeper Mindfulness</span>
+    <div class="topnav-brand">
+      <!-- Per Bot 17 (session 2) — orange/logo trial. Contained to this
+           page only, not applied site-wide, per "try it and see how it
+           feels" rather than a full commitment. -->
+      <img class="topnav-mark" src="/assets/mmpm-mark.png" alt=""/>
+      <span class="topnav-word" data-brand="name">Deeper Mindfulness</span>
+    </div>
     <a class="topnav-login" href="/login">Log in</a>
   </div>
 
@@ -142,6 +162,13 @@
         <div class="feature-text">Every practice is grounded in predictive processing and nervous-system science — never wellness cliché, always something real underneath it.</div>
       </div>
     </div>
+  </section>
+
+  <section class="section" id="includedSection" style="display:none">
+    <div class="section-eyebrow">No paywall, no fine print</div>
+    <div class="section-title" style="text-align:center">Everything below is included free</div>
+    <div style="text-align:center"><span class="included-free-tag">Full access from day one — not a limited preview</span></div>
+    <div class="included-grid" id="includedGrid"></div>
   </section>
 
   <section class="section" style="padding-top:0">
@@ -212,6 +239,25 @@
     }
   }
   loadOfferCopy();
+
+  // Per Bot 17 (session 2) — "what's included," pulled live from every
+  // free course with an open instance. Section stays hidden if there's
+  // nothing to show yet, rather than rendering an empty claim.
+  fetch('/api/public/open-courses').then(r => r.ok ? r.json() : []).then(courses => {
+    if (!courses || !courses.length) return;
+    const grid = document.getElementById('includedGrid');
+    grid.innerHTML = courses.map(c => `
+      <div class="included-card">
+        ${c.category_name ? `<div class="included-card-cat">${escHtmlLocal(c.category_name)}</div>` : ''}
+        <div class="included-card-title">${escHtmlLocal(c.title)}</div>
+        ${c.description ? `<div class="included-card-desc">${escHtmlLocal(stripHtmlLocal(c.description)).slice(0, 140)}</div>` : ''}
+      </div>
+    `).join('');
+    document.getElementById('includedSection').style.display = 'block';
+  }).catch(() => {});
+
+  function stripHtmlLocal(s) { return (s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function escHtmlLocal(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   // Per Bot 17 phase 6 — rotating line from the line bank, shown above
   // the main headline. Purely additive: if none are active yet, or the

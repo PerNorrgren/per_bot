@@ -3902,6 +3902,22 @@ function setSignupOfferId(userId, offerId) {
   save();
 }
 
+// Per Bot 17 (session 2) — public "what's included" listing for the
+// promotions page. Deliberately broader than getFeaturedCourses above:
+// this returns every free course with an open instance, not just the
+// hand-curated carousel subset — the promotions page is making a
+// completeness claim ("here's everything included"), so it needs the
+// full list, not the curated highlight.
+function getPublicOpenCourses() {
+  return queryAll(`SELECT c.id, c.title, c.description, cat.name as category_name
+    FROM courses c
+    LEFT JOIN categories cat ON c.category_id=cat.id
+    JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open' AND (ci.price_cents IS NULL OR ci.price_cents=0)
+    WHERE c.access_status='visible'
+    GROUP BY c.id
+    ORDER BY c.sort_order, c.title`);
+}
+
 // ── Signal lines (Per Bot 17 phase 6) ──
 function getAllSignalLines() {
   return queryAll('SELECT * FROM signal_lines ORDER BY created_at DESC');
@@ -4908,7 +4924,7 @@ module.exports = {
   setKnowledgeTopicContent, getKnowledgeTopicContent, getKnowledgeTopicAllContent,
   linkKnowledgeTopics, unlinkKnowledgeTopics, getLinkedKnowledgeTopics,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,

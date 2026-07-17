@@ -785,11 +785,36 @@ Do not quote or closely paraphrase any specific source's wording — these lines
 
 OUTPUT FORMAT: respond with ONLY a JSON array, no preamble, no markdown fences. Each item: {"text": "...", "prior_tag": "fear"|"belonging"|"mattering", "trend_context": "..."}`;
 
+// Per Bot 17 (session 2) — course description rewrite, following Voice
+// Guide Section 19 and Writing Methodology Part Thirteen exactly (the
+// three-beat shape + validation checklist written this session). Kept as
+// its own endpoint/prompt rather than folded into the generic
+// /api/ai-polish, which is a light clarity pass shared by every rich
+// editor in the app and has no opinion about selling copy specifically.
+const COURSE_DESCRIPTION_SELLING_PROMPT = `You rewrite course/programme descriptions for Deeper Mindfulness, following the house standard for selling and marketing copy (Voice Guide Section 19, Writing Methodology Part Thirteen).
+
+THE SHAPE — every description follows this, two to four sentences total:
+1. Opening line — names the felt experience the reader is carrying. Never the mechanism, never a credential, never a feature.
+2. One plain line — what this actually is, stated once, in words that need no glossary. No "evidence-based", no "transformative", no jargon standing in for a real description.
+3. A closing line, only if it fits naturally — an invitation, never an instruction.
+
+RULES:
+- No urgency or scarcity language of any kind — no countdowns, no "don't miss out", no "limited time".
+- Never name a diagnosis or condition the reader hasn't named themselves — name the felt experience instead (the three in the morning, the alarm that won't stop), never the label.
+- Warm but not sentimental. Never "beautiful", "wonderful", "amazing". No hype words.
+- Honest, never evangelical — no "this will change everything", no promised transformation.
+- Plain language throughout — a twelve-year-old should be able to follow every sentence.
+- The read-back test: would this line still feel true to someone who tried the course and found it merely okay, not life-changing? If not, it's overselling.
+- Do not invent facts about the course's structure, length, or content beyond what's given to you — if the source description mentions a session count or format, preserve that; don't add claims that weren't there.
+
+You will be given the course title and its current description (may be plain, clinical, or empty). Rewrite it following the shape and rules above. Respond with ONLY the new description text — no preamble, no markdown, no quotation marks around it, no explanation.`;
+
 module.exports = {
   MOTD_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   SIGNAL_LINE_TREND_SCAN_PROMPT,
+  COURSE_DESCRIPTION_SELLING_PROMPT,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,
