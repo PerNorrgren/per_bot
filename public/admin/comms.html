@@ -285,6 +285,7 @@
         <textarea class="inline-input" id="mbSource" rows="5" style="width:100%;resize:vertical" placeholder="Paste source content here…"></textarea>
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn sm" onclick="mbPullTodayMotd()">Pull today's MOTD</button>
+          <button class="btn sm" onclick="mbInsertSignalLine()">Insert a signal line</button>
         </div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
@@ -1106,6 +1107,22 @@
       || motdData[0];
     if (!pick) { showFeedback('mbFeedback', 'Nothing in the queue to pull from.', 'err'); return; }
     document.getElementById('mbSource').value = pick.body;
+  }
+
+  // Per Bot 17 phase 6 — pulls a random line from the active line bank
+  // straight into the source box, prepended above whatever's already
+  // there (rather than replacing it) so it can seed a post or be layered
+  // onto an existing draft.
+  async function mbInsertSignalLine() {
+    try {
+      const res = await fetch('/api/public/signal-line');
+      if (!res.ok) throw new Error('No active lines in the bank yet — add some in Sales & Marketing.');
+      const line = await res.json();
+      const el = document.getElementById('mbSource');
+      el.value = line.text + (el.value.trim() ? '\n\n' + el.value : '');
+    } catch (e) {
+      showFeedback('mbFeedback', e.message, 'err');
+    }
   }
 
   function mbToggleCtaFields() {

@@ -754,10 +754,42 @@ const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a clo
 - CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
 - On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
+// Per Bot 17 phase 6 — the "re-check current trends" tool. Given live
+// web search results, this identifies genuinely CURRENT cultural/
+// emotional pressures (not evergreen ones already covered — the seed
+// lines already handle rest/belonging/mattering in general) and writes
+// new short lines in the same "three truths" register, each tied to one
+// of the three primary priors.
+const SIGNAL_LINE_TREND_SCAN_PROMPT = `You write short signal-aware lines for Deeper Mindfulness, in the same register as these three (already written, don't repeat their exact territory):
+- "You don't have to earn the right to rest."
+- "You don't have to keep doing this alone."
+- "You don't have to prove you matter."
+
+VOICE RULES — same as everywhere else in this brand, no exceptions:
+- Warm but not sentimental. Never "beautiful", "wonderful", "amazing".
+- Precise but not clinical. Never expose a brain-science term, "prior", "nervous system regulation", or any diagnostic word to the reader — the line has to work for someone who has never heard of predictive processing.
+- Invitational, not instructional. Offer, don't command. Never "you should" or "you need to."
+- Honest, never evangelical. No "this will change everything", no promises of transformation, no reassurance clichés, no urgency/scarcity language ("don't miss out", "limited time").
+- Culturally universal, religiously and spiritually neutral — no "soul", "blessing", "universe", prayer language, no single nation's holidays or idiom.
+- Plain language. Every line should sound like something a person could actually say out loud to a friend, not marketing copy.
+- Short — one sentence, occasionally two. These are not paragraphs.
+
+TASK: You have web search available. Use it to find what's genuinely weighing on people RIGHT NOW — current, dated pressures (economic, technological, social, political, whatever is actually live), not timeless generic stress. Look for 3-5 real, specific current pressures a general adult audience is carrying.
+
+For each pressure you find:
+1. Identify which of these three underlying fears it's really an expression of: FEAR (safety/threat — the sense that you have to stay alert, braced, on guard), BELONGING (isolation — the sense that you're carrying this alone, that connection is unsafe or unavailable), MATTERING (inadequacy — the sense that you have to prove your worth, that you're not enough as you are).
+2. Write ONE short line, in the exact register above, that speaks to the underlying fear WITHOUT naming the specific current-events trigger. The line should still make sense in five years — it's the emotional register that's current, not a reference to a headline. Never name a specific news event, company, technology, or political figure in the line itself.
+3. Write one brief note (under 20 words) on what current pressure prompted this line — this is for internal review only, never shown to a reader.
+
+Do not quote or closely paraphrase any specific source's wording — these lines must be entirely your own original phrasing, informed by the pattern you're seeing, not lifted from any article.
+
+OUTPUT FORMAT: respond with ONLY a JSON array, no preamble, no markdown fences. Each item: {"text": "...", "prior_tag": "fear"|"belonging"|"mattering", "trend_context": "..."}`;
+
 module.exports = {
   MOTD_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
+  SIGNAL_LINE_TREND_SCAN_PROMPT,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,

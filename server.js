@@ -4181,6 +4181,35 @@ async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 250
 // Bounded at 6 rounds — a real conversation calling get_knowledge more
 // than a handful of times in one reply is very unlikely to be genuinely
 // still going deeper rather than looping.
+// Per Bot 17 phase 6 — same shape as anthropicFetch, but with Anthropic's
+// native web_search tool enabled. This is a server-executed tool —
+// Anthropic runs the search itself inside the same call and the results
+// come back already resolved as extra content blocks ahead of the final
+// text block, so this needs no tool-result loop (unlike
+// anthropicFetchWithTools below, which is for custom client-side tools
+// like get_knowledge that Anthropic can't resolve on its own).
+async function anthropicFetchWithWebSearch(systemPrompt, messages, maxTokens, timeoutMs = 45000) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+      'Connection': 'close',
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODEL, max_tokens: maxTokens, system: systemPrompt, messages,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const data = await response.json();
+  if (!data.content) throw new Error(JSON.stringify(data));
+  const textBlock = data.content.find(b => b.type === 'text');
+  if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+  return textBlock.text;
+}
+
 async function anthropicFetchWithTools(systemPrompt, messages, tools, toolResolvers, maxTokens) {
   let convo = [...messages];
   for (let round = 0; round < 6; round++) {
@@ -7976,6 +8005,76 @@ app.get('/api/admin/social-posts', auth.requireAuthApi(['admin']), (req, res) =>
 app.delete('/api/admin/social-posts/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteSocialPost(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Signal lines / line bank (Per Bot 17 phase 6) ──
+app.get('/api/admin/signal-lines', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllSignalLines()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/signal-lines', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { text, prior_tag, status } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Line text is required.' });
+    const id = db.createSignalLine({ text: text.trim(), prior_tag: prior_tag || 'general', status: status || 'active', source: 'manual' });
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/signal-lines/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.updateSignalLine(req.params.id, req.body); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/signal-lines/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteSignalLine(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per Bot 17 phase 6 — "re-check current trends." Runs a real, live web
+// search (Anthropic's native tool, not a canned prompt) to find what's
+// genuinely weighing on people right now, then writes new lines in the
+// established voice, tied to whichever of the three primary priors each
+// pressure actually expresses. Everything lands as status='draft' —
+// never auto-activated — so nothing reaches /promotions, the message
+// builder, or anywhere else without Per reviewing it first. Same
+// JSON-parse-with-fence-fallback pattern used throughout this file.
+app.post('/api/admin/signal-lines/trend-scan', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const raw = await anthropicFetchWithWebSearch(
+      prompts.SIGNAL_LINE_TREND_SCAN_PROMPT,
+      [{ role: 'user', content: 'Find current trends and write the lines now.' }],
+      2000
+    );
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch {
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      parsed = JSON.parse(cleaned);
+    }
+    if (!Array.isArray(parsed)) throw new Error('Unexpected response shape from trend scan.');
+    const created = parsed
+      .filter(l => l && typeof l.text === 'string' && l.text.trim())
+      .map(l => db.createSignalLine({
+        text: l.text.trim(),
+        prior_tag: ['fear', 'belonging', 'mattering'].includes(l.prior_tag) ? l.prior_tag : 'general',
+        status: 'draft',
+        source: 'trend-scan',
+        trend_context: l.trend_context || null,
+      }));
+    res.json({ ok: true, count: created.length });
+  } catch (e) {
+    console.error('signal-lines trend-scan error:', e);
+    res.status(500).json({ error: 'Could not run the trend scan: ' + (e.message || 'unknown error') });
+  }
+});
+
+// Public — a single random active line, for /promotions and anywhere
+// else on the public site that wants to rotate one in. Deliberately
+// minimal (just the text) since nothing beyond the line itself is ever
+// meant to be publicly visible.
+app.get('/api/public/signal-line', (req, res) => {
+  const line = db.getRandomActiveSignalLine();
+  if (!line) return res.status(404).json({ error: 'No active lines.' });
+  res.json({ text: line.text });
 });
 
 function maybeSendMotdLowStockAlert(remaining) {

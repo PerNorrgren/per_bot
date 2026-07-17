@@ -245,6 +245,60 @@
     </div>
   </div>
 
+  <!-- Line bank (Per Bot 17 phase 6) -->
+  <div>
+    <div class="section-label">Line bank</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Signal-aware lines</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm" onclick="runTrendScan()" id="trendScanBtn">Re-check current trends</button>
+          <button class="btn sm primary" onclick="openLineModal()">+ New line</button>
+        </div>
+      </div>
+      <div style="padding:12px 20px 0"><div class="feedback" id="lineFeedback"></div></div>
+      <div style="padding:8px 20px 4px;display:flex;gap:16px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.5)"><input type="radio" name="lineStatusF" value="active" checked onchange="renderLines()"/> Active</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.5)"><input type="radio" name="lineStatusF" value="draft" onchange="renderLines()"/> Drafts (awaiting review)</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.5)"><input type="radio" name="lineStatusF" value="archived" onchange="renderLines()"/> Archived</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.5)"><input type="radio" name="lineStatusF" value="" onchange="renderLines()"/> All</label>
+      </div>
+      <div id="lineList"><div class="loading">Loading...</div></div>
+    </div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
+      Active lines rotate into /promotions and are available to the message builder. "Re-check current trends" runs a live web search for what's genuinely weighing on people right now and drafts new lines from it — everything it finds lands as a draft for review here first, nothing goes live automatically.
+    </div>
+  </div>
+
+  <!-- Line modal -->
+  <div class="modal-overlay" id="lineModalOverlay">
+    <div class="modal">
+      <h3 id="lineModalTitle">New line</h3>
+      <div>
+        <label>Text</label>
+        <textarea id="lineText" style="min-height:70px" placeholder="You don't have to…"></textarea>
+      </div>
+      <div>
+        <label>Speaks to</label>
+        <select id="linePriorTag">
+          <option value="general">General</option>
+          <option value="fear">Fear / safety</option>
+          <option value="belonging">Belonging / isolation</option>
+          <option value="mattering">Mattering / inadequacy</option>
+        </select>
+      </div>
+      <div id="lineTrendContextWrap" style="display:none">
+        <label>Trend context (why this was suggested — internal only)</label>
+        <div id="lineTrendContextText" style="font-size:12px;color:rgba(255,255,255,0.4);padding:8px 0"></div>
+      </div>
+      <div class="modal-err" id="lineModalErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('lineModalOverlay')">Cancel</button>
+        <button class="modal-ok" id="lineModalSaveBtn" onclick="saveLine()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Offer modal -->
   <div class="modal-overlay" id="offerModalOverlay">
     <div class="modal">
@@ -521,7 +575,122 @@
     loadOffers();
   }
 
-  checkAuth().then(() => { loadPlans(); loadOffers(); });
+  // ════════════════════════════════════
+  // Line bank (Per Bot 17 phase 6)
+  // ════════════════════════════════════
+  let linesData = [];
+  let editingLineId = null;
+
+  async function loadLines() {
+    const res = await fetch('/api/admin/signal-lines');
+    linesData = await res.json();
+    renderLines();
+  }
+
+  const LINE_PRIOR_LABELS = { fear: 'Fear / safety', belonging: 'Belonging', mattering: 'Mattering', general: 'General' };
+  const LINE_STATUS_BADGE = { active: 'badge-approved', draft: 'badge-sent', archived: 'badge-draft' };
+
+  function renderLines() {
+    const filter = document.querySelector('input[name="lineStatusF"]:checked').value;
+    const el = document.getElementById('lineList');
+    const rows = filter ? linesData.filter(l => l.status === filter) : linesData;
+    if (!rows.length) { el.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+    el.innerHTML = rows.map(l => `
+      <div class="plan-row" style="flex-wrap:wrap;align-items:flex-start">
+        <div class="plan-name" style="flex:2">
+          "${escHtml(l.text)}"
+          <div style="font-size:11px;color:rgba(255,255,255,0.28);margin-top:4px">
+            <span class="badge ${LINE_STATUS_BADGE[l.status] || ''}">${l.status}</span>
+            &nbsp;${LINE_PRIOR_LABELS[l.prior_tag] || l.prior_tag}
+            ${l.source === 'trend-scan' ? '&nbsp;· trend scan' : ''}
+          </div>
+          ${l.trend_context ? `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:4px;font-style:italic">Why: ${escHtml(l.trend_context)}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${l.status === 'draft' ? `
+            <button class="btn sm primary" onclick="setLineStatus('${l.id}','active')">Approve</button>
+            <button class="btn sm danger" onclick="deleteLineConfirm('${l.id}')">Discard</button>
+          ` : l.status === 'active' ? `
+            <button class="btn sm" onclick="openLineModal('${l.id}')">Edit</button>
+            <button class="btn sm" onclick="setLineStatus('${l.id}','archived')">Archive</button>
+          ` : `
+            <button class="btn sm" onclick="setLineStatus('${l.id}','active')">Reactivate</button>
+            <button class="btn sm danger" onclick="deleteLineConfirm('${l.id}')">Delete</button>
+          `}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openLineModal(editId) {
+    editingLineId = editId || null;
+    document.getElementById('lineModalErr').textContent = '';
+    const source = editId ? linesData.find(l => l.id === editId) : null;
+    document.getElementById('lineModalTitle').textContent = editId ? 'Edit line' : 'New line';
+    document.getElementById('lineText').value = source ? source.text : '';
+    document.getElementById('linePriorTag').value = source ? source.prior_tag : 'general';
+    const trendWrap = document.getElementById('lineTrendContextWrap');
+    if (source && source.trend_context) {
+      trendWrap.style.display = '';
+      document.getElementById('lineTrendContextText').textContent = source.trend_context;
+    } else {
+      trendWrap.style.display = 'none';
+    }
+    openModal('lineModalOverlay');
+  }
+
+  async function saveLine() {
+    const text = document.getElementById('lineText').value.trim();
+    const prior_tag = document.getElementById('linePriorTag').value;
+    const err = document.getElementById('lineModalErr');
+    if (!text) { err.textContent = 'Line text is required.'; return; }
+    const btn = document.getElementById('lineModalSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const res = editingLineId
+        ? await fetch(`/api/admin/signal-lines/${editingLineId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, prior_tag }) })
+        : await fetch('/api/admin/signal-lines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, prior_tag, status: 'active' }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not save.');
+      closeModal('lineModalOverlay');
+      loadLines();
+    } catch (e) {
+      err.textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save';
+    }
+  }
+
+  async function setLineStatus(id, status) {
+    await fetch(`/api/admin/signal-lines/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    loadLines();
+  }
+
+  async function deleteLineConfirm(id) {
+    if (!(await appConfirm('Delete this line permanently?'))) return;
+    await fetch(`/api/admin/signal-lines/${id}`, { method: 'DELETE' });
+    loadLines();
+  }
+
+  async function runTrendScan() {
+    const btn = document.getElementById('trendScanBtn');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Searching…';
+    showFeedback('lineFeedback', 'Running a live search for current trends — this takes a moment.', 'ok');
+    try {
+      const res = await fetch('/api/admin/signal-lines/trend-scan', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Trend scan failed.');
+      showFeedback('lineFeedback', `Found ${data.count} new line${data.count === 1 ? '' : 's'} — check the Drafts filter to review them.`, 'ok');
+      document.querySelector('input[name="lineStatusF"][value="draft"]').checked = true;
+      await loadLines();
+    } catch (e) {
+      showFeedback('lineFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  checkAuth().then(() => { loadPlans(); loadOffers(); loadLines(); });
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Sales & Marketing';</script>
 <script src="/tomte-widget.js" defer></script>
