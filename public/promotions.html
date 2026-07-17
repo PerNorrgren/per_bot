@@ -16,9 +16,7 @@
     a { color:inherit; }
 
     /* ── Top nav ── */
-    .topnav { position:fixed; top:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:16px 28px; }
-    .topnav-brand { display:flex; align-items:center; gap:10px; }
-    .topnav-mark { height:34px; width:auto; opacity:0.95; }
+    .topnav { position:fixed; top:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:20px 28px; }
     .topnav-word { font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.75); }
     .topnav-login { font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); text-decoration:none; border:1px solid rgba(255,255,255,0.18); border-radius:20px; padding:8px 18px; transition:all 0.2s; }
     .topnav-login:hover { color:rgba(255,255,255,0.8); border-color:rgba(255,255,255,0.35); }
@@ -47,8 +45,8 @@
 
     .hero-inner { position:relative; z-index:1; max-width:720px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:22px; }
     .hero-eyebrow { font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:rgba(180,230,200,0.65); }
-    .hero-logo { height:64px; width:auto; margin-bottom:6px; opacity:0.96; }
     .hero-tagline { font-size:clamp(28px, 4.2vw, 42px); line-height:1.2; color:rgba(220,148,112,0.95); font-style:italic; letter-spacing:0.005em; margin-bottom:8px; }
+    .hero-support-line { font-size:15px; color:rgba(255,255,255,0.5); max-width:460px; line-height:1.6; margin-top:-2px; }
     .hero-signal-line { font-size:15px; color:rgba(200,240,220,0.7); font-style:italic; max-width:480px; }
     .hero-title { font-size:clamp(34px, 6vw, 58px); line-height:1.15; color:rgba(255,255,255,0.95); font-weight:normal; }
     .hero-title em { font-style:normal; color:rgba(180,230,200,0.85); }
@@ -116,13 +114,7 @@
 <body>
 
   <div class="topnav">
-    <div class="topnav-brand">
-      <!-- Per Bot 17 (session 2) — orange/logo trial. Contained to this
-           page only, not applied site-wide, per "try it and see how it
-           feels" rather than a full commitment. -->
-      <img class="topnav-mark" src="/assets/mmpm-mark.png" alt=""/>
-      <span class="topnav-word" data-brand="name">Deeper Mindfulness</span>
-    </div>
+    <span class="topnav-word" data-brand="name">Deeper Mindfulness</span>
     <a class="topnav-login" href="/login">Log in</a>
   </div>
 
@@ -131,9 +123,9 @@
     <div class="veil"></div>
     <div class="breath-wrap"><div class="breath-ring r2"></div><div class="breath-ring"></div><div class="breath-ring r3"></div></div>
     <div class="hero-inner">
-      <img class="hero-logo" src="/assets/mmpm-mark.png" alt=""/>
       <div class="hero-eyebrow">FELT · FIBRE</div>
       <div class="hero-tagline">The practice of being enough</div>
+      <div class="hero-support-line">For stress that doesn't have a name yet, and calm that doesn't need one either.</div>
       <h1 class="hero-title" id="heroTitle">A practice that meets your body — <em>not the other way round</em></h1>
       <p class="hero-sub" id="heroSub">Guided practices, a daily message from Per, and a companion that's actually there when you need it — built on how your nervous system really works.</p>
       <a class="hero-cta" id="heroCta" href="/register">Begin exploring — free</a>
