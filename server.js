@@ -4425,7 +4425,8 @@ app.post('/api/admin/course-description-polish', auth.requireAuthApi(['admin']),
     const { title, html } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Give the course a title first.' });
     const plain = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const userMessage = `COURSE TITLE: ${title.trim()}\n\nCURRENT DESCRIPTION: ${plain || '(none yet — write one from the title alone)'}`;
+    const language = getAdminLanguage();
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCOURSE TITLE: ${title.trim()}\n\nCURRENT DESCRIPTION: ${plain || '(none yet — write one from the title alone)'}`;
     const reply = await callClaudeRaw(prompts.COURSE_DESCRIPTION_SELLING_PROMPT, [{ role: 'user', content: userMessage }], 500);
     res.json({ text: reply.trim() });
   } catch(e) {
@@ -4439,7 +4440,8 @@ app.post('/api/admin/offer-copy-polish', auth.requireAuthApi(['admin']), async (
   try {
     const { name, trialDays, headline, description } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Give the offer a name first.' });
-    const userMessage = `OFFER NAME: ${name.trim()}\nTRIAL DAYS: ${trialDays || 14}\n\nCURRENT HEADLINE: ${(headline || '').trim() || '(none yet)'}\nCURRENT DESCRIPTION: ${(description || '').trim() || '(none yet)'}`;
+    const language = getAdminLanguage();
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nOFFER NAME: ${name.trim()}\nTRIAL DAYS: ${trialDays || 14}\n\nCURRENT HEADLINE: ${(headline || '').trim() || '(none yet)'}\nCURRENT DESCRIPTION: ${(description || '').trim() || '(none yet)'}`;
     const raw = await callClaudeRaw(prompts.OFFER_COPY_SELLING_PROMPT, [{ role: 'user', content: userMessage }], 400);
     let parsed;
     try { parsed = JSON.parse(raw); }

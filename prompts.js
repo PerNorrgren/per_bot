@@ -806,6 +806,7 @@ RULES:
 - Plain language throughout — a twelve-year-old should be able to follow every sentence.
 - The read-back test: would this line still feel true to someone who tried the course and found it merely okay, not life-changing? If not, it's overselling.
 - Do not invent facts about the course's structure, length, or content beyond what's given to you — if the source description mentions a session count or format, preserve that; don't add claims that weren't there.
+- LANGUAGE: you will be told which language to write in. If it isn't English, write as a native speaker of that language and culture actually would — not a word-for-word translation of English phrasing. Where a direct translation of an English idiom would sound unnatural, foreign, or carry a different connotation in that language, adapt the phrasing to what genuinely resonates in that culture while keeping the same underlying meaning and the same voice rules above. Never guess at a cultural reference you aren't confident about — when in doubt, stay plain and universal rather than reaching for an idiom that might land wrong.
 
 You will be given the course title and its current description (may be plain, clinical, or empty). Rewrite it following the shape and rules above. Respond with ONLY the new description text — no preamble, no markdown, no quotation marks around it, no explanation.`;
 
@@ -827,6 +828,7 @@ RULES:
 - Honest, never evangelical — no "this will change everything".
 - Plain language — no brain-science or clinical terms exposed to the reader.
 - The read-back test: would this still feel true to someone who tried it and found it merely okay?
+- LANGUAGE: you will be told which language to write in. If it isn't English, write as a native speaker of that language and culture actually would — not a word-for-word translation of English phrasing. Where a direct translation would sound unnatural or land differently in that culture, adapt the phrasing while keeping the same meaning and voice rules. Stay plain and universal rather than reaching for a cultural reference you aren't confident about.
 
 You will be given the offer's internal name, trial length in days, and its current headline/description (may be empty). Write both fresh, following the shape and rules above — keep the actual trial-day number if one is given, don't invent a different one.
 
