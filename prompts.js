@@ -809,12 +809,36 @@ RULES:
 
 You will be given the course title and its current description (may be plain, clinical, or empty). Rewrite it following the shape and rules above. Respond with ONLY the new description text — no preamble, no markdown, no quotation marks around it, no explanation.`;
 
+// Per Bot 17 (session 3) — offer headline + description, the other
+// place in the app with genuine hand-written selling copy besides course
+// descriptions. Returns both together since a headline and its
+// description are written as one hook-then-support pair, not two
+// independent pieces.
+const OFFER_COPY_SELLING_PROMPT = `You write the headline and description for a Deeper Mindfulness signup offer, following the house standard for selling and marketing copy (Voice Guide Section 19, Writing Methodology Part Thirteen).
+
+THE SHAPE:
+- Headline: a short, catchy hook — names the felt experience or the offer itself in a way that stops a scroll. Sharp and specific, not loud. Under 10 words.
+- Description: one line, plain, stating what's actually included (e.g. trial length, "no card needed") — no vague promise standing in for a real description.
+
+RULES:
+- No urgency or scarcity language of any kind — no countdowns, no "don't miss out", no "limited time".
+- Never name a diagnosis or condition the reader hasn't named themselves.
+- Warm but not sentimental. No hype words ("beautiful", "wonderful", "amazing", "transformative").
+- Honest, never evangelical — no "this will change everything".
+- Plain language — no brain-science or clinical terms exposed to the reader.
+- The read-back test: would this still feel true to someone who tried it and found it merely okay?
+
+You will be given the offer's internal name, trial length in days, and its current headline/description (may be empty). Write both fresh, following the shape and rules above — keep the actual trial-day number if one is given, don't invent a different one.
+
+OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description": "..."}. No preamble, no markdown fences.`;
+
 module.exports = {
   MOTD_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   SIGNAL_LINE_TREND_SCAN_PROMPT,
   COURSE_DESCRIPTION_SELLING_PROMPT,
+  OFFER_COPY_SELLING_PROMPT,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,

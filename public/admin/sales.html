@@ -312,7 +312,7 @@
         <input type="text" id="offerCode" placeholder="e.g. insta-launch"/>
       </div>
       <div>
-        <label>Headline (shown to the visitor)</label>
+        <label>Headline (shown to the visitor) <button type="button" class="btn sm" style="margin-left:6px;vertical-align:middle" onclick="rewriteOfferCopy()" id="rewriteOfferBtn">✨ Rewrite for selling</button></label>
         <input type="text" id="offerHeadline" placeholder="e.g. 14 Days Free — No Card Needed"/>
       </div>
       <div>
@@ -528,6 +528,36 @@
     document.getElementById('offerModalOverlay').dataset.clonedFrom = (cloneFromId && !editId) ? cloneFromId : '';
 
     openModal('offerModalOverlay');
+  }
+
+  // Per Bot 17 (session 3) — same idea as the course editor's "Rewrite
+  // for selling" button. Rewrites both headline and description together
+  // since they're written as one hook-then-support pair.
+  async function rewriteOfferCopy() {
+    const btn = document.getElementById('rewriteOfferBtn');
+    const name = document.getElementById('offerName').value.trim();
+    if (!name) { appAlert('Give the offer a name first — the rewrite needs it.'); return; }
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const res = await fetch('/api/admin/offer-copy-polish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          trialDays: document.getElementById('offerTrialDays').value,
+          headline: document.getElementById('offerHeadline').value,
+          description: document.getElementById('offerDescription').value,
+        })
+      });
+      const data = await res.json();
+      if (data.error) { appAlert(data.error); return; }
+      if (data.headline) document.getElementById('offerHeadline').value = data.headline;
+      if (data.description) document.getElementById('offerDescription').value = data.description;
+    } catch(e) {
+      appAlert('Something went wrong — please try again.');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
   }
 
   async function saveOffer() {
