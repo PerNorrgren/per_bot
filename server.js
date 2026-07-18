@@ -8102,9 +8102,15 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
     }
 
     if (includeCta && offer) {
-      const link = `${APP_URL}/promo/${offer.code}`;
+      // Per Bot 18 — every produced link now carries a source tag, no
+      // exceptions. Each platform gets its own link tagged with that
+      // platform's name, so a single generation batch (e.g. Facebook +
+      // LinkedIn + Instagram in one go) still shows up as three separately
+      // comparable rows in the funnel report, not one merged untagged hit.
       Object.keys(parsed).forEach(k => {
-        if (typeof parsed[k] === 'string') parsed[k] = parsed[k].split('{{SIGNUP_LINK}}').join(link);
+        if (typeof parsed[k] !== 'string') return;
+        const link = `${APP_URL}/promo/${offer.code}?src=${encodeURIComponent(k)}`;
+        parsed[k] = parsed[k].split('{{SIGNUP_LINK}}').join(link);
       });
     }
 

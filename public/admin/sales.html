@@ -550,12 +550,13 @@
   }
 
   function copyOfferLink(code) {
-    // Per Bot 18 — optional ?src= tag so the same offer can be posted to
-    // several platforms/messages and compared in the funnel report below,
-    // without needing a separate offer per platform.
-    const src = prompt('Tag this specific link for the funnel report (e.g. "instagram-post-3"), or leave blank:', '');
+    // Per Bot 18 — every produced link carries a source tag now, no
+    // exceptions — an untagged link is a hit the funnel report can never
+    // attribute to anything.
+    const src = prompt('Tag this link for the funnel report — where is it going? (e.g. "instagram-post-3", "email-nudge-day5")', '');
     if (src === null) return; // cancelled
-    const link = location.origin + '/promo/' + code + (src.trim() ? ('?src=' + encodeURIComponent(src.trim())) : '');
+    if (!src.trim()) { appAlert('A tag is required — every link needs to be attributable to something. Try again with a short label for where this is going.'); return; }
+    const link = location.origin + '/promo/' + code + '?src=' + encodeURIComponent(src.trim());
     navigator.clipboard.writeText(link).then(() => appAlert('Copied: ' + link)).catch(() => appAlert(link));
   }
 
