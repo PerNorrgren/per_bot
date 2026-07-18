@@ -1286,6 +1286,26 @@ app.get('/api/public/open-courses', (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 18 — /promotions showcase clip. Genuinely public, zero login —
+// only ever serves a file an admin explicitly picked as an offer's (or the
+// global default's) showcase, never anything else in the library. Same
+// r2/disk URL branching as the authenticated playback-url route, just
+// without any access check beyond "is this file currently a showcase".
+app.get('/api/public/showcase-file', async (req, res) => {
+  try {
+    const file = db.resolveShowcaseFile(req.query.promoCode || null);
+    if (!file) return res.status(404).json({ error: 'No showcase file set.' });
+    if (file.storage_type === 'r2') {
+      const url = await media.getPlaybackUrl(file.filename, {});
+      return res.json({ url, title: file.title, fileType: file.file_type, expiresIn: 600 });
+    }
+    res.json({ url: `/uploads/${file.filename}`, title: file.title, fileType: file.file_type, expiresIn: null });
+  } catch (e) {
+    console.error('showcase-file error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Self-registration ──
 app.post('/api/register', async (req, res) => {
   try {
@@ -7705,9 +7725,17 @@ app.get('/api/setup/config', auth.requireAuthApi(['admin']), (req, res) => {
 // colour, currency...) back to their defaults. This endpoint is the safe
 // alternative: only touches whatever fields are actually present in the
 // request body, nothing else.
+// Per Bot 18 — minimal GET so the Sales & Marketing page can show the
+// current default showcase file without pulling in the full setup-wizard
+// config shape. Deliberately narrow rather than a general settings GET.
+app.get('/api/admin/settings/default-showcase-file', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json({ defaultShowcaseFileId: db.getAppConfig()?.default_showcase_file_id || null }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });

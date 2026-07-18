@@ -1489,6 +1489,14 @@ async function getDb() {
     // Off (0) by default — nothing changes for existing content until an
     // admin explicitly flags a specific file per lesson.
     "ALTER TABLE lesson_file_refs ADD COLUMN free_preview INTEGER DEFAULT 0",
+    // Per Bot 18 — /promotions showcase clip. A file explicitly picked as
+    // an offer's showcase (or the standing global default below) is safe
+    // to serve with zero login at all — the act of an admin selecting it
+    // here IS the permission, rather than adding yet another per-file
+    // public flag. Nullable; the page simply shows nothing if neither
+    // resolves to a file.
+    "ALTER TABLE offers ADD COLUMN showcase_file_id TEXT",
+    "ALTER TABLE app_config ADD COLUMN default_showcase_file_id TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3910,8 +3918,8 @@ function createOffer(fields) {
   const id = crypto.randomUUID();
   if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1');
   getDbSync().run(
-    `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from,showcase_file_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id, fields.name, fields.code,
       fields.headline || null, fields.description || null,
@@ -3920,13 +3928,14 @@ function createOffer(fields) {
       fields.is_default ? 1 : 0,
       fields.active === false ? 0 : 1,
       fields.cloned_from || null,
+      fields.showcase_file_id || null,
     ]
   );
   save();
   return id;
 }
 function updateOffer(id, fields) {
-  const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active'];
+  const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active','showcase_file_id'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1 AND id!=?', [id]);
@@ -3938,6 +3947,29 @@ function deleteOffer(id) {
   getDbSync().run('UPDATE users SET signup_offer_id=NULL WHERE signup_offer_id=?', [id]);
   getDbSync().run('DELETE FROM offers WHERE id=?', [id]);
   save();
+}
+// Per Bot 18 — resolves which file (if any) /promotions should show as its
+// showcase clip. Priority: the specific offer named by the promo code's
+// own showcase_file_id, then the standing default offer's, then the
+// global fallback in app_config. Returns null (page shows nothing) if
+// none of those resolve to a real, non-archived file.
+function resolveShowcaseFile(code) {
+  let fileId = null;
+  if (code) {
+    const offer = getOfferByCode(code);
+    if (offer && isOfferCurrentlyValid(offer) && offer.showcase_file_id) fileId = offer.showcase_file_id;
+  }
+  if (!fileId) {
+    const def = getDefaultOffer();
+    if (def && isOfferCurrentlyValid(def) && def.showcase_file_id) fileId = def.showcase_file_id;
+  }
+  if (!fileId) {
+    const config = getAppConfig();
+    if (config?.default_showcase_file_id) fileId = config.default_showcase_file_id;
+  }
+  if (!fileId) return null;
+  const file = queryOne('SELECT * FROM library_files WHERE id=?', [fileId]);
+  return (file && !file.archived) ? file : null;
 }
 // Attribution-only — used by bulk-import to tag which offer a whole
 // imported batch was assigned, and by /api/register for self-signups that
@@ -4647,7 +4679,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -5047,7 +5079,7 @@ module.exports = {
   // Membership plans
   getMembershipPlans, updateMembershipPlan,
   // Offers (Per Bot 17)
-  getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid,
+  getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid, resolveShowcaseFile,
   createOffer, updateOffer, deleteOffer, setSignupOfferId,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,

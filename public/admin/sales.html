@@ -243,6 +243,14 @@
     <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
       Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration. The public marketing landing page these link to is a separate, later piece; for now the link goes straight to the signup form with the offer applied.
     </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><div class="card-title" style="font-size:13px">Default showcase clip</div></div>
+      <div style="padding:0 20px 16px">
+        <div class="modal-note" style="margin-bottom:8px">Plays on /promotions when the offer that brought someone there doesn't have its own showcase file set. Also used for anyone landing on /promotions directly, with no promo code at all.</div>
+        <select id="defaultShowcaseFile" onchange="saveDefaultShowcaseFile()"><option value="">No default set</option></select>
+        <div class="feedback" id="defaultShowcaseFeedback" style="margin-top:6px"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Line bank (Per Bot 17 phase 6) -->
@@ -337,6 +345,11 @@
         <input type="checkbox" id="offerIsDefault"/>
         Make this the standing default offer (used whenever no specific promo link is given)
       </label>
+      <div style="margin-top:14px">
+        <label>Showcase clip on /promotions (optional)</label>
+        <select id="offerShowcaseFile"><option value="">No file — falls back to the standing default</option></select>
+        <div class="modal-note" style="margin-top:6px">Played, muted, right under the headline on /promotions when someone arrives via this offer's link. Leave unset to use the default clip.</div>
+      </div>
       <div class="modal-err" id="offerModalErr"></div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('offerModalOverlay')">Cancel</button>
@@ -507,6 +520,19 @@
   // existing one (code cleared, dates cleared, default checkbox cleared —
   // a clone should never silently inherit "this is the standing default"
   // or an old campaign's now-stale window).
+  let _filesForShowcaseSelect = null;
+  async function populateShowcaseFileSelect(selectId, selectedId) {
+    // Not cached — same reasoning as populateOfferSelect elsewhere in this
+    // app: the library changes more often than a modal stays open.
+    try { _filesForShowcaseSelect = await (await fetch('/api/content/library')).json(); }
+    catch(e) { _filesForShowcaseSelect = []; }
+    const el = document.getElementById(selectId);
+    if (!el) return;
+    const playable = _filesForShowcaseSelect.filter(f => !f.archived && /^(video|audio)\//.test(f.file_type || ''));
+    el.innerHTML = '<option value="">No file — falls back to the standing default</option>'
+      + playable.map(f => `<option value="${f.id}" ${f.id===selectedId?'selected':''}>${f.title}</option>`).join('');
+  }
+
   function openOfferModal(cloneFromId, editId) {
     editingOfferId = editId || null;
     document.getElementById('offerModalErr').textContent = '';
@@ -523,6 +549,7 @@
     document.getElementById('offerLaunchDate').value   = (source && editId) ? (source.launch_date || '') : '';
     document.getElementById('offerExpiryDate').value   = (source && editId) ? (source.expiry_date || '') : '';
     document.getElementById('offerIsDefault').checked  = (source && editId) ? !!source.is_default : false;
+    populateShowcaseFileSelect('offerShowcaseFile', source ? source.showcase_file_id : null);
     // Stash which offer this clone came from, purely for lineage — read by
     // saveOffer() below, never shown in the UI.
     document.getElementById('offerModalOverlay').dataset.clonedFrom = (cloneFromId && !editId) ? cloneFromId : '';
@@ -569,6 +596,7 @@
     const launch_date = document.getElementById('offerLaunchDate').value || null;
     const expiry_date = document.getElementById('offerExpiryDate').value || null;
     const is_default  = document.getElementById('offerIsDefault').checked;
+    const showcase_file_id = document.getElementById('offerShowcaseFile').value || null;
     const err = document.getElementById('offerModalErr');
 
     if (!name)                       { err.textContent = 'Please name this offer.'; return; }
@@ -578,7 +606,7 @@
     const btn = document.getElementById('offerModalSaveBtn');
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default };
+      const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default, showcase_file_id };
       let res;
       if (editingOfferId) {
         if (code) body.code = code;
@@ -733,7 +761,22 @@
     }
   }
 
-  checkAuth().then(() => { loadPlans(); loadOffers(); loadLines(); });
+  checkAuth().then(() => { loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); });
+
+  async function loadDefaultShowcaseFile() {
+    const current = await fetch('/api/admin/settings/default-showcase-file').then(r=>r.json()).catch(()=>({}));
+    await populateShowcaseFileSelect('defaultShowcaseFile', current.defaultShowcaseFileId || null);
+  }
+  async function saveDefaultShowcaseFile() {
+    const fb = document.getElementById('defaultShowcaseFeedback');
+    const defaultShowcaseFileId = document.getElementById('defaultShowcaseFile').value || null;
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ defaultShowcaseFileId }) });
+      showFeedback('defaultShowcaseFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('defaultShowcaseFeedback', 'Could not save — please try again.', 'err');
+    }
+  }
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Sales & Marketing';</script>
 <script src="/tomte-widget.js" defer></script>

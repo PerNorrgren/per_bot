@@ -110,6 +110,25 @@
     .footer a { color:rgba(255,255,255,0.35); text-decoration:none; }
     .footer a:hover { color:rgba(255,255,255,0.6); }
     .footer-dot { opacity:0.3; }
+    /* ── Showcase clip (Per Bot 18) ── A quiet, tap-to-play video/audio
+       block, not autoplay-with-sound (browsers block that anyway, and it
+       sits oddly against the rest of this page's calm, consent-forward
+       tone). Muted loop for video invites a tap; audio just shows a
+       simple play card. Hidden entirely via JS if no showcase file
+       resolves — never an empty frame. */
+    .showcase-wrap { position:relative; z-index:1; max-width:720px; margin:0 auto; padding:0 24px 20px; display:none; }
+    .showcase-video-frame { position:relative; border-radius:18px; overflow:hidden; border:1px solid rgba(180,230,200,0.2); background:#000; cursor:pointer; }
+    .showcase-video-frame video { width:100%; display:block; max-height:60vh; object-fit:cover; }
+    .showcase-play-veil { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(6,10,8,0.15); transition:opacity 0.25s; }
+    .showcase-play-veil.hidden { opacity:0; pointer-events:none; }
+    .showcase-play-btn { width:64px; height:64px; border-radius:50%; background:rgba(10,15,13,0.55); border:1px solid rgba(255,255,255,0.4); display:flex; align-items:center; justify-content:center; }
+    .showcase-play-btn svg { width:22px; height:22px; fill:rgba(255,255,255,0.92); margin-left:3px; }
+    .showcase-audio-card { display:flex; align-items:center; gap:14px; padding:18px 20px; border-radius:16px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); cursor:pointer; }
+    .showcase-audio-icon { width:44px; height:44px; border-radius:50%; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .showcase-audio-icon svg { width:16px; height:16px; fill:rgba(200,240,220,0.9); margin-left:2px; }
+    .showcase-audio-title { font-size:14px; color:rgba(255,255,255,0.8); }
+    .showcase-audio-sub { font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px; }
+
   </style>
 </head>
 <body>
@@ -133,6 +152,8 @@
       <div class="hero-trust">No card needed to start · Cancel any time</div>
     </div>
   </section>
+
+  <div class="showcase-wrap" id="showcaseWrap"></div>
 
   <section class="truths-section">
     <div class="truths-eyebrow">Three Truths Told</div>
@@ -250,6 +271,54 @@
     }
   }
   loadOfferCopy();
+
+  // Per Bot 18 — showcase clip. Resolved server-side (offer's own file,
+  // then the default offer's, then the global fallback), so this is just
+  // "is there a file, and what kind" — no ranking logic here. Video gets
+  // a muted loop with a tap-to-unmute-and-play overlay (autoplay-with-sound
+  // is blocked by browsers anyway, and doesn't fit the page's tone); audio
+  // gets a simple play card. Hidden entirely if nothing resolves.
+  async function loadShowcaseFile() {
+    const data = await fetch('/api/public/showcase-file' + (promoCode ? ('?promoCode=' + encodeURIComponent(promoCode)) : ''))
+      .then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!data || !data.url) return;
+    const wrap = document.getElementById('showcaseWrap');
+    const isVideo = (data.fileType || '').startsWith('video/');
+    if (isVideo) {
+      wrap.innerHTML = `
+        <div class="showcase-video-frame" id="showcaseFrame">
+          <video id="showcaseVideo" src="${data.url}" muted loop playsinline preload="metadata"></video>
+          <div class="showcase-play-veil" id="showcasePlayVeil">
+            <div class="showcase-play-btn"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          </div>
+        </div>`;
+      const video = document.getElementById('showcaseVideo');
+      const veil = document.getElementById('showcasePlayVeil');
+      video.play().catch(() => {}); // muted autoplay is generally allowed; ignore if blocked
+      document.getElementById('showcaseFrame').addEventListener('click', () => {
+        video.muted = false;
+        video.play().catch(() => {});
+        veil.classList.add('hidden');
+      });
+    } else {
+      wrap.innerHTML = `
+        <div class="showcase-audio-card" id="showcaseFrame">
+          <div class="showcase-audio-icon"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          <div>
+            <div class="showcase-audio-title">${escHtmlLocal(data.title || 'Listen to a moment from inside')}</div>
+            <div class="showcase-audio-sub" id="showcaseAudioSub">Tap to play</div>
+          </div>
+          <audio id="showcaseAudio" src="${data.url}" preload="none" style="display:none"></audio>
+        </div>`;
+      const audio = document.getElementById('showcaseAudio');
+      document.getElementById('showcaseFrame').addEventListener('click', () => {
+        if (audio.paused) { audio.play().catch(() => {}); document.getElementById('showcaseAudioSub').textContent = 'Playing…'; }
+        else { audio.pause(); document.getElementById('showcaseAudioSub').textContent = 'Tap to play'; }
+      });
+    }
+    wrap.style.display = 'block';
+  }
+  loadShowcaseFile();
 
   // Per Bot 17 (session 2) — "what's included," pulled live from every
   // free course with an open instance. Section stays hidden if there's
