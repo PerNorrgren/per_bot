@@ -2474,11 +2474,7 @@ async function openCourseDetail(courseId){
   el.innerHTML=h;openModal('courseDetailModal');
 }
 
-// ── Home carousel order (Per Bot 17) ──
-// Up/down swap rather than drag-and-drop — a plain button click is far
-// less fragile to build and use correctly than wiring drag events, and
-// for a handful of curated courses (never going to be dozens) there's no
-// real benefit to dragging over just clicking an arrow a couple of times.
+// ── Home carousel order (Per Bot 17, converted to drag-and-drop in Per Bot 18) ──
 let _carouselOrderData = [];
 async function openCarouselOrder(){
   openModal('carouselOrderModal');
@@ -2490,9 +2486,9 @@ async function loadCarouselOrder(normalizeIfNeeded){
   const list = await (await fetch('/api/admin/courses/carousel-order')).json();
   // The sort_order column was sitting unused until this panel existed, so
   // the very first time it's opened every featured course likely still
-  // has sort_order=0 — swapping two zeros wouldn't visibly move anything.
-  // Normalise to the order already being shown once, so every course has
-  // a distinct value and the first up/down click actually does something.
+  // has sort_order=0 — dragging one to a new spot wouldn't visibly move
+  // anything if the underlying values are identical. Normalise to the
+  // order already being shown once, so every course has a distinct value.
   const needsNormalising = normalizeIfNeeded && list.length>1 && list.every(c=>(c.sort_order||0)===(list[0].sort_order||0));
   if(needsNormalising){
     for(let i=0;i<list.length;i++){
@@ -2509,24 +2505,47 @@ function renderCarouselOrderList(){
     el.innerHTML='<div class="empty">Nothing qualifies yet — a course needs to be both featured and have an open instance to show up here.</div>';
     return;
   }
-  el.innerHTML = _carouselOrderData.map((c,i)=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px">
+  el.innerHTML = _carouselOrderData.map((c)=>`
+    <div class="carousel-order-row" draggable="true" data-course-id="${c.id}"
+        ondragstart="coDragStart(event)" ondragover="coDragOver(event)" ondrop="coDrop(event)" ondragend="coDragEnd(event)"
+        style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px">
+      <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
       <div style="flex:1;font-size:14px;color:rgba(255,255,255,0.8)">${escHtml(c.title)}</div>
-      <button class="btn sm" onclick="moveCarouselCourse(${i},-1)" ${i===0?'disabled':''}>↑</button>
-      <button class="btn sm" onclick="moveCarouselCourse(${i},1)" ${i===_carouselOrderData.length-1?'disabled':''}>↓</button>
     </div>
   `).join('');
 }
-async function moveCarouselCourse(index,dir){
-  const j=index+dir;
-  if(j<0||j>=_carouselOrderData.length)return;
-  const a=_carouselOrderData[index], b=_carouselOrderData[j];
-  const aOrder=a.sort_order||0, bOrder=b.sort_order||0;
-  await Promise.all([
-    fetch(`/api/content/courses/${a.id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:bOrder})}),
-    fetch(`/api/content/courses/${b.id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:aOrder})}),
-  ]);
-  await loadCarouselOrder(false);
+// Per Bot 18 — same HTML5 drag-and-drop pattern already used for lesson
+// files below (lfDragStart etc): the dragged row moves in the DOM as you
+// drag over other rows, so dragend just reads the final DOM order back
+// out and persists it in one pass. Kept as its own set of functions
+// (rather than reusing the lf* ones) since the two lists could in theory
+// both be mid-drag in different modals.
+let _coDragSrc = null;
+function coDragStart(e) {
+  _coDragSrc = e.currentTarget;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.style.opacity = '0.4';
+}
+function coDragOver(e) {
+  e.preventDefault();
+  const target = e.currentTarget;
+  if (!_coDragSrc || target === _coDragSrc) return;
+  const rect = target.getBoundingClientRect();
+  const after = (e.clientY - rect.top) > (rect.height / 2);
+  target.parentElement.insertBefore(_coDragSrc, after ? target.nextSibling : target);
+}
+function coDrop(e) { e.preventDefault(); }
+async function coDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  const container = e.currentTarget.closest('#carouselOrderList');
+  _coDragSrc = null;
+  if (!container) return;
+  const courseIds = [...container.querySelectorAll('.carousel-order-row')].map(el => el.getAttribute('data-course-id'));
+  await Promise.all(courseIds.map((id, i) =>
+    fetch(`/api/content/courses/${id}/sort-order`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({sortOrder:i})})
+  ));
+  // Re-sync the local order/state to match the drop without a full reload.
+  _carouselOrderData = courseIds.map(id => _carouselOrderData.find(c => c.id === id));
 }
 
 // Per Bot 16 — every lesson's file list used to render fully expanded

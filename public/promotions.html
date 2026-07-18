@@ -84,7 +84,8 @@
 
     /* ── What's included (Per Bot 17 session 2) ── */
     .included-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:18px; }
-    .included-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:20px 22px; }
+    .included-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:20px 22px; transition:border-color 0.25s, transform 0.25s; }
+    .included-card:hover { border-color:rgba(180,230,200,0.3); transform:translateY(-3px); }
     .included-card-title { font-size:15px; color:rgba(255,255,255,0.85); margin-bottom:6px; }
     .included-card-cat { font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(180,230,200,0.5); margin-bottom:8px; }
     .included-card-desc { font-size:13px; line-height:1.55; color:rgba(255,255,255,0.42); }
@@ -203,7 +204,7 @@
     </div>
   </section>
 
-  <section class="final-cta">
+  <section class="final-cta" style="padding-top:0">
     <div class="final-title">Your practice space is ready when you are.</div>
     <a class="hero-cta" id="finalCta" href="/register">Begin exploring — free</a>
     <div class="hero-trust">No card needed to start · Cancel any time</div>

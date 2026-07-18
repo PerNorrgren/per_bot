@@ -8086,10 +8086,19 @@ app.delete('/api/admin/signal-lines/:id', auth.requireAuthApi(['admin']), (req, 
 // JSON-parse-with-fence-fallback pattern used throughout this file.
 app.post('/api/admin/signal-lines/trend-scan', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
+    // Per Bot 18 — this was failing with a 500 on the old 2000-token /
+    // 45s budget. A trend scan needs several rounds of live web search
+    // before Claude ever writes the final JSON, and both the token
+    // ceiling and the timeout were too tight to reliably survive that —
+    // same class of issue as the "Sonnet adaptive thinking draws from the
+    // same max_tokens budget as the reply" lesson learned elsewhere in
+    // this project. Raised both rather than just one, since either alone
+    // could still cut the run short.
     const raw = await anthropicFetchWithWebSearch(
       prompts.SIGNAL_LINE_TREND_SCAN_PROMPT,
       [{ role: 'user', content: 'Find current trends and write the lines now.' }],
-      2000
+      4000,
+      90000
     );
     let parsed;
     try { parsed = JSON.parse(raw); }
@@ -8110,7 +8119,10 @@ app.post('/api/admin/signal-lines/trend-scan', auth.requireAuthApi(['admin']), a
     res.json({ ok: true, count: created.length });
   } catch (e) {
     console.error('signal-lines trend-scan error:', e);
-    res.status(500).json({ error: 'Could not run the trend scan: ' + (e.message || 'unknown error') });
+    const timedOut = e.name === 'TimeoutError' || e.name === 'AbortError';
+    res.status(500).json({ error: timedOut
+      ? 'The trend scan took too long and timed out — this can happen if the search is having a slow moment. Try again.'
+      : 'Could not run the trend scan: ' + (e.message || 'unknown error') });
   }
 });
 

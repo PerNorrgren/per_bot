@@ -116,7 +116,14 @@
     .temp-pass-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.45); margin-bottom:8px; }
     .temp-pass-value { font-size:20px; letter-spacing:0.08em; color:rgba(180,230,200,1); font-family:monospace; }
     .temp-pass-note { font-size:12px; color:rgba(255,255,255,0.3); margin-top:10px; line-height:1.6; }
+
+    /* Per Bot 18 — same drop-zone pattern already used for the content
+       library uploader, reused here for the bulk import file field. */
+    .drop-zone { border:2px dashed rgba(255,255,255,0.12); border-radius:12px; padding:28px; text-align:center; cursor:pointer; transition:all 0.25s; }
+    .drop-zone:hover, .drop-zone.dragover { border-color:rgba(180,230,200,0.4); background:rgba(180,230,200,0.04); }
+    .drop-zone-filename { font-size:13px; color:rgba(180,230,200,0.85); margin-top:6px; }
   </style>
+
 </head>
 <body>
   <div class="topbar">
@@ -595,7 +602,12 @@
 
       <div>
         <label>File</label>
-        <input type="file" id="bulkFile" accept=".csv,.xlsx,.xls"/>
+        <div class="drop-zone" id="bulkDropZone" onclick="document.getElementById('bulkFile').click()">
+          <input type="file" id="bulkFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="updateBulkFileLabel()"/>
+          <div style="font-size:26px;margin-bottom:8px">📂</div>
+          <div style="font-size:14px;color:rgba(255,255,255,0.4)">Drop a CSV or Excel file here or click to select</div>
+          <div class="drop-zone-filename" id="bulkFileLabel"></div>
+        </div>
         <div class="modal-note" style="margin-top:6px"><a href="/assets/bulk-import-sample.xlsx" style="color:rgba(180,230,200,0.75)">Download a sample spreadsheet</a> to see the expected columns — fill it in and upload it straight back, or use it as a template for your own file (CSV or Excel, either works).</div>
       </div>
 
@@ -621,7 +633,7 @@
       <div style="margin-top:14px" id="bulkOfferField">
         <label>Offer (optional)</label>
         <select id="bulkOffer" onchange="toggleBulkOfferOverride()"><option value="">No offer — use the weeks above</option></select>
-        <div class="modal-note" style="margin-top:6px">Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
+        <div class="modal-note" style="margin-top:6px" id="bulkOfferNote">Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
       </div>
 
       <div style="margin-top:14px" id="bulkSkinField">
@@ -1158,6 +1170,7 @@
 
   async function openBulkImportModal() {
     document.getElementById('bulkFile').value = '';
+    document.getElementById('bulkFileLabel').textContent = '';
     document.getElementById('bulkTier').value = 'newsletter_only';
     document.getElementById('bulkTrialWeeks').value = '2';
     document.getElementById('bulkSendWelcome').checked = true;
@@ -1171,6 +1184,32 @@
     toggleBulkWelcomeWarning();
     openModal('bulkImportModal');
   }
+
+  // Per Bot 18 — drag-and-drop for the bulk import file field, same
+  // dragover/dragleave/drop pattern as the content library's drop-zone.
+  // The dropped file is pushed into the real <input type=file> via a
+  // DataTransfer object so runBulkImport() keeps reading fileInput.files
+  // exactly as before, whether the file arrived by click or by drop.
+  function updateBulkFileLabel() {
+    const f = document.getElementById('bulkFile').files[0];
+    document.getElementById('bulkFileLabel').textContent = f ? f.name : '';
+  }
+  (function wireBulkDropZone() {
+    const zone = document.getElementById('bulkDropZone');
+    if (!zone) return;
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (!files || !files.length) return;
+      const dt = new DataTransfer();
+      dt.items.add(files[0]);
+      document.getElementById('bulkFile').files = dt.files;
+      updateBulkFileLabel();
+    });
+  })();
 
   let _offersForBulkImport = null;
   async function populateOfferSelect(selectId) {
@@ -1197,7 +1236,16 @@
     const isExplorer = tier === '0';
     document.getElementById('bulkNewsletterOnlyNote').style.display = isNewsletterOnly ? '' : 'none';
     document.getElementById('bulkTrialField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
-    document.getElementById('bulkOfferField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
+    // Per Bot 18 — the offer field used to hide for Explorer too, but the
+    // backend already tags signup_offer_id on Explorer accounts (it just
+    // skips applying a trial length to them, which is correct since
+    // Explorer has no trial). So Explorer signups from a promo campaign
+    // were silently losing their attribution. Only truly hide it for
+    // newsletter-only, which has no account/offer concept at all.
+    document.getElementById('bulkOfferField').style.display = isNewsletterOnly ? 'none' : '';
+    document.getElementById('bulkOfferNote').textContent = isExplorer
+      ? 'Tags everyone in this batch to a specific campaign for reporting. Explorer has no trial, so the offer\'s trial length isn\'t applied here — attribution only.'
+      : 'Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it\'s selected.';
     document.getElementById('bulkSkinField').style.display = isNewsletterOnly ? 'none' : '';
     // No password is ever created for newsletter-only contacts, so there's
     // nothing for a welcome email to contain — hide that whole row rather
@@ -1231,7 +1279,7 @@
     formData.append('trialWeeks', trialWeeks);
     formData.append('sendWelcomeEmail', sendWelcomeEmail ? '1' : '0');
     formData.append('skinId', isNewsletterOnly ? '' : document.getElementById('bulkSkin').value);
-    formData.append('offerId', (isNewsletterOnly || tier === '0') ? '' : document.getElementById('bulkOffer').value);
+    formData.append('offerId', isNewsletterOnly ? '' : document.getElementById('bulkOffer').value);
 
     try {
       const res  = await fetch('/api/admin/members/bulk-import', { method: 'POST', body: formData });

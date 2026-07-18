@@ -718,7 +718,7 @@
   async function runTrendScan() {
     const btn = document.getElementById('trendScanBtn');
     btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Searching…';
-    showFeedback('lineFeedback', 'Running a live search for current trends — this takes a moment.', 'ok');
+    showFeedback('lineFeedback', 'Running a live search for current trends — this can take up to a minute or so.', 'ok');
     try {
       const res = await fetch('/api/admin/signal-lines/trend-scan', { method: 'POST' });
       const data = await res.json();

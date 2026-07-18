@@ -231,7 +231,9 @@
     /* Per Bot 28 — curated shelves: horizontally-scrollable rows of
        larger tappable cards, one row per featured category. */
     .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
-    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 6px; scroll-snap-type:x proximity; }
+    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 14px; scroll-snap-type:x proximity; }
+    .shelf-row::-webkit-scrollbar { height:3px; }
+    .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
     .shelf-card.locked { opacity:0.45; }
     .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
