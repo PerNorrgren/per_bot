@@ -1220,7 +1220,11 @@
       <div style="margin-top:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div class="config-label">${MB_LABELS[p] || p}</div>
-          <button class="btn sm" onclick="mbCopy('${p}')">Copy text</button>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span id="mbPublishStatus_${p}" style="font-size:11px;color:rgba(255,255,255,0.4)"></span>
+            <button class="btn sm" onclick="mbPublish('${p}')" id="mbPublishBtn_${p}">Publish</button>
+            <button class="btn sm" onclick="mbCopy('${p}')">Copy text</button>
+          </div>
         </div>
         <div id="mbEditorWrap_${p}"></div>
       </div>
@@ -1262,6 +1266,39 @@
     }).catch(() => {
       showFeedback('mbFeedback', 'Could not copy — select the text manually.', 'err');
     });
+  }
+
+  // Per Bot 18 — publishes straight to the connected account via
+  // BulkPublish. This actually goes live immediately (not a draft), so it
+  // confirms first — same weight as any other one-way action in this app.
+  async function mbPublish(platform) {
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    const text = q.getText().replace(/\n$/, '');
+    if (!text.trim()) { showFeedback('mbFeedback', 'Nothing to publish — the text is empty.', 'err'); return; }
+    if (!confirm(`Publish this to ${MB_LABELS[platform] || platform} right now? This goes live immediately, not as a draft.`)) return;
+
+    const btn = document.getElementById(`mbPublishBtn_${platform}`);
+    const status = document.getElementById(`mbPublishStatus_${platform}`);
+    btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Publishing…';
+    status.textContent = '';
+    try {
+      const res = await fetch('/api/admin/bulkpublish/publish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform, text })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not publish.');
+      status.textContent = '✓ Published';
+      status.style.color = 'rgba(180,230,200,0.85)';
+      showFeedback('mbFeedback', (MB_LABELS[platform] || platform) + ' published.', 'ok');
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      status.style.color = 'rgba(255,140,120,0.9)';
+      showFeedback('mbFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = origText;
+    }
   }
 
   // ── History (Per Bot 17 phase 4) ──

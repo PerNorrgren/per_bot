@@ -8298,6 +8298,61 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
   }
 });
 
+// ── BulkPublish integration (Per Bot 18) ──
+// Publishes message-builder output directly to the connected social
+// accounts, instead of only ever producing copy-paste text. Talks to
+// BulkPublish's REST API (app.bulkpublish.com) using an API key kept in
+// Railway's environment — never hardcoded, never sent to the browser.
+const BULKPUBLISH_BASE = 'https://app.bulkpublish.com/api';
+async function bulkPublishRequest(method, path, body) {
+  const apiKey = process.env.BULKPUBLISH_API_KEY;
+  if (!apiKey) throw new Error('BULKPUBLISH_API_KEY is not set — add it in Railway before publishing.');
+  const res = await fetch(`${BULKPUBLISH_BASE}${path}`, {
+    method,
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || `BulkPublish returned ${res.status}`);
+  return data;
+}
+
+// Lists connected channels — the admin UI uses this to show which of the
+// four platforms actually have a live connection before offering a
+// Publish button for it, rather than letting someone click Publish on a
+// platform that was never connected and get a confusing failure.
+app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const data = await bulkPublishRequest('GET', '/channels');
+    res.json({ ok: true, channels: data.channels || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Publishes one platform's already-generated text immediately (status
+// 'published', not scheduled) to whichever connected channel matches that
+// platform. Text-only for now — media attachment (the video generator's
+// output) is a natural next step once this is working end to end, not
+// bundled in here to keep the first real publish simple to verify.
+app.post('/api/admin/bulkpublish/publish', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { platform, text } = req.body;
+    if (!platform || !text || !text.trim()) return res.status(400).json({ error: 'platform and text are required.' });
+    const { channels } = await bulkPublishRequest('GET', '/channels');
+    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
+    if (!channel) return res.status(400).json({ error: `${platform} isn't connected in BulkPublish yet — connect it in the Channels page first.` });
+    const post = await bulkPublishRequest('POST', '/posts', {
+      content: text,
+      channels: [{ channelId: channel.id, platform: channel.platform }],
+      status: 'published',
+    });
+    res.json({ ok: true, post });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Message builder history (Per Bot 17 phase 4) ──
 app.get('/api/admin/social-posts', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getAllSocialPosts()); }
