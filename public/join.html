@@ -84,6 +84,9 @@
 
   <script>
     const token = location.pathname.split('/').filter(Boolean).pop();
+    const urlParams = new URLSearchParams(location.search);
+    const promoCode = urlParams.get('promoCode') || '';
+    const srcTag = urlParams.get('src') || '';
 
     const slides = [
       'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
@@ -167,7 +170,7 @@
         const res  = await fetch(`/api/invite/${token}/claim`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, password })
+          body: JSON.stringify({ name, password, promoCode: promoCode || undefined, source: srcTag || undefined })
         });
         const data = await res.json();
         if (data.redirect) {

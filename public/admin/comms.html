@@ -664,7 +664,7 @@
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
       <div id="newsletterRichEditor" style="display:none"></div>
       <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
-      <div class="modal-note" style="margin-top:6px">You can use <code>{{name}}</code> and <code>{{invite_link}}</code> — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a 2-week trial the moment they click it; for an existing member it just points to the login page.</div>
+      <div class="modal-note" style="margin-top:6px">You can use <code>{{name}}</code> and <code>{{invite_link}}</code> — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a trial the moment they click it (14 days by default, or whatever the offer below sets); for an existing member it just points to the login page.</div>
       <div class="modal-note" style="margin-top:6px">In Rich mode: click an image then use the 🔗 button to make it clickable · ▭ inserts a button (type text and a link) · 1/2/3 col inserts side-by-side columns for text next to an image.</div>
     </div>
     <div style="margin-top:6px">
@@ -680,6 +680,12 @@
         <button type="button" class="day-chip" data-seg="member3" onclick="toggleAudienceSeg(this)">Member 3</button>
       </div>
       <div class="modal-note" style="margin-top:6px" id="newsletterAudienceCount">Loading recipient count…</div>
+    </div>
+    <div style="margin-top:14px">
+      <label>Tie this send to an offer (optional)</label>
+      <select id="newsletterOffer"><option value="">No offer — {{invite_link}} uses the old fixed 14-day trial, untracked</option></select>
+      <input class="inline-input" type="text" id="newsletterSourceTag" style="width:100%;margin-top:6px" placeholder="Source tag for the funnel report, e.g. mailing-list-2026-07"/>
+      <div class="modal-note" style="margin-top:6px">When set, {{invite_link}} for anyone without a login yet carries this offer's real trial length and shows up in the Funnel report (Sales &amp; Marketing) the same way any other promo link does.</div>
     </div>
     <div class="modal-err" id="newsletterErr"></div>
     <div class="test-send-row">
@@ -2330,6 +2336,19 @@
     input.click();
   }
 
+  let _nlOffersLoaded = false;
+  async function nlLoadOffers() {
+    if (_nlOffersLoaded) return;
+    _nlOffersLoaded = true;
+    try {
+      const offers = await (await fetch('/api/admin/offers')).json();
+      const sel = document.getElementById('newsletterOffer');
+      sel.innerHTML = '<option value="">No offer — {{invite_link}} uses the old fixed 14-day trial, untracked</option>'
+        + offers.map(o => `<option value="${o.id}">${escHtml(o.name)} (${o.trial_days}d, /promo/${escHtml(o.code)})</option>`).join('');
+    } catch(e) { /* dropdown just keeps its default option */ }
+  }
+  nlLoadOffers();
+
   function openNewsletterModal() {
     document.getElementById('newsletterModalTitle').textContent = 'Write a newsletter';
     document.getElementById('newsletterEditId').value = '';
@@ -2341,6 +2360,8 @@
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
     setSelectedAudience('all'); // no chips active = everyone, matches backend default
+    document.getElementById('newsletterOffer').value = '';
+    document.getElementById('newsletterSourceTag').value = '';
     refreshAudienceCount();
     openModal('newsletterModal');
   }
@@ -2358,6 +2379,8 @@
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
     setSelectedAudience(n.audience);
+    document.getElementById('newsletterOffer').value = n.offer_id || '';
+    document.getElementById('newsletterSourceTag').value = n.source_tag || '';
     refreshAudienceCount();
     openModal('newsletterModal');
   }
@@ -2404,7 +2427,7 @@
     if (!subject) { err.textContent = 'Please write a subject.'; return; }
     if (!body)    { err.textContent = 'Please write the body.'; return; }
 
-    const payload = { subject, body, audience, format: newsletterFormat };
+    const payload = { subject, body, audience, format: newsletterFormat, offerId: document.getElementById('newsletterOffer').value || null, sourceTag: document.getElementById('newsletterSourceTag').value.trim() || null };
     let res;
     if (id) {
       res = await fetch(`/api/admin/newsletters/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });

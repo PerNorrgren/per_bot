@@ -1154,6 +1154,15 @@ async function getDb() {
     // getNewsletterRecipients below), defaults to 'all' for any pre-existing
     // rows so nothing already sent silently reinterprets who it went to.
     "ALTER TABLE newsletters ADD COLUMN audience TEXT DEFAULT 'all'",
+    // Per Bot 18 — ties a newsletter send to a specific offer (for
+    // non-logged-in recipients, i.e. mailing-list-only contacts, whose
+    // invite_link becomes a tracked /join/<token> carrying this offer's
+    // code and this send's source tag) rather than the old fixed-14-day
+    // claim flow, which had no connection to the offer/funnel system at
+    // all. Null on every newsletter until explicitly set — existing sends
+    // are unaffected.
+    "ALTER TABLE newsletters ADD COLUMN offer_id TEXT",
+    "ALTER TABLE newsletters ADD COLUMN source_tag TEXT",
     // Optional in general, but becomes required the moment a user wants MOTD
     // email or SMS on — see the PATCH /api/account validation in server.js.
     // motd_hour is interpreted IN THIS TIMEZONE once it's set, not UTC.
@@ -4127,6 +4136,10 @@ function setSignupOfferId(userId, offerId) {
   getDbSync().run('UPDATE users SET signup_offer_id=? WHERE id=?', [offerId, userId]);
   save();
 }
+function setSignupSource(userId, source) {
+  getDbSync().run('UPDATE users SET signup_source=? WHERE id=?', [source, userId]);
+  save();
+}
 
 // Per Bot 17 (session 2) — public "what's included" listing for the
 // promotions page. Deliberately broader than getFeaturedCourses above:
@@ -4287,17 +4300,18 @@ function markMotdSentForUser(userId, todayStr) {
 
 // ── Newsletters ── One-off broadcasts, distinct from the MOTD queue — see
 // table comment above for why.
-function addNewsletter(id, subject, body, audience, format) {
+function addNewsletter(id, subject, body, audience, format, offerId, sourceTag) {
   getDbSync().run(
-    `INSERT INTO newsletters (id,subject,body,status,audience,format) VALUES (?,?,?,'draft',?,?)`,
-    [id, subject, body, audience || 'all', format || 'plain']
+    `INSERT INTO newsletters (id,subject,body,status,audience,format,offer_id,source_tag) VALUES (?,?,?,'draft',?,?,?,?)`,
+    [id, subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null]
   );
   save();
 }
 function getNewsletter(id) { return queryOne('SELECT * FROM newsletters WHERE id=?', [id]); }
 function getAllNewsletters() { return queryAll('SELECT * FROM newsletters ORDER BY created_at DESC'); }
-function updateNewsletter(id, subject, body, audience, format) {
-  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=?, format=? WHERE id=? AND status='draft'", [subject, body, audience || 'all', format || 'plain', id]);
+function updateNewsletter(id, subject, body, audience, format, offerId, sourceTag) {
+  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=?, format=?, offer_id=?, source_tag=? WHERE id=? AND status='draft'",
+    [subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null, id]);
   save();
 }
 function deleteNewsletterDraft(id) {
@@ -5231,7 +5245,7 @@ module.exports = {
   // Offers (Per Bot 17)
   getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid, resolveShowcaseFile,
   logPromoHit, getFunnelStats,
-  createOffer, updateOffer, deleteOffer, setSignupOfferId,
+  createOffer, updateOffer, deleteOffer, setSignupOfferId, setSignupSource,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,
   // Signal lines (Per Bot 17 phase 6)

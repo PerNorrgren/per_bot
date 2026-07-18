@@ -1110,7 +1110,19 @@ app.get('/promo/:code', (req, res) => {
 app.get('/login/:skinSlug',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
 app.get('/register/:skinSlug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
 app.get('/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'reset-password.html')));
-app.get('/join/:token', (req, res) => res.sendFile(path.join(__dirname, 'public', 'join.html')));
+// Per Bot 18 — logs a funnel hit the same way /promotions does, when the
+// link carries promoCode/src (i.e. this join link came from a tracked
+// newsletter send, not the untracked legacy flow). No offer/src on the
+// link just means no hit logged, same as any other untagged visit.
+app.get('/join/:token', (req, res) => {
+  try {
+    if (req.query.promoCode || req.query.src) {
+      const offer = req.query.promoCode ? db.getOfferByCode(req.query.promoCode) : null;
+      db.logPromoHit(offer?.id || null, req.query.promoCode || null, req.query.src || null, null);
+    }
+  } catch (e) { console.error('join hit log error:', e.message); }
+  res.sendFile(path.join(__dirname, 'public', 'join.html'));
+});
 
 // ── One-click unsubscribe ── Public, no auth — has to work for newsletter-
 // only contacts too, who have no password and no way to log into My Account
@@ -1465,7 +1477,7 @@ app.post('/api/invite/:token/claim', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'invalid' });
     if (user.invite_token_used_at) return res.status(410).json({ error: 'used' });
 
-    let { name, password } = req.body;
+    let { name, password, promoCode, source } = req.body;
     name = (name && name.trim()) || user.name;
     if (!password || password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
 
@@ -1473,8 +1485,17 @@ app.post('/api/invite/:token/claim', async (req, res) => {
     db.updateClientPassword(user.id, hash);
     if (name !== user.name) db.updateUserName(user.id, name);
 
-    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    // Per Bot 18 — same resolver /api/register uses, so a mailing-list
+    // invite tied to an offer gets that offer's real trial length and
+    // attribution (signup_offer_id/signup_source), instead of the old
+    // fixed 14 days with no connection to the offer/funnel system.
+    // Untagged links (the plain old join flow) still resolve to the
+    // standing default offer, or 14 days if there isn't one — unchanged.
+    const { trialDays, offerId } = resolveOfferForSignup(promoCode);
+    const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
     db.setMemberTier(user.id, 1, null, trialEndsAt, null, null);
+    if (offerId) db.setSignupOfferId(user.id, offerId);
+    if (source) db.setSignupSource(user.id, source);
     db.markInviteTokenUsed(user.id);
 
     const token = auth.createToken({ role: 'client', id: user.id, name, email: user.email });
@@ -8888,24 +8909,24 @@ function newsletterBodyIsEmpty(body, format) {
 
 app.post('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience, format } = req.body;
+    const { subject, body, audience, format, offerId, sourceTag } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
     if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const id = uuidv4();
-    db.addNewsletter(id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format);
+    db.addNewsletter(id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/admin/newsletters/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience, format } = req.body;
+    const { subject, body, audience, format, offerId, sourceTag } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
     if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const existing = db.getNewsletter(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Newsletter not found.' });
     if (existing.status !== 'draft') return res.status(400).json({ error: 'Already sent — sent newsletters cannot be edited.' });
-    db.updateNewsletter(req.params.id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format);
+    db.updateNewsletter(req.params.id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8974,11 +8995,22 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   let sentCount = 0, failedCount = 0;
+  // Per Bot 18 — if this send is tied to an offer, every non-logged-in
+  // recipient's invite_link carries that offer's code plus this send's
+  // source tag, same query-string shape /promo/<code>?src=... already
+  // uses, so it lands in the same funnel report as everything else —
+  // rather than the old fixed-14-day /join/<token> link with no
+  // attribution at all.
+  const offer = newsletter.offer_id ? db.getOffer(newsletter.offer_id) : null;
+  const linkParams = new URLSearchParams();
+  if (offer) linkParams.set('promoCode', offer.code);
+  if (newsletter.source_tag) linkParams.set('src', newsletter.source_tag);
+  const linkQuery = linkParams.toString() ? ('?' + linkParams.toString()) : '';
 
   for (const user of recipients) {
     const inviteLink = user.has_login
       ? `${APP_URL}/login`
-      : `${APP_URL}/join/${db.ensureInviteToken(user.id)}`;
+      : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}`;
 
     const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
     const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
