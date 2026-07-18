@@ -6070,10 +6070,12 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
     const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
     // Facilitators/admins can preview/play any file regardless of tier; an Explorer/
-    // Member/Client only ever gets a URL for what their own tier actually permits.
+    // Member/Client only ever gets a URL for what their own tier actually permits —
+    // unless this specific file has been flagged as a free preview (Per Bot 18), in
+    // which case any logged-in client-role account can play it regardless of tier.
     const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
       ? !file.archived
-      : db.canAccessFile(file, userFlags, req.user.id);
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
     if (!allowed) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
@@ -7054,6 +7056,13 @@ app.patch('/api/content/courses/:id/sequence', auth.requireAuthApi(['admin']), (
   res.json({ ok: true });
 });
 
+// Per Bot 18 — one-off backfill, run once from the browser console:
+// fetch('/api/content/courses/backfill-sequence-defaults',{method:'POST'}).then(r=>r.json()).then(console.log)
+app.post('/api/content/courses/backfill-sequence-defaults', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json({ ok: true, updated: db.backfillCourseSequenceDefaults() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/content/courses/:id/lessons', auth.requireAuthApi(['admin','facilitator']), (req, res) => res.json(db.getLessonsForCourse(req.params.id)));
 // override: null (inherit the course default), true (force file sequence
 // on for this lesson), or false (force off) — sent as 'null'/'true'/'false'
@@ -7066,6 +7075,10 @@ app.patch('/api/content/lessons/:id/file-sequence', auth.requireAuthApi(['admin'
 });
 app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['admin']), (req, res) => {
   db.setLessonFileRefMandatory(req.params.id, !!req.body.mandatory);
+  res.json({ ok: true });
+});
+app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(['admin']), (req, res) => {
+  db.setLessonFileRefFreePreview(req.params.id, !!req.body.freePreview);
   res.json({ ok: true });
 });
 // Per Bot 15f — reorder a file within its lesson, one step at a time

@@ -1482,6 +1482,13 @@ async function getDb() {
     // Per Bot 17 — Offers (promotions/campaign links). Nullable, attribution-only —
     // doesn't drive any access logic itself; setMemberTier/trial_ends_at still do that.
     "ALTER TABLE users ADD COLUMN signup_offer_id TEXT",
+    // Per Bot 18 — free preview override. Lets one or two files inside an
+    // otherwise-locked/enrolment-gated lesson stay openable by anyone
+    // Explorer tier and up, regardless of course access_status, lesson
+    // access_status, or enforce_lesson_sequence/enforce_file_sequence.
+    // Off (0) by default — nothing changes for existing content until an
+    // admin explicitly flags a specific file per lesson.
+    "ALTER TABLE lesson_file_refs ADD COLUMN free_preview INTEGER DEFAULT 0",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -2496,6 +2503,23 @@ function setCourseSequenceFlags(id, enforceLessonSequence, enforceFileSequence) 
     [enforceLessonSequence ? 1 : 0, enforceFileSequence ? 1 : 0, id]); save();
 }
 
+// Per Bot 18 — createCourse() has defaulted both sequence flags to 1 since
+// Per Bot 15g/15k, but that only ever applied going forward. Courses built
+// before that (and everything brought in through the WordPress import
+// scripts, which insert rows directly rather than going through
+// createCourse) were left at the column's original SQL default of 0. This
+// brings every existing course that's still sitting at 0/0 up to the same
+// default the app has used for new courses for a while now. Per-course
+// toggles made afterwards through the UI are untouched either way.
+function backfillCourseSequenceDefaults() {
+  const rows = queryAll('SELECT id FROM courses WHERE enforce_lesson_sequence=0 OR enforce_file_sequence=0');
+  rows.forEach(c => {
+    getDbSync().run('UPDATE courses SET enforce_lesson_sequence=1, enforce_file_sequence=1 WHERE id=?', [c.id]);
+  });
+  save();
+  return rows.length;
+}
+
 // ── Lessons ──
 function createLesson(id, courseId, lessonNumber, title, description, visibility, accessStatus) {
   getDbSync().run('INSERT INTO lessons (id,course_id,lesson_number,title,description,visibility,access_status) VALUES (?,?,?,?,?,?,?)',
@@ -2528,6 +2552,18 @@ function addLessonFileRef(id, lessonId, fileId, sortOrder, mandatory) {
 function setLessonFileRefMandatory(refId, mandatory) {
   getDbSync().run('UPDATE lesson_file_refs SET mandatory=? WHERE id=?', [mandatory ? 1 : 0, refId]); save();
 }
+// Per Bot 18 — free preview override, same shape as the mandatory toggle
+// above. Deliberately per-ref rather than per-file: the same file could be
+// reused in more than one lesson, and "preview this everywhere it's used"
+// isn't the intent — only the specific lesson placement someone flags.
+function setLessonFileRefFreePreview(refId, freePreview) {
+  getDbSync().run('UPDATE lesson_file_refs SET free_preview=? WHERE id=?', [freePreview ? 1 : 0, refId]); save();
+}
+function getFreePreviewRef(refId) {
+  return queryOne(`SELECT r.id as ref_id, r.free_preview, r.lesson_id, f.*
+    FROM lesson_file_refs r JOIN library_files f ON r.file_id=f.id
+    WHERE r.id=?`, [refId]);
+}
 // Bulk "All" / "None" toggles for the admin lesson builder — set every file
 // in one lesson, or every file across every lesson in a course, mandatory
 // or not in a single call rather than checking dozens of boxes by hand.
@@ -2542,7 +2578,7 @@ function setAllFileRefsMandatoryForCourse(courseId, mandatory) {
   save();
 }
 function getFilesForLesson(lessonId) {
-  return queryAll(`SELECT r.id as ref_id, r.sort_order, r.mandatory, f.*
+  return queryAll(`SELECT r.id as ref_id, r.sort_order, r.mandatory, r.free_preview, f.*
     FROM lesson_file_refs r JOIN library_files f ON r.file_id=f.id
     WHERE r.lesson_id=? ORDER BY r.sort_order ASC`, [lessonId]);
 }
@@ -3414,6 +3450,15 @@ function getFacilitatorResources() {
 function canAccessFile(file, userFlags, userId) {
   if (file.archived) return false;
   return canSeeFile(file, userMaxLevel(userFlags), userId);
+}
+// Per Bot 18 — free preview override. A file flagged free_preview=1 on any
+// of its lesson_file_refs should play for any logged-in Explorer-and-up
+// account regardless of the file's own visibility tier, the lesson/course
+// access_status, or enrolment — used at the actual playback-url chokepoint
+// rather than the course/lesson browsing routes, since that's the one
+// place real file access is actually granted or refused.
+function fileHasFreePreview(fileId) {
+  return !!queryOne('SELECT 1 FROM lesson_file_refs WHERE file_id=? AND free_preview=1', [fileId]);
 }
 
 // ── Sessions ──
@@ -4926,11 +4971,13 @@ module.exports = {
   // Courses
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
+  backfillCourseSequenceDefaults,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,
   // Lesson file refs
   addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, reorderLessonFileRefs, setLessonFileRefMandatory,
+  setLessonFileRefFreePreview, getFreePreviewRef,
   setAllFileRefsMandatoryForLesson, setAllFileRefsMandatoryForCourse,
   // Lesson file opens / progress (Per Bot 13)
   logFileOpen, getOpenedFileIds, getLessonFileProgress,
@@ -4988,7 +5035,7 @@ module.exports = {
   ensureUnsubscribeToken, getUserByUnsubscribeToken,
   checkTrialExpiry,
   // Content visibility
-  getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, getFacilitatorResources,
+  getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, fileHasFreePreview, getFacilitatorResources,
   userMaxLevel, LEVEL_RANK, suppressAccessiblePreviews,
   // Invitations
   createInvitation, getInvitationByToken, acceptInvitation, getInvitationsForFacilitator,

@@ -674,6 +674,7 @@
       </select>
     </div>
     <div id="alPickerWrap"><label>Pick files from library</label>
+      <div class="modal-note" id="alPickerHint" style="margin:-4px 0 8px">Files already in this lesson are checked below — unchecking one removes it. To reorder, close this and drag the ☰ handle in the expanded lesson row.</div>
       <div class="file-picker">
         <div class="file-picker-filters" style="display:flex;gap:6px;margin-bottom:6px">
           <select id="alPickerCatF" style="flex:1;font-size:11px" onchange="onPickerCatChange('alPicker')"><option value="">All categories</option></select>
@@ -2465,6 +2466,9 @@ async function openCourseDetail(courseId){
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>
+          <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:${f.free_preview?'rgba(180,230,200,0.85)':'rgba(255,255,255,0.35)'};cursor:pointer" title="Playable by any Explorer-and-up account, even if this course/lesson is otherwise locked or not enrolled in">
+            <input type="checkbox" ${f.free_preview?'checked':''} onchange="toggleFileFreePreview('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> free preview
+          </label>
           <button onclick="rmLessonFile('${f.ref_id}')" style="background:none;border:none;color:rgba(255,100,80,0.4);cursor:pointer;font-size:14px">×</button>
         </div>`).join('')}
       </div>`:''}
@@ -2582,6 +2586,11 @@ async function toggleFileMandatory(refId,checked){
   await fetch(`/api/content/lesson-file-refs/${refId}/mandatory`,{method:'PATCH',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mandatory:checked})});
 }
+async function toggleFileFreePreview(refId,checked){
+  await fetch(`/api/content/lesson-file-refs/${refId}/free-preview`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({freePreview:checked})});
+  openCourseDetail(curCourseId);
+}
 // Per Bot 15g — drag-and-drop reorder. Standard HTML5 DnD pattern: the
 // dragged row physically moves in the DOM as you drag over other rows
 // (dragover), so what you see while dragging IS the new order already —
@@ -2626,14 +2635,25 @@ async function setCourseMandatoryAll(mandatory){
   openCourseDetail(curCourseId);
 }
 
-function openAddFilesToLesson(lessonId,lessonTitle){
+let _alExistingRefsByFileId = {};
+async function openAddFilesToLesson(lessonId,lessonTitle){
   addFilesLessonId=lessonId;editingLessonId=null;
   document.getElementById('alTitle').textContent='Add files to: '+lessonTitle;
   document.getElementById('alNum').value='';document.getElementById('alLessonTitle').value=lessonTitle;
   document.getElementById('alVis').value='client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value=lessonId;
   document.getElementById('alPickerWrap').style.display='';
-  renderPicker('alPicker');openModal('addLessonModal');
+  document.getElementById('alPickerHint').style.display='';
+  // Per Bot 18 — files already in this lesson used to render fully
+  // unchecked here, with no way to see (or remove) what was already
+  // picked without going back to the expanded lesson row. Preselect them
+  // from the live lesson-files list, and saveLesson() below now syncs
+  // both additions and removals from whatever ends up checked.
+  const existing = await fetch(`/api/content/lessons/${lessonId}/files`).then(r=>r.json()).catch(()=>[]);
+  _alExistingRefsByFileId = {};
+  existing.forEach(f => { _alExistingRefsByFileId[f.id] = f.ref_id; });
+  renderPicker('alPicker', existing.map(f=>f.id));
+  openModal('addLessonModal');
 }
 
 function openAddLesson(){
@@ -2643,6 +2663,8 @@ function openAddLesson(){
   document.getElementById('alVis').value='client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value='';
   document.getElementById('alPickerWrap').style.display='';
+  document.getElementById('alPickerHint').style.display='none';
+  _alExistingRefsByFileId = {};
   renderPicker('alPicker');openModal('addLessonModal');
 }
 
@@ -2669,9 +2691,15 @@ async function saveLesson(){
 
   if(addFilesLessonId){
     const fileIds=getPickerSel('alPicker');
-    for(const fid of fileIds){
+    const existingIds=Object.keys(_alExistingRefsByFileId);
+    const toAdd=fileIds.filter(fid=>!existingIds.includes(fid));
+    const toRemove=existingIds.filter(fid=>!fileIds.includes(fid));
+    for(const fid of toAdd){
       await fetch('/api/content/lesson-file-refs',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({lessonId:addFilesLessonId,fileId:fid})});
+    }
+    for(const fid of toRemove){
+      await fetch(`/api/content/lesson-file-refs/${_alExistingRefsByFileId[fid]}`,{method:'DELETE'});
     }
     closeModal('addLessonModal');openCourseDetail(courseId);return;
   }
