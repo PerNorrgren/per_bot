@@ -1035,12 +1035,33 @@ app.get('/register', (req, res) => res.sendFile(path.join(__dirname, 'public', '
 // Per Bot 17 (phase 3) — public marketing landing page. Reads ?promoCode=
 // itself client-side (same pattern as register.html) to show the right
 // offer copy before anyone commits to signing up.
-app.get('/promotions', (req, res) => res.sendFile(path.join(__dirname, 'public', 'promotions.html')));
+// Per Bot 18 — also logs a funnel hit here (not on /promo/:code below),
+// since /promo/:code is just a redirect straight through to this same
+// route — logging in both places would double-count every visit that
+// arrived via a promo link.
+app.get('/promotions', (req, res) => {
+  try {
+    const promoCode = req.query.promoCode || null;
+    const offer = promoCode ? db.getOfferByCode(promoCode) : null;
+    const skinId = req.query.skin || offer?.skin_id || null;
+    db.logPromoHit(offer?.id || null, promoCode, req.query.src || null, skinId);
+  } catch (e) { console.error('promo hit log error:', e.message); }
+  res.sendFile(path.join(__dirname, 'public', 'promotions.html'));
+});
 
 // Short promo link. Now points at the real landing page instead of
 // jumping straight to the form — the page's own CTA carries the code
-// through to /register from there.
-app.get('/promo/:code', (req, res) => res.redirect('/promotions?promoCode=' + encodeURIComponent(req.params.code)));
+// through to /register from there. src/skin (platform/message attribution,
+// Per Bot 18) pass straight through untouched if present on the original
+// link, so a link like /promo/insta-launch?src=instagram-post-3 keeps its
+// tag all the way to the hit log above and, if they register, to the
+// account itself.
+app.get('/promo/:code', (req, res) => {
+  const params = new URLSearchParams({ promoCode: req.params.code });
+  if (req.query.src) params.set('src', req.query.src);
+  if (req.query.skin) params.set('skin', req.query.skin);
+  res.redirect('/promotions?' + params.toString());
+});
 // Multi-skin branding (Per Bot 20) — same files, same everything, just a
 // slug in the URL for the page's own JS to notice and brand itself
 // against (see skin-inject.js). The slug isn't validated here — an
@@ -1332,13 +1353,13 @@ app.post('/api/register', async (req, res) => {
 
     const id   = uuidv4();
     const hash = await auth.hashPassword(password);
-    const { promoCode } = req.body;
+    const { promoCode, source } = req.body;
     const { trialDays, offerId } = resolveOfferForSignup(promoCode);
     db.registerUser(id, name.trim(), emailLower, hash, safeLanguage, {
       consentGiven: !!consent,
       consentVersion: 'self-registration-v2',
       marketingOptIn: !!marketingOptIn,
-    }, trialDays, offerId);
+    }, trialDays, offerId, source || null);
 
     // If there's a pending invitation, link them to the facilitator
     const { inviteToken } = req.body;
@@ -7491,6 +7512,18 @@ app.delete('/api/admin/offers/:id', auth.requireAuthApi(['admin']), (req, res) =
   try {
     db.deleteOffer(req.params.id);
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per Bot 18 — the funnel report. groupBySource/groupBySkin are opt-in
+// breakdowns (?groupBySource=1&groupBySkin=1) — with neither set, this
+// returns one row per offer; either flag splits those rows further.
+app.get('/api/admin/marketing/funnel', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    res.json(db.getFunnelStats({
+      groupBySource: req.query.groupBySource === '1',
+      groupBySkin: req.query.groupBySkin === '1',
+    }));
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

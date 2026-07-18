@@ -132,6 +132,7 @@
     const refCode = urlParams.get('ref') || '';
     const inviteEmail = urlParams.get('email') || '';
     const promoCode = urlParams.get('promoCode') || '';
+    const srcTag = urlParams.get('src') || '';
     if (inviteEmail) {
       document.getElementById('email').value = inviteEmail;
       document.getElementById('email').readOnly = true;
@@ -219,7 +220,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined, promoCode: promoCode || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined, promoCode: promoCode || undefined, source: srcTag || undefined })
       });
       const data = await res.json();
 

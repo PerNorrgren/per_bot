@@ -607,6 +607,25 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // Per Bot 18 — funnel tracking. One row per landing on /promotions,
+  // whether via a /promo/<code> link, a bare visit, or a link carrying a
+  // ?src= platform tag. Deliberately append-only and minimal — this is a
+  // hit log to aggregate later, not a per-visitor record (no user id;
+  // nobody's identified yet at this point, they haven't registered).
+  // promo_code is stored as the raw string as well as offer_id, so a hit
+  // still means something in reporting even if the offer it pointed at is
+  // later renamed or deleted.
+  db.run(`CREATE TABLE IF NOT EXISTS promo_hits (
+    id TEXT PRIMARY KEY,
+    offer_id TEXT,
+    promo_code TEXT,
+    source TEXT,
+    skin_id TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_promo_hits_offer ON promo_hits(offer_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_promo_hits_created ON promo_hits(created_at)`);
+
   // ── Social posts (Per Bot 17 phase 4) ── History of message-builder
   // generations, so a past run can be revisited or duplicated into a new
   // editable draft rather than being lost the moment the page reloads.
@@ -1497,6 +1516,13 @@ async function getDb() {
     // resolves to a file.
     "ALTER TABLE offers ADD COLUMN showcase_file_id TEXT",
     "ALTER TABLE app_config ADD COLUMN default_showcase_file_id TEXT",
+    // Per Bot 18 — funnel tracking. skin_id here is reporting-only (which
+    // skin this offer is primarily run under) — it never gates access,
+    // unlike course_skin_id which does. signup_source carries the ?src=
+    // platform/message tag from the promo link through to the account
+    // that resulted from it, alongside the existing signup_offer_id.
+    "ALTER TABLE offers ADD COLUMN skin_id TEXT",
+    "ALTER TABLE users ADD COLUMN signup_source TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3179,13 +3205,13 @@ function deleteClient(id) {
 // Both default to the pre-Offers behaviour (14 days, no attribution) so
 // every existing call site (and any deployment that never touches Offers)
 // keeps working exactly as before.
-function registerUser(id, name, email, passwordHash, language, consent, trialDays = 14, signupOfferId = null) {
+function registerUser(id, name, email, passwordHash, language, consent, trialDays = 14, signupOfferId = null, signupSource = null) {
   const c = consent || {};
   const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
   getDbSync().run(
     `INSERT INTO users (id,name,email,password_hash,facilitator_id,arc,archived,must_change_password,member_tier,member_since,trial_ends_at,is_client,is_system_client,language,
-       consent_given,consent_date,consent_version,lawful_basis,pref_email_news,signup_offer_id)
-     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?,?,?,?,?,?,?)`,
+       consent_given,consent_date,consent_version,lawful_basis,pref_email_news,signup_offer_id,signup_source)
+     VALUES (?,?,?,NULL,NULL,'',0,0,1,datetime('now'),?,0,1,?,?,?,?,?,?,?,?)`,
     [
       id, name, email.toLowerCase(), trialEndsAt, language || 'en',
       c.consentGiven ? 1 : 0,
@@ -3194,6 +3220,7 @@ function registerUser(id, name, email, passwordHash, language, consent, trialDay
       c.consentGiven ? 'consent' : null,
       c.marketingOptIn ? 1 : 0,
       signupOfferId,
+      signupSource,
     ]
   );
   getDbSync().run('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, id]);
@@ -3918,8 +3945,8 @@ function createOffer(fields) {
   const id = crypto.randomUUID();
   if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1');
   getDbSync().run(
-    `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from,showcase_file_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO offers (id,name,code,headline,description,trial_days,launch_date,expiry_date,is_default,active,cloned_from,showcase_file_id,skin_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id, fields.name, fields.code,
       fields.headline || null, fields.description || null,
@@ -3929,13 +3956,14 @@ function createOffer(fields) {
       fields.active === false ? 0 : 1,
       fields.cloned_from || null,
       fields.showcase_file_id || null,
+      fields.skin_id || null,
     ]
   );
   save();
   return id;
 }
 function updateOffer(id, fields) {
-  const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active','showcase_file_id'];
+  const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active','showcase_file_id','skin_id'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1 AND id!=?', [id]);
@@ -3953,6 +3981,74 @@ function deleteOffer(id) {
 // own showcase_file_id, then the standing default offer's, then the
 // global fallback in app_config. Returns null (page shows nothing) if
 // none of those resolve to a real, non-archived file.
+// Per Bot 18 — one row per /promotions landing. Fire-and-forget from the
+// route handler; a logging failure should never break the page itself.
+function logPromoHit(offerId, promoCode, source, skinId) {
+  getDbSync().run('INSERT INTO promo_hits (id,offer_id,promo_code,source,skin_id) VALUES (?,?,?,?,?)',
+    [crypto.randomUUID(), offerId || null, promoCode || null, source || null, skinId || null]);
+  save();
+}
+
+// Per Bot 18 — the funnel report. Hits come from promo_hits; registrations
+// and paid conversions are derived from users.signup_offer_id — there's no
+// separate "conversion event" table, a conversion IS just that user's
+// current state, checked live rather than logged as a second event that
+// could drift out of sync with reality (e.g. if someone's membership
+// later lapses, a stale "converted" log entry would keep counting them
+// forever; deriving live never has that problem).
+// Grouped by offer first (always), then optionally further broken down by
+// source and/or skin if the caller asks for it — the three dimensions
+// combine freely rather than needing separate queries for each.
+function getFunnelStats({ groupBySource = false, groupBySkin = false } = {}) {
+  const hitDims = ['offer_id'];
+  if (groupBySource) hitDims.push('source');
+  if (groupBySkin) hitDims.push('skin_id');
+  const hitDimSql = hitDims.join(', ');
+  const hitRows = queryAll(`SELECT ${hitDimSql}, COUNT(*) as hits FROM promo_hits GROUP BY ${hitDimSql}`);
+
+  // Registrations/trial/paid, grouped by the SAME dimensions as the hits
+  // above — signup_offer_id/signup_source mirror promo_hits' own
+  // offer_id/source, and skin_id here is the user's real skin assignment
+  // (already set at registration from the skin the link/invite pointed
+  // at), not a separate attribution field. Matching dimensions matters:
+  // without this, a source/skin breakdown would attach one offer-wide
+  // conversion total to every sub-row, wildly overstating each one.
+  const regDims = ['signup_offer_id as offer_id'];
+  if (groupBySource) regDims.push('signup_source as source');
+  if (groupBySkin) regDims.push('skin_id');
+  const regDimSql = regDims.join(', ');
+  const groupSql = ['signup_offer_id', groupBySource ? 'signup_source' : null, groupBySkin ? 'skin_id' : null].filter(Boolean).join(', ');
+  const regRows = queryAll(`
+    SELECT ${regDimSql},
+      COUNT(*) as registrations,
+      SUM(CASE WHEN member_tier=0 AND (trial_ends_at IS NULL OR trial_ends_at > datetime('now')) THEN 1 ELSE 0 END) as trial_active,
+      SUM(CASE WHEN member_tier>0 THEN 1 ELSE 0 END) as paid
+    FROM users WHERE signup_offer_id IS NOT NULL GROUP BY ${groupSql}`);
+
+  const keyOf = row => [row.offer_id || '', groupBySource ? (row.source || '') : '', groupBySkin ? (row.skin_id || '') : ''].join('::');
+  const regByKey = {};
+  regRows.forEach(r => { regByKey[keyOf(r)] = r; });
+
+  const offers = getAllOffers();
+  const offerById = {}; offers.forEach(o => { offerById[o.id] = o; });
+
+  return hitRows.map(row => {
+    const reg = regByKey[keyOf(row)] || { registrations: 0, trial_active: 0, paid: 0 };
+    return {
+      offer_id: row.offer_id,
+      offer_name: row.offer_id ? (offerById[row.offer_id]?.name || '(deleted offer)') : '(no offer / direct visit)',
+      source: groupBySource ? row.source : undefined,
+      skin_id: groupBySkin ? row.skin_id : undefined,
+      hits: row.hits,
+      registrations: reg.registrations,
+      trial_active: reg.trial_active,
+      paid: reg.paid,
+      click_to_reg_pct: row.hits > 0 ? Math.round((reg.registrations / row.hits) * 1000) / 10 : null,
+      reg_to_paid_pct: reg.registrations > 0 ? Math.round((reg.paid / reg.registrations) * 1000) / 10 : null,
+    };
+  }).sort((a, b) => b.hits - a.hits);
+}
+
 function resolveShowcaseFile(code) {
   let fileId = null;
   if (code) {
@@ -5080,6 +5176,7 @@ module.exports = {
   getMembershipPlans, updateMembershipPlan,
   // Offers (Per Bot 17)
   getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid, resolveShowcaseFile,
+  logPromoHit, getFunnelStats,
   createOffer, updateOffer, deleteOffer, setSignupOfferId,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,

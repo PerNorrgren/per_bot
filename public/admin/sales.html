@@ -241,7 +241,7 @@
       <div id="offerList"><div class="loading">Loading...</div></div>
     </div>
     <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
-      Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration. The public marketing landing page these link to is a separate, later piece; for now the link goes straight to the signup form with the offer applied.
+      Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration and lands on the public /promotions page, with that offer's own headline and showcase clip.
     </div>
     <div class="card" style="margin-top:12px">
       <div class="card-header"><div class="card-title" style="font-size:13px">Default showcase clip</div></div>
@@ -249,6 +249,40 @@
         <div class="modal-note" style="margin-bottom:8px">Plays on /promotions when the offer that brought someone there doesn't have its own showcase file set. Also used for anyone landing on /promotions directly, with no promo code at all.</div>
         <select id="defaultShowcaseFile" onchange="saveDefaultShowcaseFile()"><option value="">No default set</option></select>
         <div class="feedback" id="defaultShowcaseFeedback" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Funnel report (Per Bot 18) -->
+  <div>
+    <div class="section-label">Funnel</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Clicks → registrations → paid</div>
+        <div style="display:flex;gap:14px;align-items:center;font-size:12px;color:rgba(255,255,255,0.5)">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySource" onchange="loadFunnel()"/> by source</label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySkin" onchange="loadFunnel()"/> by skin</label>
+          <button class="btn sm" onclick="loadFunnel()">Refresh</button>
+        </div>
+      </div>
+      <div style="padding:8px 20px 4px" class="modal-note">Registrations and paid conversions are counted live from current account state, not logged separately — a lapsed trial or membership is always reflected here, never stuck showing a stale "converted" count.</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px" id="funnelTable">
+          <thead>
+            <tr style="text-align:left;color:rgba(255,255,255,0.4);font-size:11px;letter-spacing:0.05em;text-transform:uppercase">
+              <th style="padding:8px 10px">Offer</th>
+              <th style="padding:8px 10px;display:none" id="funnelSourceHdr">Source</th>
+              <th style="padding:8px 10px;display:none" id="funnelSkinHdr">Skin</th>
+              <th style="padding:8px 10px">Hits</th>
+              <th style="padding:8px 10px">Registered</th>
+              <th style="padding:8px 10px">Click→Reg</th>
+              <th style="padding:8px 10px">Trial active</th>
+              <th style="padding:8px 10px">Paid</th>
+              <th style="padding:8px 10px">Reg→Paid</th>
+            </tr>
+          </thead>
+          <tbody id="funnelBody"><tr><td colspan="8" class="loading" style="padding:16px">Loading…</td></tr></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -349,6 +383,11 @@
         <label>Showcase clip on /promotions (optional)</label>
         <select id="offerShowcaseFile"><option value="">No file — falls back to the standing default</option></select>
         <div class="modal-note" style="margin-top:6px">Played, muted, right under the headline on /promotions when someone arrives via this offer's link. Leave unset to use the default clip.</div>
+      </div>
+      <div style="margin-top:14px">
+        <label>Skin (optional, for reporting only)</label>
+        <select id="offerSkin"><option value="">No skin — standard branding</option></select>
+        <div class="modal-note" style="margin-top:6px">Doesn't restrict who can use this offer — just tags it in the funnel report below if you're running the same push across more than one skin.</div>
       </div>
       <div class="modal-err" id="offerModalErr"></div>
       <div class="modal-btns">
@@ -511,7 +550,12 @@
   }
 
   function copyOfferLink(code) {
-    const link = location.origin + '/promo/' + code;
+    // Per Bot 18 — optional ?src= tag so the same offer can be posted to
+    // several platforms/messages and compared in the funnel report below,
+    // without needing a separate offer per platform.
+    const src = prompt('Tag this specific link for the funnel report (e.g. "instagram-post-3"), or leave blank:', '');
+    if (src === null) return; // cancelled
+    const link = location.origin + '/promo/' + code + (src.trim() ? ('?src=' + encodeURIComponent(src.trim())) : '');
     navigator.clipboard.writeText(link).then(() => appAlert('Copied: ' + link)).catch(() => appAlert(link));
   }
 
@@ -533,6 +577,18 @@
       + playable.map(f => `<option value="${f.id}" ${f.id===selectedId?'selected':''}>${f.title}</option>`).join('');
   }
 
+  let _skinsForOfferSelect = null;
+  async function populateOfferSkinSelect(selectedId) {
+    if (!_skinsForOfferSelect) {
+      try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); }
+      catch(e) { _skinsForOfferSelect = []; }
+    }
+    const el = document.getElementById('offerSkin');
+    if (!el) return;
+    el.innerHTML = '<option value="">No skin — standard branding</option>'
+      + _skinsForOfferSelect.map(s => `<option value="${s.id}" ${s.id===selectedId?'selected':''}>${s.name}</option>`).join('');
+  }
+
   function openOfferModal(cloneFromId, editId) {
     editingOfferId = editId || null;
     document.getElementById('offerModalErr').textContent = '';
@@ -550,6 +606,7 @@
     document.getElementById('offerExpiryDate').value   = (source && editId) ? (source.expiry_date || '') : '';
     document.getElementById('offerIsDefault').checked  = (source && editId) ? !!source.is_default : false;
     populateShowcaseFileSelect('offerShowcaseFile', source ? source.showcase_file_id : null);
+    populateOfferSkinSelect(source ? source.skin_id : null);
     // Stash which offer this clone came from, purely for lineage — read by
     // saveOffer() below, never shown in the UI.
     document.getElementById('offerModalOverlay').dataset.clonedFrom = (cloneFromId && !editId) ? cloneFromId : '';
@@ -597,6 +654,7 @@
     const expiry_date = document.getElementById('offerExpiryDate').value || null;
     const is_default  = document.getElementById('offerIsDefault').checked;
     const showcase_file_id = document.getElementById('offerShowcaseFile').value || null;
+    const skin_id = document.getElementById('offerSkin').value || null;
     const err = document.getElementById('offerModalErr');
 
     if (!name)                       { err.textContent = 'Please name this offer.'; return; }
@@ -606,7 +664,7 @@
     const btn = document.getElementById('offerModalSaveBtn');
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default, showcase_file_id };
+      const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default, showcase_file_id, skin_id };
       let res;
       if (editingOfferId) {
         if (code) body.code = code;
@@ -761,7 +819,43 @@
     }
   }
 
-  checkAuth().then(() => { loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); });
+  checkAuth().then(async () => {
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile();
+    try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
+    loadFunnel();
+  });
+
+  async function loadFunnel() {
+    const bySource = document.getElementById('funnelBySource').checked;
+    const bySkin = document.getElementById('funnelBySkin').checked;
+    document.getElementById('funnelSourceHdr').style.display = bySource ? '' : 'none';
+    document.getElementById('funnelSkinHdr').style.display = bySkin ? '' : 'none';
+    const body = document.getElementById('funnelBody');
+    body.innerHTML = '<tr><td colspan="8" class="loading" style="padding:16px">Loading…</td></tr>';
+    const params = new URLSearchParams();
+    if (bySource) params.set('groupBySource', '1');
+    if (bySkin) params.set('groupBySkin', '1');
+    const rows = await fetch('/api/admin/marketing/funnel?' + params.toString()).then(r => r.json()).catch(() => []);
+    if (!Array.isArray(rows) || !rows.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty" style="padding:16px">No promo link visits logged yet.</td></tr>';
+      return;
+    }
+    const pct = v => v === null || v === undefined ? '—' : v + '%';
+    const skinName = id => id ? (_skinsForOfferSelect || []).find(s => s.id === id)?.name || id : '—';
+    body.innerHTML = rows.map(r => `
+      <tr style="border-top:1px solid rgba(255,255,255,0.06)">
+        <td style="padding:8px 10px">${escHtml(r.offer_name)}</td>
+        ${bySource ? `<td style="padding:8px 10px;color:rgba(255,255,255,0.6)">${r.source ? escHtml(r.source) : '—'}</td>` : ''}
+        ${bySkin ? `<td style="padding:8px 10px;color:rgba(255,255,255,0.6)">${escHtml(skinName(r.skin_id))}</td>` : ''}
+        <td style="padding:8px 10px">${r.hits}</td>
+        <td style="padding:8px 10px">${r.registrations}</td>
+        <td style="padding:8px 10px;color:rgba(180,230,200,0.85)">${pct(r.click_to_reg_pct)}</td>
+        <td style="padding:8px 10px">${r.trial_active}</td>
+        <td style="padding:8px 10px">${r.paid}</td>
+        <td style="padding:8px 10px;color:rgba(180,230,200,0.85)">${pct(r.reg_to_paid_pct)}</td>
+      </tr>
+    `).join('');
+  }
 
   async function loadDefaultShowcaseFile() {
     const current = await fetch('/api/admin/settings/default-showcase-file').then(r=>r.json()).catch(()=>({}));

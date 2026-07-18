@@ -240,12 +240,19 @@
 <script>
   const urlParams = new URLSearchParams(location.search);
   const promoCode = urlParams.get('promoCode') || '';
+  const srcTag = urlParams.get('src') || '';
+  const skinTag = urlParams.get('skin') || '';
 
-  // Hero CTA and final CTA both carry the promo code straight through to
-  // the actual registration form — this page never registers anyone
-  // itself, it only ever hands off to /register with the code attached,
-  // same as /promo/<code> already does one step earlier.
-  const ctaHref = '/register' + (promoCode ? ('?promoCode=' + encodeURIComponent(promoCode)) : '');
+  // Hero CTA and final CTA both carry the promo code (and, Per Bot 18, the
+  // src/skin attribution tags) straight through to the actual registration
+  // form — this page never registers anyone itself, it only ever hands off
+  // to /register with everything attached, same as /promo/<code> already
+  // does one step earlier.
+  const ctaParams = new URLSearchParams();
+  if (promoCode) ctaParams.set('promoCode', promoCode);
+  if (srcTag) ctaParams.set('src', srcTag);
+  if (skinTag) ctaParams.set('skin', skinTag);
+  const ctaHref = '/register' + (ctaParams.toString() ? ('?' + ctaParams.toString()) : '');
   document.getElementById('heroCta').href = ctaHref;
   document.getElementById('finalCta').href = ctaHref;
 
