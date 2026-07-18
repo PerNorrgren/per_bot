@@ -638,6 +638,23 @@
         <button class="btn sm" onclick="setCourseMandatoryAll(false)">None</button>
       </span>
     </div>
+    <!-- Per Bot 18 — tier-hiding. Doesn't restrict who can enrol on its own
+         (that's still the price/payment gate) — this only controls whether
+         the course shows up at all in listings for someone below the
+         chosen tier, and whether it shows locked or disappears entirely. -->
+    <div id="cdTierRow" style="display:flex;gap:12px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
+      <span>Required tier:</span>
+      <select id="cdRequiredTier" onchange="saveCourseTierGating()" style="font-size:12px">
+        <option value="">No requirement — open to everyone</option>
+        <option value="0">Explorer</option>
+        <option value="1">Member 1</option>
+        <option value="2">Member 2</option>
+        <option value="3">Member 3</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="cdHideWhenLocked" onchange="saveCourseTierGating()"/> Hide entirely below that tier (instead of showing locked)
+      </label>
+    </div>
     <div id="cdBody"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('courseDetailModal')">Close</button>
@@ -2431,6 +2448,8 @@ async function openCourseDetail(courseId){
   document.getElementById('cdTitle').textContent=c.title||'Course';
   document.getElementById('cdEnforceLessonSeq').checked=!!c.enforce_lesson_sequence;
   document.getElementById('cdEnforceFileSeq').checked=!!c.enforce_file_sequence;
+  document.getElementById('cdRequiredTier').value = (c.required_tier===null||c.required_tier===undefined) ? '' : String(c.required_tier);
+  document.getElementById('cdHideWhenLocked').checked=!!c.hide_when_locked;
   document.getElementById('alCourseId').value=courseId;
   const lessons=await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json());
   const el=document.getElementById('cdBody');
@@ -2574,6 +2593,17 @@ async function saveCourseSequence(){
     body:JSON.stringify({enforceLessonSequence,enforceFileSequence})});
   const c=allCourses.find(x=>x.id===curCourseId);
   if(c){c.enforce_lesson_sequence=enforceLessonSequence?1:0;c.enforce_file_sequence=enforceFileSequence?1:0;}
+}
+
+async function saveCourseTierGating(){
+  if(!curCourseId) return;
+  const raw=document.getElementById('cdRequiredTier').value;
+  const requiredTier = raw===''?null:parseInt(raw,10);
+  const hideWhenLocked=document.getElementById('cdHideWhenLocked').checked;
+  await fetch(`/api/content/courses/${curCourseId}/tier-gating`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({requiredTier,hideWhenLocked})});
+  const c=allCourses.find(x=>x.id===curCourseId);
+  if(c){c.required_tier=requiredTier;c.hide_when_locked=hideWhenLocked?1:0;}
 }
 
 async function setLessonFileSequence(lessonId,value){

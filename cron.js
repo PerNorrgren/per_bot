@@ -1,7 +1,7 @@
 // ── cron.js ──
 // Wires the Per Bot recurring jobs onto node-cron: the hourly scheduled MOTD
 // send (per-user day/hour preferences — Per Bot 6), the trial email sequence
-// (day 3 / 10 / 14), and inactivity reminders.
+// (day 3 / 7 / 10 / 14), and inactivity reminders.
 //
 // All schedules are UTC (node-cron's default, no timezone option set below).
 // The MOTD job runs on the hour every hour so it can catch each user's
@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -37,6 +37,12 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10,
         db.markTrialEmailSent(user.id, 'trial_email_day3_sent');
       }
 
+      const day7 = db.getTrialEmailCandidates(7, 'trial_email_day7_sent');
+      for (const user of day7) {
+        await emailTrialDay7(user);
+        db.markTrialEmailSent(user.id, 'trial_email_day7_sent');
+      }
+
       const day10 = db.getTrialEmailCandidates(10, 'trial_email_day10_sent');
       for (const user of day10) {
         await emailTrialDay10(user);
@@ -49,7 +55,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10,
         db.markTrialEmailSent(user.id, 'trial_email_day14_sent');
       }
 
-      console.log(`[cron] trial email sequence: day3=${day3.length} day10=${day10.length} day14=${day14.length}`);
+      console.log(`[cron] trial email sequence: day3=${day3.length} day7=${day7.length} day10=${day10.length} day14=${day14.length}`);
     } catch (e) {
       console.error('[cron] trial email sequence failed:', e.message);
     }

@@ -434,6 +434,17 @@ function fillTemplate(str, tokens) {
   return String(str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (tokens[k] !== undefined ? tokens[k] : ''));
 }
 
+// Per Bot 18 — renders admin-editable email body text as one <p> per
+// blank-line-separated paragraph, rather than forcing everything into a
+// single block like the older reminder templates do. Lets the trial
+// sequence's default copy actually use the felt-experience → what-it-is →
+// invitation shape as three real paragraphs, and an admin editing it later
+// gets the same shape back, not one run-on block.
+function renderEmailParagraphs(text) {
+  return String(text || '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+    .map(p => `<p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">${p}</p>`).join('');
+}
+
 function brand() {
   const cfg = db.getAppConfig() || {};
   return {
@@ -734,18 +745,44 @@ function emailAdminPasswordReset(name, email, tempPassword, language) {
 // Day 3: what you've unlocked. Day 10: 4 days left. Day 14: trial ended.
 function emailTrialDay3(user) {
   const b = brand();
-  return sendEmail(user.email, `Here's what you've unlocked at ${b.name}`,
+  const cfg = db.getAppConfig() || {};
+  const subject = cfg.trial_day3_subject || "The parts of this you haven't found yet";
+  const body = fillTemplate(cfg.trial_day3_body || `A few days in is usually when people find the one thing that works and quietly stop looking any further. That's completely fine — but there's more here than the first thing you landed on.
+
+Everything is actually open to you right now, not just what's free to try — the full library, and Talk, for the days nothing scripted quite fits what you're carrying.
+
+No pressure to go looking. Just wanted you to know it's there.`, { name: user.name });
+  return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">You're a few days into your trial. A quick look at what's already available to you:</p>
-      <ul style="font-size:15px;line-height:1.9;color:#444;margin:0 0 24px;padding-left:20px">
-        <li>The full content library — every guided practice, not just the free selection</li>
-        <li>A daily message, if you've opted in — a short prompt to pause and notice</li>
-        <li>Your own practice space, with history of what you've listened to</li>
-      </ul>
-      <p style="font-size:14px;line-height:1.7;color:#666;margin-bottom:24px">No pressure to do anything with this today. Just wanted you to know it's there.</p>
+      ${renderEmailParagraphs(body)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
+
+// Per Bot 18 — fills the previously-empty week between day 3 and day 10.
+// Purpose is different from day 3 (which points at what's unopened) — this
+// one is about return frequency, since short-and-often is what actually
+// makes a practice stick, not one long session.
+function emailTrialDay7(user) {
+  const b = brand();
+  const cfg = db.getAppConfig() || {};
+  const subject = cfg.trial_day7_subject || 'The five minutes that actually add up';
+  const body = fillTemplate(cfg.trial_day7_body || `The people who keep this going long after a trial ends aren't usually the ones who did one long session — they're the ones who came back for five minutes, a few times a week.
+
+If you haven't yet, that's really all Talk or a short practice needs to be. Not a commitment. Just a few minutes, whenever the day happens to call for it.
+
+However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`, { name: user.name });
+  return sendEmail(user.email, subject,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
+      ${renderEmailParagraphs(body)}
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Try a few minutes now →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`
@@ -756,21 +793,19 @@ function emailTrialDay10(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
-  return sendEmail(user.email, 'Four days left on your trial',
+  const subject = cfg.trial_day10_subject || 'Four days left, and what happens after';
+  const defaultBody = paymentsOn
+    ? `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, but full access doesn't.
+
+If this has found a place in your week, membership just means it stays there. Nothing else changes, and there's no pressure either way.`
+    : `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, and the free content stays fully available too.`;
+  const body = fillTemplate(cfg.trial_day10_body || defaultBody, { name: user.name });
+  return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">Your trial ends in four days. After that, your account moves to the free Explorer tier — you'll keep your history, but full access ends.</p>
-      ${paymentsOn ? `
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">If it's been useful, you can continue anytime, no rush and no pressure either way.</p>
-      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
-        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Membership</div>
-        <div style="font-size:15px;color:#1a1a1a">See current membership options on your account page.</div>
-      </div>
-      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
-      ` : `
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">The free tier still gives you access to what's openly available — no action needed from you.</p>
-      `}
+      ${renderEmailParagraphs(body)}
+      ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`
@@ -781,15 +816,19 @@ function emailTrialDay14(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
-  return sendEmail(user.email, 'Your trial has ended',
+  const subject = cfg.trial_day14_subject || 'Your trial has ended — here\'s where things stand';
+  const defaultBody = paymentsOn
+    ? `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.
+
+If you'd like full access back, you're welcome any time. No explanation needed, and nothing about coming back later is complicated.`
+    : `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.`;
+  const body = fillTemplate(cfg.trial_day14_body || defaultBody, { name: user.name });
+  return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and saved content are still there, and the free content is still available.</p>
-      ${paymentsOn ? `
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">If you'd like full access back, you're welcome anytime.</p>
-      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
-      ` : ''}
+      ${renderEmailParagraphs(body)}
+      ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`
@@ -1829,10 +1868,11 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
-    const userFlags = db.userFlagsFromRecord(db.getUser(req.user.id), 'client');
+    const userRecord = db.getUser(req.user.id);
+    const userFlags = db.userFlagsFromRecord(userRecord, 'client');
     const content = db.getFeaturedLibraryFiles(userFlags, req.user.id).map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
     res.json({
-      courses: db.getFeaturedCourses(),
+      courses: db.getFeaturedCourses({ userTier: userRecord?.member_tier || 0, skinId: userRecord?.skin_id || null }),
       content,
       recentPoems: db.getRecentStandaloneFiles('poem', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
@@ -1859,6 +1899,19 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const instances = db.getAllCourseInstances({ status: 'open' });
     const user = db.getUser(req.user.id);
+    const userTier = user?.member_tier || 0;
+    const myEnrolments = db.getEnrolmentsForUser(req.user.id);
+    const byInstance = {};
+    myEnrolments.forEach(e => { byInstance[e.course_instance_id] = e; });
+    // Per Bot 18 — tier gating. required_tier null/undefined means no
+    // requirement (every course before this feature existed, and any new
+    // one left unset) — behaviour there is byte-for-byte unchanged.
+    // Someone already enrolled is never hidden or newly locked by this,
+    // even if the requirement is added or raised after they joined — this
+    // is a discovery/listing control, not a way to revoke access someone
+    // already has.
+    const isTierGated = i => i.course_required_tier !== null && i.course_required_tier !== undefined
+      && userTier < i.course_required_tier && !byInstance[i.id];
     // Per Bot 33l — a course restricted to a skin (course_skin_id set) only
     // shows to users belonging to that same skin. Unrestricted courses
     // (the overwhelming majority — course_skin_id null) show to everyone,
@@ -1869,10 +1922,8 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
     // — enrol is blocked separately below.
     const visible = instances
       .filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id)
-      .filter(i => i.course_access_status !== 'hidden');
-    const myEnrolments = db.getEnrolmentsForUser(req.user.id);
-    const byInstance = {};
-    myEnrolments.forEach(e => { byInstance[e.course_instance_id] = e; });
+      .filter(i => i.course_access_status !== 'hidden')
+      .filter(i => !(isTierGated(i) && i.course_hide_when_locked));
     res.json(visible.map(i => {
       const enrolment = byInstance[i.id];
       return {
@@ -1880,7 +1931,7 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
         enrolled: !!enrolment,
         enrolment_id: enrolment?.id || null,
         percent_complete: enrolment?.percent_complete ?? null,
-        locked: i.course_access_status === 'locked',
+        locked: i.course_access_status === 'locked' || isTierGated(i),
       };
     }));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1934,6 +1985,12 @@ app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) 
     // call even if it never showed up in that person's list.
     if (instance.course_skin_id && instance.course_skin_id !== user?.skin_id) {
       return res.status(403).json({ error: 'This course is not available on your account.' });
+    }
+    // Per Bot 18 — same reasoning again for tier gating: block the direct
+    // call too, not just the listing. Doesn't apply if they're already
+    // enrolled (handled above, this only runs for a fresh enrol).
+    if (course?.required_tier !== null && course?.required_tier !== undefined && (user?.member_tier || 0) < course.required_tier) {
+      return res.status(403).json({ error: 'This course requires a higher membership tier.' });
     }
     const isMember = (user.member_tier || 0) >= 1;
 
@@ -7097,6 +7154,16 @@ app.patch('/api/content/courses/:id/sequence', auth.requireAuthApi(['admin']), (
   res.json({ ok: true });
 });
 
+// Per Bot 18 — course tier-hiding. requiredTier: null/''/undefined clears
+// the requirement entirely (open to everyone, today's behaviour); 0-3 sets
+// Explorer through Member 3 as the floor.
+app.patch('/api/content/courses/:id/tier-gating', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.setCourseTierGating(req.params.id, req.body.requiredTier, !!req.body.hideWhenLocked);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 18 — one-off backfill, run once from the browser console:
 // fetch('/api/content/courses/backfill-sequence-defaults',{method:'POST'}).then(r=>r.json()).then(console.log)
 app.post('/api/content/courses/backfill-sequence-defaults', auth.requireAuthApi(['admin']), (req, res) => {
@@ -7766,9 +7833,36 @@ app.get('/api/admin/settings/default-showcase-file', auth.requireAuthApi(['admin
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 18 — trial sequence copy, GET counterpart for the admin UI, and
+// a test-send so Per can see exactly what a real trial member gets at each
+// step without waiting for cron or faking a trial account.
+app.get('/api/admin/settings/trial-sequence', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const cfg = db.getAppConfig() || {};
+    res.json({
+      trialDay3Subject: cfg.trial_day3_subject || '', trialDay3Body: cfg.trial_day3_body || '',
+      trialDay7Subject: cfg.trial_day7_subject || '', trialDay7Body: cfg.trial_day7_body || '',
+      trialDay10Subject: cfg.trial_day10_subject || '', trialDay10Body: cfg.trial_day10_body || '',
+      trialDay14Subject: cfg.trial_day14_subject || '', trialDay14Body: cfg.trial_day14_body || '',
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+const TRIAL_TEST_SENDERS = { day3: emailTrialDay3, day7: emailTrialDay7, day10: emailTrialDay10, day14: emailTrialDay14 };
+app.post('/api/admin/settings/trial-sequence/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { step, email } = req.body;
+    const sender = TRIAL_TEST_SENDERS[step];
+    if (!sender) return res.status(400).json({ error: 'Unknown step.' });
+    const to = resolveTestEmail(email, req.user.email);
+    if (!to) return res.status(400).json({ error: 'No test email address available.' });
+    await sender({ id: 'test', name: req.user.name || 'there', email: to });
+    res.json({ ok: true, sentTo: to });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -9075,7 +9169,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

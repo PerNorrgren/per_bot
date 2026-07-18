@@ -253,6 +253,22 @@
     </div>
   </div>
 
+  <!-- Trial sequence (Per Bot 18) -->
+  <div>
+    <div class="section-label">Trial sequence</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Day 3 / 7 / 10 / 14 emails</div>
+      </div>
+      <div style="padding:0 20px 4px" class="modal-note">Sent automatically at each day mark, once per trial member. Follows the same selling-copy rules as Offers and course descriptions — no urgency or scarcity language, no hype words. Leave a field blank to use the built-in default shown as its placeholder.</div>
+      <div id="trialSeqBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
+      <div style="padding:0 20px 18px;display:flex;gap:8px;align-items:center">
+        <button class="btn sm primary" onclick="saveTrialSequence()">Save all</button>
+        <div class="feedback" id="trialSeqFeedback"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Funnel report (Per Bot 18) -->
   <div>
     <div class="section-label">Funnel</div>
@@ -821,7 +837,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -870,6 +886,52 @@
       showFeedback('defaultShowcaseFeedback', 'Saved.', 'ok');
     } catch(e) {
       showFeedback('defaultShowcaseFeedback', 'Could not save — please try again.', 'err');
+    }
+  }
+
+  // ── Trial sequence (Per Bot 18) ──
+  const TRIAL_STEPS = [
+    { key: 'trialDay3',  label: 'Day 3',  hint: 'Points at what they haven\'t explored yet.' },
+    { key: 'trialDay7',  label: 'Day 7',  hint: 'Return-frequency nudge — short and often, not one big session.' },
+    { key: 'trialDay10', label: 'Day 10', hint: '4 days left — the value case for staying, no pressure.' },
+    { key: 'trialDay14', label: 'Day 14', hint: 'Trial just ended — soft invitation back, any time.' },
+  ];
+  async function loadTrialSequence() {
+    const cfg = await fetch('/api/admin/settings/trial-sequence').then(r=>r.json()).catch(()=>({}));
+    const el = document.getElementById('trialSeqBody');
+    el.innerHTML = TRIAL_STEPS.map(s => `
+      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;color:rgba(255,255,255,0.75)">${s.label} <span style="color:rgba(255,255,255,0.35);font-weight:normal">— ${s.hint}</span></div>
+          <button class="btn sm" onclick="testSendTrialStep('${s.key.replace('trialDay','day')}')">Send test</button>
+        </div>
+        <input class="inline-input" type="text" id="${s.key}Subject" style="width:100%;margin-bottom:6px" placeholder="Using the built-in default subject" value="${escHtml(cfg[s.key+'Subject']||'')}"/>
+        <textarea class="inline-input" id="${s.key}Body" rows="4" style="width:100%;resize:vertical" placeholder="Using the built-in default copy — leave blank to keep it">${escHtml(cfg[s.key+'Body']||'')}</textarea>
+      </div>
+    `).join('');
+  }
+  async function saveTrialSequence() {
+    const body = {};
+    TRIAL_STEPS.forEach(s => {
+      body[s.key+'Subject'] = document.getElementById(s.key+'Subject').value;
+      body[s.key+'Body'] = document.getElementById(s.key+'Body').value;
+    });
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      showFeedback('trialSeqFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('trialSeqFeedback', 'Could not save — please try again.', 'err');
+    }
+  }
+  async function testSendTrialStep(step) {
+    showFeedback('trialSeqFeedback', 'Sending…', 'ok');
+    try {
+      const res = await fetch('/api/admin/settings/trial-sequence/test-send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ step }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not send test.');
+      showFeedback('trialSeqFeedback', 'Sent to ' + data.sentTo + '.', 'ok');
+    } catch(e) {
+      showFeedback('trialSeqFeedback', e.message, 'err');
     }
   }
 </script>

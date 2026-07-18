@@ -1523,6 +1523,40 @@ async function getDb() {
     // that resulted from it, alongside the existing signup_offer_id.
     "ALTER TABLE offers ADD COLUMN skin_id TEXT",
     "ALTER TABLE users ADD COLUMN signup_source TEXT",
+    // Per Bot 18 — course tier-hiding. Deliberately NOT reusing the
+    // existing courses.visibility column here — that column defaults to
+    // 'client' (rank 4, the 1:1-facilitator-client tier) on every course,
+    // a legacy default from before self-registration/Explorer existed,
+    // and was never actually enforced anywhere in the client-facing
+    // routes. Enforcing it as-is would have silently hidden every
+    // existing course from every ordinary self-registered member. This
+    // is a clean, purpose-built field instead: NULL (the default) means
+    // "no tier requirement" — today's actual behaviour, unchanged for
+    // every course that already exists — and only ever restricts
+    // anything once an admin explicitly sets it. Scale is 0-3 (Explorer
+    // through Member 3), matching member_tier directly, not the
+    // file-visibility ladder's client/facilitator/admin levels, which
+    // aren't a meaningful concept for "hide this from a lower audience."
+    "ALTER TABLE courses ADD COLUMN required_tier INTEGER",
+    // 0 (default) = show locked, same as today's access_status='locked'
+    // behaviour, just triggered by tier instead of an admin's manual
+    // flip. 1 = don't show at all below the required tier.
+    "ALTER TABLE courses ADD COLUMN hide_when_locked INTEGER DEFAULT 0",
+    // Per Bot 18 — fills the untouched week between the day-3 and day-10
+    // trial emails with a real mid-trial nudge.
+    "ALTER TABLE users ADD COLUMN trial_email_day7_sent INTEGER DEFAULT 0",
+    // Per Bot 18 — trial sequence copy, admin-editable same as the
+    // existing reminder/renewal email fields below. Empty/NULL falls back
+    // to the hand-written default in server.js, same fallback pattern
+    // buildReminderHtml already uses.
+    "ALTER TABLE app_config ADD COLUMN trial_day3_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day3_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day7_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day7_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day10_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day10_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day14_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_day14_body TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -2477,6 +2511,13 @@ function updateCourse(id, title, description, categoryId, subcategoryId, guestVi
     [title, description||'', categoryId, subcategoryId||null, guestVisible?1:0, skinId||null, visibility||'client', accessStatus||'visible', id]); save();
 }
 function getCourse(id) { return queryOne('SELECT * FROM courses WHERE id=?', [id]); }
+// Per Bot 18 — course tier-hiding. requiredTier: null (no requirement) or
+// 0-3 (Explorer through Member 3). hideWhenLocked: 0 (show locked, same
+// look as an admin-locked course) or 1 (don't show at all below tier).
+function setCourseTierGating(id, requiredTier, hideWhenLocked) {
+  getDbSync().run('UPDATE courses SET required_tier=?, hide_when_locked=? WHERE id=?',
+    [requiredTier === null || requiredTier === '' ? null : parseInt(requiredTier, 10), hideWhenLocked ? 1 : 0, id]); save();
+}
 function getAllCourses(filters = {}) {
   let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name
     FROM courses c
@@ -2512,14 +2553,25 @@ function setCourseSortOrder(id, sortOrder) {
 // in — courses themselves are just the template) since a featured course
 // with nothing currently open isn't something a client could do anything
 // with if it showed up.
-function getFeaturedCourses() {
-  return queryAll(`SELECT c.*, cat.name as category_name, ci.id as instance_id
+// Per Bot 18 — options are optional and default to unfiltered, since the
+// admin carousel-order editor calls this with none and needs to see and
+// reorder every featured course regardless of who could actually see it.
+// The client-facing /api/client/featured call is the one that passes
+// userTier/skinId, same tier/skin rules as the main course list.
+function getFeaturedCourses({ userTier, skinId } = {}) {
+  const rows = queryAll(`SELECT c.*, cat.name as category_name, ci.id as instance_id
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
     JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open'
     WHERE c.featured=1
     GROUP BY c.id
     ORDER BY c.sort_order, c.title`);
+  if (userTier === undefined && skinId === undefined) return rows;
+  return rows.filter(c => {
+    if (c.skin_id && c.skin_id !== skinId) return false;
+    if (c.required_tier !== null && c.required_tier !== undefined && (userTier || 0) < c.required_tier && c.hide_when_locked) return false;
+    return true;
+  });
 }
 function deleteCourse(id) {
   const lessons = queryAll('SELECT id FROM lessons WHERE course_id=?', [id]);
@@ -2708,7 +2760,8 @@ function getInstancesForCourse(courseId) {
   return queryAll('SELECT * FROM course_instances WHERE course_id=? ORDER BY created_at DESC', [courseId]);
 }
 function getAllCourseInstances(filters = {}) {
-  let sql = `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id, c.access_status as course_access_status
+  let sql = `SELECT ci.*, c.title as course_title, c.skin_id as course_skin_id, c.access_status as course_access_status,
+    c.required_tier as course_required_tier, c.hide_when_locked as course_hide_when_locked
     FROM course_instances ci LEFT JOIN courses c ON ci.course_id=c.id WHERE 1=1`;
   const params = [];
   if (filters.status) { sql += ' AND ci.status=?'; params.push(filters.status); }
@@ -4086,7 +4139,7 @@ function getPublicOpenCourses() {
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
     JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open' AND (ci.price_cents IS NULL OR ci.price_cents=0)
-    WHERE c.access_status='visible'
+    WHERE c.access_status='visible' AND (c.required_tier IS NULL OR c.required_tier=0)
     GROUP BY c.id
     ORDER BY c.sort_order, c.title`);
 }
@@ -4688,7 +4741,7 @@ function markRenewalReminderSent(userId, expiresAt) {
 // people still genuinely on trial: tier 1, a trial_ends_at set, and no
 // Stripe subscription yet (once they've subscribed, the trial nudges no
 // longer apply to them).
-const TRIAL_EMAIL_FLAGS = ['trial_email_day3_sent', 'trial_email_day10_sent', 'trial_email_day14_sent'];
+const TRIAL_EMAIL_FLAGS = ['trial_email_day3_sent', 'trial_email_day7_sent', 'trial_email_day10_sent', 'trial_email_day14_sent'];
 
 function getTrialEmailCandidates(daysSinceStart, flagColumn) {
   if (!TRIAL_EMAIL_FLAGS.includes(flagColumn)) throw new Error('Invalid trial email flag column: ' + flagColumn);
@@ -4775,7 +4828,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day7_subject','trial_day7_body','trial_day10_subject','trial_day10_body','trial_day14_subject','trial_day14_body'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -5100,6 +5153,7 @@ module.exports = {
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   backfillCourseSequenceDefaults,
+  setCourseTierGating,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,
