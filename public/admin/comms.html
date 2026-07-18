@@ -369,6 +369,28 @@
         <div style="margin-top:10px">
           <a class="btn sm primary" id="vgDownloadLink" download="deeper-mindfulness-video.webm">Download video</a>
         </div>
+        <!-- Per Bot 18 — saving straight to the library is what actually
+             makes a rendered clip attachable anywhere else (a lesson's
+             files, an offer's showcase clip) — those pickers only ever
+             pull from the library, they don't see a raw downloaded file.
+             Download above still exists for posting to social manually. -->
+        <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08);text-align:left">
+          <div class="config-label" style="margin-bottom:8px">Save to library</div>
+          <input class="inline-input" type="text" id="vgSaveTitle" style="width:100%;margin-bottom:8px" placeholder="Title for the library"/>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <select class="inline-input" id="vgSaveCat" style="flex:1" onchange="vgOnCatChange()"><option value="">Category…</option></select>
+            <select class="inline-input" id="vgSaveSub" style="flex:1"><option value="">Subcategory (optional)</option></select>
+          </div>
+          <select class="inline-input" id="vgSaveVis" style="width:100%;margin-bottom:10px">
+            <option value="registered">Explorer</option>
+            <option value="member">Member</option>
+            <option value="client" selected>Client</option>
+            <option value="facilitator">Facilitator</option>
+          </select>
+          <button class="btn sm primary" id="vgSaveBtn" onclick="vgSaveToLibrary()">Save to library</button>
+          <div style="margin-top:8px"><div class="feedback" id="vgSaveFeedback"></div></div>
+          <div class="config-desc" style="margin-top:6px">Once saved, this clip is pickable anywhere a file picker already exists — a lesson's files, or an offer's showcase clip on /promotions.</div>
+        </div>
       </div>
       <canvas id="vgCanvas" width="1080" height="1920" style="display:none"></canvas>
       <audio id="vgAudio" style="display:none"></audio>
@@ -1303,6 +1325,9 @@
   // real time (a 60s message takes ~60s to render) and produces WebM, not
   // mp4 — accepted by every mainstream upload tool in practice, but worth
   // knowing if something downstream specifically demands mp4.
+  let _vgResultBlob = null;
+  let _vgCats = [];
+
   const VG_BACKGROUNDS = [
     'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
     'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
@@ -1535,10 +1560,13 @@
       audioCtx.close();
 
       const blob = new Blob(chunks, { type: 'video/webm' });
+      _vgResultBlob = blob;
       const url = URL.createObjectURL(blob);
       document.getElementById('vgResultVideo').src = url;
       document.getElementById('vgDownloadLink').href = url;
       document.getElementById('vgPreviewWrap').style.display = 'block';
+      document.getElementById('vgSaveTitle').value = (document.getElementById('vgSource').value || '').slice(0, 60).trim() || 'Calming message video';
+      document.getElementById('vgSaveFeedback').textContent = '';
       showFeedback('vgFeedback', 'Rendered — preview above, or download to post manually.', 'ok');
     } catch (e) {
       showFeedback('vgFeedback', e.message, 'err');
@@ -1546,6 +1574,75 @@
       btn.disabled = false; btn.innerHTML = origHtml;
     }
   }
+
+  // Per Bot 18 — save the rendered clip straight into the library, using
+  // the same presign → direct-to-R2 PUT → confirm pattern the content
+  // library's own uploader uses (see uploadOneFile in content.html).
+  async function vgLoadCategories() {
+    try { _vgCats = await (await fetch('/api/content/categories')).json(); }
+    catch(e) { _vgCats = []; }
+    const catSel = document.getElementById('vgSaveCat');
+    if (!catSel) return;
+    catSel.innerHTML = '<option value="">Category…</option>'
+      + _vgCats.filter(c => !c.parent_id).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  }
+  function vgOnCatChange() {
+    const catId = document.getElementById('vgSaveCat').value;
+    const subSel = document.getElementById('vgSaveSub');
+    subSel.innerHTML = '<option value="">Subcategory (optional)</option>'
+      + _vgCats.filter(c => c.parent_id === catId).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  }
+  async function vgSaveToLibrary() {
+    if (!_vgResultBlob) { showFeedback('vgSaveFeedback', 'Render a video first.', 'err'); return; }
+    const title = document.getElementById('vgSaveTitle').value.trim();
+    const categoryId = document.getElementById('vgSaveCat').value;
+    if (!title) { showFeedback('vgSaveFeedback', 'Give it a title first.', 'err'); return; }
+    if (!categoryId) { showFeedback('vgSaveFeedback', 'Pick a category first.', 'err'); return; }
+    const subcategoryId = document.getElementById('vgSaveSub').value;
+    const visibility = document.getElementById('vgSaveVis').value;
+    const btn = document.getElementById('vgSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const filename = `video-message-${Date.now()}.webm`;
+    try {
+      const presignRes = await fetch('/api/content/library/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, contentType: 'video/webm' })
+      });
+      if (presignRes.ok) {
+        const { uploadUrl, key } = await presignRes.json();
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', uploadUrl);
+          xhr.setRequestHeader('Content-Type', 'video/webm');
+          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+          xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+          xhr.send(_vgResultBlob);
+        });
+        const fd = new FormData();
+        fd.append('title', title); fd.append('description', '');
+        fd.append('categoryId', categoryId); fd.append('subcategoryId', subcategoryId || '');
+        fd.append('visibility', visibility);
+        fd.append('r2Key', key); fd.append('originalName', filename);
+        fd.append('contentType', 'video/webm'); fd.append('fileSize', _vgResultBlob.size);
+        const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
+        if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');
+      } else {
+        // R2 not configured — legacy direct-through-Express fallback, same as content.html.
+        const fd = new FormData();
+        fd.append('file', _vgResultBlob, filename);
+        fd.append('title', title); fd.append('categoryId', categoryId); fd.append('subcategoryId', subcategoryId || '');
+        fd.append('visibility', visibility);
+        const res = await fetch('/api/content/library', { method: 'POST', body: fd });
+        if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
+      }
+      showFeedback('vgSaveFeedback', "Saved to the library — pick it in a lesson's files or an offer's showcase clip.", 'ok');
+    } catch (e) {
+      showFeedback('vgSaveFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Save to library';
+    }
+  }
+  vgLoadCategories();
 
   // ════════════════════════════════════
   // Newsletters
