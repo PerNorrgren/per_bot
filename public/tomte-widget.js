@@ -21,6 +21,19 @@
       position: absolute; top: -3px; right: -3px; width: 14px; height: 14px; border-radius: 50%;
       background: rgba(230,175,90,0.9); border: 2px solid #0d1210; display: none;
     }
+    /* Per Bot 18 — tip-pending state: bigger badge with a small glyph
+       instead of a plain dot, so the "I noticed something" state reads
+       differently from an ordinary unread-message dot. Placeholder icon
+       (raised hand via CSS content) until real matching artwork exists —
+       swapping to a real image later only needs a class/content change
+       here, nothing in the tip logic itself. */
+    #tomte-fab .tomte-badge.tomte-badge-tip {
+      width: 20px; height: 20px; top: -5px; right: -5px; display: flex;
+      align-items: center; justify-content: center; font-size: 11px;
+      animation: tomte-tip-bounce 2s ease-in-out infinite;
+    }
+    #tomte-fab .tomte-badge.tomte-badge-tip::after { content: '✋'; }
+    @keyframes tomte-tip-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
     #tomte-fab.tomte-listening { border-color: rgba(255,140,120,0.8); animation: tomte-pulse 1.2s ease-in-out infinite; }
     @keyframes tomte-pulse { 0%,100% { box-shadow: 0 4px 18px rgba(255,140,120,0.15); } 50% { box-shadow: 0 4px 24px rgba(255,140,120,0.45); } }
 
@@ -47,6 +60,8 @@
     .tomte-msg { max-width: 88%; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
     .tomte-msg.tomte-bot { background: rgba(230,175,90,0.1); border: 1px solid rgba(230,175,90,0.2); color: rgba(255,228,190,0.9); align-self: flex-start; }
     .tomte-msg.tomte-user { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); align-self: flex-end; }
+    .tomte-tip-action { display: inline-block; margin-top: 8px; font-size: 12px; color: rgba(230,175,90,0.95); text-decoration: none; border-bottom: 1px solid rgba(230,175,90,0.4); }
+    .tomte-tip-action:hover { color: rgba(255,210,140,1); }
     .tomte-empty { color: rgba(255,255,255,0.3); font-size: 12px; font-style: italic; text-align: center; padding: 16px 8px; }
     #tomte-input-row { display: flex; gap: 6px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.08); }
     #tomte-input {
@@ -140,6 +155,7 @@
     injectStyle();
     const { fab, panel } = buildDom();
     const messagesEl = document.getElementById('tomte-messages');
+    const badge = document.getElementById('tomte-badge');
     const inputEl = document.getElementById('tomte-input');
     const micBtn = document.getElementById('tomte-mic-btn');
     const sendBtn = document.getElementById('tomte-send-btn');
@@ -212,6 +228,24 @@
         updateVoiceToggleUI();
         if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
       } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
+    })();
+
+    // Per Bot 18 — proactive tips. Same silent-no-op-if-not-logged-in
+    // pattern as applyPersonalization above (tomte-widget.js loads on
+    // public pages too, e.g. /promotions, where this route simply won't
+    // exist for the visitor). Only ever fetched once per page load — the
+    // badge either lights up or it doesn't; no polling.
+    let pendingTip = null;
+    (async function checkTomteTip() {
+      try {
+        const res = await fetch('/api/my/tomte-tip');
+        if (!res.ok) return;
+        const tip = await res.json();
+        if (!tip) return;
+        pendingTip = tip;
+        badge.classList.add('tomte-badge-tip');
+        badge.style.display = 'flex';
+      } catch(e) { /* quietly no-op */ }
     })();
 
     // Expressions (Per Bot 8) — swaps to whatever image the server resolved
@@ -330,12 +364,45 @@
       });
     }
 
+    // Per Bot 18 — renders a tip with its action link. Separate from
+    // addMessage since a tip needs an actual clickable link inside the
+    // bubble, not just plain text — content here is always our own
+    // hand-written copy from TOMTE_TIPS server-side, never user input, so
+    // innerHTML is safe.
+    function addTipMessage(tip) {
+      const empty = messagesEl.querySelector('.tomte-empty');
+      if (empty) empty.remove();
+      const div = document.createElement('div');
+      div.className = 'tomte-msg tomte-bot';
+      div.textContent = tip.text;
+      if (tip.actionLabel && tip.actionHref) {
+        const a = document.createElement('a');
+        a.href = tip.actionHref; a.className = 'tomte-tip-action'; a.textContent = tip.actionLabel + ' →';
+        div.appendChild(document.createElement('br'));
+        div.appendChild(a);
+      }
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     function openPanel() {
       panel.classList.add('tomte-open');
       positionPanel();
       connect();
       inputEl.focus();
       nudgeScrollContainers();
+      // A pending tip counts as this session's greeting — showing both
+      // back to back would feel cluttered for what's meant to be one
+      // quiet, easy-to-ignore observation, not two things landing at once.
+      if (pendingTip) {
+        addTipMessage(pendingTip);
+        fetch('/api/my/tomte-tip/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tipId: pendingTip.id }) }).catch(() => {});
+        pendingTip = null;
+        badge.classList.remove('tomte-badge-tip');
+        badge.style.display = 'none';
+        sessionStorage.setItem('tomte_greeted', '1');
+        return;
+      }
       // First contact (Per Bot 8) — greets once per browser session, not
       // every time the panel opens, so it doesn't get repetitive if
       // someone opens/closes him a few times while using the app.

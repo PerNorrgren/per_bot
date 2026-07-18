@@ -3375,6 +3375,39 @@ app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
   const imageUrl = resolveTomteImage(s.tomte_image_filename, s.tomte_language || s.language, 'default', s.skin_id);
   res.json({ name: s.tomte_name || null, imageUrl, voiceEnabled: !!s.tomte_voice_enabled });
 });
+
+// Per Bot 18 — Tomte proactive tips. Deliberately a small, hand-written
+// list rather than anything generated — this is feature-discovery, not
+// marketing copy, and every tip here should read like Tomte noticing
+// something helpful, not selling anything. Same restraint as everywhere
+// else in the app: no urgency, no hype, easy to ignore.
+// Each tip: id (for the seen-tracking table), condition (userId -> bool,
+// true means "this tip is relevant"), text, and an optional action
+// link/label. Checked in order; the first unseen relevant one wins — so
+// order here doubles as priority if more than one ever applies at once.
+const TOMTE_TIPS = [
+  {
+    id: 'try-talk',
+    condition: (userId) => !db.hasEverUsedTalk(userId),
+    text: "Something I noticed: you haven't tried Talk yet. It's not a scripted practice — just a place to think something through out loud, any time, for as long or short as you need.",
+    actionLabel: 'Try Talk',
+    actionHref: '/client/',
+  },
+];
+app.get('/api/my/tomte-tip', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const tip = TOMTE_TIPS.find(t => !db.hasSeenTomteTip(req.user.id, t.id) && t.condition(req.user.id));
+    if (!tip) return res.json(null);
+    res.json({ tipId: tip.id, text: tip.text, actionLabel: tip.actionLabel || null, actionHref: tip.actionHref || null });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/tomte-tip/seen', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    if (!req.body.tipId) return res.status(400).json({ error: 'tipId required.' });
+    db.markTomteTipSeen(req.user.id, req.body.tipId);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 // Self-service voice-output toggle (Per Bot 11) — replaces the old
 // per-browser localStorage flag. Any logged-in role can flip their own
 // preference here; an admin can also set the same field from the user

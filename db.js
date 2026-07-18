@@ -831,6 +831,16 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // Per Bot 18 — Tomte proactive tips (feature discovery, not marketing —
+  // see the tip definitions in server.js for the actual scope reasoning).
+  // One row per person per tip they've been shown, so nothing repeats.
+  db.run(`CREATE TABLE IF NOT EXISTS tomte_tips_seen (
+    user_id TEXT NOT NULL,
+    tip_id TEXT NOT NULL,
+    seen_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, tip_id)
+  )`);
+
   // ── Legal documents ──
   db.run(`CREATE TABLE IF NOT EXISTS legal_documents (
     id TEXT PRIMARY KEY,
@@ -3569,6 +3579,23 @@ function getSessionsForClient(clientId) {
 function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
 }
+// Per Bot 18 — self-guided Talk sessions save as type='self' with no
+// facilitator_id (see the addSession call right after a Talk session
+// generates its summary). A facilitator-led session is a different type
+// and shouldn't count here — this is specifically about whether the
+// person has used the self-serve Talk feature, not sessions generally.
+function hasEverUsedTalk(userId) {
+  return !!queryOne("SELECT 1 FROM sessions WHERE client_id=? AND type='self' LIMIT 1", [userId]);
+}
+
+// ── Tomte proactive tips (Per Bot 18) ──
+function hasSeenTomteTip(userId, tipId) {
+  return !!queryOne('SELECT 1 FROM tomte_tips_seen WHERE user_id=? AND tip_id=?', [userId, tipId]);
+}
+function markTomteTipSeen(userId, tipId) {
+  getDbSync().run('INSERT OR IGNORE INTO tomte_tips_seen (user_id, tip_id) VALUES (?, ?)', [userId, tipId]);
+  save();
+}
 
 // ── Messages (Per Bot 8) ──
 function addMessage(id, clientId, facilitatorId, sessionId, senderRole, senderId, contentType, content, filename, originalFilename) {
@@ -5210,7 +5237,8 @@ module.exports = {
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions
-  addSession, getSessionsForClient, getClientSessionsForClient,
+  addSession, getSessionsForClient, getClientSessionsForClient, hasEverUsedTalk,
+  hasSeenTomteTip, markTomteTipSeen,
   addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
