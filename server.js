@@ -1903,15 +1903,23 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
     const myEnrolments = db.getEnrolmentsForUser(req.user.id);
     const byInstance = {};
     myEnrolments.forEach(e => { byInstance[e.course_instance_id] = e; });
-    // Per Bot 18 — tier gating. required_tier null/undefined means no
-    // requirement (every course before this feature existed, and any new
-    // one left unset) — behaviour there is byte-for-byte unchanged.
-    // Someone already enrolled is never hidden or newly locked by this,
-    // even if the requirement is added or raised after they joined — this
-    // is a discovery/listing control, not a way to revoke access someone
-    // already has.
-    const isTierGated = i => i.course_required_tier !== null && i.course_required_tier !== undefined
-      && userTier < i.course_required_tier && !byInstance[i.id];
+    // Per Bot 18 — tier gating, revised: membership sells access to the
+    // app, not a permanent licence to a course the moment someone's
+    // touched it. Two separate questions here, deliberately answered
+    // differently:
+    // - Should it vanish from the list entirely (isTierGatedForHiding)?
+    //   Still exempts someone already enrolled — losing access to a
+    //   course you were partway through is one thing, having it silently
+    //   disappear from "My Courses" with no explanation is another and
+    //   worse. It stays visible, just locked.
+    // - Should it show (and actually be) locked (isTierGatedForAccess)?
+    //   Applies to everyone, enrolled or not — this is the real,
+    //   enforced answer, matching what /api/client/courses/:instanceId
+    //   and /api/client/lessons/:lessonId now actually check before
+    //   letting the content itself open.
+    const hasTierRequirement = i => i.course_required_tier !== null && i.course_required_tier !== undefined && userTier < i.course_required_tier;
+    const isTierGatedForHiding = i => hasTierRequirement(i) && !byInstance[i.id];
+    const isTierGatedForAccess = i => hasTierRequirement(i);
     // Per Bot 33l — a course restricted to a skin (course_skin_id set) only
     // shows to users belonging to that same skin. Unrestricted courses
     // (the overwhelming majority — course_skin_id null) show to everyone,
@@ -1923,7 +1931,7 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
     const visible = instances
       .filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id)
       .filter(i => i.course_access_status !== 'hidden')
-      .filter(i => !(isTierGated(i) && i.course_hide_when_locked));
+      .filter(i => !(isTierGatedForHiding(i) && i.course_hide_when_locked));
     res.json(visible.map(i => {
       const enrolment = byInstance[i.id];
       return {
@@ -1931,7 +1939,7 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
         enrolled: !!enrolment,
         enrolment_id: enrolment?.id || null,
         percent_complete: enrolment?.percent_complete ?? null,
-        locked: i.course_access_status === 'locked' || isTierGated(i),
+        locked: i.course_access_status === 'locked' || isTierGatedForAccess(i),
       };
     }));
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -2051,6 +2059,17 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
     // same as "not found" here too, for anyone hitting the URL directly.
     if (course?.access_status === 'locked') return res.status(403).json({ error: 'This course is not currently available.' });
     if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Not found.' });
+    // Per Bot 18 — required_tier applies the same way: membership sells
+    // access to the app, not a permanent licence to a specific course the
+    // moment someone's touched it. Someone who started this while on a
+    // qualifying tier and has since dropped below it (or the requirement
+    // was raised after they joined) is blocked the same as anyone else —
+    // their progress isn't deleted, just not reachable until they're back
+    // at the required tier.
+    const userTierForCourse = db.getUser(req.user.id)?.member_tier || 0;
+    if (course?.required_tier !== null && course?.required_tier !== undefined && userTierForCourse < course.required_tier) {
+      return res.status(403).json({ error: 'This course requires a higher membership tier to continue.', requiredTier: course.required_tier });
+    }
 
     const allLessons = db.getLessonsForCourse(instance.course_id);
     // Hidden lessons are excluded entirely, same as a hidden course above —
@@ -2116,6 +2135,13 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
     if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Lesson not found in this course.' });
     if (lesson.access_status === 'hidden') return res.status(404).json({ error: 'Lesson not found in this course.' });
     if (lesson.access_status === 'locked') return res.status(403).json({ error: 'This lesson is not currently available.' });
+    // Per Bot 18 — same tier rule as the course-detail route above: applies
+    // to everyone, already enrolled or not, same reasoning as access_status
+    // just above it.
+    const userTierForLesson = db.getUser(req.user.id)?.member_tier || 0;
+    if (course?.required_tier !== null && course?.required_tier !== undefined && userTierForLesson < course.required_tier) {
+      return res.status(403).json({ error: 'This course requires a higher membership tier to continue.', requiredTier: course.required_tier });
+    }
 
     const quizRecord = db.getQuizForLesson(req.params.lessonId);
     const quiz = quizRecord ? db.getQuizForTaking(quizRecord.id) : null;
