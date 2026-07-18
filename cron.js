@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -103,6 +103,19 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
+  // ── Campaign email steps — 07:50 UTC ──
+  // The one channel campaigns need a cron for — social steps are
+  // scheduled directly with BulkPublish at go-live time instead (see
+  // /api/admin/campaigns/:id/activate in server.js) and never reach here.
+  cron.schedule('50 7 * * *', async () => {
+    try {
+      const count = await sendDueCampaignEmailSteps();
+      console.log(`[cron] campaign email steps: ${count} step(s) due`);
+    } catch (e) {
+      console.error('[cron] campaign email steps failed:', e.message);
+    }
+  });
+
   // ── Stale chat session sweep — every 10 minutes ──
   // Safety net for Keep History (Per Bot 6) — catches any automated Talk
   // conversation that went quiet without the client's own beacon firing
@@ -118,7 +131,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), stale chat sweep (every 10 min)');
+  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), stale chat sweep (every 10 min)');
 }
 
 module.exports = { startCronJobs };

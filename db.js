@@ -692,6 +692,50 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Campaigns (Per Bot 18) ──
+  // A campaign is a named sequence of steps, mixing calming (line-bank,
+  // no CTA) and sales (offer-linked, tracked) content across email and
+  // social, fired on a schedule once approved. Draft until explicitly
+  // approved — nothing in a draft campaign ever sends anywhere.
+  // audience: same NEWSLETTER_AUDIENCE_CLAUSES segments as newsletters —
+  // applies only to this campaign's email steps; social steps go to
+  // whatever account is connected, audience doesn't apply to them.
+  // offer_id nullable — a pure-calming campaign genuinely has no offer.
+  db.run(`CREATE TABLE IF NOT EXISTS campaigns (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    offer_id TEXT,
+    audience TEXT DEFAULT 'all',
+    created_at TEXT DEFAULT (datetime('now')),
+    started_at TEXT
+  )`);
+  // offset_days: day N of the campaign, counted from started_at (day 0 =
+  // the day it goes live). type: calming | sales. channel: email or one
+  // of the BulkPublish platform keys. line_id: which signal_line a
+  // calming step drew from, kept for reference/re-roll, not required.
+  // status: pending (not yet fired) -> scheduled (social steps only, once
+  // BulkPublish has accepted it) or sent (email steps, once actually
+  // delivered) -> failed if either of those errors.
+  db.run(`CREATE TABLE IF NOT EXISTS campaign_steps (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    step_order INTEGER NOT NULL DEFAULT 0,
+    offset_days INTEGER NOT NULL DEFAULT 0,
+    type TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    subject TEXT,
+    content TEXT,
+    line_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    external_post_id TEXT,
+    sent_at TEXT,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_steps_campaign ON campaign_steps(campaign_id)`);
+
   // ── Email log (Per Bot 8) ──
   // Every email the app sends — welcome, password reset, reminders,
   // renewals, message alerts, newsletters, anything — logs itself here via
@@ -4065,6 +4109,97 @@ function deleteOffer(id) {
   getDbSync().run('DELETE FROM offers WHERE id=?', [id]);
   save();
 }
+
+// ── Campaigns (Per Bot 18) ──
+function getAllCampaigns() {
+  return queryAll(`SELECT c.*, o.name as offer_name,
+    (SELECT COUNT(*) FROM campaign_steps WHERE campaign_id=c.id) as step_count
+    FROM campaigns c LEFT JOIN offers o ON c.offer_id=o.id
+    ORDER BY c.created_at DESC`);
+}
+function getCampaign(id) { return queryOne('SELECT * FROM campaigns WHERE id=?', [id]); }
+function createCampaign(id, name, offerId, audience) {
+  getDbSync().run('INSERT INTO campaigns (id,name,offer_id,audience) VALUES (?,?,?,?)',
+    [id, name, offerId || null, audience || 'all']);
+  save();
+  return id;
+}
+function updateCampaign(id, fields) {
+  const allowed = ['name', 'offer_id', 'audience'];
+  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!keys.length) return;
+  const sets = keys.map(k => `${k}=?`).join(', ');
+  getDbSync().run(`UPDATE campaigns SET ${sets} WHERE id=? AND status='draft'`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+// Draft -> active is one-way through this function; going live records
+// started_at, which every step's offset_days counts from. Pausing stops
+// the daily email-step cron from firing anything further, but doesn't
+// touch social steps already scheduled with BulkPublish — those can only
+// be cancelled on BulkPublish's side, a genuine limitation worth knowing.
+function setCampaignStatus(id, status) {
+  if (status === 'active') {
+    getDbSync().run("UPDATE campaigns SET status='active', started_at=datetime('now') WHERE id=? AND status='draft'", [id]);
+  } else {
+    getDbSync().run('UPDATE campaigns SET status=? WHERE id=?', [status, id]);
+  }
+  save();
+}
+function deleteCampaign(id) {
+  getDbSync().run('DELETE FROM campaign_steps WHERE campaign_id=?', [id]);
+  getDbSync().run('DELETE FROM campaigns WHERE id=?', [id]);
+  save();
+}
+
+function getCampaignSteps(campaignId) {
+  return queryAll('SELECT * FROM campaign_steps WHERE campaign_id=? ORDER BY offset_days ASC, step_order ASC', [campaignId]);
+}
+function getCampaignStep(id) { return queryOne('SELECT * FROM campaign_steps WHERE id=?', [id]); }
+function addCampaignStep(id, campaignId, offsetDays, type, channel, subject, content, lineId) {
+  const order = queryOne('SELECT COALESCE(MAX(step_order),0)+1 as n FROM campaign_steps WHERE campaign_id=?', [campaignId]).n;
+  getDbSync().run(
+    `INSERT INTO campaign_steps (id,campaign_id,step_order,offset_days,type,channel,subject,content,line_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, campaignId, order, offsetDays, type, channel, subject || null, content || '', lineId || null]
+  );
+  save();
+  return id;
+}
+function updateCampaignStep(id, fields) {
+  const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id'];
+  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!keys.length) return;
+  const sets = keys.map(k => `${k}=?`).join(', ');
+  getDbSync().run(`UPDATE campaign_steps SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+function deleteCampaignStep(id) {
+  getDbSync().run('DELETE FROM campaign_steps WHERE id=?', [id]);
+  save();
+}
+function setCampaignStepResult(id, status, fields = {}) {
+  const sets = ['status=?'];
+  const vals = [status];
+  if (status === 'sent' || status === 'scheduled') { sets.push('sent_at=?'); vals.push(new Date().toISOString()); }
+  if (fields.externalPostId !== undefined) { sets.push('external_post_id=?'); vals.push(fields.externalPostId); }
+  if (fields.error !== undefined) { sets.push('error=?'); vals.push(fields.error); }
+  vals.push(id);
+  getDbSync().run(`UPDATE campaign_steps SET ${sets.join(', ')} WHERE id=?`, vals);
+  save();
+}
+// Per Bot 18 — used by the daily cron: every email step, in any active
+// campaign, whose offset_days matches how many whole days have passed
+// since that campaign went live, and hasn't already fired. Social steps
+// are excluded here entirely — they're scheduled directly with
+// BulkPublish at go-live time and need no further cron attention.
+function getDueCampaignEmailSteps() {
+  return queryAll(`
+    SELECT s.*, c.audience, c.started_at
+    FROM campaign_steps s JOIN campaigns c ON s.campaign_id=c.id
+    WHERE c.status='active' AND s.channel='email' AND s.status='pending'
+      AND s.offset_days <= CAST(julianday('now') - julianday(c.started_at) AS INTEGER)
+  `);
+}
+
 // Per Bot 18 — resolves which file (if any) /promotions should show as its
 // showcase clip. Priority: the specific offer named by the promo code's
 // own showcase_file_id, then the standing default offer's, then the
@@ -5274,6 +5409,9 @@ module.exports = {
   getAllOffers, getOffer, getOfferByCode, getDefaultOffer, isOfferCurrentlyValid, resolveShowcaseFile,
   logPromoHit, getFunnelStats,
   createOffer, updateOffer, deleteOffer, setSignupOfferId, setSignupSource,
+  getAllCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, deleteCampaign,
+  getCampaignSteps, getCampaignStep, addCampaignStep, updateCampaignStep, deleteCampaignStep,
+  setCampaignStepResult, getDueCampaignEmailSteps,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,
   // Signal lines (Per Bot 17 phase 6)

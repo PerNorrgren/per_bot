@@ -835,6 +835,43 @@ If you'd like full access back, you're welcome any time. No explanation needed, 
   );
 }
 
+// Per Bot 18 — daily cron job for campaign email steps. Social steps are
+// scheduled directly with BulkPublish at go-live time (see the /activate
+// route) and need no further attention here — this only ever touches
+// email, the one channel with no external scheduler of its own.
+// Deliberately a straightforward per-recipient loop rather than the
+// newsletter system's fuller pending/status job-queue machinery — fine
+// for a mailing list at today's size; worth revisiting if a single
+// campaign step's audience ever grows very large.
+async function sendDueCampaignEmailSteps() {
+  const dueSteps = db.getDueCampaignEmailSteps();
+  for (const step of dueSteps) {
+    try {
+      const recipients = db.getNewsletterRecipients(step.audience);
+      const b = brand();
+      let sent = 0;
+      for (const user of recipients) {
+        try {
+          await sendEmail(user.email, step.subject || b.name,
+            `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+              <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+              ${renderEmailParagraphs(fillTemplate(step.content, { name: user.name }))}
+              <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+              <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+            </div>`);
+          sent++;
+        } catch (e) { console.error(`[campaign] send failed for ${user.email}:`, e.message); }
+      }
+      db.setCampaignStepResult(step.id, 'sent');
+      console.log(`[campaign] step ${step.id} sent to ${sent}/${recipients.length} recipients`);
+    } catch (e) {
+      db.setCampaignStepResult(step.id, 'failed', { error: e.message });
+      console.error(`[campaign] step ${step.id} failed:`, e.message);
+    }
+  }
+  return dueSteps.length;
+}
+
 // ── Inactivity reminder (Per Bot 5, item 8) ──
 // ── Inactivity reminder — shared HTML, used by both the real send and the ──
 // admin test-send endpoint, so a test email matches a real one exactly.
@@ -7662,15 +7699,217 @@ app.delete('/api/admin/offers/:id', auth.requireAuthApi(['admin']), (req, res) =
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Per Bot 18 — the funnel report. groupBySource/groupBySkin are opt-in
-// breakdowns (?groupBySource=1&groupBySkin=1) — with neither set, this
-// returns one row per offer; either flag splits those rows further.
-app.get('/api/admin/marketing/funnel', auth.requireAuthApi(['admin']), (req, res) => {
+// ── Campaigns (Per Bot 18) ──
+// A campaign mixes calming (line-bank, no CTA) and sales (offer-linked,
+// tracked) steps across email and social, on a schedule, reviewed as a
+// whole before going live rather than step by step as days pass.
+//
+// Content generation, kept as one shared function so every entry point
+// (adding a step, regenerating one) produces content the same way.
+async function generateCampaignStepContent(campaign, step, brief) {
+  if (step.type === 'calming') {
+    const line = db.getRandomActiveSignalLine();
+    if (!line) throw new Error('No active lines in the line bank to draw from — add or activate some first.');
+    return { content: line.text, subject: step.channel === 'email' ? 'A little something for today' : null, lineId: line.id };
+  }
+  // Sales steps need a real offer to link to — a campaign with no offer
+  // can still exist (pure calming), it just can't have sales-type steps.
+  if (!campaign.offer_id) throw new Error('This campaign has no offer set — sales steps need one to link to.');
+  const offer = db.getOffer(campaign.offer_id);
+  if (!offer || !db.isOfferCurrentlyValid(offer)) throw new Error('This campaign\'s offer is missing or no longer valid.');
+  const source = `${slugify(campaign.name)}-day${step.offset_days}-${step.channel}`;
+  const link = `${APP_URL}/promo/${offer.code}?src=${encodeURIComponent(source)}`;
+
+  if (step.channel === 'email') {
+    const userBrief = brief || `${offer.headline || offer.name}. ${offer.description || ''}`.trim();
+    const systemPrompt = prompts.CAMPAIGN_SALES_EMAIL_PROMPT.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days);
+    const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userBrief }], 800);
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
+    return { content: (parsed.body || '').split('{{SIGNUP_LINK}}').join(link), subject: parsed.subject || offer.headline || offer.name, lineId: null };
+  }
+
+  // Social channel — same generator the message builder itself uses,
+  // asked for just this one platform.
+  const ctaInstructions = prompts.MESSAGE_BUILDER_CTA_INSTRUCTIONS.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days);
+  const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
+  const userBrief = brief || `${offer.headline || offer.name}. ${offer.description || ''}`.trim();
+  const userMessage = `SOURCE CONTENT:\n${userBrief}\n\nPLATFORMS TO PRODUCE: ${step.channel}\n\nRespond with only the JSON object, nothing else.`;
+  const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 800);
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
+  const text = (parsed[step.channel] || '').split('{{SIGNUP_LINK}}').join(link);
+  return { content: text, subject: null, lineId: null };
+}
+
+app.get('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllCampaigns()); } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    res.json(db.getFunnelStats({
-      groupBySource: req.query.groupBySource === '1',
-      groupBySkin: req.query.groupBySkin === '1',
-    }));
+    const { name, offerId, audience } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    const id = uuidv4();
+    db.createCampaign(id, name.trim(), offerId || null, audience || 'all');
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...campaign, steps: db.getCampaignSteps(req.params.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { name, offerId, audience } = req.body;
+    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (campaign && campaign.status === 'active') return res.status(400).json({ error: 'Pause an active campaign before deleting it.' });
+    db.deleteCampaign(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/campaigns/:id/steps', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found.' });
+    if (campaign.status !== 'draft') return res.status(400).json({ error: 'Only draft campaigns can have steps added.' });
+    const { offsetDays, type, channel, brief } = req.body;
+    if (!['calming', 'sales'].includes(type)) return res.status(400).json({ error: 'type must be calming or sales.' });
+    if (!['email', 'facebook', 'linkedin', 'instagram', 'threads'].includes(channel)) return res.status(400).json({ error: 'Unknown channel.' });
+    const id = uuidv4();
+    const stub = { offset_days: Number.isFinite(offsetDays) ? offsetDays : 0, type, channel };
+    const generated = await generateCampaignStepContent(campaign, stub, brief);
+    db.addCampaignStep(id, campaign.id, stub.offset_days, type, channel, generated.subject, generated.content, generated.lineId);
+    res.json({ id, step: db.getCampaignStep(id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { offsetDays, subject, content } = req.body;
+    db.updateCampaignStep(req.params.stepId, { offset_days: offsetDays, subject, content });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteCampaignStep(req.params.stepId); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/steps/:stepId/regenerate', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    const step = db.getCampaignStep(req.params.stepId);
+    if (!campaign || !step) return res.status(404).json({ error: 'Not found.' });
+    const generated = await generateCampaignStepContent(campaign, step, req.body?.brief);
+    db.updateCampaignStep(step.id, { subject: generated.subject, content: generated.content, line_id: generated.lineId });
+    res.json({ step: db.getCampaignStep(step.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per Bot 18 — email steps can be safely tested (sends only to the admin's
+// own test address, never touches the real audience, doesn't mark the
+// step as sent). Social steps have no equivalent safe test — BulkPublish
+// has no sandbox — so those get a "publish now" action below instead,
+// explicitly live, rather than a misleading "test" that either does
+// nothing or secretly posts for real.
+app.post('/api/admin/campaigns/:id/steps/:stepId/test-email', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const step = db.getCampaignStep(req.params.stepId);
+    if (!step) return res.status(404).json({ error: 'Not found.' });
+    if (step.channel !== 'email') return res.status(400).json({ error: 'This step isn\'t an email step.' });
+    const to = resolveTestEmail(req.body?.email, req.user.email);
+    if (!to) return res.status(400).json({ error: 'No test email address available.' });
+    const b = brand();
+    await sendEmail(to, `[TEST] ${step.subject || '(no subject)'}`,
+      `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+        <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name} — campaign test</div>
+        ${renderEmailParagraphs(step.content)}
+      </div>`);
+    res.json({ ok: true, sentTo: to });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const step = db.getCampaignStep(req.params.stepId);
+    if (!step) return res.status(404).json({ error: 'Not found.' });
+    if (step.channel === 'email') return res.status(400).json({ error: 'Use "Send test" for email steps, not this.' });
+    if (step.status !== 'pending') return res.status(400).json({ error: 'This step has already fired.' });
+    const { channels } = await bulkPublishRequest('GET', '/channels');
+    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === step.channel.toLowerCase());
+    if (!channel) return res.status(400).json({ error: `${step.channel} isn't connected in BulkPublish yet.` });
+    const post = await bulkPublishRequest('POST', '/posts', {
+      content: step.content,
+      channels: [{ channelId: channel.id, platform: channel.platform }],
+      status: 'published',
+    });
+    db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || post?.post?.id || null });
+    res.json({ ok: true });
+  } catch(e) {
+    db.setCampaignStepResult(req.params.stepId, 'failed', { error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Per Bot 18 — approve & go live. One-way, draft -> active. Every social
+// step still pending gets scheduled directly with BulkPublish (its own
+// infrastructure fires it, not our cron — more reliable, survives this
+// app being briefly down). Email steps stay pending; the daily cron below
+// picks those up on their actual day.
+app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Not found.' });
+    if (campaign.status !== 'draft') return res.status(400).json({ error: 'Only a draft campaign can be activated.' });
+    const steps = db.getCampaignSteps(campaign.id);
+    if (!steps.length) return res.status(400).json({ error: 'Add at least one step first.' });
+    const emptyStep = steps.find(s => !s.content || !s.content.trim());
+    if (emptyStep) return res.status(400).json({ error: `Day ${emptyStep.offset_days}'s ${emptyStep.channel} step has no content.` });
+
+    db.setCampaignStatus(campaign.id, 'active');
+    const startedAt = new Date();
+    const results = [];
+    for (const step of steps) {
+      if (step.status !== 'pending' || step.channel === 'email') continue; // already fired, or email — cron's job
+      try {
+        const { channels } = await bulkPublishRequest('GET', '/channels');
+        const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === step.channel.toLowerCase());
+        if (!channel) throw new Error(`${step.channel} isn't connected in BulkPublish.`);
+        const scheduledAt = new Date(startedAt.getTime() + step.offset_days * 24 * 60 * 60 * 1000);
+        scheduledAt.setUTCHours(9, 0, 0, 0); // fixed default send time, 9am UTC
+        const post = await bulkPublishRequest('POST', '/posts', {
+          content: step.content,
+          channels: [{ channelId: channel.id, platform: channel.platform }],
+          status: 'scheduled',
+          scheduledAt: scheduledAt.toISOString(),
+        });
+        db.setCampaignStepResult(step.id, 'scheduled', { externalPostId: post?.id || post?.post?.id || null });
+        results.push({ stepId: step.id, ok: true });
+      } catch (e) {
+        db.setCampaignStepResult(step.id, 'failed', { error: e.message });
+        results.push({ stepId: step.id, ok: false, error: e.message });
+      }
+    }
+    res.json({ ok: true, results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/pause', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    // Per Bot 18 — stops the daily cron from firing this campaign's
+    // remaining email steps. Doesn't touch social steps already scheduled
+    // with BulkPublish — those can only be cancelled on BulkPublish's own
+    // side, a genuine limitation worth knowing before relying on pause.
+    db.setCampaignStatus(req.params.id, 'paused');
+    res.json({ ok: true, note: 'Email steps still pending are stopped. Any social steps already scheduled with BulkPublish need cancelling there directly.' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -9315,7 +9554,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

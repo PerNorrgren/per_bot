@@ -303,6 +303,19 @@
     </div>
   </div>
 
+  <!-- Campaigns (Per Bot 18) -->
+  <div>
+    <div class="section-label">Campaigns</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Calming + sales sequences</div>
+        <button class="btn sm primary" onclick="openNewCampaignModal()">+ New campaign</button>
+      </div>
+      <div style="padding:8px 20px 4px" class="modal-note">A campaign mixes calming lines (no CTA) and sales posts (offer-linked, tracked) across email and social, on a schedule. Draft, add steps, test each one, then approve the whole thing to go live — nothing sends before that.</div>
+      <div id="campaignList" style="padding:8px 20px 18px"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
   <!-- Line bank (Per Bot 17 phase 6) -->
   <div>
     <div class="section-label">Line bank</div>
@@ -410,6 +423,87 @@
         <button class="modal-cancel" onclick="closeModal('offerModalOverlay')">Cancel</button>
         <button class="modal-ok" id="offerModalSaveBtn" onclick="saveOffer()">Save offer</button>
       </div>
+    </div>
+  </div>
+
+  <!-- New campaign (Per Bot 18) -->
+  <div class="modal-overlay" id="newCampaignModalOverlay">
+    <div class="modal">
+      <h3>New campaign</h3>
+      <div>
+        <label>Name</label>
+        <input type="text" id="campNewName" placeholder="e.g. Autumn grounding push"/>
+      </div>
+      <div>
+        <label>Offer (optional — leave unset for a pure calming campaign)</label>
+        <select id="campNewOffer"><option value="">No offer — calming steps only</option></select>
+      </div>
+      <div>
+        <label>Audience for email steps</label>
+        <select id="campNewAudience">
+          <option value="all">Everyone opted in</option>
+          <option value="newsletter_only">Newsletter-only (not yet registered)</option>
+          <option value="explorer">Explorer</option>
+          <option value="member1">Member 1</option>
+          <option value="member2">Member 2</option>
+          <option value="member3">Member 3</option>
+        </select>
+      </div>
+      <div class="modal-err" id="campNewErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('newCampaignModalOverlay')">Cancel</button>
+        <button class="modal-ok" onclick="createCampaign()">Create draft</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Campaign detail (Per Bot 18) -->
+  <div class="modal-overlay" id="campaignDetailModalOverlay">
+    <div class="modal" style="max-width:820px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <h3 id="campDetailName" style="margin-bottom:4px">Campaign</h3>
+          <div style="font-size:12px;color:rgba(255,255,255,0.4)" id="campDetailMeta"></div>
+        </div>
+        <button class="btn sm" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
+      </div>
+      <div class="modal-err" id="campDetailErr"></div>
+
+      <div id="campAddStepWrap" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px">
+        <div class="config-label" style="margin-bottom:8px">Add step</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:0 0 90px">
+            <label style="font-size:11px">Day</label>
+            <input type="number" id="campStepDay" min="0" value="0" style="width:100%"/>
+          </div>
+          <div style="flex:0 0 130px">
+            <label style="font-size:11px">Type</label>
+            <select id="campStepType" style="width:100%">
+              <option value="calming">Calming</option>
+              <option value="sales">Sales</option>
+            </select>
+          </div>
+          <div style="flex:0 0 140px">
+            <label style="font-size:11px">Channel</label>
+            <select id="campStepChannel" style="width:100%">
+              <option value="email">Email</option>
+              <option value="facebook">Facebook</option>
+              <option value="linkedin">LinkedIn</option>
+              <option value="instagram">Instagram</option>
+              <option value="threads">Threads</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:180px">
+            <label style="font-size:11px">Brief (sales steps only, optional — defaults to the offer's own copy)</label>
+            <input type="text" id="campStepBrief" style="width:100%" placeholder="What's this one about?"/>
+          </div>
+          <button class="btn sm primary" onclick="addCampaignStep()" id="campAddStepBtn">+ Add &amp; generate</button>
+        </div>
+      </div>
+
+      <div id="campStepsList" style="display:flex;flex-direction:column;gap:10px"></div>
+
+      <div class="modal-btns" id="campDetailActions"></div>
     </div>
   </div>
 
@@ -837,7 +931,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence(); loadCampaigns();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -887,6 +981,191 @@
     } catch(e) {
       showFeedback('defaultShowcaseFeedback', 'Could not save — please try again.', 'err');
     }
+  }
+
+  // ── Campaigns (Per Bot 18) ──
+  const CAMP_CHANNEL_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  let curCampaignId = null;
+
+  async function loadCampaigns() {
+    const el = document.getElementById('campaignList');
+    const list = await fetch('/api/admin/campaigns').then(r=>r.json()).catch(()=>[]);
+    if (!Array.isArray(list) || !list.length) {
+      el.innerHTML = '<div class="empty">No campaigns yet.</div>';
+      return;
+    }
+    const statusColor = s => s==='active' ? 'rgba(180,230,200,0.9)' : s==='paused' ? 'rgba(230,175,90,0.9)' : 'rgba(255,255,255,0.4)';
+    el.innerHTML = list.map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:8px;cursor:pointer" onclick="openCampaignDetail('${c.id}')">
+        <div>
+          <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtml(c.name)}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4)">${c.step_count} step${c.step_count===1?'':'s'}${c.offer_name ? ' · ' + escHtml(c.offer_name) : ' · no offer'}</div>
+        </div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:${statusColor(c.status)}">${c.status}</div>
+      </div>
+    `).join('');
+  }
+
+  async function openNewCampaignModal() {
+    document.getElementById('campNewName').value = '';
+    document.getElementById('campNewAudience').value = 'all';
+    document.getElementById('campNewErr').textContent = '';
+    const sel = document.getElementById('campNewOffer');
+    sel.innerHTML = '<option value="">No offer — calming steps only</option>'
+      + offersData.map(o => `<option value="${o.id}">${escHtml(o.name)}</option>`).join('');
+    openModal('newCampaignModalOverlay');
+  }
+  async function createCampaign() {
+    const name = document.getElementById('campNewName').value.trim();
+    const err = document.getElementById('campNewErr');
+    if (!name) { err.textContent = 'Please name this campaign.'; return; }
+    const body = {
+      name,
+      offerId: document.getElementById('campNewOffer').value || null,
+      audience: document.getElementById('campNewAudience').value,
+    };
+    try {
+      const res = await fetch('/api/admin/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not create campaign.');
+      closeModal('newCampaignModalOverlay');
+      loadCampaigns();
+      openCampaignDetail(data.id);
+    } catch(e) { err.textContent = e.message; }
+  }
+
+  async function openCampaignDetail(id) {
+    curCampaignId = id;
+    await refreshCampaignDetail();
+    openModal('campaignDetailModalOverlay');
+  }
+  async function refreshCampaignDetail() {
+    const data = await fetch(`/api/admin/campaigns/${curCampaignId}`).then(r=>r.json());
+    document.getElementById('campDetailName').textContent = data.name;
+    const offer = offersData.find(o => o.id === data.offer_id);
+    document.getElementById('campDetailMeta').textContent =
+      `${data.status.toUpperCase()} · ${offer ? offer.name : 'no offer'} · audience: ${data.audience}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}`;
+
+    const isDraft = data.status === 'draft';
+    document.getElementById('campAddStepWrap').style.display = isDraft ? '' : 'none';
+
+    const list = document.getElementById('campStepsList');
+    if (!data.steps.length) {
+      list.innerHTML = '<div class="empty" style="padding:12px">No steps yet — add one above.</div>';
+    } else {
+      list.innerHTML = data.steps.map(s => `
+        <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:12px;color:rgba(255,255,255,0.5)">
+              Day ${s.offset_days} · <span style="color:${s.type==='sales'?'rgba(230,175,90,0.9)':'rgba(180,230,200,0.85)'}">${s.type}</span> · ${CAMP_CHANNEL_LABELS[s.channel]||s.channel}
+              · <span style="color:${s.status==='pending'?'rgba(255,255,255,0.4)':s.status==='failed'?'rgba(255,140,120,0.9)':'rgba(180,230,200,0.85)'}">${s.status}</span>
+            </div>
+            ${isDraft ? `<div style="display:flex;gap:6px">
+              <button class="btn sm" onclick="regenerateCampaignStep('${s.id}')">↻ Regenerate</button>
+              ${s.channel==='email'
+                ? `<button class="btn sm" onclick="testCampaignStepEmail('${s.id}')">Send test</button>`
+                : `<button class="btn sm" onclick="publishCampaignStepNow('${s.id}')">Publish now (live)</button>`}
+              <button class="btn sm" onclick="deleteCampaignStep('${s.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
+            </div>` : ''}
+          </div>
+          ${s.channel==='email' ? `<input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="width:100%;margin-bottom:6px" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>` : ''}
+          <textarea class="inline-input" id="campStepContent_${s.id}" rows="4" ${isDraft?'':'disabled'} style="width:100%;resize:vertical" onblur="saveCampaignStepEdit('${s.id}')">${escHtml(s.content||'')}</textarea>
+        </div>
+      `).join('');
+    }
+
+    const actions = document.getElementById('campDetailActions');
+    if (data.status === 'draft') {
+      actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
+        <button class="modal-ok" onclick="activateCampaign()">Approve &amp; go live</button>`;
+    } else if (data.status === 'active') {
+      actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
+        <button class="btn sm" onclick="pauseCampaign()" style="color:rgba(230,175,90,0.9)">Pause campaign</button>`;
+    } else {
+      actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>`;
+    }
+  }
+
+  async function addCampaignStep() {
+    const btn = document.getElementById('campAddStepBtn');
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Generating…';
+    try {
+      const body = {
+        offsetDays: parseInt(document.getElementById('campStepDay').value, 10) || 0,
+        type: document.getElementById('campStepType').value,
+        channel: document.getElementById('campStepChannel').value,
+        brief: document.getElementById('campStepBrief').value.trim() || undefined,
+      };
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not add step.');
+      document.getElementById('campStepBrief').value = '';
+      await refreshCampaignDetail();
+      loadCampaigns();
+    } catch(e) { err.textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = orig; }
+  }
+  async function regenerateCampaignStep(stepId) {
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}/regenerate`, { method:'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not regenerate.');
+      await refreshCampaignDetail();
+    } catch(e) { err.textContent = e.message; }
+  }
+  async function saveCampaignStepEdit(stepId) {
+    const contentEl = document.getElementById(`campStepContent_${stepId}`);
+    const subjectEl = document.getElementById(`campStepSubject_${stepId}`);
+    await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ content: contentEl.value, subject: subjectEl ? subjectEl.value : undefined })
+    });
+  }
+  async function deleteCampaignStep(stepId) {
+    if (!confirm('Remove this step?')) return;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}`, { method:'DELETE' });
+    await refreshCampaignDetail();
+    loadCampaigns();
+  }
+  async function testCampaignStepEmail(stepId) {
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}/test-email`, { method:'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not send test.');
+      err.style.color = 'rgba(180,230,200,0.85)'; err.textContent = 'Test sent to ' + data.sentTo + '.';
+    } catch(e) { err.style.color = ''; err.textContent = e.message; }
+  }
+  async function publishCampaignStepNow(stepId) {
+    if (!confirm('This publishes live, right now, to the connected account — not a test. Continue?')) return;
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}/publish-now`, { method:'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not publish.');
+      await refreshCampaignDetail();
+    } catch(e) { err.textContent = e.message; }
+  }
+  async function activateCampaign() {
+    if (!confirm('Approve this campaign to go live? Social steps get scheduled with BulkPublish immediately; email steps fire on their own day. This can\'t be undone step by step.')) return;
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/activate`, { method:'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not activate.');
+      const failed = (data.results||[]).filter(r=>!r.ok);
+      if (failed.length) err.textContent = `Live, but ${failed.length} step(s) failed to schedule — check them below.`;
+      await refreshCampaignDetail();
+      loadCampaigns();
+    } catch(e) { err.textContent = e.message; }
+  }
+  async function pauseCampaign() {
+    if (!confirm('Pause this campaign? Remaining email steps stop; anything already scheduled with BulkPublish needs cancelling there directly.')) return;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/pause`, { method:'POST' });
+    await refreshCampaignDetail();
+    loadCampaigns();
   }
 
   // ── Trial sequence (Per Bot 18) ──

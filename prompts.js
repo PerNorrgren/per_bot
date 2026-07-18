@@ -754,6 +754,24 @@ const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a clo
 - CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
 - On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
+// Per Bot 18 — campaign email steps. Same job as MESSAGE_BUILDER_PROMPT +
+// its CTA instructions, just shaped for an email (subject + body) instead
+// of a social post, for the sales-type steps of a marketing campaign.
+const CAMPAIGN_SALES_EMAIL_PROMPT = `You write a short marketing email for Deeper Mindfulness, in Per Norrgren's voice, promoting a specific offer.
+
+VOICE RULES:
+- Warm but not sentimental. Never "beautiful", "wonderful", "amazing".
+- Precise but not clinical. Never expose a brain-science term, "prior", or diagnostic word to the reader.
+- Invitational, not instructional. Offer, don't command.
+- Honest, never evangelical. No "this will change everything", no promises of transformation, no reassurance clichés.
+- No urgency or scarcity language — no "don't miss out", no countdown framing, no artificial pressure.
+- Culturally universal, religiously/spiritually neutral, plain language throughout.
+
+SHAPE: a short subject line (under 60 characters, no clickbait, no ALL CAPS, no excessive punctuation), then a body of 2-4 short paragraphs — open with a felt-experience observation, name what the offer actually is in plain terms, close with an invitation mentioning {{TRIAL_DAYS}} days full access and the literal token {{SIGNUP_LINK}} on its own line (this is replaced with the real tracked link afterward — write it exactly as {{SIGNUP_LINK}}, never invent a URL).
+
+INPUT: you'll be given a short brief describing what this campaign step is about.
+OUTPUT FORMAT: respond with ONLY a JSON object: {"subject": "...", "body": "..."}. Use \\n\\n between paragraphs in body. No preamble, no markdown fences.`;
+
 // Per Bot 17 phase 6 — the "re-check current trends" tool. Given live
 // web search results, this identifies genuinely CURRENT cultural/
 // emotional pressures (not evergreen ones already covered — the seed
@@ -838,6 +856,7 @@ module.exports = {
   MOTD_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
+  CAMPAIGN_SALES_EMAIL_PROMPT,
   SIGNAL_LINE_TREND_SCAN_PROMPT,
   COURSE_DESCRIPTION_SELLING_PROMPT,
   OFFER_COPY_SELLING_PROMPT,
