@@ -1522,17 +1522,22 @@ app.post('/api/invite/:token/claim', async (req, res) => {
     db.updateClientPassword(user.id, hash);
     if (name !== user.name) db.updateUserName(user.id, name);
 
-    // Per Bot 18 — same resolver /api/register uses, so a mailing-list
-    // invite tied to an offer gets that offer's real trial length and
-    // attribution (signup_offer_id/signup_source), instead of the old
-    // fixed 14 days with no connection to the offer/funnel system.
-    // Untagged links (the plain old join flow) still resolve to the
-    // standing default offer, or 14 days if there isn't one — unchanged.
-    const { trialDays, offerId } = resolveOfferForSignup(promoCode);
-    const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
-    db.setMemberTier(user.id, 1, null, trialEndsAt, null, null);
-    if (offerId) db.setSignupOfferId(user.id, offerId);
-    if (source) db.setSignupSource(user.id, source);
+    // Per Bot 18 — trial/offer logic only applies if this person was
+    // genuinely still at Explorer (tier 0) before clicking. Someone an
+    // admin has already manually moved to a paid tier with a real expiry
+    // set — e.g. a lapsed legacy member being brought back in at the
+    // membership they already have time left on — keeps exactly what was
+    // set. Without this check, every claim would blindly recalculate a
+    // fresh trial from today and silently overwrite that expiry the
+    // moment they clicked the link, which is never what's wanted for an
+    // already-configured account.
+    if ((user.member_tier || 0) === 0) {
+      const { trialDays, offerId } = resolveOfferForSignup(promoCode);
+      const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+      db.setMemberTier(user.id, 1, null, trialEndsAt, null, null);
+      if (offerId) db.setSignupOfferId(user.id, offerId);
+      if (source) db.setSignupSource(user.id, source);
+    }
     db.markInviteTokenUsed(user.id);
 
     const token = auth.createToken({ role: 'client', id: user.id, name, email: user.email });
