@@ -8644,6 +8644,19 @@ app.post('/api/membership/checkout', auth.requireAuthApi(['client']), async (req
     const { priceId, billing } = req.body;
     if (!priceId) return res.status(400).json({ error: 'priceId required.' });
 
+    // Per Bot 18 — STRIPE_PLANS already existed as the intended source of
+    // truth for which tier each plan maps to, but this route never
+    // actually read from it — every checkout was tagged tier:'1' in the
+    // metadata regardless of which plan was actually purchased, harmless
+    // only because there was nothing but tier-1 pricing live yet. Now
+    // resolved from billing (trusted, server-side) rather than accepting
+    // a client-supplied tier at all; the client's priceId is cross-checked
+    // against what that plan should actually be, not just trusted as-is.
+    const plan = STRIPE_PLANS[billing];
+    if (!plan) return res.status(400).json({ error: `Unknown billing plan: ${billing}` });
+    if (plan.priceId !== priceId) return res.status(400).json({ error: 'priceId doesn\'t match the selected billing plan.' });
+    const resolvedTier = plan.tier;
+
     const user = db.getUser(req.user.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
@@ -8667,7 +8680,7 @@ app.post('/api/membership/checkout', auth.requireAuthApi(['client']), async (req
       mode:                 isLifetime ? 'payment' : 'subscription',
       success_url:          `${APP_URL}/membership/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:           `${APP_URL}/membership`,
-      metadata:             { user_id: user.id, billing, tier: '1' },
+      metadata:             { user_id: user.id, billing, tier: String(resolvedTier) },
       client_reference_id:  user.id,
     };
 
