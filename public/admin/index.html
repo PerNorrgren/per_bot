@@ -1850,6 +1850,7 @@
       if (!res.ok || data.error) throw new Error(data.error || 'Could not link.');
       showConfirm('Linked', `${r.name} is now Member ${tier} with access through ${data.expiresAt ? data.expiresAt.slice(0,10) : 'no set end date'}. Future Stripe events for this subscription now apply to their account automatically.`, ()=>{});
       loadMembers();
+      loadUsers();
     } catch(e) {
       showConfirm('Could not link', e.message, ()=>{});
     }
