@@ -256,6 +256,7 @@
             <button class="btn sm primary" onclick="openNewExplorerModal()">+ Add Explorer</button>
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
+            <button class="btn sm disabled" id="userGetSubsBtn" onclick="getSelectedUserSubscriptions()">Get Subscriptions</button>
           </div>
         </div>
         <div class="card-search-wrap"><input class="card-search" id="userSearch" placeholder="Search explorers… (* and ? wildcards)" oninput="renderUsers()"/></div>
@@ -1793,10 +1794,14 @@
   // two rows); someone with no Stripe customer at all still gets a row,
   // so the export always has one line per person selected, not silent gaps.
   let _subsResultRows = [];
-  async function getSelectedMemberSubscriptions() {
-    const ids = [...memberSel.sel]; if (!ids.length) return;
+  let _subsResultRequestedCount = 0;
+  async function getSelectedMemberSubscriptions() { return getSubscriptionsFor([...memberSel.sel], 'memberGetSubsBtn'); }
+  async function getSelectedUserSubscriptions() { return getSubscriptionsFor([...userSel.sel], 'userGetSubsBtn'); }
+  async function getSubscriptionsFor(ids, btnId) {
+    if (!ids.length) return;
     if (ids.length > 100) { showConfirm('Too many selected', 'Please select 100 people or fewer at a time.', ()=>{}); return; }
-    const btn = document.getElementById('memberGetSubsBtn');
+    _subsResultRequestedCount = ids.length;
+    const btn = document.getElementById(btnId);
     btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Looking up…';
     try {
       const res = await fetch('/api/admin/stripe/lookup-subscriptions', {
@@ -1815,7 +1820,7 @@
     }
   }
   function renderSubsResult() {
-    document.getElementById('subsResultSummary').textContent = `${_subsResultRows.length} row(s) from ${memberSel.sel.size} selected — live from Stripe just now.`;
+    document.getElementById('subsResultSummary').textContent = `${_subsResultRows.length} row(s) from ${_subsResultRequestedCount} selected — live from Stripe just now.`;
     document.getElementById('subsResultBody').innerHTML = _subsResultRows.map((r,i) => `
       <tr style="border-top:1px solid rgba(255,255,255,0.06)">
         <td style="padding:8px 10px">${escHtml(r.name||'')}</td>
@@ -1873,7 +1878,7 @@
   // ── REGISTERED EXPLORERS ──
   // ══════════════════════════════════════════
   let _userData = [];
-  const userSel = makeSelection(['userUpgradeBtn','userDelBtn'], null);
+  const userSel = makeSelection(['userUpgradeBtn','userDelBtn','userGetSubsBtn'], null);
 
   async function loadUsers() {
     userSel.clear();
