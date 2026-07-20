@@ -231,6 +231,24 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
               db.markReferralRewarded(userId);
               db.createReferralEvent(uuidv4(), referrer.id, userId, referredUser.name, 30);
               console.log(`[referral] ${referrer.id} credited 30 days — referred ${userId} just paid for the first time`);
+              // Per Bot 18 — the reward itself already fired above; this is
+              // just the notification. Before this, a referrer only found
+              // out via a small in-app badge next time they happened to
+              // open the app — worth an actual email given it's genuinely
+              // good news for them.
+              if (referrer.email) {
+                const b = brand();
+                sendEmail(referrer.email, `${referredUser.name} joined — you've got a free month`,
+                  `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+                    <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+                    <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Thank you, ${referrer.name}.</h1>
+                    <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">${referredUser.name} joined using your link, and just became a member. A month's been added to your own membership, on the house — nothing for you to do, it's already there.</p>
+                    <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">See it in your account →</a></p>
+                    <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+                    <p style="font-size:12px;color:#aaa">${b.name}</p>
+                  </div>`
+                ).catch(e => console.error('[referral] thank-you email failed:', e.message));
+              }
             }
           }
         } catch (e) { console.error('[referral] reward error:', e.message); }
@@ -1712,6 +1730,63 @@ app.post('/api/admin/explorers', auth.requireAuthApi(['admin']), async (req, res
 // request, not awaited inline — a few hundred individual Scaleway sends
 // would otherwise risk the request itself timing out. The response tells
 // you how many were created immediately; the emails follow shortly after.
+// Per Bot 18 — live Stripe lookup for a batch of people, for the People
+// admin "Get Subscriptions" action. Uses stripe_customer_id if the user
+// already has one on file (fastest, exact); falls back to searching
+// Stripe by email otherwise — which is genuinely the only way to find a
+// legacy customer the app's own webhooks never touched (e.g. paid
+// through the old app, never synced here). Sequential, not parallel — a
+// deliberately gentle pace against Stripe's rate limits since this is an
+// admin-triggered batch action, not a hot path. Capped at 100 people per
+// call; the front-end enforces this too so the error reads clearly if hit.
+app.post('/api/admin/stripe/lookup-subscriptions', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).json({ error: 'Stripe isn\'t configured (no STRIPE_SECRET_KEY set).' });
+    const ids = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+    if (!ids.length) return res.status(400).json({ error: 'No people selected.' });
+    if (ids.length > 100) return res.status(400).json({ error: 'Please select 100 people or fewer at a time.' });
+
+    const rows = [];
+    for (const id of ids) {
+      const user = db.getUser(id);
+      if (!user) continue;
+      const base = { userId: user.id, name: user.name, email: user.email };
+      try {
+        let customerId = user.stripe_customer_id || null;
+        if (!customerId) {
+          const found = await stripe.customers.list({ email: user.email, limit: 1 });
+          customerId = found.data[0]?.id || null;
+        }
+        if (!customerId) { rows.push({ ...base, status: 'no Stripe customer found' }); continue; }
+
+        const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 10 });
+        if (!subs.data.length) { rows.push({ ...base, stripeCustomerId: customerId, status: 'customer exists, no subscriptions' }); continue; }
+
+        for (const sub of subs.data) {
+          const item = sub.items.data[0];
+          const price = item?.price;
+          rows.push({
+            ...base,
+            stripeCustomerId: customerId,
+            subscriptionId: sub.id,
+            status: sub.status,
+            interval: price?.recurring?.interval || '',
+            amount: price ? (price.unit_amount / 100).toFixed(2) : '',
+            currency: (price?.currency || '').toUpperCase(),
+            currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString().slice(0, 10) : '',
+            cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+          });
+        }
+      } catch (e) {
+        rows.push({ ...base, status: 'error: ' + e.message });
+      }
+    }
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
