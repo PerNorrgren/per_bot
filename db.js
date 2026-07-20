@@ -4826,7 +4826,7 @@ const NEWSLETTER_AUDIENCE_CLAUSES = {
 function getNewsletterRecipients(segments) {
   const base = `pref_email_news=1 AND email IS NOT NULL AND archived=0`;
   const list = Array.isArray(segments) ? segments : String(segments || 'all').split(',').map(s => s.trim()).filter(Boolean);
-  const cols = `id, name, email, (password_hash IS NOT NULL) as has_login`;
+  const cols = `id, name, email, trial_ends_at, (password_hash IS NOT NULL) as has_login`;
 
   if (!list.length || list.includes('all')) {
     return queryAll(`SELECT ${cols} FROM users WHERE ${base}`);

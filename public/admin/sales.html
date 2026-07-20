@@ -1068,8 +1068,12 @@
               <button class="btn sm" onclick="deleteCampaignStep('${s.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
             </div>` : ''}
           </div>
-          ${s.channel==='email' ? `<input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="width:100%;margin-bottom:6px" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>` : ''}
+          ${s.channel==='email' ? `<div style="display:flex;gap:6px;margin-bottom:6px">
+            <input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="flex:1" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>
+            ${isDraft ? `<select onchange="if(this.value){insertTokenAtField(document.getElementById('campStepSubject_${s.id}'),this.value);this.value='';saveCampaignStepEdit('${s.id}');}" style="font-size:11px;width:auto"><option value="">Insert…</option><option value="{{name}}">Recipient's name</option></select>` : ''}
+          </div>` : ''}
           <textarea class="inline-input" id="campStepContent_${s.id}" rows="4" ${isDraft?'':'disabled'} style="width:100%;resize:vertical" onblur="saveCampaignStepEdit('${s.id}')">${escHtml(s.content||'')}</textarea>
+          ${(isDraft && s.channel==='email') ? `<select onchange="if(this.value){insertTokenAtField(document.getElementById('campStepContent_${s.id}'),this.value);this.value='';saveCampaignStepEdit('${s.id}');}" style="font-size:11px;margin-top:4px"><option value="">Insert field into body…</option><option value="{{name}}">Recipient's name</option></select>` : ''}
         </div>
       `).join('');
     }
@@ -1169,6 +1173,20 @@
   }
 
   // ── Trial sequence (Per Bot 18) ──
+  // Per Bot 18 — substitution-field insertion at cursor, shared by the
+  // trial sequence and campaign step editors below (both plain
+  // input/textarea fields, no rich-editor mode to account for here unlike
+  // the newsletter composer's equivalent in comms.html).
+  function insertTokenAtField(el, token) {
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0, start) + token + el.value.slice(end);
+    el.focus();
+    const pos = start + token.length;
+    el.setSelectionRange(pos, pos);
+  }
+
   const TRIAL_STEPS = [
     { key: 'trialDay3',  label: 'Day 3',  hint: 'Points at what they haven\'t explored yet.' },
     { key: 'trialDay7',  label: 'Day 7',  hint: 'Return-frequency nudge — short and often, not one big session.' },
@@ -1184,8 +1202,12 @@
           <div style="font-size:13px;color:rgba(255,255,255,0.75)">${s.label} <span style="color:rgba(255,255,255,0.35);font-weight:normal">— ${s.hint}</span></div>
           <button class="btn sm" onclick="testSendTrialStep('${s.key.replace('trialDay','day')}')">Send test</button>
         </div>
-        <input class="inline-input" type="text" id="${s.key}Subject" style="width:100%;margin-bottom:6px" placeholder="Using the built-in default subject" value="${escHtml(cfg[s.key+'Subject']||'')}"/>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input class="inline-input" type="text" id="${s.key}Subject" style="flex:1" placeholder="Using the built-in default subject" value="${escHtml(cfg[s.key+'Subject']||'')}"/>
+          <select onchange="if(this.value){insertTokenAtField(document.getElementById('${s.key}Subject'),this.value);this.value='';}" style="font-size:11px;width:auto"><option value="">Insert…</option><option value="{{name}}">Recipient's name</option></select>
+        </div>
         <textarea class="inline-input" id="${s.key}Body" rows="4" style="width:100%;resize:vertical" placeholder="Using the built-in default copy — leave blank to keep it">${escHtml(cfg[s.key+'Body']||'')}</textarea>
+        <select onchange="if(this.value){insertTokenAtField(document.getElementById('${s.key}Body'),this.value);this.value='';}" style="font-size:11px;margin-top:4px"><option value="">Insert field into body…</option><option value="{{name}}">Recipient's name</option></select>
       </div>
     `).join('');
   }

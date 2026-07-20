@@ -653,7 +653,15 @@
     <input type="hidden" id="newsletterEditId"/>
     <div>
       <label>Subject</label>
-      <input type="text" id="newsletterSubject" placeholder="e.g. What's new this month"/>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="newsletterSubject" placeholder="e.g. What's new this month" style="flex:1"/>
+        <select onchange="if(this.value){insertNewsletterToken('subject',this.value);this.value='';}" style="font-size:11px;width:auto">
+          <option value="">Insert field…</option>
+          <option value="{{name}}">Recipient's name</option>
+          <option value="{{invite_link}}">Their login/invite link</option>
+          <option value="{{expiry_date}}">Their membership expiry date</option>
+        </select>
+      </div>
     </div>
     <div>
       <label>Body</label>
@@ -664,7 +672,15 @@
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
       <div id="newsletterRichEditor" style="display:none"></div>
       <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
-      <div class="modal-note" style="margin-top:6px">You can use <code>{{name}}</code> and <code>{{invite_link}}</code> — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a trial the moment they click it (14 days by default, or whatever the offer below sets); for an existing member it just points to the login page.</div>
+      <div style="margin-top:6px">
+        <select onchange="if(this.value){insertNewsletterToken('body',this.value);this.value='';}" style="font-size:11px">
+          <option value="">Insert field into body…</option>
+          <option value="{{name}}">Recipient's name</option>
+          <option value="{{invite_link}}">Their login/invite link</option>
+          <option value="{{expiry_date}}">Their membership expiry date</option>
+        </select>
+      </div>
+      <div class="modal-note" style="margin-top:6px">{{name}} and {{invite_link}} — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a trial the moment they click it (14 days by default, or whatever the offer below sets); for an existing member it just points to the login page. {{expiry_date}} reads their real membership end date if one's set — blank otherwise.</div>
       <div class="modal-note" style="margin-top:6px">In Rich mode: click an image then use the 🔗 button to make it clickable · ▭ inserts a button (type text and a link) · 1/2/3 col inserts side-by-side columns for text next to an image.</div>
     </div>
     <div style="margin-top:6px">
@@ -1776,6 +1792,30 @@
   // only ever write plain text.
   let quillInstance = null;
   let newsletterFormat = 'plain';
+
+  // Per Bot 18 — substitution-field dropdowns. One small reusable
+  // primitive (insert at cursor for a plain input/textarea), plus a
+  // newsletter-specific wrapper that also knows how to insert into the
+  // Quill rich editor when that's the active mode. Resets the dropdown
+  // back to its placeholder after each use so it reads as an action, not
+  // a persistent setting.
+  function insertTokenAtField(el, token) {
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    el.value = el.value.slice(0, start) + token + el.value.slice(end);
+    el.focus();
+    const pos = start + token.length;
+    el.setSelectionRange(pos, pos);
+  }
+  function insertNewsletterToken(target, token) {
+    if (target === 'subject') { insertTokenAtField(document.getElementById('newsletterSubject'), token); return; }
+    if (newsletterFormat === 'plain') { insertTokenAtField(document.getElementById('newsletterBody'), token); return; }
+    const q = getQuill();
+    const range = q.getSelection(true) || { index: q.getLength(), length: 0 };
+    q.insertText(range.index, token);
+    q.setSelection(range.index + token.length);
+  }
   let lastClickedImage = null;
 
   // ── Custom Quill extensions (Per Bot 6) — columns, buttons ──
@@ -2495,7 +2535,12 @@
         body: JSON.stringify({ subject, body, to: to || undefined, format: newsletterFormat })
       });
       const data = await res.json();
-      if (data.ok) { fb.textContent = `Sent to ${data.to}`; fb.className = 'feedback ok'; }
+      if (data.ok) {
+        fb.textContent = data.real
+          ? `Sent to ${data.to} — real invite link and expiry date, this is a genuine working send.`
+          : `Sent to ${data.to} — preview only (no account matches this address, so the link/date are placeholders).`;
+        fb.className = 'feedback ok';
+      }
       else { fb.textContent = data.error || 'Could not send test.'; fb.className = 'feedback err'; }
     } catch(e) {
       fb.textContent = 'Network error — could not send test.'; fb.className = 'feedback err';

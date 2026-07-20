@@ -852,7 +852,7 @@ async function sendDueCampaignEmailSteps() {
       let sent = 0;
       for (const user of recipients) {
         try {
-          await sendEmail(user.email, step.subject || b.name,
+          await sendEmail(user.email, fillTemplate(step.subject || b.name, { name: user.name }),
             `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
               <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
               ${renderEmailParagraphs(fillTemplate(step.content, { name: user.name }))}
@@ -9283,20 +9283,43 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
-    // Preview only — there's no real recipient for a test send, so
-    // {{invite_link}} resolves to an obviously-fake example link rather than
-    // minting a real token, and {{name}} uses the admin's own name so the
-    // substitution is at least visibly working before a real send.
-    const previewLink = `${APP_URL}/join/EXAMPLE-TOKEN-not-a-real-link`;
-    const subjectFilled = subject.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink);
-    const bodyFilled    = body.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink);
+    // Per Bot 18 — if the address being sent to actually matches a real
+    // account, use their real data: a genuinely working invite link and
+    // their real expiry date, not the placeholder preview below. This is
+    // what makes it safe to use this same button to send a real, working,
+    // one-off message to a specific named person (e.g. inviting a handful
+    // of legacy members back one at a time) rather than only ever being a
+    // wording check. Falls back to the placeholder preview for any
+    // address that isn't a real account — testing wording to your own
+    // admin inbox, most commonly.
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
+    let subjectFilled, bodyFilled, note = '';
+    if (realUser) {
+      const inviteLink = realUser.password_hash
+        ? `${APP_URL}/login`
+        : `${APP_URL}/join/${db.ensureInviteToken(realUser.id)}`;
+      const expiryDate = realUser.trial_ends_at
+        ? new Date(realUser.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+        : '';
+      subjectFilled = subject.trim().split('{{name}}').join(realUser.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
+      bodyFilled    = body.trim().split('{{name}}').join(realUser.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
+      note = ` — sent with ${realUser.name}'s real invite link and expiry date, this is a genuine working send, not a preview`;
+    } else {
+      // Preview only — there's no real recipient for a test send, so
+      // {{invite_link}} resolves to an obviously-fake example link rather than
+      // minting a real token, and {{name}} uses the admin's own name so the
+      // substitution is at least visibly working before a real send.
+      const previewLink = `${APP_URL}/join/EXAMPLE-TOKEN-not-a-real-link`;
+      subjectFilled = subject.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink).split('{{expiry_date}}').join('[example date]');
+      bodyFilled    = body.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink).split('{{expiry_date}}').join('[example date]');
+    }
 
     const b = brand();
     const cfg = db.getAppConfig() || {};
-    const previewUnsubscribe = `${APP_URL}/unsubscribe/EXAMPLE-TOKEN-not-a-real-link`;
+    const previewUnsubscribe = realUser ? `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(realUser.id)}` : `${APP_URL}/unsubscribe/EXAMPLE-TOKEN-not-a-real-link`;
     const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, previewUnsubscribe);
-    await sendEmail(toEmail, `[TEST] ${subjectFilled}`, buildNewsletterHtml(subjectFilled, bodyFilled, b, format, footerHtml));
-    res.json({ ok: true, to: toEmail });
+    await sendEmail(toEmail, `${realUser ? '' : '[TEST] '}${subjectFilled}`, buildNewsletterHtml(subjectFilled, bodyFilled, b, format, footerHtml));
+    res.json({ ok: true, to: toEmail, real: !!realUser, note });
   } catch (e) {
     console.error('newsletter test-send error:', e.message);
     res.status(500).json({ error: e.message });
@@ -9343,9 +9366,17 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
     const inviteLink = user.has_login
       ? `${APP_URL}/login`
       : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}`;
+    // Per Bot 18 — {{expiry_date}} reads the same trial_ends_at column
+    // that already drives real access (set manually here for someone
+    // whose carried-over membership has a specific end date). Formatted
+    // for reading, not the raw ISO string; blank if there isn't one
+    // rather than printing "Invalid Date".
+    const expiryDate = user.trial_ends_at
+      ? new Date(user.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      : '';
 
-    const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
-    const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink);
+    const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
+    const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
 
     const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
     const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);
