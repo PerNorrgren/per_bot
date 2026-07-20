@@ -116,11 +116,11 @@
   // ── Config ──
   const PUBLISHABLE_KEY = 'pk_live_51PGhWKCxT0sk2KVUdAIzaa72frMnNuM8i4O6WuxcNmLCltzcV3StYdSX63lXEt4GG01ydwRtMn3sKw4wTA2DeCuD000ealyXy8';
 
-  const PLANS = {
-    monthly:  { priceId:'price_1ToG0XCxT0sk2KVUHercrrgp', amount:'£5.99',  period:'per month', label:'Monthly',  saving:null },
-    annual:   { priceId:'price_1ToG7kCxT0sk2KVUdSeLuNk4', amount:'£69.00', period:'per year',  label:'Annual',   saving:'Save £2.88 vs monthly' },
-    lifetime: { priceId:'price_1ToG7kCxT0sk2KVUMBQnPiZn', amount:'£205.00', period:'one-off',   label:'Lifetime', saving:'Pay once, access forever' },
-  };
+  // Per Bot 18 — PLANS used to be hardcoded here (three fixed Price IDs
+  // and amounts baked into the page). Built dynamically now, from
+  // whatever's actually configured in Sales & Marketing → Active plans —
+  // see loadPlans() below.
+  let PLANS = {};
 
   const FEATURES = [
     'Full content library — audio, video, and written guides',
@@ -185,17 +185,46 @@
       const res = await fetch('/api/account');
       if (res.status === 401) {
         // Not logged in — show pricing anyway (if enabled), redirect to register on click
+        await loadPlans();
         renderStatus(null);
         renderPricing(null);
         return;
       }
       account = await res.json();
+      await loadPlans();
       renderStatus(account);
       renderPricing(account);
     } catch(e) {
       document.getElementById('mainContent').innerHTML =
         '<div class="err-msg">Could not load page. Please refresh.</div>';
     }
+  }
+
+  // Per Bot 18 — builds PLANS from whatever's actually configured and
+  // priced in Sales & Marketing, instead of three numbers baked into this
+  // page. Labels/periods are fixed per billing_cycle (those aren't really
+  // configurable data, just display shape); price and the yearly saving
+  // are computed from whatever pricePence values actually came back, so
+  // they can never quietly drift out of sync with each other again.
+  async function loadPlans() {
+    try {
+      const plans = await fetch('/api/public/membership-plans').then(r => r.json());
+      const byCycle = {};
+      plans.forEach(p => { byCycle[p.billingCycle] = p; });
+      const fmt = pence => '£' + (pence / 100).toFixed(2).replace(/\.00$/, '');
+      PLANS = {};
+      if (byCycle.monthly) PLANS.monthly = { priceId: byCycle.monthly.stripePriceId, amount: fmt(byCycle.monthly.pricePence), period: 'per month', label: 'Monthly', saving: null };
+      if (byCycle.annual) {
+        const monthlyEquivalent = byCycle.monthly ? byCycle.monthly.pricePence * 12 : null;
+        const savingPence = monthlyEquivalent ? monthlyEquivalent - byCycle.annual.pricePence : null;
+        PLANS.annual = {
+          priceId: byCycle.annual.stripePriceId, amount: fmt(byCycle.annual.pricePence), period: 'per year', label: 'Annual',
+          saving: (savingPence && savingPence > 0) ? `Save ${fmt(savingPence)} vs monthly` : null,
+          savingPercent: (savingPence && monthlyEquivalent) ? Math.round((savingPence / monthlyEquivalent) * 100) : null,
+        };
+      }
+      if (byCycle.lifetime) PLANS.lifetime = { priceId: byCycle.lifetime.stripePriceId, amount: fmt(byCycle.lifetime.pricePence), period: 'one-off', label: 'Lifetime', saving: 'Pay once, access forever' };
+    } catch(e) { PLANS = {}; }
   }
 
   function renderStatus(a) {
@@ -232,11 +261,11 @@
       return;
     }
 
-    // Payments turned off for this deployment (setup wizard toggle) —
-    // showing pricing and a Stripe checkout button here would either be
-    // misleading or actively broken, depending on whether Stripe keys are
-    // even configured. Show a plain, honest message instead.
-    if (!paymentsEnabled) {
+    // Per Bot 18 — genuinely nothing configured (no active plan has both
+    // active=1 and a real Stripe price attached) is the same honest
+    // message as payments being switched off — showing a broken picker
+    // with nothing to actually buy would be worse than just saying so.
+    if (!paymentsEnabled || !Object.keys(PLANS).length) {
       content.innerHTML = `
         <div class="member-card">
           <div class="member-card-title">Membership isn't open yet</div>
@@ -247,22 +276,31 @@
       return;
     }
 
+    // Per Bot 18 — only a billing-toggle button for a cycle that actually
+    // exists (e.g. no Lifetime button at all if that plan isn't currently
+    // configured), and the Annual saving badge reflects the real
+    // percentage from loadPlans() rather than a fixed "18%" that could
+    // silently stop matching the moment either price changes.
+    selectedBilling = PLANS.monthly ? 'monthly' : Object.keys(PLANS)[0];
+    const toggleBtn = (key, label) => PLANS[key] ? `
+        <button class="billing-opt${key === selectedBilling ? ' active' : ''}" data-billing="${key}" onclick="setBilling('${key}')">
+          ${label}
+          ${key === 'annual' && PLANS.annual.savingPercent ? `<span class="save-badge">Save ${PLANS.annual.savingPercent}%</span>` : ''}
+        </button>` : '';
+
     content.innerHTML = `
       <div class="billing-toggle" id="billingToggle">
-        <button class="billing-opt active" data-billing="monthly" onclick="setBilling('monthly')">Monthly</button>
-        <button class="billing-opt" data-billing="annual" onclick="setBilling('annual')">
-          Annual
-          <span class="save-badge">Save 18%</span>
-        </button>
-        <button class="billing-opt" data-billing="lifetime" onclick="setBilling('lifetime')">Lifetime</button>
+        ${toggleBtn('monthly', 'Monthly')}
+        ${toggleBtn('annual', 'Annual')}
+        ${toggleBtn('lifetime', 'Lifetime')}
       </div>
 
       <div class="plan-card featured" id="planCard">
         <div class="plan-header">
           <div class="plan-name">${brandName} · Member</div>
           <div class="plan-price-row">
-            <div class="plan-price" id="planPrice">£5.99</div>
-            <div class="plan-period" id="planPeriod">per month</div>
+            <div class="plan-price" id="planPrice">${PLANS[selectedBilling].amount}</div>
+            <div class="plan-period" id="planPeriod">${PLANS[selectedBilling].period}</div>
           </div>
           <div class="plan-saving" id="planSaving" style="display:none"></div>
         </div>
@@ -300,6 +338,7 @@
 
       ${reassuranceHtml()}
     `;
+    setBilling(selectedBilling);
   }
 
   function reassuranceHtml() {

@@ -21,11 +21,6 @@ const Stripe = require('stripe');
 const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || null;
 
-const STRIPE_PLANS = {
-  monthly:  { priceId: 'price_1ToG0XCxT0sk2KVUHercrrgp', tier: 1 },
-  annual:   { priceId: 'price_1ToG7kCxT0sk2KVUdSeLuNk4', tier: 1 },
-  lifetime: { priceId: 'price_1ToG7kCxT0sk2KVUMBQnPiZn', tier: 1 },
-};
 const db         = require('./db');
 const auth       = require('./auth');
 const prompts    = require('./prompts');
@@ -8637,6 +8632,24 @@ app.get('/api/config', (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 18 — public, no-auth: what /membership actually shows and
+// lets someone buy. Deliberately filters out any plan missing a real
+// stripe_price_id even if marked active — a tier an admin has toggled on
+// but not yet actually priced in Stripe would otherwise appear as a
+// clickable option that fails at checkout. Scoped to tier 1 for now,
+// matching what's actually live; the query itself already supports more
+// tiers the moment real Stripe prices exist for them and this filter
+// naturally becomes the whole membership picker's source of truth.
+app.get('/api/public/membership-plans', (req, res) => {
+  try {
+    const plans = db.getMembershipPlans(true).filter(p => p.stripe_price_id && p.tier === 1);
+    res.json(plans.map(p => ({
+      id: p.id, billingCycle: p.billing_cycle, pricePence: p.price_pence,
+      stripePriceId: p.stripe_price_id, trialDays: p.trial_days,
+    })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Stripe: create Checkout Session ──
 app.post('/api/membership/checkout', auth.requireAuthApi(['client']), async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Payment system not configured yet.' });
@@ -8644,17 +8657,16 @@ app.post('/api/membership/checkout', auth.requireAuthApi(['client']), async (req
     const { priceId, billing } = req.body;
     if (!priceId) return res.status(400).json({ error: 'priceId required.' });
 
-    // Per Bot 18 — STRIPE_PLANS already existed as the intended source of
-    // truth for which tier each plan maps to, but this route never
-    // actually read from it — every checkout was tagged tier:'1' in the
-    // metadata regardless of which plan was actually purchased, harmless
-    // only because there was nothing but tier-1 pricing live yet. Now
-    // resolved from billing (trusted, server-side) rather than accepting
-    // a client-supplied tier at all; the client's priceId is cross-checked
-    // against what that plan should actually be, not just trusted as-is.
-    const plan = STRIPE_PLANS[billing];
-    if (!plan) return res.status(400).json({ error: `Unknown billing plan: ${billing}` });
-    if (plan.priceId !== priceId) return res.status(400).json({ error: 'priceId doesn\'t match the selected billing plan.' });
+    // Per Bot 18 — resolved from the membership_plans table now (the
+    // Sales & Marketing "Active plans" screen), not a hardcoded object —
+    // that's what makes editing a price or adding a new tier there
+    // actually take effect here without a code change. Both active=1 and
+    // a matching stripe_price_id are required, same filter as the public
+    // /api/public/membership-plans endpoint that built the picker in the
+    // first place, so a plan can't be bought via a stale/guessed priceId
+    // even if it was once valid.
+    const plan = db.getMembershipPlans(true).find(p => p.billing_cycle === billing && p.stripe_price_id === priceId);
+    if (!plan) return res.status(400).json({ error: 'That plan isn\'t currently available.' });
     const resolvedTier = plan.tier;
 
     const user = db.getUser(req.user.id);

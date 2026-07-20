@@ -224,7 +224,7 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title">Active plans</div>
-        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Prices are set in Stripe -- edit trial days here</div>
+        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Edit price, trial days, and the Stripe Price ID directly — this is what /membership actually reads from now</div>
       </div>
       <div id="planList"><div class="loading">Loading...</div></div>
     </div>
@@ -598,15 +598,25 @@
     el.innerHTML = plans.map(p => `
       <div class="plan-row">
         <div class="plan-name">${escHtml(p.name)}</div>
-        <div class="plan-price">£${(p.price_pence/100).toFixed(2)}</div>
+        <div class="plan-price">
+          £<input class="inline-input" type="number" min="0" step="0.01"
+            value="${(p.price_pence/100).toFixed(2)}" style="width:80px"
+            onchange="savePlanField('${p.id}', 'price_pence', Math.round(parseFloat(this.value||0)*100))"/>
+        </div>
         <div class="plan-trial">
           Trial: <input class="inline-input" type="number" min="0" max="365"
             value="${p.trial_days}" style="width:55px"
-            onchange="savePlanTrial('${p.id}', this.value)"/>
+            onchange="savePlanField('${p.id}', 'trial_days', parseInt(this.value)||0)"/>
           days
+        </div>
+        <div class="plan-stripe-id">
+          <input class="inline-input" type="text" placeholder="price_… (from Stripe)"
+            value="${escHtml(p.stripe_price_id||'')}" style="width:220px;font-size:11px"
+            onchange="savePlanField('${p.id}', 'stripe_price_id', this.value.trim() || null)"/>
         </div>
         <div class="plan-status">
           <span class="badge ${p.active ? 'badge-approved' : 'badge-draft'}">${p.active ? 'active' : 'inactive'}</span>
+          ${p.active && !p.stripe_price_id ? '<span class="badge badge-draft" title="Active but has no Stripe Price ID, so it never actually appears as buyable on /membership">no price ID</span>' : ''}
         </div>
         <div class="plan-actions">
           <button class="btn sm" onclick="togglePlan('${p.id}',${p.active})">${p.active ? 'Deactivate' : 'Activate'}</button>
@@ -615,12 +625,13 @@
     `).join('');
   }
 
-  async function savePlanTrial(id, days) {
+  async function savePlanField(id, field, value) {
     await fetch(`/api/admin/membership/plans/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trial_days: parseInt(days) || 0 })
+      body: JSON.stringify({ [field]: value })
     });
+    if (field !== 'trial_days') loadPlans();
   }
 
   async function togglePlan(id, currentlyActive) {
