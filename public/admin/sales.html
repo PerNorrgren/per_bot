@@ -599,9 +599,11 @@
       <div class="plan-row">
         <div class="plan-name">${escHtml(p.name)}</div>
         <div class="plan-price">
-          £<input class="inline-input" type="number" min="0" step="0.01"
-            value="${(p.price_pence/100).toFixed(2)}" style="width:80px"
-            onchange="savePlanField('${p.id}', 'price_pence', Math.round(parseFloat(this.value||0)*100))"/>
+          ${p.stripe_price_id
+            ? `£<input class="inline-input" type="number" value="${(p.price_pence/100).toFixed(2)}" style="width:80px" disabled title="Synced from Stripe — set by the Price ID, not editable here"/>`
+            : `£<input class="inline-input" type="number" min="0" step="0.01"
+                value="${(p.price_pence/100).toFixed(2)}" style="width:80px"
+                onchange="savePlanField('${p.id}', 'price_pence', Math.round(parseFloat(this.value||0)*100))"/>`}
         </div>
         <div class="plan-trial">
           Trial: <input class="inline-input" type="number" min="0" max="365"
@@ -626,11 +628,13 @@
   }
 
   async function savePlanField(id, field, value) {
-    await fetch(`/api/admin/membership/plans/${id}`, {
+    const res = await fetch(`/api/admin/membership/plans/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value })
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) { appAlert(data.error || 'Could not save — please try again.'); loadPlans(); return; }
     if (field !== 'trial_days') loadPlans();
   }
 

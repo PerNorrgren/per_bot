@@ -7949,10 +7949,29 @@ app.get('/api/admin/membership/plans', auth.requireAuthApi(['admin']), (req, res
   try { res.json(db.getMembershipPlans(false)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), (req, res) => {
+app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    db.updateMembershipPlan(req.params.id, req.body);
-    res.json({ ok: true });
+    const fields = { ...req.body };
+    // Per Bot 18 — the price field and the Stripe Price ID field used to
+    // be fully independent, so pasting a real ID here did nothing to the
+    // displayed price — exactly the kind of drift that caused a long,
+    // confusing back-and-forth earlier tonight. Now, the moment a Price
+    // ID is saved, the real amount is pulled live from Stripe and always
+    // wins over anything hand-typed in the same request — the price
+    // shown here can no longer silently disagree with what Stripe will
+    // actually charge.
+    if (fields.stripe_price_id) {
+      if (!stripe) return res.status(400).json({ error: 'Stripe isn\'t configured (no STRIPE_SECRET_KEY set) — can\'t verify that price ID right now.' });
+      try {
+        const stripePrice = await stripe.prices.retrieve(fields.stripe_price_id.trim());
+        fields.stripe_price_id = stripePrice.id;
+        fields.price_pence = stripePrice.unit_amount;
+      } catch (e) {
+        return res.status(400).json({ error: `Couldn't find that price in Stripe: ${e.message}` });
+      }
+    }
+    db.updateMembershipPlan(req.params.id, fields);
+    res.json({ ok: true, pricePence: fields.price_pence });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
