@@ -1978,6 +1978,39 @@ app.post('/api/admin/stripe/lookup-subscriptions', auth.requireAuthApi(['admin']
   }
 });
 
+// Per Bot 18 — links a real, live Stripe subscription to a Per Bot
+// account: sets their tier, sets member_expires_at to the subscription's
+// actual current period end (re-fetched fresh here, not trusting
+// whatever the lookup table showed a minute ago), and — this is the part
+// that matters most — stores the customer/subscription IDs so every
+// future Stripe webhook (renewal, cancellation, payment failure, the
+// whole Savers Protocol) recognizes and correctly manages this person
+// from here on, exactly like anyone who subscribed through the new app
+// directly. This is a one-way "adopt" action, not a sync — it doesn't
+// run again on its own; if the subscription changes later, the webhooks
+// take over from this point forward.
+app.post('/api/admin/stripe/link-subscription', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).json({ error: 'Stripe isn\'t configured (no STRIPE_SECRET_KEY set).' });
+    const { userId, stripeCustomerId, stripeSubscriptionId, tier } = req.body;
+    if (!userId || !stripeCustomerId || !stripeSubscriptionId) return res.status(400).json({ error: 'userId, stripeCustomerId, and stripeSubscriptionId are all required.' });
+    const parsedTier = parseInt(tier, 10);
+    if (![1, 2, 3].includes(parsedTier)) return res.status(400).json({ error: 'tier must be 1, 2, or 3.' });
+    const user = db.getUser(userId);
+    if (!user) return res.status(404).json({ error: 'Person not found.' });
+
+    const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+    if (sub.customer !== stripeCustomerId) return res.status(400).json({ error: 'That subscription doesn\'t belong to that customer — please re-check the lookup.' });
+    if (!['active', 'trialing', 'past_due'].includes(sub.status)) return res.status(400).json({ error: `That subscription's status is "${sub.status}" — not something safe to link as active.` });
+
+    const expiresAt = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null;
+    db.setMemberTier(userId, parsedTier, expiresAt, null, stripeCustomerId, stripeSubscriptionId);
+    res.json({ ok: true, tier: parsedTier, expiresAt });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });

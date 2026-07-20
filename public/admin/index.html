@@ -684,6 +684,7 @@
               <th style="padding:8px 10px">Amount</th>
               <th style="padding:8px 10px">Period end</th>
               <th style="padding:8px 10px">Cancel at end?</th>
+              <th style="padding:8px 10px">Actions</th>
             </tr>
           </thead>
           <tbody id="subsResultBody"></tbody>
@@ -1815,7 +1816,7 @@
   }
   function renderSubsResult() {
     document.getElementById('subsResultSummary').textContent = `${_subsResultRows.length} row(s) from ${memberSel.sel.size} selected — live from Stripe just now.`;
-    document.getElementById('subsResultBody').innerHTML = _subsResultRows.map(r => `
+    document.getElementById('subsResultBody').innerHTML = _subsResultRows.map((r,i) => `
       <tr style="border-top:1px solid rgba(255,255,255,0.06)">
         <td style="padding:8px 10px">${escHtml(r.name||'')}</td>
         <td style="padding:8px 10px">${escHtml(r.email||'')}</td>
@@ -1824,8 +1825,34 @@
         <td style="padding:8px 10px">${r.amount ? escHtml(r.amount)+' '+escHtml(r.currency||'') : ''}</td>
         <td style="padding:8px 10px">${escHtml(r.currentPeriodEnd||'')}</td>
         <td style="padding:8px 10px">${r.cancelAtPeriodEnd ? 'Yes' : (r.subscriptionId ? 'No' : '')}</td>
+        <td style="padding:8px 10px">${['active','trialing','past_due'].includes(r.status) && r.subscriptionId ? `<button class="btn sm" onclick="linkSubsResultRow(${i})">Link</button>` : ''}</td>
       </tr>
     `).join('');
+  }
+  // Per Bot 18 — adopts a live Stripe subscription found by the lookup
+  // above into this person's Per Bot account: sets their tier, syncs
+  // their expiry to the subscription's real current period end, and
+  // stores the customer/subscription IDs so every future Stripe event
+  // (renewal, cancellation, the Savers Protocol) recognizes them
+  // automatically from here on. Asks for the tier since Stripe's Price ID
+  // on a legacy subscription doesn't map to anything this app knows.
+  async function linkSubsResultRow(i) {
+    const r = _subsResultRows[i];
+    const tier = prompt(`Link ${r.name}'s ${r.interval} subscription — which tier? (1, 2, or 3)`, '1');
+    if (tier === null) return;
+    if (!['1','2','3'].includes(tier.trim())) { showConfirm('Invalid tier', 'Please enter 1, 2, or 3.', ()=>{}); return; }
+    try {
+      const res = await fetch('/api/admin/stripe/link-subscription', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: r.userId, stripeCustomerId: r.stripeCustomerId, stripeSubscriptionId: r.subscriptionId, tier: tier.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not link.');
+      showConfirm('Linked', `${r.name} is now Member ${tier} with access through ${data.expiresAt ? data.expiresAt.slice(0,10) : 'no set end date'}. Future Stripe events for this subscription now apply to their account automatically.`, ()=>{});
+      loadMembers();
+    } catch(e) {
+      showConfirm('Could not link', e.message, ()=>{});
+    }
   }
   function exportSubsResultCsv() {
     const cols = ['name','email','status','interval','amount','currency','currentPeriodEnd','cancelAtPeriodEnd','stripeCustomerId','subscriptionId'];
