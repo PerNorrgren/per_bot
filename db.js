@@ -1620,6 +1620,64 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN trial_day10_body TEXT",
     "ALTER TABLE app_config ADD COLUMN trial_day14_subject TEXT",
     "ALTER TABLE app_config ADD COLUMN trial_day14_body TEXT",
+
+    // Per Bot 18 — Savers Protocol. Two distinct lifecycles, both
+    // per-person-triggered (not a shared campaign start date, same
+    // reasoning as the trial sequence above) rather than a broadcast:
+    // - 'cancellation': triggered the moment someone schedules a cancel
+    //   (cancel_at_period_end flips true), not when it completes. Their
+    //   already-paid time is untouched; savers_grace_ends_at is only set
+    //   once that real time actually runs out (customer.subscription.
+    //   deleted fires), and is a BONUS 14 days on top of what they paid
+    //   for, not a replacement for it.
+    // - 'payment_failure': triggered on invoice.payment_failed, but only
+    //   when it's a genuine failure — i.e. NOT already mid-cancellation
+    //   (see the type check in the webhook handler). savers_grace_ends_at
+    //   is set immediately, a firm 14-day window from the first failure,
+    //   deliberately independent of however long Stripe's own retry
+    //   schedule happens to take.
+    // savers_real_period_end: only meaningful for 'cancellation' — the
+    // date their actually-paid time runs out, recorded at the moment
+    // cancellation is scheduled so the day-0 acknowledgment email can
+    // reference it accurately even though the bonus grace period hasn't
+    // started yet.
+    "ALTER TABLE users ADD COLUMN savers_type TEXT",
+    "ALTER TABLE users ADD COLUMN savers_triggered_at TEXT",
+    "ALTER TABLE users ADD COLUMN savers_real_period_end TEXT",
+    // For payment_failure this equals savers_triggered_at (grace starts
+    // immediately on failure). For cancellation it's set LATER, once
+    // customer.subscription.deleted actually fires — savers_triggered_at
+    // stays as the moment they decided to cancel, which could be months
+    // earlier, while this marks when the bonus 14 days actually begins.
+    // mid/final touchpoints below count from this field, not from
+    // savers_triggered_at, for both types.
+    "ALTER TABLE users ADD COLUMN savers_grace_started_at TEXT",
+    "ALTER TABLE users ADD COLUMN savers_grace_ends_at TEXT",
+    "ALTER TABLE users ADD COLUMN savers_last_prior_tier INTEGER",
+    "ALTER TABLE users ADD COLUMN savers_email_day0_sent INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN savers_email_mid_sent INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN savers_email_final_sent INTEGER DEFAULT 0",
+    // Admin-editable copy, same fallback-to-hand-written-default pattern
+    // as the trial sequence. cancel_day0 fires at the moment of
+    // cancellation itself (acknowledgment, no offer yet — their paid time
+    // hasn't even started running out); cancel_grace0/mid/final are the
+    // three touchpoints across the bonus 14 days once real access ends.
+    // failure_day0/mid/final are the three touchpoints across the firm
+    // 14-day window from a genuine payment failure.
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_day0_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_day0_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_grace0_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_grace0_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_mid_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_mid_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_final_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_final_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_day0_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_day0_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_mid_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_mid_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_final_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_final_body TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4200,6 +4258,77 @@ function getDueCampaignEmailSteps() {
   `);
 }
 
+// ── Savers Protocol (Per Bot 18) ──
+// Starts tracking someone the moment they schedule a cancellation — their
+// paid time is untouched, this is purely a record of intent so the day-0
+// acknowledgment can fire and so the eventual subscription.deleted event
+// (real end of term) knows to start a bonus grace period rather than
+// downgrading immediately.
+function startSaversCancellation(userId, realPeriodEnd, priorTier) {
+  getDbSync().run(
+    `UPDATE users SET savers_type='cancellation', savers_triggered_at=datetime('now'),
+      savers_real_period_end=?, savers_last_prior_tier=? WHERE id=?`,
+    [realPeriodEnd, priorTier, userId]
+  );
+  save();
+}
+// Called once real access has actually ended (cancellation) or the moment
+// a genuine payment failure happens — either way this is what actually
+// starts the 14-day countdown and both email-sent flags.
+function startSaversGrace(userId, type, priorTier) {
+  const graceEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  getDbSync().run(
+    `UPDATE users SET savers_type=?, savers_grace_started_at=datetime('now'), savers_grace_ends_at=?,
+      savers_last_prior_tier=COALESCE(savers_last_prior_tier,?),
+      savers_email_day0_sent=0, savers_email_mid_sent=0, savers_email_final_sent=0
+      WHERE id=?`,
+    [type, graceEnds, priorTier, userId]
+  );
+  save();
+}
+// Called on any sign of real payment success (renewal, or a fresh
+// checkout) — clears every Savers field so a resolved case can never be
+// mistaken for still-pending, and can't accidentally get downgraded later
+// by a stale grace deadline.
+function clearSaversState(userId) {
+  getDbSync().run(
+    `UPDATE users SET savers_type=NULL, savers_triggered_at=NULL, savers_real_period_end=NULL,
+      savers_grace_started_at=NULL, savers_grace_ends_at=NULL, savers_last_prior_tier=NULL,
+      savers_email_day0_sent=0, savers_email_mid_sent=0, savers_email_final_sent=0
+      WHERE id=?`,
+    [userId]
+  );
+  save();
+}
+function markSaversEmailSent(userId, stage) {
+  const col = { day0: 'savers_email_day0_sent', mid: 'savers_email_mid_sent', final: 'savers_email_final_sent' }[stage];
+  if (!col) return;
+  getDbSync().run(`UPDATE users SET ${col}=1 WHERE id=?`, [userId]);
+  save();
+}
+// Cron candidates — grace already started (so day0 already fired inline
+// in the webhook handler), mid/final touchpoints counted from
+// savers_grace_started_at, same day-window shape for both types.
+function getUsersDueForSaversEmail(stage) {
+  const days = { mid: 7, final: 13 }[stage];
+  const col = { mid: 'savers_email_mid_sent', final: 'savers_email_final_sent' }[stage];
+  if (!days) return [];
+  return queryAll(`
+    SELECT * FROM users
+    WHERE savers_type IS NOT NULL AND savers_grace_started_at IS NOT NULL AND ${col}=0
+      AND julianday('now') - julianday(savers_grace_started_at) >= ?
+  `, [days]);
+}
+// Cron candidates for the actual downgrade — grace window fully elapsed,
+// still flagged (nobody cleared it via a real payment succeeding).
+function getUsersDueForSaversDowngrade() {
+  return queryAll(`
+    SELECT * FROM users
+    WHERE savers_type IS NOT NULL AND savers_grace_ends_at IS NOT NULL
+      AND savers_grace_ends_at <= datetime('now')
+  `);
+}
+
 // Per Bot 18 — resolves which file (if any) /promotions should show as its
 // showcase clip. Priority: the specific offer named by the promo code's
 // own showcase_file_id, then the standing default offer's, then the
@@ -5004,7 +5133,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day7_subject','trial_day7_body','trial_day10_subject','trial_day10_body','trial_day14_subject','trial_day14_body'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day7_subject','trial_day7_body','trial_day10_subject','trial_day10_body','trial_day14_subject','trial_day14_body','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_final_subject','savers_cancel_final_body','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_final_subject','savers_failure_final_body'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -5412,6 +5541,8 @@ module.exports = {
   getAllCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, deleteCampaign,
   getCampaignSteps, getCampaignStep, addCampaignStep, updateCampaignStep, deleteCampaignStep,
   setCampaignStepResult, getDueCampaignEmailSteps,
+  startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
+  getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,
   // Signal lines (Per Bot 17 phase 6)

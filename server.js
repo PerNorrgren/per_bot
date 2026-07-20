@@ -204,6 +204,11 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
         const subId = session.subscription || null;
         db.setMemberTier(userId, tier, expiresAt, null, session.customer, subId);
+        // Per Bot 18 — same reasoning as invoice.payment_succeeded above:
+        // a fresh subscription is just as unambiguous a resolution as a
+        // renewal, whether this is a Savers case resubscribing or someone
+        // upgrading who was never flagged at all (harmless no-op then).
+        db.clearSaversState(userId);
 
         // Referral reward (Per Bot 22) — this is genuinely this person's
         // FIRST payment turning into a real membership (not a renewal;
@@ -283,30 +288,67 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
         if (userRec) {
           const d = new Date(); d.setMonth(d.getMonth() + 1);
           db.setMemberTier(userRec.id, userRec.member_tier || 1, d.toISOString(), null, null, null);
+          // Per Bot 18 — a real payment landing resolves any Savers
+          // tracking outright, cancellation or payment-failure alike. No
+          // partial credit for "still checking in" — a successful renewal
+          // is unambiguous.
+          if (userRec.savers_type) db.clearSaversState(userRec.id);
+        }
+        break;
+      }
+
+      // Per Bot 18 — Savers Protocol, cancellation path, part 1: fires the
+      // moment someone SCHEDULES a cancellation (cancel_at_period_end
+      // flips true), which is well before customer.subscription.deleted
+      // below — that only fires once the term actually ends. This is
+      // where the day-0 acknowledgment goes out; their paid time is
+      // completely untouched here, this is just acknowledging the
+      // decision. Also handles someone changing their mind before the
+      // term ends (cancel_at_period_end flips back to false) by clearing
+      // the tracking outright.
+      case 'customer.subscription.updated': {
+        const sub = event.data.object;
+        const prevCancelFlag = event.data.previous_attributes?.cancel_at_period_end;
+        const userRec = db.getUserByStripeCustomer ? db.getUserByStripeCustomer(sub.customer) : null;
+        if (!userRec) break;
+        if (sub.cancel_at_period_end && prevCancelFlag === false && !userRec.savers_type) {
+          const periodEndStr = sub.current_period_end
+            ? new Date(sub.current_period_end * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+            : 'the end of your current term';
+          db.startSaversCancellation(userRec.id, sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null, userRec.member_tier || 1);
+          if (userRec.email) await emailSaversCancelDay0(userRec, periodEndStr);
+        } else if (!sub.cancel_at_period_end && prevCancelFlag === true && userRec.savers_type === 'cancellation' && !userRec.savers_grace_started_at) {
+          // Changed their mind before the term even ended — grace never
+          // started, safe to just clear it, nothing to undo.
+          db.clearSaversState(userRec.id);
         }
         break;
       }
 
       case 'customer.subscription.deleted': {
-        // Subscription cancelled — drop to Explorer
+        // Per Bot 18 — this now only means "real access has actually
+        // ended," for either reason (explicit cancellation reaching term
+        // end, or Stripe's own retries finally being exhausted on a
+        // payment-failure case we may not have caught in time). Rather
+        // than downgrading immediately, this starts the BONUS 14-day
+        // grace period — a genuine extension beyond what was ever paid
+        // for, not a continuation of it. Only falls through to an
+        // immediate downgrade if Savers is already resolved/not
+        // applicable for this person (e.g. someone with no subscription
+        // history at all being cleaned up some other way).
         const sub    = event.data.object;
         const custId = sub.customer;
-        // Find user by stripe_customer_id
         const userRec = db.getUserByStripeCustomer ? db.getUserByStripeCustomer(custId) : null;
         if (userRec) {
-          db.downgradeToExplorer(userRec.id);
-          const user = db.getUser(userRec.id);
-          if (user?.email) {
-            const b = brand();
-            await sendEmail(user.email,
-              `Your ${b.name} membership has ended`,
-              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-                <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
-                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership has ended. You can continue exploring as a free member, or <a href="${APP_URL}/membership" style="color:#2d7873">rejoin at any time</a>.</p>
-                <p style="font-size:12px;color:#aaa">${b.tagline}</p>
-              </div>`
-            );
+          if (userRec.savers_type === 'payment_failure' && userRec.savers_grace_started_at) {
+            // Already being handled via the failure path (which starts
+            // its own countdown immediately on first failure, faster than
+            // Stripe's own retry schedule) — nothing new to do here.
+            break;
           }
+          const priorTier = userRec.savers_last_prior_tier || userRec.member_tier || 1;
+          db.startSaversGrace(userRec.id, 'cancellation', priorTier);
+          if (userRec.email) await emailSaversCancelGrace0(userRec);
         }
         break;
       }
@@ -335,6 +377,19 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
               <a href="${portalUrl}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px">Update payment details</a>
             </div>`
           );
+          // Per Bot 18 — Savers Protocol, payment-failure path. Only
+          // treated as a genuine failure (distinct 14-day grace, warm
+          // day-0 email) if this person isn't already mid-cancellation —
+          // a failed renewal attempt on a subscription someone already
+          // chose to end isn't a new signal, it's just Stripe's normal
+          // behaviour for a cancel-at-period-end subscription reaching
+          // its date. Also only triggers once per episode — repeated
+          // retry failures on the same underlying issue don't restart the
+          // clock, since savers_type is already set after the first one.
+          if (!userRec.savers_type) {
+            db.startSaversGrace(userRec.id, 'payment_failure', userRec.member_tier || 1);
+            await emailSaversFailureDay0(userRec);
+          }
         }
         break;
       }
@@ -861,6 +916,109 @@ If you'd like full access back, you're welcome any time. No explanation needed, 
 // newsletter system's fuller pending/status job-queue machinery — fine
 // for a mailing list at today's size; worth revisiting if a single
 // campaign step's audience ever grows very large.
+// Per Bot 18 — Savers Protocol email builder. One shared wrapper (same
+// admin-editable-with-fallback-default pattern as the trial sequence)
+// plus seven thin touchpoint functions. Two genuinely different voices
+// by design, not the same message reused: cancellation was a decision,
+// so it's acknowledged as one, never treated as a mistake to be
+// corrected; payment failure is usually nobody's fault, so it stays
+// practical and warm rather than reading like a sales attempt.
+async function sendSaversEmail(user, cfgKeyPrefix, defaultSubject, defaultBody, extraTokens = {}) {
+  const cfg = db.getAppConfig() || {};
+  const b = brand();
+  const subject = fillTemplate(cfg[`${cfgKeyPrefix}_subject`] || defaultSubject, { name: user.name, ...extraTokens });
+  const body = fillTemplate(cfg[`${cfgKeyPrefix}_body`] || defaultBody, { name: user.name, ...extraTokens });
+  return sendEmail(user.email, subject,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      ${renderEmailParagraphs(body)}
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
+
+function emailSaversCancelDay0(user, periodEndStr) {
+  return sendSaversEmail(user, 'savers_cancel_day0', "Got it — no questions asked",
+    `You've let us know you're moving on, and that's completely fine — no explanation needed.
+
+Nothing changes for now. You've got full access exactly as already paid for, through {{period_end}}. We're genuinely glad you spent time here at all.`,
+    { period_end: periodEndStr });
+}
+function emailSaversCancelGrace0(user) {
+  return sendSaversEmail(user, 'savers_cancel_grace0', "We've kept the door open a little longer",
+    `Your paid time wrapped up — but rather than closing things off right away, we've kept full access open for another two weeks, no charge.
+
+No pressure either way. Just wanted you to have the option, in case the timing was the only thing wrong.`);
+}
+function emailSaversCancelMid(user) {
+  return sendSaversEmail(user, 'savers_cancel_mid', "A week left of the extra time",
+    `Just flagging it — there's about a week left of the extra access we set aside after your membership wrapped up.
+
+Nothing you need to do. If it's found a place in your week again, membership's there whenever suits.`);
+}
+function emailSaversCancelFinal(user) {
+  return sendSaversEmail(user, 'savers_cancel_final', "Last day, and that's alright too",
+    `This is the last day of the extra time we set aside. After today your account settles into the free Explorer tier — which is a real, permanent place, not a dead end.
+
+If you'd like to come back properly at some point, you're always welcome, any time.`);
+}
+function emailSaversFailureDay0(user) {
+  return sendSaversEmail(user, 'savers_failure_day0', "Your last payment didn't go through",
+    `Wanted to flag this from an actual person, not just the automated notice — your last payment didn't process. This happens for all sorts of ordinary reasons, most often just a card that's expired or been reissued.
+
+Your access hasn't changed. You've got two full weeks to sort it out, no rush.`);
+}
+function emailSaversFailureMid(user) {
+  return sendSaversEmail(user, 'savers_failure_mid', "Still showing a payment issue",
+    `A gentle follow-up — the payment issue from last week is still showing on our end. No drama, just didn't want it to quietly slip by.
+
+Full access is still there while this gets sorted.`);
+}
+function emailSaversFailureFinal(user) {
+  return sendSaversEmail(user, 'savers_failure_final', "One more day before things settle",
+    `Last day of full access before your account moves to the free Explorer tier — if it's just a card that needs updating, this is the moment to catch it.
+
+If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`);
+}
+
+const SAVERS_MID_SENDERS = { cancellation: emailSaversCancelMid, payment_failure: emailSaversFailureMid };
+const SAVERS_FINAL_SENDERS = { cancellation: emailSaversCancelFinal, payment_failure: emailSaversFailureFinal };
+
+// Per Bot 18 — daily cron: the two mid-grace touchpoints (day0/grace0
+// already fired inline in the webhook handlers themselves, not here).
+async function sendDueSaversEmails() {
+  let sent = 0;
+  for (const stage of ['mid', 'final']) {
+    const senders = stage === 'mid' ? SAVERS_MID_SENDERS : SAVERS_FINAL_SENDERS;
+    const due = db.getUsersDueForSaversEmail(stage);
+    for (const user of due) {
+      const sender = senders[user.savers_type];
+      if (!sender || !user.email) continue;
+      try { await sender(user); db.markSaversEmailSent(user.id, stage); sent++; }
+      catch (e) { console.error(`[savers] ${stage} email failed for ${user.email}:`, e.message); }
+    }
+  }
+  return sent;
+}
+
+// Per Bot 18 — daily cron: the actual downgrade once a grace window (of
+// either type) has fully elapsed with nobody resolving it via a real
+// payment. Genuinely the last resort — every earlier step in both
+// lifecycles exists to avoid ever reaching this.
+async function processDueSaversDowngrades() {
+  const due = db.getUsersDueForSaversDowngrade();
+  for (const user of due) {
+    try {
+      db.downgradeToExplorer(user.id);
+      db.clearSaversState(user.id);
+      console.log(`[savers] ${user.id} downgraded to Explorer — ${user.savers_type} grace window elapsed`);
+    } catch (e) { console.error(`[savers] downgrade failed for ${user.id}:`, e.message); }
+  }
+  return due.length;
+}
+
 async function sendDueCampaignEmailSteps() {
   const dueSteps = db.getDueCampaignEmailSteps();
   for (const step of dueSteps) {
@@ -8259,9 +8417,43 @@ app.post('/api/admin/settings/trial-sequence/test-send', auth.requireAuthApi(['a
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/admin/settings/savers-sequence', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const cfg = db.getAppConfig() || {};
+    const keys = ['savers_cancel_day0','savers_cancel_grace0','savers_cancel_mid','savers_cancel_final','savers_failure_day0','savers_failure_mid','savers_failure_final'];
+    const out = {};
+    keys.forEach(k => {
+      const camel = k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+      out[`${camel}Subject`] = cfg[`${k}_subject`] || '';
+      out[`${camel}Body`] = cfg[`${k}_body`] || '';
+    });
+    res.json(out);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+const SAVERS_TEST_SENDERS = {
+  cancel_day0: (u) => emailSaversCancelDay0(u, '[example date]'),
+  cancel_grace0: emailSaversCancelGrace0,
+  cancel_mid: emailSaversCancelMid,
+  cancel_final: emailSaversCancelFinal,
+  failure_day0: emailSaversFailureDay0,
+  failure_mid: emailSaversFailureMid,
+  failure_final: emailSaversFailureFinal,
+};
+app.post('/api/admin/settings/savers-sequence/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { step, email } = req.body;
+    const sender = SAVERS_TEST_SENDERS[step];
+    if (!sender) return res.status(400).json({ error: 'Unknown step.' });
+    const to = resolveTestEmail(email, req.user.email);
+    if (!to) return res.status(400).json({ error: 'No test email address available.' });
+    await sender({ id: 'test', name: req.user.name || 'there', email: to });
+    res.json({ ok: true, sentTo: to });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -9665,7 +9857,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

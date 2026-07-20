@@ -14,7 +14,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades }) {
   // ── Scheduled MOTD send — hourly, on the hour ──
   // Each run checks which users' motd_days/motd_hour match right now and
   // sends only to them. See sendScheduledMotd() in server.js for the full
@@ -116,6 +116,20 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
+  // ── Savers Protocol — 08:00 UTC ──
+  // Mid/final touchpoints and the actual grace-period downgrade. Day0/
+  // grace0 fire immediately from the Stripe webhook handlers themselves,
+  // not from here — those are event-triggered, not calendar-triggered.
+  cron.schedule('0 8 * * *', async () => {
+    try {
+      const emailCount = await sendDueSaversEmails();
+      const downgradeCount = await processDueSaversDowngrades();
+      console.log(`[cron] savers protocol: ${emailCount} email(s) sent, ${downgradeCount} downgrade(s)`);
+    } catch (e) {
+      console.error('[cron] savers protocol failed:', e.message);
+    }
+  });
+
   // ── Stale chat session sweep — every 10 minutes ──
   // Safety net for Keep History (Per Bot 6) — catches any automated Talk
   // conversation that went quiet without the client's own beacon firing
@@ -131,7 +145,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), stale chat sweep (every 10 min)');
+  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min)');
 }
 
 module.exports = { startCronJobs };

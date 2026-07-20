@@ -269,6 +269,29 @@
     </div>
   </div>
 
+  <!-- Savers Protocol (Per Bot 18) -->
+  <div>
+    <div class="section-label">Savers Protocol</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Cancellation win-back</div>
+      </div>
+      <div style="padding:0 20px 4px" class="modal-note">Day 0 fires the moment someone schedules a cancellation — an acknowledgment only, their paid time is untouched. Grace 0/Mid/Final cover a bonus 14 days once their real term actually ends. Different voice from the payment-failure side below on purpose: this was a decision, not a mistake.</div>
+      <div id="saversCancelBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header">
+        <div class="card-title">Payment-failure win-back</div>
+      </div>
+      <div style="padding:0 20px 4px" class="modal-note">Day 0 fires immediately on a genuine payment failure (not one already mid-cancellation). A firm 14-day window from that moment, independent of Stripe's own retry schedule. Warm and practical, not a sales pitch — usually nobody's fault at all.</div>
+      <div id="saversFailureBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
+    </div>
+    <div style="padding:12px 0;display:flex;gap:8px;align-items:center">
+      <button class="btn sm primary" onclick="saveSaversSequence()">Save all</button>
+      <div class="feedback" id="saversSeqFeedback"></div>
+    </div>
+  </div>
+
   <!-- Funnel report (Per Bot 18) -->
   <div>
     <div class="section-label">Funnel</div>
@@ -931,7 +954,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence(); loadCampaigns();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence(); loadSaversSequence(); loadCampaigns();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -1233,6 +1256,65 @@
       showFeedback('trialSeqFeedback', 'Sent to ' + data.sentTo + '.', 'ok');
     } catch(e) {
       showFeedback('trialSeqFeedback', e.message, 'err');
+    }
+  }
+
+  // ── Savers Protocol (Per Bot 18) ──
+  const SAVERS_CANCEL_STEPS = [
+    { key: 'saversCancelDay0',   testStep: 'cancel_day0',   label: 'Day 0',   hint: 'Fires the moment they schedule a cancellation — acknowledgment only, paid time untouched.', extraToken: '{{period_end}}' },
+    { key: 'saversCancelGrace0', testStep: 'cancel_grace0', label: 'Grace 0', hint: 'Fires once their real term ends — the bonus 14 days starts here.' },
+    { key: 'saversCancelMid',    testStep: 'cancel_mid',    label: 'Grace day 7', hint: 'Gentle mid-point reminder.' },
+    { key: 'saversCancelFinal',  testStep: 'cancel_final',  label: 'Grace day 13', hint: 'Last day before Explorer.' },
+  ];
+  const SAVERS_FAILURE_STEPS = [
+    { key: 'saversFailureDay0',  testStep: 'failure_day0',  label: 'Day 0',  hint: 'Fires immediately on a genuine payment failure (not one already mid-cancellation).' },
+    { key: 'saversFailureMid',   testStep: 'failure_mid',   label: 'Day 7',  hint: 'Gentle follow-up.' },
+    { key: 'saversFailureFinal', testStep: 'failure_final', label: 'Day 13', hint: 'Last day before Explorer.' },
+  ];
+  function renderSaversStepGroup(containerId, steps, cfg) {
+    const el = document.getElementById(containerId);
+    el.innerHTML = steps.map(s => `
+      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;color:rgba(255,255,255,0.75)">${s.label} <span style="color:rgba(255,255,255,0.35);font-weight:normal">— ${s.hint}</span></div>
+          <button class="btn sm" onclick="testSendSaversStep('${s.testStep}')">Send test</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input class="inline-input" type="text" id="${s.key}Subject" style="flex:1" placeholder="Using the built-in default subject" value="${escHtml(cfg[s.key+'Subject']||'')}"/>
+          <select onchange="if(this.value){insertTokenAtField(document.getElementById('${s.key}Subject'),this.value);this.value='';}" style="font-size:11px;width:auto"><option value="">Insert…</option><option value="{{name}}">Recipient's name</option>${s.extraToken?`<option value="${s.extraToken}">Real term end date</option>`:''}</select>
+        </div>
+        <textarea class="inline-input" id="${s.key}Body" rows="4" style="width:100%;resize:vertical" placeholder="Using the built-in default copy — leave blank to keep it">${escHtml(cfg[s.key+'Body']||'')}</textarea>
+        <select onchange="if(this.value){insertTokenAtField(document.getElementById('${s.key}Body'),this.value);this.value='';}" style="font-size:11px;margin-top:4px"><option value="">Insert field into body…</option><option value="{{name}}">Recipient's name</option>${s.extraToken?`<option value="${s.extraToken}">Real term end date</option>`:''}</select>
+      </div>
+    `).join('');
+  }
+  async function loadSaversSequence() {
+    const cfg = await fetch('/api/admin/settings/savers-sequence').then(r=>r.json()).catch(()=>({}));
+    renderSaversStepGroup('saversCancelBody', SAVERS_CANCEL_STEPS, cfg);
+    renderSaversStepGroup('saversFailureBody', SAVERS_FAILURE_STEPS, cfg);
+  }
+  async function saveSaversSequence() {
+    const body = {};
+    [...SAVERS_CANCEL_STEPS, ...SAVERS_FAILURE_STEPS].forEach(s => {
+      body[s.key+'Subject'] = document.getElementById(s.key+'Subject').value;
+      body[s.key+'Body'] = document.getElementById(s.key+'Body').value;
+    });
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      showFeedback('saversSeqFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('saversSeqFeedback', 'Could not save — please try again.', 'err');
+    }
+  }
+  async function testSendSaversStep(step) {
+    showFeedback('saversSeqFeedback', 'Sending…', 'ok');
+    try {
+      const res = await fetch('/api/admin/settings/savers-sequence/test-send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ step }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not send test.');
+      showFeedback('saversSeqFeedback', 'Sent to ' + data.sentTo + '.', 'ok');
+    } catch(e) {
+      showFeedback('saversSeqFeedback', e.message, 'err');
     }
   }
 </script>
