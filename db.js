@@ -3463,22 +3463,36 @@ function getUserByUnsubscribeToken(token) {
   return queryOne('SELECT * FROM users WHERE unsubscribe_token=?', [token]);
 }
 
-// ── Trial expiry ──
-// Called on every login for client-role users. If a trial has lapsed and no paid
-// subscription picked it up (no stripe_subscription_id), drop back to Explorer.
+// ── Trial / membership expiry ──
+// Called on every login and on every /api/my/profile fetch for
+// client-role users, so a long-lived session gets caught too, not only a
+// fresh login. If either date has lapsed and no paid subscription picked
+// it up (no stripe_subscription_id), drop back to Explorer.
 // Leaves member_since alone — that's a historical fact, not a current-tier signal.
+//
+// Per Bot 18 — this used to only check trial_ends_at, which meant it
+// never actually caught member_expires_at lapsing at all — the field
+// People admin's manual expiry override (setMemberExpiry, used for
+// honouring a carried-over legacy membership) actually writes to. Someone
+// given a hand-set expiry date would never have been auto-downgraded by
+// anything, ever. Now checks both, and reports which one fired so the
+// login route can send the right invitation-to-subscribe email — someone
+// whose manually-honoured time just ran out is a very different moment
+// from an ordinary trial ending (which already has its own day-14 email).
 function checkTrialExpiry(userId) {
   const user = getUser(userId);
   if (!user) return user;
-  const trialLapsed = user.trial_ends_at && new Date(user.trial_ends_at) < new Date();
   const noActiveSubscription = !user.stripe_subscription_id;
-  if (trialLapsed && noActiveSubscription && user.member_tier > 0) {
+  const trialLapsed = user.trial_ends_at && new Date(user.trial_ends_at) < new Date();
+  const membershipLapsed = user.member_expires_at && new Date(user.member_expires_at) < new Date();
+  if ((trialLapsed || membershipLapsed) && noActiveSubscription && user.member_tier > 0) {
+    const lapsedReason = membershipLapsed ? 'membership' : 'trial';
     getDbSync().run(
-      `UPDATE users SET member_tier=0, trial_ends_at=NULL WHERE id=?`,
+      `UPDATE users SET member_tier=0, trial_ends_at=NULL, member_expires_at=NULL WHERE id=?`,
       [userId]
     );
     save();
-    return getUser(userId);
+    return { ...getUser(userId), _justLapsed: lapsedReason };
   }
   return user;
 }

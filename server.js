@@ -983,6 +983,27 @@ function emailSaversFailureFinal(user) {
 If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`);
 }
 
+// Per Bot 18 — fires when a manually-honoured membership period (set by
+// hand in People admin, not tied to any Stripe subscription — the
+// carried-over-legacy-member case) actually runs out. Distinct from
+// both the trial sequence (that's a brand new trial ending) and Savers
+// (that's a real Stripe subscription lapsing) — this is specifically
+// "the free time we gave you has now been used up."
+async function emailMembershipHonouredEnded(user) {
+  const b = brand();
+  return sendEmail(user.email, `Your access has come to an end`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">The membership time we carried over for you has now come to an end. Your account is on the free Explorer tier — your history's still there, and so is the free content.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">If you'd like full access again, you're welcome to subscribe whenever suits — no rush, and nothing about picking it back up later is complicated.</p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
+
 const SAVERS_MID_SENDERS = { cancellation: emailSaversCancelMid, payment_failure: emailSaversFailureMid };
 const SAVERS_FINAL_SENDERS = { cancellation: emailSaversCancelFinal, payment_failure: emailSaversFailureFinal };
 
@@ -1418,6 +1439,18 @@ app.post('/api/login', async (req, res) => {
   if (!email || !password) return res.json({ error: 'Email and password required.' });
   const user = await auth.login(email, password);
   if (!user) return res.json({ error: 'Email or password not recognised.' });
+  // Per Bot 18 — this was documented as happening ("checkTrialExpiry()
+  // called on login" — see the comment above its definition in db.js) but
+  // was never actually wired up anywhere in the app. Practical effect:
+  // nobody's trial or manually-set membership period has ever actually
+  // auto-expired — someone whose access should have lapsed just stayed at
+  // their prior tier indefinitely, silently, until this was found and
+  // fixed. Restoring it here for real, plus on /api/my/profile below for
+  // long-lived sessions that don't re-login often.
+  if (user.role === 'client') {
+    const checked = db.checkTrialExpiry(user.id);
+    if (checked._justLapsed === 'membership') emailMembershipHonouredEnded(checked).catch(e => console.error('[expiry] membership-ended email failed:', e.message));
+  }
   const token = auth.createToken(user);
   res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
   if (user.mustChangePassword) return res.json({ redirect: '/change-password' });
@@ -2129,6 +2162,12 @@ app.patch('/api/clients/:id/archive', auth.requireAuthApi(['admin','facilitator'
   db.archiveClient(req.params.id); res.json({ ok: true });
 });
 app.get('/api/my/profile', auth.requireAuthApi(['client']), (req, res) => {
+  // Per Bot 18 — same reasoning as the login route above: this is what
+  // catches someone whose session has stayed valid for a long time
+  // without a fresh login, so an expired trial/membership doesn't sit
+  // silently un-downgraded until they happen to log out and back in.
+  const checked = db.checkTrialExpiry(req.user.id);
+  if (checked._justLapsed === 'membership') emailMembershipHonouredEnded(checked).catch(e => console.error('[expiry] membership-ended email failed:', e.message));
   res.json({ ...db.getUser(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
 });
 
