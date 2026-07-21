@@ -5946,6 +5946,13 @@ app.get('/api/admin/email-log/check-status', auth.requireAuthApi(['admin']), asy
         sent_at: row.created_at,
         our_status: row.status,
         scaleway_status: status ? status.status : 'lookup failed (id not found, or credentials issue)',
+        status_details: status ? status.status_details : null,
+        // The actual SMTP response from the recipient's mail server —
+        // code 250 is the standard "accepted" response, the most
+        // concrete evidence delivery genuinely happened.
+        last_smtp_response: status && status.last_tries && status.last_tries.length
+          ? status.last_tries[status.last_tries.length - 1]
+          : null,
       });
     }
     res.json({ results });
