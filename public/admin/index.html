@@ -2137,7 +2137,7 @@
   // action alongside loadNlContacts/loadUsers/loadMembers.
   // ── Newsletter migration status (Per Bot 19p) ──
   let _migPending = [];
-  const migSel = makeSelection(['migRetryBtn'], 'migRetryBtn');
+  const migSel = makeSelection(['migRetryBtn'], null);
   async function loadMigrationStatus() {
     document.getElementById('migSummary').textContent = 'Loading…';
     try {
