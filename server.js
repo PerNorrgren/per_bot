@@ -5924,6 +5924,36 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
 // the same request — this exposes that log directly, since it's the one
 // record of what actually went out that doesn't depend on whether a
 // tier change or anything else in the same request later got lost.
+// Per Bot 19m — email_log only ever records 'sent', meaning Scaleway
+// *accepted* the request — nothing has ever checked back on what
+// actually happened afterward (delivered/bounced/complained). This asks
+// Scaleway directly, for real, current status on a sample of recent
+// sends — genuinely useful right now given zero newsletter replies ever,
+// which could mean healthy-but-quiet delivery, or could mean silent
+// bounces this app has never had visibility into either way.
+app.get('/api/admin/email-log/check-status', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const kind = req.query.kind || null;
+    const rows = db.getRecentEmailLog(limit, kind).filter(r => r.scaleway_email_id);
+    if (!rows.length) return res.json({ note: 'No logged emails with a scaleway_email_id to check — either none match this kind/limit, or Scaleway credentials were missing at send time.', results: [] });
+    const results = [];
+    for (const row of rows) {
+      const status = await scwGetEmailStatus(row.scaleway_email_id);
+      results.push({
+        email: row.email,
+        subject: row.subject,
+        sent_at: row.created_at,
+        our_status: row.status,
+        scaleway_status: status ? status.status : 'lookup failed (id not found, or credentials issue)',
+      });
+    }
+    res.json({ results });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/email-log', auth.requireAuthApi(['admin']), (req, res) => {
   const kind = req.query.kind || null;
   const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
