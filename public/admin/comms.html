@@ -2978,7 +2978,7 @@
       document.getElementById('newsletterWelcomeBody_plain').style.display = 'none';
       document.getElementById('newsletterWelcomeBody_rich').style.display = '';
       const bodyVal = document.getElementById('newsletterWelcomeBody_plain').value;
-      MessageEditor.mountRich('newsletterWelcomeBody_rich', bodyVal ? renderPlainAsRichPreview(bodyVal) : '');
+      MessageEditor.mountRich('newsletterWelcomeBody_rich', bodyVal || '');
     }
   }
 

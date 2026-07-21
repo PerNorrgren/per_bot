@@ -544,7 +544,7 @@ function buildMessageTokens(user, opts = {}) {
   if (opts.sourceTag) linkParams.set('src', opts.sourceTag);
   const linkQuery = linkParams.toString() ? ('?' + linkParams.toString()) : '';
   const inviteLink = hasLogin
-    ? `${APP_URL}/login`
+    ? `${APP_URL}/login?email=${encodeURIComponent(user.email || '')}`
     : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}`;
   const rawExpiry = user.trial_ends_at || user.member_expires_at;
   const expiryDate = rawExpiry

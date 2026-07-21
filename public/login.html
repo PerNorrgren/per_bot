@@ -182,6 +182,15 @@
     if (params.get('error') === 'session') {
       document.getElementById('error').textContent = 'Session expired. Please sign in again.';
     }
+    // Per Bot 19 — links generated for someone who already has an account
+    // (e.g. the newsletter-welcome email, sent via {{invite_link}} when
+    // has_login is true) carry ?email=... so they land here with it
+    // already filled in and focus straight on the password field, rather
+    // than needing to retype an address they just clicked a link from.
+    if (params.get('email')) {
+      document.getElementById('email').value = params.get('email');
+      document.getElementById('password').focus();
+    }
 
     function togglePassword() {
       const input     = document.getElementById('password');

@@ -1135,7 +1135,7 @@
       `; }).join('');
       data.steps.forEach(s => {
         if (isDraft && s.channel === 'email' && (s.format||'plain') === 'rich') {
-          MessageEditor.mountRich(`campStepContent_${s.id}_rich`, s.content ? renderPlainAsRichPreview(s.content) : '');
+          MessageEditor.mountRich(`campStepContent_${s.id}_rich`, s.content || '');
         }
       });
     }
@@ -1304,7 +1304,7 @@
     `; }).join('');
     TRIAL_STEPS.forEach(s => {
       if ((_trialCfg[s.key+'Format']||'plain') === 'rich') {
-        MessageEditor.mountRich(s.key+'Body_rich', _trialCfg[s.key+'Body'] ? renderPlainAsRichPreview(_trialCfg[s.key+'Body']) : '', { placeholder: 'Using the built-in default copy…' });
+        MessageEditor.mountRich(s.key+'Body_rich', _trialCfg[s.key+'Body'] || '', { placeholder: 'Using the built-in default copy…' });
       }
     });
   }
@@ -1399,7 +1399,7 @@
     `; }).join('');
     steps.forEach(s => {
       if ((cfg[s.key+'Format']||'plain') === 'rich') {
-        MessageEditor.mountRich(s.key+'Body_rich', cfg[s.key+'Body'] ? renderPlainAsRichPreview(cfg[s.key+'Body']) : '', { placeholder: 'Using the built-in default copy…' });
+        MessageEditor.mountRich(s.key+'Body_rich', cfg[s.key+'Body'] || '', { placeholder: 'Using the built-in default copy…' });
       }
     });
   }
