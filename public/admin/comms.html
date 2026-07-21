@@ -627,7 +627,9 @@
           <div class="config-label">Welcome message (email)</div>
           <div class="config-desc">The greeting, sign-off, and the "sign in and set up your password" link all stay fixed either side of this — write the middle. {{name}}, {{invite_link}}, and {{expiry_date}} are all available.</div>
         </div>
-        <textarea class="inline-input" id="newsletterWelcomeBody" rows="6" style="width:100%;resize:vertical" placeholder="A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you."></textarea>
+        <div id="newsletterWelcomeBody_toggleWrap"></div>
+        <textarea class="inline-input" id="newsletterWelcomeBody_plain" rows="6" style="width:100%;resize:vertical" placeholder="A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you."></textarea>
+        <div id="newsletterWelcomeBody_rich" style="display:none"></div>
         <div id="newsletterWelcomeBodyTokenWrap"></div>
       </div>
       <div class="config-row" style="border-bottom:none">
@@ -2948,24 +2950,67 @@
   }
 
   // ── Newsletter → Explorer welcome (Per Bot 19) ──
+  // Plain body text (newline-separated) shown as paragraphs when first
+  // switching an existing draft into rich mode — same helper sales.html
+  // uses for Trial/Savers/Campaign, kept local here since this page has
+  // no shared module file of its own yet.
+  function renderPlainAsRichPreview(text) {
+    return String(text).split(/\n\s*\n/).map(p => `<p>${escHtml ? escHtml(p.trim()) : p.trim()}</p>`).join('');
+  }
+  let _newsletterWelcomeFormat = 'plain';
   async function loadNewsletterWelcomeConfig() {
     document.getElementById('newsletterWelcomeSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('newsletterWelcomeSubject', MessageEditor.standardTokens());
-    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('newsletterWelcomeBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…' });
     try {
       const res = await fetch('/api/setup/config');
       const cfg = await res.json();
       document.getElementById('newsletterWelcomeSubject').value = cfg.newsletter_welcome_subject || '';
-      document.getElementById('newsletterWelcomeBody').value    = cfg.newsletter_welcome_body || '';
+      document.getElementById('newsletterWelcomeBody_plain').value = cfg.newsletter_welcome_body || '';
+      _newsletterWelcomeFormat = cfg.newsletter_welcome_format || 'plain';
     } catch(e) { /* fields keep their HTML defaults */ }
+
+    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
+      _newsletterWelcomeFormat === 'rich' ? 'newsletterWelcomeBody_rich' : 'newsletterWelcomeBody_plain',
+      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: _newsletterWelcomeFormat === 'rich' }
+    );
+    document.getElementById('newsletterWelcomeBody_toggleWrap').innerHTML =
+      MessageEditor.formatToggleHtml('newsletterWelcomeBody', _newsletterWelcomeFormat, 'setNewsletterWelcomeFormat');
+    if (_newsletterWelcomeFormat === 'rich') {
+      document.getElementById('newsletterWelcomeBody_plain').style.display = 'none';
+      document.getElementById('newsletterWelcomeBody_rich').style.display = '';
+      const bodyVal = document.getElementById('newsletterWelcomeBody_plain').value;
+      MessageEditor.mountRich('newsletterWelcomeBody_rich', bodyVal ? renderPlainAsRichPreview(bodyVal) : '');
+    }
+  }
+
+  function setNewsletterWelcomeFormat(bodyId, format) {
+    _newsletterWelcomeFormat = format;
+    document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';
+    document.getElementById(bodyId+'_richBtn').className = format==='rich' ? 'active' : '';
+    const plainEl = document.getElementById(bodyId+'_plain');
+    const richEl = document.getElementById(bodyId+'_rich');
+    if (format === 'rich') {
+      plainEl.style.display = 'none'; richEl.style.display = '';
+      if (!MessageEditor.isMounted(bodyId+'_rich')) {
+        MessageEditor.mountRich(bodyId+'_rich', renderPlainAsRichPreview(plainEl.value));
+      }
+    } else {
+      richEl.style.display = 'none'; plainEl.style.display = '';
+    }
+    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
+      format === 'rich' ? bodyId+'_rich' : bodyId+'_plain',
+      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: format === 'rich' }
+    );
   }
 
   async function saveNewsletterWelcomeConfig() {
     const subject = document.getElementById('newsletterWelcomeSubject').value.trim();
-    const body     = document.getElementById('newsletterWelcomeBody').value.trim();
+    const body = _newsletterWelcomeFormat === 'rich'
+      ? MessageEditor.getHtml('newsletterWelcomeBody_rich')
+      : document.getElementById('newsletterWelcomeBody_plain').value.trim();
     try {
       const res  = await fetch('/api/admin/settings', {
         method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ newsletterWelcomeSubject: subject || null, newsletterWelcomeBody: body || null })
+        body: JSON.stringify({ newsletterWelcomeSubject: subject || null, newsletterWelcomeBody: body || null, newsletterWelcomeFormat: _newsletterWelcomeFormat })
       });
       const data = await res.json();
       if (data.ok) showFeedback('newsletterWelcomeFeedback', 'Saved.', 'ok');
