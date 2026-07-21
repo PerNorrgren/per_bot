@@ -3460,7 +3460,7 @@ function createMailingListContact(id, name, email) {
         member_tier,is_client,is_system_client,
         pref_email_motd,pref_email_reminders,pref_email_renewal,pref_email_news,pref_sms,
         lawful_basis)
-     VALUES (?,?,?,NULL,NULL,'',0,0, 0,0,0, 0,0,0,1,0, 'Existing mailing list — imported, not registered via Per Bot')`,
+     VALUES (?,?,?,NULL,NULL,'',0,0, -1,0,0, 0,0,0,1,0, 'Existing mailing list — imported, not registered via Per Bot')`,
     [id, name, email.toLowerCase()]
   );
   save();
@@ -3537,6 +3537,51 @@ function checkTrialExpiry(userId) {
     return { ...getUser(userId), _justLapsed: lapsedReason };
   }
   return user;
+}
+
+// Per Bot 20 — the daily, login-independent counterpart to checkTrialExpiry
+// above. That function only ever runs when the person themselves hits
+// /api/login or /api/my/profile — someone who trials in and never comes
+// back stays at their prior tier indefinitely, not from the actual day
+// their access should have lapsed. This finds everyone currently past
+// their trial_ends_at or member_expires_at with no active Stripe
+// subscription, in one pass, and downgrades all of them to Explorer —
+// same effect as checkTrialExpiry, just calendar-triggered instead of
+// visit-triggered. Returns the list of who lapsed (with _justLapsed
+// still set per person) so the caller can send the same
+// membership-honoured-ended email checkTrialExpiry's callers already do,
+// for the 'membership' case only — ordinary trial lapses already have
+// their own day-14 email from the trial sequence, nothing extra needed.
+function sweepExpiredMemberships() {
+  const now = new Date().toISOString();
+  const candidates = queryAll(
+    `SELECT * FROM users
+     WHERE member_tier > 0
+       AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')
+       AND (
+         (trial_ends_at IS NOT NULL AND trial_ends_at < ?)
+         OR (member_expires_at IS NOT NULL AND member_expires_at < ?)
+       )`,
+    [now, now]
+  );
+  if (!candidates.length) return [];
+  const lapsed = [];
+  for (const user of candidates) {
+    const membershipLapsed = user.member_expires_at && new Date(user.member_expires_at) < new Date();
+    lapsed.push({ ...user, _justLapsed: membershipLapsed ? 'membership' : 'trial' });
+  }
+  getDbSync().run(
+    `UPDATE users SET member_tier=0, trial_ends_at=NULL, member_expires_at=NULL
+     WHERE member_tier > 0
+       AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')
+       AND (
+         (trial_ends_at IS NOT NULL AND trial_ends_at < ?)
+         OR (member_expires_at IS NOT NULL AND member_expires_at < ?)
+       )`,
+    [now, now]
+  );
+  save();
+  return lapsed;
 }
 
 // ── Referrals (Per Bot 22) ──
@@ -4999,22 +5044,81 @@ function updateUserAdminDetails(id, fields) {
 }
 
 // ── Newsletter audience segments ──
-// The 377-person mailing-list import created accounts at member_tier=0 with
-// NO password (createMailingListContact — passive, no login). A real
-// Explorer is also member_tier=0, but WITH a password (self-registered, or
-// bulk-imported as a real account) — so "newsletter-only" vs "Explorer" is
-// distinguished by password_hash, not tier, even though both currently sit
-// at the same tier number. This lets Per keep his old list as pure
-// newsletter contacts today, and as people get invited to actually join
-// (given a password), they automatically graduate into the Explorer segment
-// without needing any manual re-tagging.
+// Per Bot 20 — member_tier now has a genuine fourth state below Explorer:
+// -1 = a raw mailing-list import, never invited. 0 = Explorer — meaning
+// they've been successfully sent their personal sign-in link (whether or
+// not they've actually clicked it and set a password yet). This replaced
+// the old scheme (both states crammed into member_tier=0, distinguished
+// only by password_hash), which meant "move to Explorer" could never be
+// observed to succeed for a self-service invite: tier 0→0 is a no-op, and
+// password_hash stays NULL by design (no temp password is ever emailed —
+// the recipient sets their own via the invite link). The old scheme's
+// "success" was therefore silently unreachable until someone clicked,
+// which isn't what a "move to Explorer" action should mean. Tier is now
+// the single source of truth; has_login (password_hash presence) is a
+// separate, secondary fact about whether they've actually claimed it yet.
 const NEWSLETTER_AUDIENCE_CLAUSES = {
-  newsletter_only: `member_tier=0 AND password_hash IS NULL`,
-  explorer:        `member_tier=0 AND password_hash IS NOT NULL`,
+  newsletter_only: `member_tier=-1`,
+  explorer:        `member_tier=0`,
   member1:         `member_tier=1`,
   member2:         `member_tier=2`,
   member3:         `member_tier=3`,
 };
+
+// One-off migration (Per Bot 20) — every contact currently sitting at the
+// old ambiguous member_tier=0/no-password state is genuinely still raw
+// (nobody was ever actually being counted as invited under the old
+// scheme), so this is a safe, one-time reclassification down to -1. Once
+// this has run, the /upgrade route's success-gated invite send is what
+// moves people back up to 0 — for real, the moment the email genuinely
+// sends. Idempotent: running it again after it's already run is a no-op,
+// since anyone already at -1, or genuinely at 0 with a password, no
+// longer matches the WHERE clause.
+function migrateNewsletterOnlyToRawTier() {
+  const before = queryOne(`SELECT COUNT(*) as n FROM users WHERE member_tier=0 AND password_hash IS NULL`).n;
+  getDbSync().run(`UPDATE users SET member_tier=-1 WHERE member_tier=0 AND password_hash IS NULL`);
+  save();
+  const after = queryOne(`SELECT COUNT(*) as n FROM users WHERE member_tier=0 AND password_hash IS NULL`).n;
+  return { matchedBefore: before, remainingAfter: after };
+}
+
+// One-off backfill (Per Bot 20) — for contacts who've already genuinely
+// received the welcome/invite email (one or more times, under the old
+// broken scheme), this moves them straight to their correct current
+// state with NO email sent — re-sending a third time isn't wanted here.
+// emailedAddresses: array of lowercased emails known (from email_log,
+// status='sent') to have actually received it. Three outcomes per person:
+//   - already has a password (they clicked and set one) but tier is
+//     somehow still below Member 1 — a straggler from before this fix
+//     existed, since the claim route normally promotes to Member 1 with
+//     a trial the moment a password is set. Corrected the same way here:
+//     Member 1, fresh 14-day trial from today.
+//   - never touched (still at -1) — moved straight to Explorer (0), no
+//     email involved.
+//   - anything else (already Explorer or higher, or already a correctly
+//     set-up Member) — left untouched.
+function backfillNewsletterMigrationFromLog(emailedAddresses) {
+  let movedToExplorer = 0, correctedToMember = 0, alreadyFine = 0, noLongerExists = 0;
+  for (const email of emailedAddresses) {
+    const user = getUserByEmail(email);
+    if (!user) { noLongerExists++; continue; }
+    if (user.password_hash) {
+      if ((user.member_tier || 0) < 1) {
+        const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+        setMemberTier(user.id, 1, null, trialEndsAt, null, null);
+        correctedToMember++;
+      } else {
+        alreadyFine++;
+      }
+    } else if (user.member_tier === -1) {
+      setMemberTier(user.id, 0, null, null, null, null);
+      movedToExplorer++;
+    } else {
+      alreadyFine++;
+    }
+  }
+  return { movedToExplorer, correctedToMember, alreadyFine, noLongerExists };
+}
 
 // Per Bot 19j — one real, authoritative count per level, using the exact
 // same tier definitions as everything else (NEWSLETTER_AUDIENCE_CLAUSES) —
@@ -5503,6 +5607,7 @@ function getUserConsentHistory(userId) {
 
 module.exports = {
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
+  migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
@@ -5600,7 +5705,7 @@ module.exports = {
   registerUser, createMailingListContact,
   ensureInviteToken, getUserByInviteToken, markInviteTokenUsed,
   ensureUnsubscribeToken, getUserByUnsubscribeToken,
-  checkTrialExpiry,
+  checkTrialExpiry, sweepExpiredMemberships,
   // Content visibility
   getLibraryFilesForUser, getAllLibraryFilesWithAccess, canAccessFile, fileHasFreePreview, getFacilitatorResources,
   userMaxLevel, LEVEL_RANK, suppressAccessiblePreviews,

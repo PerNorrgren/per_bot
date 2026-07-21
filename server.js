@@ -1875,7 +1875,7 @@ app.post('/api/invite/:token/claim', async (req, res) => {
     // fresh trial from today and silently overwrite that expiry the
     // moment they clicked the link, which is never what's wanted for an
     // already-configured account.
-    if ((user.member_tier || 0) === 0) {
+    if ((user.member_tier ?? 0) < 1) {
       const { trialDays, offerId } = resolveOfferForSignup(promoCode);
       const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
       db.setMemberTier(user.id, 1, null, trialEndsAt, null, null);
@@ -5960,7 +5960,10 @@ app.get('/api/admin/newsletter-migration-status', auth.requireAuthApi(['admin'])
       const user = db.getUserByEmail(email);
       if (!user) { noLongerExists.push({ email, sent_at: log.created_at }); continue; }
       const row = { id: user.id, email, name: user.name, sent_at: log.created_at, member_tier: user.member_tier, has_password: !!user.password_hash };
-      if (user.member_tier > 0 || user.password_hash) succeeded.push(row);
+      // Per Bot 20 — under the new tier scheme, -1 is the only "still
+      // raw" state; 0 (Explorer) or above means the invite genuinely
+      // took, whether or not they've clicked to set a password yet.
+      if (user.member_tier > -1) succeeded.push(row);
       else pending.push(row);
     }
 
@@ -6018,6 +6021,48 @@ app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => 
   res.json(db.getUserTierCounts());
 });
 
+// ── One-off (Per Bot 20) — reclassify existing member_tier=0/no-password
+// rows down to -1 (raw, never invited), so the fixed /upgrade route's
+// success-gated tier bump has a clean starting point to move them back up
+// from. Safe to run more than once — idempotent, matches nothing the
+// second time. Trigger from the browser console, not the Railway console
+// tab (see deploy notes) — e.g.:
+//   fetch('/api/admin/migrate-newsletter-tier', {method:'POST'}).then(r=>r.json()).then(console.log)
+app.post('/api/admin/migrate-newsletter-tier', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const result = db.migrateNewsletterOnlyToRawTier();
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('migrate-newsletter-tier error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── One-off backfill (Per Bot 20) — for the ~370 people already emailed
+// (one or more times) under the old broken scheme: moves them straight
+// to Explorer (or corrects a straggler to Member 1+trial if they already
+// logged in) with NO email sent. Only ever looks at emails whose most
+// recent welcome/invite send genuinely succeeded (status='sent'), never
+// a failed one. Trigger from the browser console, logged in as admin:
+//   fetch('/api/admin/backfill-newsletter-migration', {method:'POST'}).then(r=>r.json()).then(console.log)
+app.post('/api/admin/backfill-newsletter-migration', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const WELCOME_SUBJECTS = [
+      'Welcome to the new Deeper Mindfulness experience',
+      "Welcome to Deeper Mindfulness — you're in",
+      'Welcome to the new app',
+    ];
+    const sentLogs = db.getRecentEmailLog(5000, null)
+      .filter(r => WELCOME_SUBJECTS.includes(r.subject) && r.status === 'sent');
+    const emails = [...new Set(sentLogs.map(r => r.email))];
+    const result = db.backfillNewsletterMigrationFromLog(emails);
+    res.json({ ok: true, consideredEmails: emails.length, ...result });
+  } catch (e) {
+    console.error('backfill-newsletter-migration error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
   const users = db.getAllUsersAdmin(false).map(u => {
     const { password_hash, ...safe } = u;
@@ -6053,19 +6098,13 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
     if (!user) { console.log(`[upgrade] ${req.params.id} — NOT FOUND`); return res.status(404).json({ error: 'User not found.' }); }
     console.log(`[upgrade] ${req.params.id} (${user.email}) — before: member_tier=${user.member_tier} has_password=${!!user.password_hash}`);
 
-    // Per Bot 19 — this exact condition (member_tier=0, no password) is
-    // the same definition NEWSLETTER_AUDIENCE_CLAUSES already uses for
-    // "newsletter_only" — a genuine subscriber becoming a real account
-    // for the first time, not any other kind of activation.
-    const wasNewsletterOnly = user.member_tier === 0 && !user.password_hash;
+    // Per Bot 20 — member_tier=-1 is a raw mailing-list import, never
+    // invited (see NEWSLETTER_AUDIENCE_CLAUSES in db.js). This is the one
+    // and only signal now; password_hash is no longer part of the
+    // definition, since a genuinely-invited Explorer may still have no
+    // password until they click their own link.
+    const wasNewsletterOnly = user.member_tier === -1;
     console.log(`[upgrade] ${req.params.id} — wasNewsletterOnly=${wasNewsletterOnly}, target memberTier=${memberTier}`);
-
-    let tempPassword = null;
-    if (!user.password_hash && !wasNewsletterOnly) {
-      tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
-      const passwordHash = await auth.hashPassword(tempPassword);
-      db.updateClientPassword(req.params.id, passwordHash);
-    }
 
     // Per Bot 19i — moving someone directly to a paid tier (bypassing the
     // Explorer self-service claim, which is what normally grants a
@@ -6084,6 +6123,52 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
       }
     }
 
+    if (wasNewsletterOnly) {
+      // Per Bot 20 — this is the core fix for the migration that wouldn't
+      // persist. Never email a temp password (Per's explicit call: no
+      // password to find in an email, nothing to remember — they just
+      // click their personal link, which auto-fills their email on the
+      // sign-in page, and set whatever password they like themselves).
+      // Because of that, the ONLY observable state change for this
+      // person is the tier itself — so that write now happens only
+      // after the invite email has genuinely sent (checked against
+      // Scaleway's real response, not just "no exception was thrown").
+      // Previously the tier changed unconditionally and immediately,
+      // which for a tier-0-to-tier-0 "move to Explorer" was a pure
+      // no-op regardless of whether the email sent — success in the UI
+      // meant nothing had actually happened.
+      let sendResult = { ok: true };
+      if (sendWelcomeEmail !== false) {
+        sendResult = await emailWelcomeFromNewsletter(user);
+      }
+      if (!sendResult || sendResult.ok !== true) {
+        console.error(`[upgrade] ${req.params.id} — invite email failed to send, tier NOT changed:`, sendResult && sendResult.error);
+        return res.status(502).json({ error: 'Invite email failed to send — tier was not changed, safe to retry. ' + (sendResult && sendResult.error || '') });
+      }
+      try {
+        db.setMemberTier(req.params.id, memberTier, null, trialEndsAt, null, null);
+      } catch (dbErr) {
+        console.error(`[upgrade] ${req.params.id} — setMemberTier THREW:`, dbErr.message, dbErr.stack);
+        return res.status(500).json({ error: 'Email sent, but could not save the tier change: ' + dbErr.message });
+      }
+      const after = db.getUser(req.params.id);
+      console.log(`[upgrade] ${req.params.id} — after: member_tier=${after.member_tier} (expected ${memberTier})`);
+      if (after.member_tier !== memberTier) {
+        console.error(`[upgrade] ${req.params.id} — MISMATCH: tier did not actually change after setMemberTier ran`);
+      }
+      return res.json({ ok: true, activated: true, welcomeEmailSent: sendWelcomeEmail !== false });
+    }
+
+    // Not a newsletter-only contact — unchanged behaviour: tier changes
+    // immediately, and a temp password is generated (and emailed) only
+    // if this account has no login of its own yet.
+    let tempPassword = null;
+    if (!user.password_hash) {
+      tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+      const passwordHash = await auth.hashPassword(tempPassword);
+      db.updateClientPassword(req.params.id, passwordHash);
+    }
+
     try {
       db.setMemberTier(req.params.id, memberTier, null, trialEndsAt, null, null);
     } catch (dbErr) {
@@ -6097,20 +6182,12 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
     }
 
     let welcomeEmailSent = false;
-    if (wasNewsletterOnly) {
-      // No password is set here at all — {{invite_link}} inside
-      // emailWelcomeFromNewsletter generates a real, working /join/:token
-      // self-service link since password_hash is still genuinely null.
-      if (sendWelcomeEmail !== false) {
-        emailWelcomeFromNewsletter(db.getUser(req.params.id));
-        welcomeEmailSent = true;
-      }
-    } else if (tempPassword && sendWelcomeEmail !== false) {
+    if (tempPassword && sendWelcomeEmail !== false) {
       emailWelcomeClient(user.name, user.email, tempPassword);
       welcomeEmailSent = true;
     }
 
-    res.json({ ok: true, activated: wasNewsletterOnly || !!tempPassword, welcomeEmailSent });
+    res.json({ ok: true, activated: !!tempPassword, welcomeEmailSent });
   } catch (e) {
     console.error('upgrade error:', e);
     res.status(500).json({ error: 'Something went wrong.' });
@@ -10332,7 +10409,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailMembershipHonouredEnded });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();
