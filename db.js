@@ -5016,6 +5016,19 @@ const NEWSLETTER_AUDIENCE_CLAUSES = {
   member3:         `member_tier=3`,
 };
 
+// Per Bot 19j — one real, authoritative count per level, using the exact
+// same tier definitions as everything else (NEWSLETTER_AUDIENCE_CLAUSES) —
+// deliberately a fresh COUNT(*) query each time rather than trusting
+// whatever happens to already be loaded/filtered client-side, so it stays
+// accurate through a large bulk migration in progress.
+function getUserTierCounts() {
+  const out = {};
+  for (const [key, clause] of Object.entries(NEWSLETTER_AUDIENCE_CLAUSES)) {
+    out[key] = queryOne(`SELECT COUNT(*) as n FROM users WHERE ${clause}`).n;
+  }
+  return out;
+}
+
 // segments: array of keys from NEWSLETTER_AUDIENCE_CLAUSES, or the string/array
 // containing 'all' for everyone opted in regardless of tier or login status.
 function getNewsletterRecipients(segments) {
@@ -5489,7 +5502,7 @@ function getUserConsentHistory(userId) {
 }
 
 module.exports = {
-  getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig,
+  getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,

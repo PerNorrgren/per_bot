@@ -5916,6 +5916,13 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
 // u.*`, which includes it. has_login (computed from the same fact) is what
 // the frontend actually needs, to tell real accounts apart from passive
 // newsletter-only contacts (createMailingListContact — no password at all).
+// Per Bot 19j — real counts per level (Newsletter/Explorer/Member 1/2/3),
+// for the small counts summary on the People page. A fresh COUNT(*) each
+// time, not derived from whatever's currently loaded in the browser.
+app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getUserTierCounts());
+});
+
 app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
   const users = db.getAllUsersAdmin(false).map(u => {
     const { password_hash, ...safe } = u;

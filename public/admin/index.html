@@ -150,6 +150,12 @@
 
   <div class="page">
 
+<!-- Per Bot 19j — real, live counts per level, refreshed after every -->
+<!-- bulk action so it's trustworthy mid-migration, not just on load. -->
+<div id="userCountsBar" style="display:flex;gap:24px;flex-wrap:wrap;padding:14px 18px;margin-bottom:18px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;font-size:13px;color:rgba(255,255,255,0.6)">
+  <span>Loading counts…</span>
+</div>
+
 <!-- Admins -->
     <div>
       <div class="section-label">Admins</div>
@@ -2050,7 +2056,7 @@
       `Give ${name} a real password and move them to ${nlTierLabel(value)}? A welcome email will be sent.`,
       async () => {
         await fetch(`/api/admin/users/${id}/upgrade`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tier, sendWelcomeEmail: true, trialDays }) });
-        loadNlContacts(); loadUsers(); loadMembers();
+        loadNlContacts(); loadUsers(); loadMembers(); loadUserCounts();
       });
   }
 
@@ -2086,6 +2092,24 @@
     return { succeeded, failed, failedIds };
   }
 
+  // Per Bot 19j — real counts per level, refreshed after every bulk
+  // action alongside loadNlContacts/loadUsers/loadMembers.
+  async function loadUserCounts() {
+    try {
+      const res = await fetch('/api/admin/user-counts');
+      const c = await res.json();
+      document.getElementById('userCountsBar').innerHTML = `
+        <span><strong>${c.newsletter_only ?? 0}</strong> Newsletter only</span>
+        <span><strong>${c.explorer ?? 0}</strong> Explorer</span>
+        <span><strong>${c.member1 ?? 0}</strong> Member 1</span>
+        <span><strong>${c.member2 ?? 0}</strong> Member 2</span>
+        <span><strong>${c.member3 ?? 0}</strong> Member 3</span>
+      `;
+    } catch(e) {
+      document.getElementById('userCountsBar').innerHTML = '<span>Counts unavailable right now.</span>';
+    }
+  }
+
   function applyNlContactBulkAction() {
     const ids = [...nlContactSel.sel]; if (!ids.length) return;
     const action = document.getElementById('nlContactBulkAction').value;
@@ -2098,7 +2122,7 @@
             const r = await fetch(`/api/clients/${id}`,{method:'DELETE'});
             return r.ok;
           });
-          loadNlContacts();
+          loadNlContacts(); loadUserCounts();
           if (failed > 0) alert(`${succeeded} deleted. ${failed} failed — nothing changed for those, safe to select them and try again.`);
         });
       return;
@@ -2123,7 +2147,7 @@
           const r = await fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ tier, sendWelcomeEmail: true, trialDays })});
           return r.ok;
         });
-        loadNlContacts(); loadUsers(); loadMembers();
+        loadNlContacts(); loadUsers(); loadMembers(); loadUserCounts();
         if (failed > 0) alert(`${succeeded} moved to ${nlTierLabel(action)}. ${failed} failed — nothing changed for those, safe to select them and try again.`);
         else alert(`All ${succeeded} moved to ${nlTierLabel(action)} successfully.`);
       });
@@ -2297,7 +2321,7 @@
   loadMembers();
   loadMembers();
   loadUsers();
-  loadNlContacts();
+  loadNlContacts(); loadUserCounts();
   loadLeads();
   loadFacilitatorRequests();
 </script>
