@@ -5959,7 +5959,7 @@ app.get('/api/admin/newsletter-migration-status', auth.requireAuthApi(['admin'])
     for (const [email, log] of byEmail) {
       const user = db.getUserByEmail(email);
       if (!user) { noLongerExists.push({ email, sent_at: log.created_at }); continue; }
-      const row = { email, name: user.name, sent_at: log.created_at, member_tier: user.member_tier, has_password: !!user.password_hash };
+      const row = { id: user.id, email, name: user.name, sent_at: log.created_at, member_tier: user.member_tier, has_password: !!user.password_hash };
       if (user.member_tier > 0 || user.password_hash) succeeded.push(row);
       else pending.push(row);
     }

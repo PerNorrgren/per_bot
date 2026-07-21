@@ -156,6 +156,47 @@
   <span>Loading counts…</span>
 </div>
 
+<!-- Per Bot 19p — real migration status: cross-references every welcome
+     email against the recipient's CURRENT live account state, so it's
+     possible to see who actually completed their move vs who's still
+     stuck, with a one-click retry for the stuck ones. -->
+<div>
+  <div class="section-label">Newsletter migration status</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Who was emailed vs who actually moved</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn sm disabled" id="migRetryBtn" onclick="retrySelectedMigration()">Retry selected</button>
+        <button class="btn sm" onclick="loadMigrationStatus()">Refresh</button>
+      </div>
+    </div>
+    <div style="padding:14px 18px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:rgba(255,255,255,0.6)" id="migSummary">
+      Loading…
+    </div>
+    <div class="table" id="migPendingTable"><div class="loading">Loading…</div></div>
+    <div style="padding:0 20px 14px"><div class="feedback" id="migFeedback"></div></div>
+  </div>
+</div>
+
+<!-- Per Bot 19p — browsable email send log, defaults to today. -->
+<div>
+  <div class="section-label">Email log</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Recent sends</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="emailLogDateFilter" onchange="loadEmailLog()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);border-radius:7px;padding:6px 10px;font-family:Georgia,serif;font-size:13px">
+          <option value="today">Today</option>
+          <option value="all">All (last 500)</option>
+        </select>
+        <button class="btn sm" onclick="loadEmailLog()">Refresh</button>
+      </div>
+    </div>
+    <div class="card-search-wrap"><input class="card-search" id="emailLogSearch" placeholder="Search by email or subject…" oninput="renderEmailLog()"/></div>
+    <div class="table" id="emailLogTable"><div class="loading">Loading…</div></div>
+  </div>
+</div>
+
 <!-- Admins -->
     <div>
       <div class="section-label">Admins</div>
@@ -2094,6 +2135,99 @@
 
   // Per Bot 19j — real counts per level, refreshed after every bulk
   // action alongside loadNlContacts/loadUsers/loadMembers.
+  // ── Newsletter migration status (Per Bot 19p) ──
+  let _migPending = [];
+  const migSel = makeSelection(['migRetryBtn'], 'migRetryBtn');
+  async function loadMigrationStatus() {
+    document.getElementById('migSummary').textContent = 'Loading…';
+    try {
+      const res = await fetch('/api/admin/newsletter-migration-status');
+      const d = await res.json();
+      _migPending = d.pending || [];
+      document.getElementById('migSummary').innerHTML = `
+        <span><strong>${d.totalEmailed}</strong> emailed total</span>
+        <span style="color:rgba(180,230,200,0.85)"><strong>${d.succeededCount}</strong> succeeded</span>
+        <span style="color:rgba(230,175,90,0.9)"><strong>${d.pendingCount}</strong> still stuck — select below and retry</span>
+        <span><strong>${d.noLongerExistsCount}</strong> no longer exist</span>
+      `;
+      renderMigrationPending();
+    } catch(e) {
+      document.getElementById('migSummary').textContent = 'Could not load — try Refresh again.';
+    }
+  }
+  function renderMigrationPending() {
+    migSel.clear();
+    const el = document.getElementById('migPendingTable');
+    if (!_migPending.length) { el.innerHTML = '<div class="empty">Nobody stuck right now — everyone emailed has either succeeded or hasn\'t been checked yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="col-cb"><input type="checkbox" onchange="migSel.toggleAll('migPendingTable',this)"/></div>
+        <div class="table-hdr-cell col-name">Name</div>
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-created">Emailed at</div>
+      </div>` +
+      _migPending.map(u => `
+        <div class="table-row">
+          <div class="col-cb"><input class="row-cb" type="checkbox" value="${u.id}" onchange="migSel.toggle('${u.id}',this.checked)"/></div>
+          <div class="col-name">${escHtml(u.name)}</div>
+          <div class="col-email">${escHtml(u.email)}</div>
+          <div class="col-created">${u.sent_at}</div>
+        </div>
+      `).join('');
+  }
+  async function retrySelectedMigration() {
+    const ids = [...migSel.sel]; if (!ids.length) return;
+    const answer = prompt('Days of full access before this expires once they click their link (matches the standard promo)? Leave blank for permanent.', '14');
+    if (answer === null) return;
+    const trialDays = answer.trim() === '' ? 0 : parseInt(answer, 10);
+    showConfirm('Retry move to Explorer', `Re-send the welcome email and retry the move for ${ids.length} people?`, async () => {
+      const { succeeded, failed } = await runBatchedRequests(ids, async (id) => {
+        const r = await fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ tier: 0, sendWelcomeEmail: true, trialDays })});
+        return r.ok;
+      });
+      loadNlContacts(); loadUsers(); loadMembers(); loadUserCounts(); loadMigrationStatus();
+      showFeedback('migFeedback', failed > 0 ? `${succeeded} retried successfully. ${failed} failed again.` : `All ${succeeded} retried successfully.`, failed > 0 ? 'err' : 'ok');
+    });
+  }
+
+  // ── Email log (Per Bot 19p) ──
+  let _emailLogData = [];
+  async function loadEmailLog() {
+    document.getElementById('emailLogTable').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const res = await fetch('/api/admin/email-log?limit=2000');
+      _emailLogData = await res.json();
+      renderEmailLog();
+    } catch(e) {
+      document.getElementById('emailLogTable').innerHTML = '<div class="empty">Could not load — try Refresh.</div>';
+    }
+  }
+  function renderEmailLog() {
+    const el = document.getElementById('emailLogTable');
+    const query = document.getElementById('emailLogSearch').value.trim().toLowerCase();
+    const dateFilter = document.getElementById('emailLogDateFilter').value;
+    const today = new Date().toISOString().slice(0,10);
+    let list = _emailLogData;
+    if (dateFilter === 'today') list = list.filter(r => r.created_at.startsWith(today));
+    if (query) list = list.filter(r => r.email.toLowerCase().includes(query) || (r.subject||'').toLowerCase().includes(query));
+    if (!list.length) { el.innerHTML = '<div class="empty">No matching sends.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="table-hdr-cell col-email">Email</div>
+        <div class="table-hdr-cell col-name">Subject</div>
+        <div class="table-hdr-cell col-created">Sent at</div>
+        <div class="table-hdr-cell" style="flex:0 0 90px">Status</div>
+      </div>` +
+      list.map(r => `
+        <div class="table-row">
+          <div class="col-email">${escHtml(r.email)}</div>
+          <div class="col-name">${escHtml(r.subject||'')}</div>
+          <div class="col-created">${r.created_at}</div>
+          <div style="flex:0 0 90px;color:${r.status==='sent'?'rgba(180,230,200,0.85)':'rgba(255,140,120,0.9)'}">${r.status}</div>
+        </div>
+      `).join('');
+  }
+
   async function loadUserCounts() {
     try {
       const res = await fetch('/api/admin/user-counts');
@@ -2321,7 +2455,7 @@
   loadMembers();
   loadMembers();
   loadUsers();
-  loadNlContacts(); loadUserCounts();
+  loadNlContacts(); loadUserCounts(); loadMigrationStatus(); loadEmailLog();
   loadLeads();
   loadFacilitatorRequests();
 </script>
