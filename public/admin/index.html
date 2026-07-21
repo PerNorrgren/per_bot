@@ -232,8 +232,7 @@
         <div class="card-header">
           <div class="card-title">Members</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="btn sm" onclick="openNewMemberModal()">Add Member</button>
-            <button class="btn sm" onclick="openBulkImportModal()">Bulk Import</button>
+            <button class="btn sm primary" onclick="openAddUserModal()">+ Add User</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
             <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
             <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
@@ -253,7 +252,6 @@
         <div class="card-header">
           <div class="card-title">Explorers</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="btn sm primary" onclick="openNewExplorerModal()">+ Add Explorer</button>
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
             <button class="btn sm disabled" id="userGetSubsBtn" onclick="getSelectedUserSubscriptions()">Get Subscriptions</button>
@@ -2042,10 +2040,16 @@
   function moveNlContact(id, name, value) {
     if (!value) return;
     const tier = nlTierFromValue(value);
+    let trialDays;
+    if (tier >= 1) {
+      const answer = prompt(`Days of full access before this expires (matches the standard promo)? Leave blank for permanent, no expiry.`, '14');
+      if (answer === null) return; // cancelled
+      trialDays = answer.trim() === '' ? 0 : parseInt(answer, 10);
+    }
     showConfirm(`Move to ${nlTierLabel(value)}`,
       `Give ${name} a real password and move them to ${nlTierLabel(value)}? A welcome email will be sent.`,
       async () => {
-        await fetch(`/api/admin/users/${id}/upgrade`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tier, sendWelcomeEmail: true }) });
+        await fetch(`/api/admin/users/${id}/upgrade`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tier, sendWelcomeEmail: true, trialDays }) });
         loadNlContacts(); loadUsers(); loadMembers();
       });
   }
@@ -2055,6 +2059,33 @@
       async () => { await fetch(`/api/clients/${id}`, { method:'DELETE' }); loadNlContacts(); });
   }
 
+  // Per Bot 19j — Promise.all(ids.map(fetch...)) fires every request at
+  // once and fails the ENTIRE batch the moment any single one rejects —
+  // for 370 people, one network blip anywhere in that pile aborts
+  // everything after it silently (no error shown, refresh never runs),
+  // even though many requests before the failure already succeeded on
+  // the server. This runs a small number at a time, catches each one's
+  // own success/failure independently, and always finishes with a real
+  // count — used by every bulk action on this page from here on.
+  async function runBatchedRequests(ids, makeRequest, concurrency = 8) {
+    let succeeded = 0, failed = 0;
+    const failedIds = [];
+    let index = 0;
+    async function worker() {
+      while (index < ids.length) {
+        const id = ids[index++];
+        try {
+          const ok = await makeRequest(id);
+          if (ok) succeeded++; else { failed++; failedIds.push(id); }
+        } catch (e) {
+          failed++; failedIds.push(id);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker));
+    return { succeeded, failed, failedIds };
+  }
+
   function applyNlContactBulkAction() {
     const ids = [...nlContactSel.sel]; if (!ids.length) return;
     const action = document.getElementById('nlContactBulkAction').value;
@@ -2062,16 +2093,39 @@
 
     if (action === 'delete') {
       showConfirm('Delete contacts', `Permanently delete ${ids.length} contact${ids.length>1?'s':''}? Cannot be undone.`,
-        async () => { await Promise.all(ids.map(id => fetch(`/api/clients/${id}`,{method:'DELETE'}))); loadNlContacts(); });
+        async () => {
+          const { succeeded, failed } = await runBatchedRequests(ids, async (id) => {
+            const r = await fetch(`/api/clients/${id}`,{method:'DELETE'});
+            return r.ok;
+          });
+          loadNlContacts();
+          if (failed > 0) alert(`${succeeded} deleted. ${failed} failed — nothing changed for those, safe to select them and try again.`);
+        });
       return;
     }
 
     const tier = nlTierFromValue(action);
+    // Per Bot 19i — moving straight to a paid tier used to leave access
+    // permanently open-ended (no expiry at all) unless separately linked
+    // to a real subscription. Asking here — defaulting to the standard
+    // 14-day promo, editable, or blank for a genuine permanent grant —
+    // means it's always a deliberate choice, not an accident.
+    let trialDays;
+    if (tier >= 1) {
+      const answer = prompt(`Days of full access before this expires (matches the standard promo)? Leave blank for permanent, no expiry.`, '14');
+      if (answer === null) return; // cancelled
+      trialDays = answer.trim() === '' ? 0 : parseInt(answer, 10);
+    }
     showConfirm(`Move to ${nlTierLabel(action)}`,
       `Give ${ids.length} contact${ids.length>1?'s':''} a real password and move them to ${nlTierLabel(action)}? A welcome email will be sent to each.`,
       async () => {
-        await Promise.all(ids.map(id => fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ tier, sendWelcomeEmail: true })})));
+        const { succeeded, failed } = await runBatchedRequests(ids, async (id) => {
+          const r = await fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ tier, sendWelcomeEmail: true, trialDays })});
+          return r.ok;
+        });
         loadNlContacts(); loadUsers(); loadMembers();
+        if (failed > 0) alert(`${succeeded} moved to ${nlTierLabel(action)}. ${failed} failed — nothing changed for those, safe to select them and try again.`);
+        else alert(`All ${succeeded} moved to ${nlTierLabel(action)} successfully.`);
       });
   }
 

@@ -1977,6 +1977,68 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
 // Mirrors self-registration: same fields, same email-confirmation-with-password-change flow.
 // GDPR: consent is recorded as given by the admin on the member's behalf at creation time,
 // since this mirrors the same consent checkbox shown on self-registration.
+// Per Bot 19j — single-person counterpart to /api/admin/members/bulk-import,
+// same tier/trial/offer/skin/welcome-email shape. Built for the unified
+// "Add User" interface (one person or a whole file, same settings either
+// way) — replaces /api/admin/members and /api/admin/explorers as the
+// entry point for creating a real account or a newsletter-only contact
+// from the admin UI, though those two older routes are left in place
+// untouched in case anything else still calls them directly.
+app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { name, email, tier: tierRaw, trialWeeks, offerId, skinId, sendWelcomeEmail } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name required.' });
+    if (!email || !email.trim()) return res.status(400).json({ error: 'Email required.' });
+    const emailLower = email.trim().toLowerCase();
+
+    if (db.getFacilitatorByEmail(emailLower) || db.getUserByEmail(emailLower)) {
+      return res.status(400).json({ error: 'An account with this email already exists.' });
+    }
+
+    const isNewsletterOnly = tierRaw === 'newsletter_only';
+    const tier = isNewsletterOnly ? null : parseInt(tierRaw, 10);
+    if (!isNewsletterOnly && ![0, 1, 2, 3].includes(tier)) return res.status(400).json({ error: 'Invalid level.' });
+
+    if (isNewsletterOnly) {
+      const id = uuidv4();
+      db.createMailingListContact(id, name.trim(), emailLower);
+      return res.json({ id, name: name.trim(), email: emailLower, newsletterOnly: true });
+    }
+
+    const validSkinId = (skinId && db.getSkin(skinId)) ? skinId : null;
+    const offer = offerId ? db.getOffer(offerId) : null;
+    const offerTrialDays = (offer && db.isOfferCurrentlyValid(offer)) ? offer.trial_days : null;
+
+    const id = uuidv4();
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
+    const passwordHash = await auth.hashPassword(tempPassword);
+
+    db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
+      consentGiven: true, consentVersion: 'admin-added-v1', lawfulBasis: 'consent'
+    });
+    if (validSkinId) db.setUserSkin(id, validSkinId);
+    if (offerTrialDays !== null) db.setSignupOfferId(id, offerId);
+
+    if (tier > 0) {
+      // Same rule as bulk import: a valid offer's own trial length wins
+      // over the manual weeks field, since a batch/person tied to a named
+      // campaign should reflect that campaign's real trial length.
+      const effectiveDays = offerTrialDays !== null ? offerTrialDays : (Math.max(0, parseInt(trialWeeks, 10) || 0) * 7);
+      const trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
+      db.setMemberTier(id, tier, null, trialEndsAt, null, null);
+    }
+
+    if (sendWelcomeEmail !== false) {
+      emailWelcomeClient(name.trim(), emailLower, tempPassword, null, validSkinId);
+    }
+
+    res.json({ id, name: name.trim(), email: emailLower, tempPassword });
+  } catch(e) {
+    console.error('add user error:', e);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
 app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { name, email, skinId } = req.body;
@@ -5872,7 +5934,7 @@ app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
 // behaviour from before).
 app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { level, tier, sendWelcomeEmail } = req.body;
+    const { level, tier, sendWelcomeEmail, trialDays } = req.body;
     // Per Bot 15l — level='registered' (the dropdown's actual value for
     // "Explorer (free)") isn't 'member' and isn't a parseable integer, so
     // this used to fall through to parseInt(level)||1 — NaN||1 is 1, so
@@ -5900,7 +5962,24 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
       db.updateClientPassword(req.params.id, passwordHash);
     }
 
-    db.setMemberTier(req.params.id, memberTier, null, null, null, null);
+    // Per Bot 19i — moving someone directly to a paid tier (bypassing the
+    // Explorer self-service claim, which is what normally grants a
+    // trial_ends_at) previously left both expiry columns null —
+    // permanent, open-ended access with nothing to expire. If the caller
+    // passes trialDays, this sets trial_ends_at that many days out — the
+    // same column the self-service claim route already uses, so the
+    // existing daily expiry check treats it identically either way. 0,
+    // omitted, or not a real number means genuinely permanent — an
+    // explicit choice rather than an accidental default.
+    let trialEndsAt = null;
+    if (memberTier >= 1 && trialDays !== undefined) {
+      const days = parseInt(trialDays, 10);
+      if (Number.isFinite(days) && days > 0) {
+        trialEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+      }
+    }
+
+    db.setMemberTier(req.params.id, memberTier, null, trialEndsAt, null, null);
 
     let welcomeEmailSent = false;
     if (wasNewsletterOnly) {
