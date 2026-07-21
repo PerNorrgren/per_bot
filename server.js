@@ -5919,6 +5919,17 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
 // Per Bot 19j — real counts per level (Newsletter/Explorer/Member 1/2/3),
 // for the small counts summary on the People page. A fresh COUNT(*) each
 // time, not derived from whatever's currently loaded in the browser.
+// Per Bot 19l — every sendEmail() call already logs to email_log
+// (pending, then sent/failed) regardless of what happens elsewhere in
+// the same request — this exposes that log directly, since it's the one
+// record of what actually went out that doesn't depend on whether a
+// tier change or anything else in the same request later got lost.
+app.get('/api/admin/email-log', auth.requireAuthApi(['admin']), (req, res) => {
+  const kind = req.query.kind || null;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
+  res.json(db.getRecentEmailLog(limit, kind));
+});
+
 app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getUserTierCounts());
 });
