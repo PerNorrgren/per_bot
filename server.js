@@ -803,9 +803,22 @@ function emailWelcomeFromNewsletter(user) {
   const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
   const subject = fillTemplate(cfg.newsletter_welcome_subject || `Welcome to ${b.name} — you're in`, tokens);
-  const defaultBody = `A short note to welcome you to the new, rebuilt Deeper Mindfulness — genuinely rebuilt, not just refreshed, and we hope you feel that the moment you're in it.
+  // Per Bot 19h — no more fixed "Dear {{name}}, Hope you're well" greeting
+  // or fixed "Sign in and set up your password →" button below it. Per
+  // writes the whole thing himself now, including his own greeting,
+  // sign-off, and a real clickable link (via the rich editor's link
+  // tool, targeting {{invite_link}}) rather than a plain-text mention of
+  // the token, which just showed the raw URL as visible text. This
+  // plain-text fallback only matters until Per saves his own version —
+  // it's deliberately readable-but-plain, since a plain-text body can't
+  // have a custom-labelled link, only a bare URL.
+  const defaultBody = `Dear {{name}},
 
-If you have an existing subscription to Deeper Mindfulness, it has carried over in full, nothing to renew or reconsider. All you need to do is follow the link below to get started.
+Hope you're well, and that things are good with you.
+
+A short note to welcome you to the new, rebuilt Deeper Mindfulness — genuinely rebuilt, not just refreshed, and we hope you feel that the moment you're in it.
+
+If you have an existing subscription to Deeper Mindfulness, it has carried over in full, nothing to renew or reconsider. All you need to do is follow this link: {{invite_link}}
 
 Once you're in, everything is open to you — courses, practices, poems, blogs, whitepapers, all of it, fully. If you find something missing, just let me know and I will add it promptly.
 
@@ -821,10 +834,7 @@ Per`;
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Dear ${tokens.name},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Hope you're well, and that things are good with you.</p>
       ${renderMessageBody(body, cfg.newsletter_welcome_format)}
-      <p style="font-size:14px;line-height:1.7"><a href="${tokens.invite_link}" style="color:#2d6a4f">Sign in and set up your password →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`
