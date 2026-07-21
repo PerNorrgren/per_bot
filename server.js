@@ -502,6 +502,79 @@ function fillTemplate(str, tokens) {
   return String(str || '').replace(/\{\{(\w+)\}\}/g, (_, k) => (tokens[k] !== undefined ? tokens[k] : ''));
 }
 
+// ── Unified message editor (Per Bot 19) ── One real token set, reused by
+// every context that sends an admin-editable message to a specific person
+// — Newsletters, Trial sequence, Savers Protocol, Campaign steps,
+// Reminder, Renewal reminder, Birthday. Previously each of these built its
+// own version of this logic (or, for Trial/Savers/Campaign/Reminder/
+// Renewal/Birthday, didn't build it at all — those six only ever
+// substituted {{name}}). Consolidating here means {{invite_link}} and
+// {{expiry_date}} now work identically everywhere, and any future fix
+// (like the has_login/password_hash check below) only has to happen once.
+//
+// opts.offerId/opts.sourceTag: only meaningful for a non-logged-in
+// recipient's invite_link — carries a real offer's trial length and shows
+// up in the Funnel report, the same query-string shape /promo/<code>
+// already uses. Omit both for a single-recipient context (trial/savers/
+// reminder/renewal/birthday all trigger per-user, with no offer to tie
+// to); pass them through for batch sends tied to a campaign or offer.
+//
+// expiry_date checks trial_ends_at first, then member_expires_at — the
+// newsletter-only version of this logic (before this consolidation) only
+// ever checked trial_ends_at, so a paying member's real renewal/expiry
+// date would have rendered blank. Genuine fix, not just a relocation.
+function buildMessageTokens(user, opts = {}) {
+  // A preview-only "user" (test-send with no matching real account) has
+  // no real id — nothing to write an invite token against, so this
+  // returns the same obviously-fake placeholder every preview always used.
+  if (!user || !user.id || user.id === 'test') {
+    return {
+      name: user?.name || 'there',
+      invite_link: `${APP_URL}/join/EXAMPLE-TOKEN-not-a-real-link`,
+      expiry_date: '[example date]',
+      ...(opts.extra || {}),
+    };
+  }
+  const hasLogin = !!(user.has_login || user.password_hash);
+  const linkParams = new URLSearchParams();
+  if (opts.offerId) {
+    const offer = db.getOffer(opts.offerId);
+    if (offer) linkParams.set('promoCode', offer.code);
+  }
+  if (opts.sourceTag) linkParams.set('src', opts.sourceTag);
+  const linkQuery = linkParams.toString() ? ('?' + linkParams.toString()) : '';
+  const inviteLink = hasLogin
+    ? `${APP_URL}/login`
+    : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}`;
+  const rawExpiry = user.trial_ends_at || user.member_expires_at;
+  const expiryDate = rawExpiry
+    ? new Date(rawExpiry).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : '';
+  return { name: user.name || 'there', invite_link: inviteLink, expiry_date: expiryDate, ...(opts.extra || {}) };
+}
+
+// Per Bot 19 — generalizes the newsletter test-send's "if this address is
+// a real account, send them a genuine working message" logic so every
+// test-send button across the app behaves the same way: a real account
+// gets its own real invite link/expiry date (a genuine one-off send, not
+// just a wording check); anything else falls back to an obviously-fake
+// preview so {{tokens}} are still visibly working before a real send.
+function resolveTestRecipientTokens(toEmail, adminUser) {
+  const realUser = db.getUserByEmail((toEmail || '').toLowerCase());
+  if (realUser) {
+    return { toEmail, isReal: true, tokens: buildMessageTokens(realUser) };
+  }
+  return {
+    toEmail,
+    isReal: false,
+    tokens: {
+      name: adminUser?.name || 'there',
+      invite_link: `${APP_URL}/join/EXAMPLE-TOKEN-not-a-real-link`,
+      expiry_date: '[example date]',
+    },
+  };
+}
+
 // Per Bot 18 — renders admin-editable email body text as one <p> per
 // blank-line-separated paragraph, rather than forcing everything into a
 // single block like the older reminder templates do. Lets the trial
@@ -714,6 +787,43 @@ function emailWelcomeFacilitator(name, email, tempPassword) {
   );
 }
 
+// Per Bot 19 — the warm, permanent counterpart to emailWelcomeClient,
+// used ONLY when the person being activated was a genuine newsletter-only
+// contact (member_tier=0, no password at all — see
+// NEWSLETTER_AUDIENCE_CLAUSES in db.js) becoming a real account for the
+// first time. Deliberately doesn't set or email a temporary password —
+// {{invite_link}} is a self-service /join/:token link they use to set
+// their own, same mechanism Newsletters already use for anyone without a
+// login yet. Every other activation path (facilitator adding a client,
+// bulk import, lead conversion) is a different psychological moment —
+// "someone set this account up for you" — and keeps emailWelcomeClient's
+// original immediate-password behaviour unchanged.
+function emailWelcomeFromNewsletter(user) {
+  const b = brand();
+  const cfg = db.getAppConfig() || {};
+  const tokens = buildMessageTokens(user);
+  const subject = fillTemplate(cfg.newsletter_welcome_subject || `Welcome to ${b.name} — you're in`, tokens);
+  const defaultBody = `A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you: courses, practices, poems, blogs, whitepapers, all of it, fully.
+
+If you already had a subscription with us, it's carried over in full, exactly as it stood — nothing to renew or reconsider before it's due.
+
+One thing worth knowing about: Talk. It's not a scripted practice — it's somewhere to think something through out loud, and it listens and responds to whatever you're actually carrying in that moment, not a fixed script. I'd love to know what you make of it.
+
+You can also set up practice reminders — a small message once a day, by email or text, whichever suits you.`;
+  const body = fillTemplate(cfg.newsletter_welcome_body || defaultBody, tokens);
+  return sendEmail(user.email, subject,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Dear ${tokens.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Hope you're well, and that things are good with you.</p>
+      ${renderMessageBody(body, cfg.newsletter_welcome_format)}
+      <p style="font-size:14px;line-height:1.7"><a href="${tokens.invite_link}" style="color:#2d6a4f">Sign in and set up your password →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
+
 function emailWelcomeClient(name, email, tempPassword, language, skinId) {
   const b = brand();
   // Per Bot 33r — a member added directly to a skin (individually or via
@@ -814,17 +924,18 @@ function emailAdminPasswordReset(name, email, tempPassword, language) {
 function emailTrialDay3(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
-  const subject = cfg.trial_day3_subject || "The parts of this you haven't found yet";
+  const tokens = buildMessageTokens(user);
+  const subject = fillTemplate(cfg.trial_day3_subject || "The parts of this you haven't found yet", tokens);
   const body = fillTemplate(cfg.trial_day3_body || `A few days in is usually when people find the one thing that works and quietly stop looking any further. That's completely fine — but there's more here than the first thing you landed on.
 
 Everything is actually open to you right now, not just what's free to try — the full library, and Talk, for the days nothing scripted quite fits what you're carrying.
 
-No pressure to go looking. Just wanted you to know it's there.`, { name: user.name });
+No pressure to go looking. Just wanted you to know it's there.`, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderEmailParagraphs(body)}
+      ${renderMessageBody(body, cfg.trial_day3_format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -839,17 +950,18 @@ No pressure to go looking. Just wanted you to know it's there.`, { name: user.na
 function emailTrialDay7(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
-  const subject = cfg.trial_day7_subject || 'The five minutes that actually add up';
+  const tokens = buildMessageTokens(user);
+  const subject = fillTemplate(cfg.trial_day7_subject || 'The five minutes that actually add up', tokens);
   const body = fillTemplate(cfg.trial_day7_body || `The people who keep this going long after a trial ends aren't usually the ones who did one long session — they're the ones who came back for five minutes, a few times a week.
 
 If you haven't yet, that's really all Talk or a short practice needs to be. Not a commitment. Just a few minutes, whenever the day happens to call for it.
 
-However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`, { name: user.name });
+However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderEmailParagraphs(body)}
+      ${renderMessageBody(body, cfg.trial_day7_format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Try a few minutes now →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -861,18 +973,19 @@ function emailTrialDay10(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
-  const subject = cfg.trial_day10_subject || 'Four days left, and what happens after';
+  const tokens = buildMessageTokens(user);
+  const subject = fillTemplate(cfg.trial_day10_subject || 'Four days left, and what happens after', tokens);
   const defaultBody = paymentsOn
     ? `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, but full access doesn't.
 
 If this has found a place in your week, membership just means it stays there. Nothing else changes, and there's no pressure either way.`
     : `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, and the free content stays fully available too.`;
-  const body = fillTemplate(cfg.trial_day10_body || defaultBody, { name: user.name });
+  const body = fillTemplate(cfg.trial_day10_body || defaultBody, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderEmailParagraphs(body)}
+      ${renderMessageBody(body, cfg.trial_day10_format)}
       ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -884,18 +997,19 @@ function emailTrialDay14(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
-  const subject = cfg.trial_day14_subject || 'Your trial has ended — here\'s where things stand';
+  const tokens = buildMessageTokens(user);
+  const subject = fillTemplate(cfg.trial_day14_subject || 'Your trial has ended — here\'s where things stand', tokens);
   const defaultBody = paymentsOn
     ? `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.
 
 If you'd like full access back, you're welcome any time. No explanation needed, and nothing about coming back later is complicated.`
     : `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.`;
-  const body = fillTemplate(cfg.trial_day14_body || defaultBody, { name: user.name });
+  const body = fillTemplate(cfg.trial_day14_body || defaultBody, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderEmailParagraphs(body)}
+      ${renderMessageBody(body, cfg.trial_day14_format)}
       ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -921,12 +1035,13 @@ If you'd like full access back, you're welcome any time. No explanation needed, 
 async function sendSaversEmail(user, cfgKeyPrefix, defaultSubject, defaultBody, extraTokens = {}) {
   const cfg = db.getAppConfig() || {};
   const b = brand();
-  const subject = fillTemplate(cfg[`${cfgKeyPrefix}_subject`] || defaultSubject, { name: user.name, ...extraTokens });
-  const body = fillTemplate(cfg[`${cfgKeyPrefix}_body`] || defaultBody, { name: user.name, ...extraTokens });
+  const tokens = buildMessageTokens(user, { extra: extraTokens });
+  const subject = fillTemplate(cfg[`${cfgKeyPrefix}_subject`] || defaultSubject, tokens);
+  const body = fillTemplate(cfg[`${cfgKeyPrefix}_body`] || defaultBody, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      ${renderEmailParagraphs(body)}
+      ${renderMessageBody(body, cfg[`${cfgKeyPrefix}_format`])}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1044,10 +1159,11 @@ async function sendDueCampaignEmailSteps() {
       let sent = 0;
       for (const user of recipients) {
         try {
-          await sendEmail(user.email, fillTemplate(step.subject || b.name, { name: user.name }),
+          const tokens = buildMessageTokens(user, { offerId: step.offer_id, sourceTag: step.source_tag });
+          await sendEmail(user.email, fillTemplate(step.subject || b.name, tokens),
             `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
               <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-              ${renderEmailParagraphs(fillTemplate(step.content, { name: user.name }))}
+              ${renderMessageBody(fillTemplate(step.content, tokens), step.format)}
               <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
               <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
             </div>`);
@@ -1067,16 +1183,17 @@ async function sendDueCampaignEmailSteps() {
 // ── Inactivity reminder (Per Bot 5, item 8) ──
 // ── Inactivity reminder — shared HTML, used by both the real send and the ──
 // admin test-send endpoint, so a test email matches a real one exactly.
-function buildReminderHtml(userName, b) {
+function buildReminderHtml(user, b) {
   const cfg = db.getAppConfig() || {};
+  const tokens = buildMessageTokens(user);
   const bodyText = fillTemplate(
     cfg.reminder_body || "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
-    { name: userName }
+    tokens
   );
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${userName},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
+      ${renderMessageBody(bodyText, cfg.reminder_format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1086,8 +1203,8 @@ function buildReminderHtml(userName, b) {
 function emailInactivityReminder(user) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
-  const subject = cfg.reminder_subject || "Whenever you're ready";
-  return sendEmail(user.email, subject, buildReminderHtml(user.name, b));
+  const subject = fillTemplate(cfg.reminder_subject || "Whenever you're ready", buildMessageTokens(user));
+  return sendEmail(user.email, subject, buildReminderHtml(user, b));
 }
 
 function buildReminderSms(userName, b) {
@@ -1130,17 +1247,18 @@ async function sendInactivityReminders() {
 // invoice.payment_succeeded, cleared on cancellation) — see
 // getUpcomingRenewals in db.js for why only active subscriptions match
 // (lifetime members have no expiry to remind about).
-function buildRenewalReminderHtml(userName, expiresAt, b) {
+function buildRenewalReminderHtml(user, expiresAt, b) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
   const cfg = db.getAppConfig() || {};
+  const tokens = buildMessageTokens(user, { extra: { date: dateStr } });
   const bodyText = fillTemplate(
     cfg.renewal_reminder_body || "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
-    { name: userName, date: dateStr }
+    tokens
   );
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${userName},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
+      ${renderMessageBody(bodyText, cfg.renewal_reminder_format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">Manage my membership →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1161,11 +1279,11 @@ async function sendRenewalReminders() {
   const days = Number.isInteger(cfg.renewal_reminder_days) ? cfg.renewal_reminder_days : parseInt(cfg.renewal_reminder_days, 10) || 5;
   const upcoming = db.getUpcomingRenewals(days);
   const b = brand();
-  const subject = cfg.renewal_reminder_subject || 'Your membership renews soon';
   let sentEmail = 0, sentSms = 0;
   for (const user of upcoming) {
     if (user.pref_email_renewal && user.email) {
-      await sendEmail(user.email, subject, buildRenewalReminderHtml(user.name, user.member_expires_at, b));
+      const subject = fillTemplate(cfg.renewal_reminder_subject || 'Your membership renews soon', buildMessageTokens(user));
+      await sendEmail(user.email, subject, buildRenewalReminderHtml(user, user.member_expires_at, b));
       sentEmail++;
     }
     if (user.pref_sms_renewal && user.phone) {
@@ -1181,16 +1299,17 @@ async function sendRenewalReminders() {
 // to send this — there's no separate preference toggle to check, unlike
 // every other message type in this file. Month/day only, everywhere —
 // nothing here ever sees or uses a birth year.
-function buildBirthdayHtml(userName, b) {
+function buildBirthdayHtml(user, b) {
   const cfg = db.getAppConfig() || {};
+  const tokens = buildMessageTokens(user);
   const bodyText = fillTemplate(
     cfg.birthday_email_body || "Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.",
-    { name: userName }
+    tokens
   );
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Happy birthday, ${userName}!</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${bodyText}</p>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Happy birthday, ${tokens.name}!</h1>
+      ${renderMessageBody(bodyText, cfg.birthday_email_format)}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`;
@@ -1214,10 +1333,13 @@ async function sendBirthdayMessages() {
   const matches = db.getUsersWithBirthdayToday(month, day);
   const b = brand();
   const cfg = db.getAppConfig() || {};
-  const subject = cfg.birthday_email_subject || 'Happy birthday from all of us';
   let sentEmail = 0, sentSms = 0;
   for (const user of matches) {
-    if (user.email) { await sendEmail(user.email, subject, buildBirthdayHtml(user.name, b)); sentEmail++; }
+    if (user.email) {
+      const subject = fillTemplate(cfg.birthday_email_subject || 'Happy birthday from all of us', buildMessageTokens(user));
+      await sendEmail(user.email, subject, buildBirthdayHtml(user, b));
+      sentEmail++;
+    }
     if (user.phone) { const result = await sms.sendSms(user.phone, buildBirthdaySms(user.name, b)); if (result.ok) sentSms++; }
     db.markBirthdaySent(user.id);
   }
@@ -1402,6 +1524,7 @@ app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(
 // introduced them.
 app.get('/js/dialogs.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'dialogs.js')));
 app.get('/js/call.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'call.js')));
+app.get('/js/message-editor.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'message-editor.js')));
 app.get('/',                (req, res) => res.redirect('/login'));
 
 function roleRouter(allowedRoles, file) {
@@ -5747,8 +5870,14 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
     const user = db.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
 
+    // Per Bot 19 — this exact condition (member_tier=0, no password) is
+    // the same definition NEWSLETTER_AUDIENCE_CLAUSES already uses for
+    // "newsletter_only" — a genuine subscriber becoming a real account
+    // for the first time, not any other kind of activation.
+    const wasNewsletterOnly = user.member_tier === 0 && !user.password_hash;
+
     let tempPassword = null;
-    if (!user.password_hash) {
+    if (!user.password_hash && !wasNewsletterOnly) {
       tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
       const passwordHash = await auth.hashPassword(tempPassword);
       db.updateClientPassword(req.params.id, passwordHash);
@@ -5756,10 +5885,21 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
 
     db.setMemberTier(req.params.id, memberTier, null, null, null, null);
 
-    const shouldEmail = tempPassword && sendWelcomeEmail !== false;
-    if (shouldEmail) emailWelcomeClient(user.name, user.email, tempPassword);
+    let welcomeEmailSent = false;
+    if (wasNewsletterOnly) {
+      // No password is set here at all — {{invite_link}} inside
+      // emailWelcomeFromNewsletter generates a real, working /join/:token
+      // self-service link since password_hash is still genuinely null.
+      if (sendWelcomeEmail !== false) {
+        emailWelcomeFromNewsletter(db.getUser(req.params.id));
+        welcomeEmailSent = true;
+      }
+    } else if (tempPassword && sendWelcomeEmail !== false) {
+      emailWelcomeClient(user.name, user.email, tempPassword);
+      welcomeEmailSent = true;
+    }
 
-    res.json({ ok: true, activated: !!tempPassword, welcomeEmailSent: !!shouldEmail });
+    res.json({ ok: true, activated: wasNewsletterOnly || !!tempPassword, welcomeEmailSent });
   } catch (e) {
     console.error('upgrade error:', e);
     res.status(500).json({ error: 'Something went wrong.' });
@@ -8120,8 +8260,8 @@ app.post('/api/admin/campaigns/:id/steps', auth.requireAuthApi(['admin']), async
 });
 app.patch('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { offsetDays, subject, content } = req.body;
-    db.updateCampaignStep(req.params.stepId, { offset_days: offsetDays, subject, content });
+    const { offsetDays, subject, content, format } = req.body;
+    db.updateCampaignStep(req.params.stepId, { offset_days: offsetDays, subject, content, format });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8154,10 +8294,11 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/test-email', auth.requireAuthAp
     const to = resolveTestEmail(req.body?.email, req.user.email);
     if (!to) return res.status(400).json({ error: 'No test email address available.' });
     const b = brand();
-    await sendEmail(to, `[TEST] ${step.subject || '(no subject)'}`,
+    const { tokens } = resolveTestRecipientTokens(to, req.user);
+    await sendEmail(to, `[TEST] ${fillTemplate(step.subject || '(no subject)', tokens)}`,
       `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
         <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name} — campaign test</div>
-        ${renderEmailParagraphs(step.content)}
+        ${renderMessageBody(fillTemplate(step.content, tokens), step.format)}
       </div>`);
     res.json({ ok: true, sentTo: to });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -8483,10 +8624,10 @@ app.get('/api/admin/settings/trial-sequence', auth.requireAuthApi(['admin']), (r
   try {
     const cfg = db.getAppConfig() || {};
     res.json({
-      trialDay3Subject: cfg.trial_day3_subject || '', trialDay3Body: cfg.trial_day3_body || '',
-      trialDay7Subject: cfg.trial_day7_subject || '', trialDay7Body: cfg.trial_day7_body || '',
-      trialDay10Subject: cfg.trial_day10_subject || '', trialDay10Body: cfg.trial_day10_body || '',
-      trialDay14Subject: cfg.trial_day14_subject || '', trialDay14Body: cfg.trial_day14_body || '',
+      trialDay3Subject: cfg.trial_day3_subject || '', trialDay3Body: cfg.trial_day3_body || '', trialDay3Format: cfg.trial_day3_format || 'plain',
+      trialDay7Subject: cfg.trial_day7_subject || '', trialDay7Body: cfg.trial_day7_body || '', trialDay7Format: cfg.trial_day7_format || 'plain',
+      trialDay10Subject: cfg.trial_day10_subject || '', trialDay10Body: cfg.trial_day10_body || '', trialDay10Format: cfg.trial_day10_format || 'plain',
+      trialDay14Subject: cfg.trial_day14_subject || '', trialDay14Body: cfg.trial_day14_body || '', trialDay14Format: cfg.trial_day14_format || 'plain',
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8498,7 +8639,11 @@ app.post('/api/admin/settings/trial-sequence/test-send', auth.requireAuthApi(['a
     if (!sender) return res.status(400).json({ error: 'Unknown step.' });
     const to = resolveTestEmail(email, req.user.email);
     if (!to) return res.status(400).json({ error: 'No test email address available.' });
-    await sender({ id: 'test', name: req.user.name || 'there', email: to });
+    // Per Bot 19 — same pattern as Newsletters: if the test address is a
+    // real account, send them a genuine working message (real invite
+    // link/expiry date) rather than only ever a wording preview.
+    const realUser = db.getUserByEmail(to.toLowerCase());
+    await sender(realUser || { id: 'test', name: req.user.name || 'there', email: to });
     res.json({ ok: true, sentTo: to });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8512,6 +8657,7 @@ app.get('/api/admin/settings/savers-sequence', auth.requireAuthApi(['admin']), (
       const camel = k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
       out[`${camel}Subject`] = cfg[`${k}_subject`] || '';
       out[`${camel}Body`] = cfg[`${k}_body`] || '';
+      out[`${camel}Format`] = cfg[`${k}_format`] || 'plain';
     });
     res.json(out);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -8532,14 +8678,15 @@ app.post('/api/admin/settings/savers-sequence/test-send', auth.requireAuthApi(['
     if (!sender) return res.status(400).json({ error: 'Unknown step.' });
     const to = resolveTestEmail(email, req.user.email);
     if (!to) return res.status(400).json({ error: 'No test email address available.' });
-    await sender({ id: 'test', name: req.user.name || 'there', email: to });
+    const realUser = db.getUserByEmail(to.toLowerCase());
+    await sender(realUser || { id: 'test', name: req.user.name || 'there', email: to });
     res.json({ ok: true, sentTo: to });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -9167,6 +9314,18 @@ const DEFAULT_NEWSLETTER_FOOTER = `You're receiving this because you're part of 
 // patterns is predictable and narrow (an <a class="nl-button"...> tag, and
 // td elements carrying these two specific attributes), not general-purpose
 // HTML sanitization.
+// ── Unified message editor (Per Bot 19) ── format-aware body rendering,
+// shared by every context. 'rich' bodies come straight from the same
+// Quill setup Newsletters already used (see postProcessRichBody just
+// below — genuinely reusable as-is, it was never newsletter-specific
+// logic, just the only place it was called from). 'plain' bodies keep
+// each context's existing paragraph rendering — renderEmailParagraphs for
+// the multi-paragraph templates (Trial/Savers/Reminder/Renewal/
+// Birthday/Campaign), which is unchanged from before this session.
+function renderMessageBody(text, format) {
+  return format === 'rich' ? postProcessRichBody(String(text || '')) : renderEmailParagraphs(text);
+}
+
 function postProcessRichBody(html) {
   return html
     .replace(/<a\s+([^>]*\bclass=["']nl-button["'][^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, innerText) => {
@@ -9472,11 +9631,30 @@ app.post('/api/admin/reminders/test', auth.requireAuthApi(['admin']), async (req
     const cfg = db.getAppConfig() || {};
     const testSubject = (subject && subject.trim()) || cfg.reminder_subject || "Whenever you're ready";
     const b = brand();
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
 
-    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildReminderHtml(req.user.name || 'there', b));
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildReminderHtml(realUser || { id: null, name: req.user.name || 'there' }, b));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('reminder test-send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Per Bot 19 — same pattern as the other test-sends: real account tokens
+// when the address matches one, preview tokens otherwise. Uses the
+// CURRENT saved config, not whatever an admin form might have unsaved —
+// there's no dedicated edit form for this one yet, just the shared
+// settings PATCH, so "test" here means "see what's currently live."
+app.post('/api/admin/newsletter-welcome/test', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const toEmail = resolveTestEmail(req.body?.to, req.user.email);
+    if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
+    await emailWelcomeFromNewsletter(realUser || { id: null, name: req.user.name || 'there', email: toEmail });
+    res.json({ ok: true, to: toEmail });
+  } catch (e) {
+    console.error('newsletter-welcome test-send error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -9513,8 +9691,9 @@ app.post('/api/admin/renewal/test', auth.requireAuthApi(['admin']), async (req, 
     const testSubject = (subject && subject.trim()) || cfg.renewal_reminder_subject || 'Your membership renews soon';
     const b = brand();
     const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
 
-    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildRenewalReminderHtml(req.user.name || 'there', sampleExpiry, b));
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildRenewalReminderHtml(realUser || { id: null, name: req.user.name || 'there' }, (realUser && realUser.member_expires_at) || sampleExpiry, b));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('renewal test-send error:', e.message);
@@ -9551,8 +9730,9 @@ app.post('/api/admin/birthday/test', auth.requireAuthApi(['admin']), async (req,
     const cfg = db.getAppConfig() || {};
     const testSubject = (subject && subject.trim()) || cfg.birthday_email_subject || 'Happy birthday from all of us';
     const b = brand();
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
 
-    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildBirthdayHtml(req.user.name || 'there', b));
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildBirthdayHtml(realUser || { id: null, name: req.user.name || 'there' }, b));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('birthday test-send error:', e.message);
@@ -9666,36 +9846,20 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
-    // Per Bot 18 — if the address being sent to actually matches a real
-    // account, use their real data: a genuinely working invite link and
-    // their real expiry date, not the placeholder preview below. This is
-    // what makes it safe to use this same button to send a real, working,
-    // one-off message to a specific named person (e.g. inviting a handful
-    // of legacy members back one at a time) rather than only ever being a
+    // Per Bot 18 (now via the shared resolveTestRecipientTokens, Per Bot
+    // 19) — if the address being sent to actually matches a real account,
+    // use their real data: a genuinely working invite link and their real
+    // expiry date, not the placeholder preview below. This is what makes
+    // it safe to use this same button to send a real, working, one-off
+    // message to a specific named person (e.g. inviting a handful of
+    // legacy members back one at a time) rather than only ever being a
     // wording check. Falls back to the placeholder preview for any
     // address that isn't a real account — testing wording to your own
     // admin inbox, most commonly.
-    const realUser = db.getUserByEmail(toEmail.toLowerCase());
-    let subjectFilled, bodyFilled, note = '';
-    if (realUser) {
-      const inviteLink = realUser.password_hash
-        ? `${APP_URL}/login`
-        : `${APP_URL}/join/${db.ensureInviteToken(realUser.id)}`;
-      const expiryDate = realUser.trial_ends_at
-        ? new Date(realUser.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-        : '';
-      subjectFilled = subject.trim().split('{{name}}').join(realUser.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
-      bodyFilled    = body.trim().split('{{name}}').join(realUser.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
-      note = ` — sent with ${realUser.name}'s real invite link and expiry date, this is a genuine working send, not a preview`;
-    } else {
-      // Preview only — there's no real recipient for a test send, so
-      // {{invite_link}} resolves to an obviously-fake example link rather than
-      // minting a real token, and {{name}} uses the admin's own name so the
-      // substitution is at least visibly working before a real send.
-      const previewLink = `${APP_URL}/join/EXAMPLE-TOKEN-not-a-real-link`;
-      subjectFilled = subject.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink).split('{{expiry_date}}').join('[example date]');
-      bodyFilled    = body.trim().split('{{name}}').join(req.user.name || 'there').split('{{invite_link}}').join(previewLink).split('{{expiry_date}}').join('[example date]');
-    }
+    const { isReal, tokens } = resolveTestRecipientTokens(toEmail, req.user);
+    const subjectFilled = fillTemplate(subject.trim(), tokens);
+    const bodyFilled = fillTemplate(body.trim(), tokens);
+    const note = isReal ? ` — sent with ${tokens.name}'s real invite link and expiry date, this is a genuine working send, not a preview` : '';
 
     const b = brand();
     const cfg = db.getAppConfig() || {};
@@ -9733,33 +9897,17 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   let sentCount = 0, failedCount = 0;
-  // Per Bot 18 — if this send is tied to an offer, every non-logged-in
-  // recipient's invite_link carries that offer's code plus this send's
-  // source tag, same query-string shape /promo/<code>?src=... already
-  // uses, so it lands in the same funnel report as everything else —
-  // rather than the old fixed-14-day /join/<token> link with no
-  // attribution at all.
-  const offer = newsletter.offer_id ? db.getOffer(newsletter.offer_id) : null;
-  const linkParams = new URLSearchParams();
-  if (offer) linkParams.set('promoCode', offer.code);
-  if (newsletter.source_tag) linkParams.set('src', newsletter.source_tag);
-  const linkQuery = linkParams.toString() ? ('?' + linkParams.toString()) : '';
 
   for (const user of recipients) {
-    const inviteLink = user.has_login
-      ? `${APP_URL}/login`
-      : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}`;
-    // Per Bot 18 — {{expiry_date}} reads the same trial_ends_at column
-    // that already drives real access (set manually here for someone
-    // whose carried-over membership has a specific end date). Formatted
-    // for reading, not the raw ISO string; blank if there isn't one
-    // rather than printing "Invalid Date".
-    const expiryDate = user.trial_ends_at
-      ? new Date(user.trial_ends_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-      : '';
-
-    const subject = newsletter.subject.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
-    const body    = newsletter.body.split('{{name}}').join(user.name || '').split('{{invite_link}}').join(inviteLink).split('{{expiry_date}}').join(expiryDate);
+    // Per Bot 18 (now via the shared buildMessageTokens, Per Bot 19) — if
+    // this send is tied to an offer, every non-logged-in recipient's
+    // invite_link carries that offer's code plus this send's source tag,
+    // same query-string shape /promo/<code>?src=... already uses, so it
+    // lands in the same funnel report as everything else — rather than
+    // the old fixed-14-day /join/<token> link with no attribution at all.
+    const tokens = buildMessageTokens(user, { offerId: newsletter.offer_id, sourceTag: newsletter.source_tag });
+    const subject = fillTemplate(newsletter.subject, tokens);
+    const body    = fillTemplate(newsletter.body, tokens);
 
     const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
     const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);

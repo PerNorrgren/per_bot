@@ -12,6 +12,10 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/quill-image-resize-module@3.0.0/image-resize.min.js"></script>
+  <!-- Per Bot 19 — shared token-insertion primitive, used by the Reminder/
+       Renewal/Birthday sections below. Newsletters keeps its own existing
+       richer editor untouched. -->
+  <script src="/js/message-editor.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
@@ -420,16 +424,18 @@
           <div class="config-label">Reminder subject line</div>
           <div class="config-desc">Email subject sent to inactive users</div>
         </div>
-        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
-          <input class="inline-input" type="text" id="reminderSubject" value="It's been a few days — your practice space is here" style="width:320px"/>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
+          <input class="inline-input" type="text" id="reminderSubject" value="It's been a few days — your practice space is here" style="width:280px"/>
+          <span id="reminderSubjectTokenWrap"></span>
         </div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
           <div class="config-label">Reminder message (email)</div>
-          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. Use {{name}} for the person's name.</div>
+          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. {{name}}, {{invite_link}}, and {{expiry_date}} are all available.</div>
         </div>
         <textarea class="inline-input" id="reminderBody" rows="3" style="width:100%;resize:vertical" placeholder="It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help."></textarea>
+        <div id="reminderBodyTokenWrap"></div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
@@ -485,16 +491,18 @@
           <div class="config-label">Reminder subject line</div>
           <div class="config-desc">Email subject sent ahead of renewal</div>
         </div>
-        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
-          <input class="inline-input" type="text" id="renewalSubject" value="Your membership renews soon" style="width:320px"/>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
+          <input class="inline-input" type="text" id="renewalSubject" value="Your membership renews soon" style="width:280px"/>
+          <span id="renewalSubjectTokenWrap"></span>
         </div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
           <div class="config-label">Renewal message (email)</div>
-          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. {{name}} and {{date}} are available; wrap {{date}} in &lt;strong&gt;&lt;/strong&gt; if you want it bold.</div>
+          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. {{name}}, {{invite_link}}, {{expiry_date}}, and {{date}} are all available; wrap {{date}} in &lt;strong&gt;&lt;/strong&gt; if you want it bold.</div>
         </div>
         <textarea class="inline-input" id="renewalBody" rows="3" style="width:100%;resize:vertical" placeholder="Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time."></textarea>
+        <div id="renewalBodyTokenWrap"></div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
@@ -546,16 +554,18 @@
           <div class="config-label">Subject line</div>
           <div class="config-desc">Email subject sent on the day</div>
         </div>
-        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px">
-          <input class="inline-input" type="text" id="birthdaySubject" placeholder="Happy birthday from all of us" style="width:320px"/>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
+          <input class="inline-input" type="text" id="birthdaySubject" placeholder="Happy birthday from all of us" style="width:280px"/>
+          <span id="birthdaySubjectTokenWrap"></span>
         </div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
           <div class="config-label">Birthday message (email)</div>
-          <div class="config-desc">The paragraph inside the email — greeting stays fixed. Use {{name}} for the person's name.</div>
+          <div class="config-desc">The paragraph inside the email — greeting stays fixed. {{name}}, {{invite_link}}, and {{expiry_date}} are all available.</div>
         </div>
         <textarea class="inline-input" id="birthdayBody" rows="3" style="width:100%;resize:vertical" placeholder="Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it."></textarea>
+        <div id="birthdayBodyTokenWrap"></div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
         <div>
@@ -585,6 +595,52 @@
         </div>
       </div>
       <div style="padding:0 20px 14px"><div class="feedback" id="birthdayFeedback"></div></div>
+    </div>
+  </div>
+
+  <!-- ── Newsletter → Explorer welcome (Per Bot 19) ── -->
+  <div>
+    <div class="section-label">Newsletter subscriber welcome</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Newsletter → Explorer welcome settings</div>
+        <button class="btn sm primary" onclick="saveNewsletterWelcomeConfig()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">When this sends</div>
+          <div class="config-desc">Automatically, whenever a genuine newsletter-only contact (no password yet) is promoted to Explorer or above — replaces the bare "your account is ready" email for this specific case only. Every other way of activating an account is unaffected.</div>
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Subject line</div>
+          <div class="config-desc">Email subject sent when they're welcomed in</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
+          <input class="inline-input" type="text" id="newsletterWelcomeSubject" placeholder="Welcome to Deeper Mindfulness — you're in" style="width:280px"/>
+          <span id="newsletterWelcomeSubjectTokenWrap"></span>
+        </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Welcome message (email)</div>
+          <div class="config-desc">The greeting, sign-off, and the "sign in and set up your password" link all stay fixed either side of this — write the middle. {{name}}, {{invite_link}}, and {{expiry_date}} are all available.</div>
+        </div>
+        <textarea class="inline-input" id="newsletterWelcomeBody" rows="6" style="width:100%;resize:vertical" placeholder="A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you."></textarea>
+        <div id="newsletterWelcomeBodyTokenWrap"></div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test</div>
+          <div class="config-desc">Sends using the settings above (even if not saved yet) — if the address matches a real account, it's a genuine working link</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="email" id="newsletterWelcomeTestTo" placeholder="Defaults to your email" style="width:200px"/>
+          <button class="btn sm" id="newsletterWelcomeTestBtn" onclick="sendTestNewsletterWelcome()">Send test</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="newsletterWelcomeFeedback"></div></div>
     </div>
   </div>
 
@@ -2654,6 +2710,8 @@
   // Reminders
   // ════════════════════════════════════
   async function loadReminderConfig() {
+    document.getElementById('reminderSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('reminderSubject', MessageEditor.standardTokens());
+    document.getElementById('reminderBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('reminderBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…' });
     try {
       const res = await fetch('/api/setup/config');
       const cfg = await res.json();
@@ -2736,6 +2794,8 @@
 
   // ── Renewal reminders ──
   async function loadRenewalConfig() {
+    document.getElementById('renewalSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('renewalSubject', MessageEditor.standardTokens([{ value: '{{date}}', label: 'Renewal date' }]));
+    document.getElementById('renewalBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('renewalBody', MessageEditor.standardTokens([{ value: '{{date}}', label: 'Renewal date' }]), { placeholder: 'Insert field into body…' });
     try {
       const res = await fetch('/api/setup/config');
       const cfg = await res.json();
@@ -2817,6 +2877,8 @@
 
   // ── Birthday messages ──
   async function loadBirthdayConfig() {
+    document.getElementById('birthdaySubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('birthdaySubject', MessageEditor.standardTokens());
+    document.getElementById('birthdayBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('birthdayBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…' });
     try {
       const res = await fetch('/api/setup/config');
       const cfg = await res.json();
@@ -2885,6 +2947,54 @@
     }
   }
 
+  // ── Newsletter → Explorer welcome (Per Bot 19) ──
+  async function loadNewsletterWelcomeConfig() {
+    document.getElementById('newsletterWelcomeSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('newsletterWelcomeSubject', MessageEditor.standardTokens());
+    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('newsletterWelcomeBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…' });
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      document.getElementById('newsletterWelcomeSubject').value = cfg.newsletter_welcome_subject || '';
+      document.getElementById('newsletterWelcomeBody').value    = cfg.newsletter_welcome_body || '';
+    } catch(e) { /* fields keep their HTML defaults */ }
+  }
+
+  async function saveNewsletterWelcomeConfig() {
+    const subject = document.getElementById('newsletterWelcomeSubject').value.trim();
+    const body     = document.getElementById('newsletterWelcomeBody').value.trim();
+    try {
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ newsletterWelcomeSubject: subject || null, newsletterWelcomeBody: body || null })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('newsletterWelcomeFeedback', 'Saved.', 'ok');
+      else         showFeedback('newsletterWelcomeFeedback', data.error || 'Could not save.', 'err');
+    } catch(e) {
+      showFeedback('newsletterWelcomeFeedback', 'Network error — could not save.', 'err');
+    }
+  }
+
+  async function sendTestNewsletterWelcome() {
+    const to  = document.getElementById('newsletterWelcomeTestTo').value.trim();
+    const btn = document.getElementById('newsletterWelcomeTestBtn');
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/newsletter-welcome/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ to: to || undefined })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('newsletterWelcomeFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('newsletterWelcomeFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('newsletterWelcomeFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
   // ════════════════════════════════════
   // Test destination (Per Bot 7) — one saved email + phone used as the
   // default for every test-send button on this page. Prefills every
@@ -2935,6 +3045,7 @@
     loadReminderConfig();
     loadRenewalConfig();
     loadBirthdayConfig();
+    loadNewsletterWelcomeConfig();
     loadNewsletters();
   });
 </script>

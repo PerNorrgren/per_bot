@@ -1678,6 +1678,48 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN savers_failure_mid_body TEXT",
     "ALTER TABLE app_config ADD COLUMN savers_failure_final_subject TEXT",
     "ALTER TABLE app_config ADD COLUMN savers_failure_final_body TEXT",
+    // ── Unified message editor (Per Bot 19) ── format columns, one per
+    // named email step across Trial sequence, Savers Protocol, Reminder,
+    // Renewal reminder, and Birthday message — the same 'plain'/'rich'
+    // distinction newsletters already had (see the ADD COLUMN format on
+    // the newsletters table, above). SMS bodies never get one — they stay
+    // plain always, by design. campaign_steps.format and
+    // campaigns.source_tag cover the two dynamic-row contexts.
+    "ALTER TABLE app_config ADD COLUMN trial_day3_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN trial_day7_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN trial_day10_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN trial_day14_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_day0_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_grace0_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_mid_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_cancel_final_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_day0_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_mid_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN savers_failure_final_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN reminder_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN renewal_reminder_format TEXT DEFAULT 'plain'",
+    "ALTER TABLE app_config ADD COLUMN birthday_email_format TEXT DEFAULT 'plain'",
+    // campaign_steps already stores content per-row (unlike the singleton
+    // app_config fields above) — one format column covers every step,
+    // read only when channel='email' (social steps ignore it entirely).
+    "ALTER TABLE campaign_steps ADD COLUMN format TEXT DEFAULT 'plain'",
+    // campaigns didn't previously carry their own source tag — email
+    // steps had no way to show up distinctly in the Funnel report the way
+    // every newsletter/promo link already does. Auto-filled from the
+    // campaign name at creation (see createCampaign below); editable
+    // later isn't built yet, not required for the unified editor itself.
+    "ALTER TABLE campaigns ADD COLUMN source_tag TEXT",
+    // ── Newsletter → Explorer welcome (Per Bot 19) ── the permanent,
+    // warm replacement for the bare "Your account is ready" email,
+    // specifically for genuine newsletter-only contacts (member_tier=0,
+    // password_hash IS NULL — see NEWSLETTER_AUDIENCE_CLAUSES) becoming a
+    // real account for the first time. Every other activation path
+    // (facilitator adding a client, bulk import, lead conversion) keeps
+    // the original emailWelcomeClient unchanged — this one is specific to
+    // "was reading the newsletter, now has a real account."
+    "ALTER TABLE app_config ADD COLUMN newsletter_welcome_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN newsletter_welcome_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN newsletter_welcome_format TEXT DEFAULT 'plain'",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4190,14 +4232,24 @@ function getAllCampaigns() {
     ORDER BY c.created_at DESC`);
 }
 function getCampaign(id) { return queryOne('SELECT * FROM campaigns WHERE id=?', [id]); }
+// Per Bot 19 — a campaign's email steps previously had no way to show up
+// distinctly in the Funnel report the way every newsletter/promo link
+// already does (no {{invite_link}} attribution at all, see
+// buildMessageTokens in server.js). Auto-slugged from the name at
+// creation time so there's always something sensible without asking Per
+// to type one; editing it later isn't built yet.
+function slugifySourceTag(name) {
+  return 'campaign-' + String(name || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
 function createCampaign(id, name, offerId, audience) {
-  getDbSync().run('INSERT INTO campaigns (id,name,offer_id,audience) VALUES (?,?,?,?)',
-    [id, name, offerId || null, audience || 'all']);
+  getDbSync().run('INSERT INTO campaigns (id,name,offer_id,audience,source_tag) VALUES (?,?,?,?,?)',
+    [id, name, offerId || null, audience || 'all', slugifySourceTag(name)]);
   save();
   return id;
 }
 function updateCampaign(id, fields) {
-  const allowed = ['name', 'offer_id', 'audience'];
+  const allowed = ['name', 'offer_id', 'audience', 'source_tag'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
@@ -4237,7 +4289,7 @@ function addCampaignStep(id, campaignId, offsetDays, type, channel, subject, con
   return id;
 }
 function updateCampaignStep(id, fields) {
-  const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id'];
+  const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id', 'format'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
@@ -4265,7 +4317,7 @@ function setCampaignStepResult(id, status, fields = {}) {
 // BulkPublish at go-live time and need no further cron attention.
 function getDueCampaignEmailSteps() {
   return queryAll(`
-    SELECT s.*, c.audience, c.started_at
+    SELECT s.*, c.audience, c.started_at, c.offer_id, c.source_tag
     FROM campaign_steps s JOIN campaigns c ON s.campaign_id=c.id
     WHERE c.status='active' AND s.channel='email' AND s.status='pending'
       AND s.offset_days <= CAST(julianday('now') - julianday(c.started_at) AS INTEGER)
