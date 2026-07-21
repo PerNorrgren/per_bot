@@ -41,6 +41,7 @@
     .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
     .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
     .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .card-count { font-size:12px; color:rgba(255,255,255,0.35); font-weight:normal; margin-left:6px; }
 
     .table { width:100%; max-height:460px; overflow-y:auto; }
     /* Per Bot 14 — same bounded-scroll-box treatment, these four never had
@@ -156,34 +157,16 @@
   <span>Loading counts…</span>
 </div>
 
-<!-- Per Bot 19p — real migration status: cross-references every welcome
-     email against the recipient's CURRENT live account state, so it's
-     possible to see who actually completed their move vs who's still
-     stuck, with a one-click retry for the stuck ones. -->
-<div>
-  <div class="section-label">Newsletter migration status</div>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Who was emailed vs who actually moved</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn sm disabled" id="migRetryBtn" onclick="retrySelectedMigration()">Retry selected</button>
-        <button class="btn sm" onclick="loadMigrationStatus()">Refresh</button>
-      </div>
-    </div>
-    <div style="padding:14px 18px;display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:rgba(255,255,255,0.6)" id="migSummary">
-      Loading…
-    </div>
-    <div class="table" id="migPendingTable"><div class="loading">Loading…</div></div>
-    <div style="padding:0 20px 14px"><div class="feedback" id="migFeedback"></div></div>
-  </div>
-</div>
+<!-- Per Bot 20 — Newsletter Migration Status box removed. Its job was
+     one-off (tracking the 2026-07 mailing-list migration to Explorer);
+     the counts bar above is the ongoing source of truth going forward. -->
 
 <!-- Per Bot 19p — browsable email send log, defaults to today. -->
 <div>
   <div class="section-label">Email log</div>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">Recent sends</div>
+      <div class="card-title">Recent sends<span class="card-count" id="emailLogCount"></span></div>
       <div style="display:flex;gap:8px;align-items:center">
         <select id="emailLogDateFilter" onchange="loadEmailLog()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);border-radius:7px;padding:6px 10px;font-family:Georgia,serif;font-size:13px">
           <option value="today">Today</option>
@@ -202,7 +185,7 @@
       <div class="section-label">Admins</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Admin accounts</div>
+          <div class="card-title">Admin accounts<span class="card-count" id="adminCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn sm disabled" id="adminEditBtn" onclick="editSelectedAdmin()">Edit</button>
             <button class="btn sm danger disabled" id="adminDelBtn" onclick="deleteSelectedAdmin()">Delete</button>
@@ -219,7 +202,7 @@
       <div class="section-label">Facilitators</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Facilitators</div>
+          <div class="card-title">Facilitators<span class="card-count" id="facCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="show-archived-wrap"><input type="checkbox" id="showArchivedFac" onchange="loadFacilitators()"/> Show archived</label>
             <button class="btn sm disabled" id="facEditBtn" onclick="editSelectedFac()">Edit</button>
@@ -238,7 +221,7 @@
       <div class="section-label">Facilitator requests</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Facilitator requests</div>
+          <div class="card-title">Facilitator requests<span class="card-count" id="frCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn sm primary disabled" id="frApproveBtn" onclick="bulkFacilitatorRequests('approve')">Approve</button>
             <button class="btn sm disabled" id="frDeferBtn" onclick="bulkFacilitatorRequests('defer')">Defer</button>
@@ -257,7 +240,7 @@
       <div class="section-label">All clients</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Clients</div>
+          <div class="card-title">Clients<span class="card-count" id="clientCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="show-archived-wrap"><input type="checkbox" id="showArchivedClients" onchange="loadClients()"/> Show archived</label>
             <button class="btn sm disabled" id="clientEditBtn" onclick="editSelectedClient()">Edit</button>
@@ -277,7 +260,7 @@
       <div class="section-label">Members</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Members</div>
+          <div class="card-title">Members<span class="card-count" id="memberCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn sm primary" onclick="openAddUserModal()">+ Add User</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
@@ -297,7 +280,7 @@
       <div class="section-label">Explorers</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Explorers</div>
+          <div class="card-title">Explorers<span class="card-count" id="userCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
@@ -314,14 +297,11 @@
       <div class="section-label">Newsletter contacts</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Newsletter contacts</div>
+          <div class="card-title">Newsletter contacts<span class="card-count" id="nlContactCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select class="inline-select" id="nlContactBulkAction">
               <option value="">Bulk action…</option>
               <option value="explorer">Move to Explorer</option>
-              <option value="1">Move to Member 1</option>
-              <option value="2">Move to Member 2</option>
-              <option value="3">Move to Member 3</option>
               <option value="delete">Delete</option>
             </select>
             <button class="btn sm disabled" id="nlContactApplyBtn" onclick="applyNlContactBulkAction()">Apply</button>
@@ -338,7 +318,7 @@
       <div class="section-label">Enquiries</div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Enquiries</div>
+          <div class="card-title">Enquiries<span class="card-count" id="leadCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn sm disabled" id="leadUpgradeBtn" onclick="upgradeSelectedLeads()">Convert</button>
             <button class="btn sm primary disabled" id="leadSyncBtn" onclick="syncLeads()">Sync to Brevo</button>
@@ -366,6 +346,11 @@
         <select id="upgradeAssignFac" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
           <option value="">No facilitator</option>
         </select>
+        <div id="upgradeExpiryField" style="display:none">
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Membership expiry</label>
+          <input type="date" id="upgradeExpiryDate" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
+          <div class="modal-note" style="margin-top:6px">Leave blank for permanent, no automatic expiry. Only affects this one person — for matching an existing subscription or manually extending access.</div>
+        </div>
       </div>
       <div class="modal-err" id="upgradeErr"></div>
       <div class="modal-btns">
@@ -1026,6 +1011,7 @@
     adminSel.clear();
     const res  = await fetch('/api/admin/admins');
     _adminData = await res.json();
+    document.getElementById('adminCount').textContent = ` (${_adminData.length})`;
     renderAdmins();
   }
 
@@ -1099,6 +1085,7 @@
     const archived = document.getElementById('showArchivedFac').checked ? 1 : 0;
     const res  = await fetch(`/api/admin/facilitators?archived=${archived}`);
     _facData   = await res.json();
+    document.getElementById('facCount').textContent = ` (${_facData.length})`;
     renderFacilitators();
   }
 
@@ -1455,6 +1442,7 @@
     // appeared here too — cosmetic only, never a notification issue (their
     // email/SMS preferences are all correctly off), but wrong all the same.
     _clientData = (await res.json()).filter(u => !!u.is_client);
+    document.getElementById('clientCount').textContent = ` (${_clientData.length})`;
     renderClients();
   }
 
@@ -1616,6 +1604,7 @@
     memberSel.clear();
     const res   = await fetch('/api/admin/users');
     _memberData = (await res.json()).filter(u => (u.member_tier || 0) >= 1);
+    document.getElementById('memberCount').textContent = ` (${_memberData.length})`;
     renderMembers();
   }
 
@@ -1632,7 +1621,7 @@
         <div class="col-cb"><input type="checkbox" id="memberAllCb" onchange="memberSel.toggleAll('membersTable',this)"/></div>
         <div class="table-hdr-cell col-name" onclick="memberSort('name')">Name ${sortIndicator('member','name')}</div>
         <div class="table-hdr-cell col-email" onclick="memberSort('email')">Email ${sortIndicator('member','email')}</div>
-        <div class="table-hdr-cell col-level">Level</div>
+        <div class="table-hdr-cell col-level" onclick="memberSort('member_tier')">Level ${sortIndicator('member','member_tier')}</div>
         <div class="table-hdr-cell col-fac" onclick="memberSort('facilitator_name')">Facilitator ${sortIndicator('member','facilitator_name')}</div>
       </div>` +
       list.map(u => `
@@ -1652,7 +1641,7 @@
   function editSelectedMember() {
     const id = [...memberSel.sel][0]; if (!id) return;
     const u  = _memberData.find(x => x.id === id); if (!u) return;
-    upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id);
+    upgradeSelected([id], u.name, (u.member_tier || 0) >= 1 ? 'member' : 'registered', u.facilitator_id, u.member_expires_at);
   }
 
   // ── Tomte language override + voice picker + existing-image gallery
@@ -1981,6 +1970,7 @@
     // every logged-in user regardless of tier, so a Member appeared here
     // AND in the Members table below — this is the fix for that.
     _userData=(await res.json()).filter(u => (u.member_tier ?? -1) === 0);
+    document.getElementById('userCount').textContent = ` (${_userData.length})`;
     renderUsers();
   }
 
@@ -2016,7 +2006,7 @@
   }
   function userSort(col) { setSort('user',col); renderUsers(); }
 
-  async function upgradeSelected(ids, name, level, currentFacId) {
+  async function upgradeSelected(ids, name, level, currentFacId, currentExpiry) {
     // Called two ways: with no args from the Registered Explorers table's
     // own Upgrade button (reads userSel.sel), or with explicit args from
     // editSelectedMember() below. Previously this silently ignored the
@@ -2033,6 +2023,18 @@
     document.getElementById('upgradeUserName').textContent = name || `${ids.length} user${ids.length>1?'s':''} selected`;
     document.getElementById('upgradeUserId').value = ids.join(',');
     if (level) document.getElementById('upgradeMemberLevel').value = level;
+    // Per Bot 20 — manual expiry only makes sense for exactly one person
+    // at a time (applying one shared date across a bulk selection would
+    // silently overwrite everyone's individual expiry with the same
+    // value) — hidden entirely for multi-select, shown and prefilled
+    // with their current expiry (blank = permanent) for a single edit.
+    const expiryField = document.getElementById('upgradeExpiryField');
+    if (ids.length === 1) {
+      document.getElementById('upgradeExpiryDate').value = currentExpiry || '';
+      expiryField.style.display = '';
+    } else {
+      expiryField.style.display = 'none';
+    }
     document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
   }
@@ -2042,6 +2044,14 @@
     try {
       await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({level})})));
       if (facId) await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/assign-facilitator`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId:facId})})));
+      // Per Bot 20 — only ever applies to a single-person edit (field is
+      // hidden for bulk selections), and only sent if visible — safe to
+      // always include when it is, since blank means "set to permanent"
+      // which is a real, deliberate choice, not an accidental no-op.
+      if (ids.length === 1 && document.getElementById('upgradeExpiryField').style.display !== 'none') {
+        const expiresAt = document.getElementById('upgradeExpiryDate').value || null;
+        await fetch(`/api/admin/users/${ids[0]}/expiry`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expiresAt})});
+      }
       closeModal('upgradeModal'); userSel.clear(); loadUsers(); loadMembers();
     } catch(e) { document.getElementById('upgradeErr').textContent='Error: '+e.message; }
   }
@@ -2092,6 +2102,7 @@
     // table instead (see loadUsers), even before they've clicked to set
     // a password.
     _nlContactData = (await res.json()).filter(u => (u.member_tier ?? -1) === -1);
+    document.getElementById('nlContactCount').textContent = ` (${_nlContactData.length})`;
     renderNlContacts();
   }
 
@@ -2099,14 +2110,16 @@
     nlContactSel.clear();
     const el    = document.getElementById('nlContactsTable');
     const query = document.getElementById('nlContactSearch').value.trim();
+    const s     = getSort('nlContact');
     let list    = _nlContactData.filter(u => matchesSearch(u, query, ['name','email']));
+    if (s.col) list = [...list].sort((a,b) => { const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
     if (!list.length) { el.innerHTML = '<div class="empty">No newsletter-only contacts.</div>'; return; }
     el.innerHTML =
       `<div class="table-hdr">
         <div class="col-cb"><input type="checkbox" id="nlContactAllCb" onchange="nlContactSel.toggleAll('nlContactsTable',this)"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-created">Added</div>
+        <div class="table-hdr-cell col-name" onclick="nlContactSort('name')">Name ${sortIndicator('nlContact','name')}</div>
+        <div class="table-hdr-cell col-email" onclick="nlContactSort('email')">Email ${sortIndicator('nlContact','email')}</div>
+        <div class="table-hdr-cell col-created" onclick="nlContactSort('created_at')">Added ${sortIndicator('nlContact','created_at')}</div>
         <div class="table-hdr-cell col-actions" style="justify-content:flex-end">Move to</div>
       </div>` +
       list.map(u => `
@@ -2119,14 +2132,12 @@
             <select class="row-move-select" onchange="moveNlContact('${u.id}','${escJsAttr(u.name)}',this.value);this.selectedIndex=0;">
               <option value="">Move to…</option>
               <option value="explorer">Explorer</option>
-              <option value="1">Member 1</option>
-              <option value="2">Member 2</option>
-              <option value="3">Member 3</option>
             </select>
             <button class="btn sm danger" onclick="deleteNlContact('${u.id}','${escJsAttr(u.name)}')">Delete</button>
           </div>
         </div>`).join('');
   }
+  function nlContactSort(col) { setSort('nlContact', col); renderNlContacts(); }
 
   function nlTierFromValue(v) { return v === 'explorer' ? 0 : parseInt(v, 10); }
   function nlTierLabel(v) { return v === 'explorer' ? 'Explorer' : `Member ${v}`; }
@@ -2183,60 +2194,6 @@
 
   // Per Bot 19j — real counts per level, refreshed after every bulk
   // action alongside loadNlContacts/loadUsers/loadMembers.
-  // ── Newsletter migration status (Per Bot 19p) ──
-  let _migPending = [];
-  const migSel = makeSelection(['migRetryBtn'], null);
-  async function loadMigrationStatus() {
-    document.getElementById('migSummary').textContent = 'Loading…';
-    try {
-      const res = await fetch('/api/admin/newsletter-migration-status');
-      const d = await res.json();
-      _migPending = d.pending || [];
-      document.getElementById('migSummary').innerHTML = `
-        <span><strong>${d.totalEmailed}</strong> emailed total</span>
-        <span style="color:rgba(180,230,200,0.85)"><strong>${d.succeededCount}</strong> succeeded</span>
-        <span style="color:rgba(230,175,90,0.9)"><strong>${d.pendingCount}</strong> still stuck — select below and retry</span>
-        <span><strong>${d.noLongerExistsCount}</strong> no longer exist</span>
-      `;
-      renderMigrationPending();
-    } catch(e) {
-      document.getElementById('migSummary').textContent = 'Could not load — try Refresh again.';
-    }
-  }
-  function renderMigrationPending() {
-    migSel.clear();
-    const el = document.getElementById('migPendingTable');
-    if (!_migPending.length) { el.innerHTML = '<div class="empty">Nobody stuck right now — everyone emailed has either succeeded or hasn\'t been checked yet.</div>'; return; }
-    el.innerHTML =
-      `<div class="table-hdr">
-        <div class="col-cb"><input type="checkbox" onchange="migSel.toggleAll('migPendingTable',this)"/></div>
-        <div class="table-hdr-cell col-name">Name</div>
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-created">Emailed at</div>
-      </div>` +
-      _migPending.map(u => `
-        <div class="table-row">
-          <div class="col-cb"><input class="row-cb" type="checkbox" value="${u.id}" onchange="migSel.toggle('${u.id}',this.checked)"/></div>
-          <div class="col-name">${escHtml(u.name)}</div>
-          <div class="col-email">${escHtml(u.email)}</div>
-          <div class="col-created">${u.sent_at}</div>
-        </div>
-      `).join('');
-  }
-  async function retrySelectedMigration() {
-    const ids = [...migSel.sel]; if (!ids.length) return;
-    const answer = prompt('Days of full access before this expires once they click their link (matches the standard promo)? Leave blank for permanent.', '14');
-    if (answer === null) return;
-    const trialDays = answer.trim() === '' ? 0 : parseInt(answer, 10);
-    showConfirm('Retry move to Explorer', `Re-send the sign-in link and move each of ${ids.length} people to Explorer once their email genuinely sends?`, async () => {
-      const { succeeded, failed } = await runBatchedRequests(ids, async (id) => {
-        const r = await fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ tier: 0, sendWelcomeEmail: true, trialDays })});
-        return r.ok;
-      });
-      loadNlContacts(); loadUsers(); loadMembers(); loadUserCounts(); loadMigrationStatus();
-      showFeedback('migFeedback', failed > 0 ? `${succeeded} retried successfully. ${failed} failed again.` : `All ${succeeded} retried successfully.`, failed > 0 ? 'err' : 'ok');
-    });
-  }
 
   // ── Email log (Per Bot 19p) ──
   let _emailLogData = [];
@@ -2245,6 +2202,7 @@
     try {
       const res = await fetch('/api/admin/email-log?limit=2000');
       _emailLogData = await res.json();
+      document.getElementById('emailLogCount').textContent = ` (${_emailLogData.length})`;
       renderEmailLog();
     } catch(e) {
       document.getElementById('emailLogTable').innerHTML = '<div class="empty">Could not load — try Refresh.</div>';
@@ -2255,16 +2213,18 @@
     const query = document.getElementById('emailLogSearch').value.trim().toLowerCase();
     const dateFilter = document.getElementById('emailLogDateFilter').value;
     const today = new Date().toISOString().slice(0,10);
+    const s = getSort('emailLog');
     let list = _emailLogData;
     if (dateFilter === 'today') list = list.filter(r => r.created_at.startsWith(today));
     if (query) list = list.filter(r => r.email.toLowerCase().includes(query) || (r.subject||'').toLowerCase().includes(query));
+    if (s.col) list = [...list].sort((a,b) => { const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
     if (!list.length) { el.innerHTML = '<div class="empty">No matching sends.</div>'; return; }
     el.innerHTML =
       `<div class="table-hdr">
-        <div class="table-hdr-cell col-email">Email</div>
-        <div class="table-hdr-cell col-name">Subject</div>
-        <div class="table-hdr-cell col-created">Sent at</div>
-        <div class="table-hdr-cell" style="flex:0 0 90px">Status</div>
+        <div class="table-hdr-cell col-email" onclick="emailLogSort('email')">Email ${sortIndicator('emailLog','email')}</div>
+        <div class="table-hdr-cell col-name" onclick="emailLogSort('subject')">Subject ${sortIndicator('emailLog','subject')}</div>
+        <div class="table-hdr-cell col-created" onclick="emailLogSort('created_at')">Sent at ${sortIndicator('emailLog','created_at')}</div>
+        <div class="table-hdr-cell" style="flex:0 0 90px" onclick="emailLogSort('status')">Status ${sortIndicator('emailLog','status')}</div>
       </div>` +
       list.map(r => `
         <div class="table-row">
@@ -2275,6 +2235,7 @@
         </div>
       `).join('');
   }
+  function emailLogSort(col) { setSort('emailLog', col); renderEmailLog(); }
 
   async function loadUserCounts() {
     try {
@@ -2345,6 +2306,7 @@
     frSel.clear();
     const res = await fetch('/api/admin/facilitator-requests');
     _frData = await res.json();
+    document.getElementById('frCount').textContent = ` (${_frData.length})`;
     renderFacilitatorRequests();
   }
 
@@ -2445,6 +2407,7 @@
     leadSel.clear();
     const res=await fetch('/api/admin/guest-leads');
     _leadData=await res.json();
+    document.getElementById('leadCount').textContent = ` (${_leadData.length})`;
     renderLeads();
   }
 
@@ -2503,7 +2466,7 @@
   loadMembers();
   loadMembers();
   loadUsers();
-  loadNlContacts(); loadUserCounts(); loadMigrationStatus(); loadEmailLog();
+  loadNlContacts(); loadUserCounts(); loadEmailLog();
   loadLeads();
   loadFacilitatorRequests();
 </script>
