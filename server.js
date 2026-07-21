@@ -803,13 +803,20 @@ function emailWelcomeFromNewsletter(user) {
   const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
   const subject = fillTemplate(cfg.newsletter_welcome_subject || `Welcome to ${b.name} — you're in`, tokens);
-  const defaultBody = `A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you: courses, practices, poems, blogs, whitepapers, all of it, fully.
+  const defaultBody = `A short note to welcome you to the new, rebuilt Deeper Mindfulness — genuinely rebuilt, not just refreshed, and we hope you feel that the moment you're in it.
 
-If you already had a subscription with us, it's carried over in full, exactly as it stood — nothing to renew or reconsider before it's due.
+If you have an existing subscription to Deeper Mindfulness, it has carried over in full, nothing to renew or reconsider. All you need to do is follow the link below to get started.
 
-One thing worth knowing about: Talk. It's not a scripted practice — it's somewhere to think something through out loud, and it listens and responds to whatever you're actually carrying in that moment, not a fixed script. I'd love to know what you make of it.
+Once you're in, everything is open to you — courses, practices, poems, blogs, whitepapers, all of it, fully. If you find something missing, just let me know and I will add it promptly.
 
-You can also set up practice reminders — a small message once a day, by email or text, whichever suits you.`;
+One new thing worth knowing about: Talk. It's not a scripted practice — it's somewhere to think something through out loud, and it listens and responds to whatever you're actually carrying in that moment, not a fixed script. I'd love to know what you make of it.
+
+You can also set up practice reminders — a small message once a day, by email or text, whichever suits you.
+
+Hope this lands well, and that the new app becomes a good place for you.
+
+Warmly,
+Per`;
   const body = fillTemplate(cfg.newsletter_welcome_body || defaultBody, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
