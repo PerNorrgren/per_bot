@@ -5931,6 +5931,53 @@ app.post('/api/guest/chat', auth.requireGuestIdentity(), async (req, res) => {
 // sends — genuinely useful right now given zero newsletter replies ever,
 // which could mean healthy-but-quiet delivery, or could mean silent
 // bounces this app has never had visibility into either way.
+// Per Bot 19o — cross-references every welcome email ever logged against
+// the recipient's CURRENT live account state (not just "we sent it"),
+// so it's possible to see, definitively, who actually completed their
+// move and who's still stuck as newsletter-only despite having been
+// emailed — the exact question that's been impossible to answer from
+// email_log or the tier counts alone.
+app.get('/api/admin/newsletter-migration-status', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const WELCOME_SUBJECTS = [
+      'Welcome to the new Deeper Mindfulness experience',
+      "Welcome to Deeper Mindfulness — you're in",
+      'Welcome to the new app',
+    ];
+    const allLogs = db.getRecentEmailLog(5000, null)
+      .filter(r => WELCOME_SUBJECTS.includes(r.subject));
+
+    // Most recent send per email address — if someone got two attempts,
+    // only the latest matters for "did it actually stick."
+    const byEmail = new Map();
+    for (const row of allLogs) {
+      const existing = byEmail.get(row.email);
+      if (!existing || row.created_at > existing.created_at) byEmail.set(row.email, row);
+    }
+
+    const succeeded = [], pending = [], noLongerExists = [];
+    for (const [email, log] of byEmail) {
+      const user = db.getUserByEmail(email);
+      if (!user) { noLongerExists.push({ email, sent_at: log.created_at }); continue; }
+      const row = { email, name: user.name, sent_at: log.created_at, member_tier: user.member_tier, has_password: !!user.password_hash };
+      if (user.member_tier > 0 || user.password_hash) succeeded.push(row);
+      else pending.push(row);
+    }
+
+    res.json({
+      totalEmailed: byEmail.size,
+      succeededCount: succeeded.length,
+      pendingCount: pending.length,
+      noLongerExistsCount: noLongerExists.length,
+      pending,     // ← this is the retry list
+      succeeded,
+      noLongerExists,
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/email-log/check-status', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
@@ -5990,6 +6037,7 @@ app.get('/api/admin/users', auth.requireAuthApi(['admin']), (req, res) => {
 app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { level, tier, sendWelcomeEmail, trialDays } = req.body;
+    console.log(`[upgrade] ${req.params.id} — received tier=${tier} level=${level} trialDays=${trialDays}`);
     // Per Bot 15l — level='registered' (the dropdown's actual value for
     // "Explorer (free)") isn't 'member' and isn't a parseable integer, so
     // this used to fall through to parseInt(level)||1 — NaN||1 is 1, so
@@ -6002,13 +6050,15 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
       : parseInt(level) || 1;
 
     const user = db.getUser(req.params.id);
-    if (!user) return res.status(404).json({ error: 'User not found.' });
+    if (!user) { console.log(`[upgrade] ${req.params.id} — NOT FOUND`); return res.status(404).json({ error: 'User not found.' }); }
+    console.log(`[upgrade] ${req.params.id} (${user.email}) — before: member_tier=${user.member_tier} has_password=${!!user.password_hash}`);
 
     // Per Bot 19 — this exact condition (member_tier=0, no password) is
     // the same definition NEWSLETTER_AUDIENCE_CLAUSES already uses for
     // "newsletter_only" — a genuine subscriber becoming a real account
     // for the first time, not any other kind of activation.
     const wasNewsletterOnly = user.member_tier === 0 && !user.password_hash;
+    console.log(`[upgrade] ${req.params.id} — wasNewsletterOnly=${wasNewsletterOnly}, target memberTier=${memberTier}`);
 
     let tempPassword = null;
     if (!user.password_hash && !wasNewsletterOnly) {
@@ -6034,7 +6084,17 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
       }
     }
 
-    db.setMemberTier(req.params.id, memberTier, null, trialEndsAt, null, null);
+    try {
+      db.setMemberTier(req.params.id, memberTier, null, trialEndsAt, null, null);
+    } catch (dbErr) {
+      console.error(`[upgrade] ${req.params.id} — setMemberTier THREW:`, dbErr.message, dbErr.stack);
+      return res.status(500).json({ error: 'Could not save tier change: ' + dbErr.message });
+    }
+    const after = db.getUser(req.params.id);
+    console.log(`[upgrade] ${req.params.id} — after: member_tier=${after.member_tier} (expected ${memberTier})`);
+    if (after.member_tier !== memberTier) {
+      console.error(`[upgrade] ${req.params.id} — MISMATCH: tier did not actually change after setMemberTier ran`);
+    }
 
     let welcomeEmailSent = false;
     if (wasNewsletterOnly) {
