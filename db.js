@@ -786,6 +786,40 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_cron_log_job_time ON cron_log(job_name, started_at)`);
 
+  // ── Login activity log (Per Bot 20) ── One row per authenticated
+  // session issued — covers the main sign-in form plus every other place
+  // that hands someone a session cookie (register, the newsletter
+  // self-service invite claim, a facilitator-invite acceptance, and a
+  // dual-role switch), each tagged with which kind of event it was so
+  // the Reports hub can distinguish "someone signed in" from "someone's
+  // account was just created and they were logged in as part of that."
+  db.run(`CREATE TABLE IF NOT EXISTS login_log (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    role TEXT NOT NULL,
+    event_type TEXT NOT NULL DEFAULT 'login',
+    logged_in_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_login_log_time ON login_log(logged_in_at)`);
+
+  // ── Talk-to-Per session log (Per Bot 20) ── One row per live voice
+  // session with the WebSocket-based Talk-to-Per feature, so the Reports
+  // hub can show real usage hours rather than nothing at all. started_at
+  // is set when the socket opens; ended_at + duration_seconds are filled
+  // in once it closes (whether the person hung up, the tab closed, or the
+  // stale-session sweep in cron.js finalized it). A row with ended_at
+  // still NULL means either a session genuinely in progress right now, or
+  // one that crashed without a clean close — the sweep is what catches
+  // and finalizes those the same way it does for chat sessions.
+  db.run(`CREATE TABLE IF NOT EXISTS talk_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    started_at TEXT DEFAULT (datetime('now')),
+    ended_at TEXT,
+    duration_seconds INTEGER
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_talk_sessions_user_time ON talk_sessions(user_id, started_at)`);
+
   // ── Tomte image library (Per Bot 31) ──
   // Previously, a Tomte photo only ever existed as a side-effect of being
   // uploaded straight into a specific slot (a language+action pair, a
@@ -4830,6 +4864,41 @@ function pruneCronLog() {
   save();
 }
 
+// ── Login activity log (Per Bot 20) ──
+function logLogin(userId, role, eventType) {
+  getDbSync().run(
+    `INSERT INTO login_log (id, user_id, role, event_type) VALUES (?,?,?,?)`,
+    [crypto.randomUUID(), userId || null, role || 'unknown', eventType || 'login']
+  );
+  save();
+}
+function pruneLoginLog() {
+  getDbSync().run(`DELETE FROM login_log WHERE logged_in_at < datetime('now','-180 days')`);
+  save();
+}
+
+// ── Talk-to-Per session log (Per Bot 20) ──
+function startTalkSession(id, userId) {
+  getDbSync().run(`INSERT INTO talk_sessions (id, user_id) VALUES (?,?)`, [id, userId]);
+  save();
+}
+function endTalkSession(id) {
+  const row = queryOne(`SELECT started_at FROM talk_sessions WHERE id=?`, [id]);
+  if (!row) return;
+  getDbSync().run(
+    `UPDATE talk_sessions SET ended_at=datetime('now'),
+       duration_seconds=CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)
+     WHERE id=?`,
+    [id]
+  );
+  save();
+}
+// Talk session end/duration is set by endTalkSession() above, called from
+// finalizeChatSession() in server.js — which is itself invoked either by
+// the client's own leave-Talk beacon, or by the existing stale-chat-
+// session cron sweep for anyone who never sent one (crashed tab, killed
+// app). No separate staleness mechanism needed here.
+
 // ── 1:1 video/audio calls (Per Bot 12) ──
 function createCall(id, facilitatorId, clientId, callType) {
   getDbSync().run(
@@ -5328,6 +5397,60 @@ function reportCronActivity() {
   };
 }
 
+function reportLogins() {
+  const since = (days) => queryOne(
+    `SELECT COUNT(*) as n FROM login_log WHERE logged_in_at > datetime('now','-${days} days')`
+  ).n;
+  const uniqueUsers7d = queryOne(
+    `SELECT COUNT(DISTINCT user_id) as n FROM login_log WHERE logged_in_at > datetime('now','-7 days') AND user_id IS NOT NULL`
+  ).n;
+  const byDay = queryAll(
+    `SELECT substr(logged_in_at,1,10) as day, COUNT(*) as n
+     FROM login_log WHERE logged_in_at > datetime('now','-30 days')
+     GROUP BY day ORDER BY day DESC`
+  );
+  const byRole = queryAll(
+    `SELECT role, COUNT(*) as n FROM login_log WHERE logged_in_at > datetime('now','-30 days') GROUP BY role ORDER BY n DESC`
+  );
+  return {
+    tiles: [
+      { label: 'Logins today', value: since(1) },
+      { label: 'Last 7 days', value: since(7) },
+      { label: 'Last 30 days', value: since(30) },
+      { label: 'Unique people (7d)', value: uniqueUsers7d },
+    ],
+    table: {
+      columns: ['Day', 'Logins', 'By role (30d, for reference)'],
+      rows: byDay.map((r, i) => [r.day, r.n, i === 0 ? byRole.map(b => `${b.role}: ${b.n}`).join(', ') : '']),
+    },
+    note: 'Tracking started this deploy — history builds up from here, not retroactively. Covers sign-ins, registrations, and invite-link claims (anything that hands someone a session).',
+  };
+}
+
+function reportTalkUsage() {
+  const totalSessions = queryOne(`SELECT COUNT(*) as n FROM talk_sessions WHERE ended_at IS NOT NULL`).n;
+  const totalSeconds = queryOne(`SELECT COALESCE(SUM(duration_seconds),0) as n FROM talk_sessions WHERE ended_at IS NOT NULL`).n;
+  const sessions30d = queryOne(`SELECT COUNT(*) as n FROM talk_sessions WHERE started_at > datetime('now','-30 days')`).n;
+  const uniqueUsers = queryOne(`SELECT COUNT(DISTINCT user_id) as n FROM talk_sessions`).n;
+  const avgMinutes = totalSessions ? Math.round((totalSeconds / totalSessions) / 60 * 10) / 10 : 0;
+  const fmtHours = (secs) => `${(secs / 3600).toFixed(1)} hrs`;
+  const recent = queryAll(
+    `SELECT u.name as user_name, t.started_at, t.duration_seconds
+     FROM talk_sessions t LEFT JOIN users u ON u.id = t.user_id
+     WHERE t.ended_at IS NOT NULL ORDER BY t.started_at DESC LIMIT 20`
+  );
+  return {
+    tiles: [
+      { label: 'Total hours (all time)', value: fmtHours(totalSeconds) },
+      { label: 'Sessions (last 30 days)', value: sessions30d },
+      { label: 'Unique people', value: uniqueUsers },
+      { label: 'Avg session length', value: `${avgMinutes} min` },
+    ],
+    table: { columns: ['Person', 'Started', 'Duration'], rows: recent.map(r => [r.user_name || '(deleted user)', r.started_at, r.duration_seconds != null ? `${Math.round(r.duration_seconds/60*10)/10} min` : '—']) },
+    note: 'Tracking started this deploy — history builds up from here, not retroactively.',
+  };
+}
+
 // segments: array of keys from NEWSLETTER_AUDIENCE_CLAUSES, or the string/array
 // containing 'all' for everyone opted in regardless of tier or login status.
 function getNewsletterRecipients(segments) {
@@ -5804,7 +5927,9 @@ module.exports = {
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
-  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity,
+  logLogin, pruneLoginLog,
+  startTalkSession, endTalkSession,
+  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,

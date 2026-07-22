@@ -284,6 +284,7 @@
           <div class="card-title">Explorers<span class="card-count" id="userCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
+            <button class="btn sm disabled" id="userResetPwBtn" onclick="resetSelectedUserPassword()">Reset password</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
             <button class="btn sm disabled" id="userGetSubsBtn" onclick="getSelectedUserSubscriptions()">Get Subscriptions</button>
           </div>
@@ -754,6 +755,33 @@
       </div>
       <div class="modal-btns">
         <button class="btn sm" onclick="exportSubsResultCsv()">Export to CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Link Subscription Modal (Per Bot 20) — replaces a native browser
+       prompt() that was silently doing nothing if dismissed or clicked
+       past without noticing (it doesn't look like part of the app), with
+       no error and no feedback either way. This makes the choice and the
+       result impossible to miss, consistent with every other action in
+       the panel. -->
+  <div class="modal-overlay" id="linkSubModal">
+    <div class="modal">
+      <h3>Link subscription</h3>
+      <div class="modal-note" id="linkSubDescription" style="margin-bottom:14px"></div>
+      <div>
+        <label>Member tier</label>
+        <select id="linkSubTier" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none;width:100%">
+          <option value="1">Member 1</option>
+          <option value="2">Member 2</option>
+          <option value="3">Member 3</option>
+        </select>
+        <div class="modal-note" style="margin-top:6px">Stripe's own record doesn't tell us which tier this price maps to on a legacy subscription — pick the one that matches what they're actually paying for.</div>
+      </div>
+      <div class="modal-err" id="linkSubErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('linkSubModal')">Cancel</button>
+        <button class="modal-ok" id="linkSubBtn" onclick="confirmLinkSubscription()">Link</button>
       </div>
     </div>
   </div>
@@ -1633,6 +1661,11 @@
           <div class="col-level">
             <span class="status-badge status-active">Member</span>
             ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
+            ${u.stripe_subscription_id
+              ? `<span class="status-badge" style="margin-left:4px;background:rgba(120,170,255,0.12);color:rgba(150,190,255,0.85)" title="Linked to a live Stripe subscription">Stripe · ends ${u.member_expires_at ? escHtml(u.member_expires_at.slice(0,10)) : '—'}</span>`
+              : u.member_expires_at
+                ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually set — not linked to Stripe">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
+                : ''}
           </div>
           <div class="col-fac">${escHtml(u.facilitator_name)||'—'}</div>
         </div>`).join('');
@@ -1843,6 +1876,24 @@
       document.getElementById('udErr').textContent = 'Could not upload photo.';
     } finally { input.value = ''; }
   }
+  async function resetSelectedUserPassword() {
+    const ids = [...userSel.sel]; if (!ids.length) return;
+    const names = ids.map(id => _userData.find(x => x.id === id)?.name || id).join(', ');
+    showConfirm('Reset password' + (ids.length > 1 ? 's' : ''),
+      `Reset the password for ${names}? They'll be emailed a new temporary password and asked to choose their own the next time they sign in. The temporary password will also be shown here — useful for testing their account yourself first.`,
+      async () => {
+        const results = await Promise.all(ids.map(async id => {
+          const res  = await fetch(`/api/admin/users/${id}/reset-password`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+          const data = await res.json();
+          const name = _userData.find(x => x.id === id)?.name || id;
+          const email = _userData.find(x => x.id === id)?.email || '';
+          return `${name} (${email}): ${data.tempPassword || 'error — ' + (data.error || 'unknown')}`;
+        }));
+        appAlert('Password reset — temporary password below (also emailed):\n\n' + results.join('\n'));
+        userSel.clear(); loadUsers();
+      });
+  }
+
   async function resetSelectedMemberPassword() {
     const ids = [...memberSel.sel]; if (!ids.length) return;
     const names = ids.map(id => _memberData.find(x => x.id === id)?.name || id).join(', ');
@@ -1918,25 +1969,41 @@
   // (renewal, cancellation, the Savers Protocol) recognizes them
   // automatically from here on. Asks for the tier since Stripe's Price ID
   // on a legacy subscription doesn't map to anything this app knows.
-  async function linkSubsResultRow(i) {
+  let _linkSubRowIndex = null;
+  function linkSubsResultRow(i) {
+    _linkSubRowIndex = i;
     const r = _subsResultRows[i];
-    const tier = prompt(`Link ${r.name}'s ${r.interval} subscription — which tier? (1, 2, or 3)`, '1');
-    if (tier === null) return;
-    if (!['1','2','3'].includes(tier.trim())) { showConfirm('Invalid tier', 'Please enter 1, 2, or 3.', ()=>{}); return; }
+    document.getElementById('linkSubDescription').textContent = `Link ${r.name}'s ${r.interval}ly subscription (${r.amount} ${r.currency || ''})?`;
+    document.getElementById('linkSubTier').value = '1';
+    document.getElementById('linkSubErr').textContent = '';
+    const btn = document.getElementById('linkSubBtn');
+    btn.disabled = false; btn.textContent = 'Link';
+    openModal('linkSubModal');
+  }
+  async function confirmLinkSubscription() {
+    const r = _subsResultRows[_linkSubRowIndex];
+    const tier = document.getElementById('linkSubTier').value;
+    const btn = document.getElementById('linkSubBtn');
+    const err = document.getElementById('linkSubErr');
+    err.textContent = '';
+    btn.disabled = true; btn.textContent = 'Linking…';
     try {
       const res = await fetch('/api/admin/stripe/link-subscription', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: r.userId, stripeCustomerId: r.stripeCustomerId, stripeSubscriptionId: r.subscriptionId, tier: tier.trim() })
+        body: JSON.stringify({ userId: r.userId, stripeCustomerId: r.stripeCustomerId, stripeSubscriptionId: r.subscriptionId, tier })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not link.');
+      closeModal('linkSubModal');
       showConfirm('Linked', `${r.name} is now Member ${tier} with access through ${data.expiresAt ? data.expiresAt.slice(0,10) : 'no set end date'}. Future Stripe events for this subscription now apply to their account automatically.`, ()=>{});
       loadMembers();
       loadUsers();
     } catch(e) {
-      showConfirm('Could not link', e.message, ()=>{});
+      err.textContent = e.message;
+      btn.disabled = false; btn.textContent = 'Link';
     }
   }
+
   function exportSubsResultCsv() {
     const cols = ['name','email','status','interval','amount','currency','currentPeriodEnd','cancelAtPeriodEnd','stripeCustomerId','subscriptionId'];
     const header = ['Name','Email','Status','Interval','Amount','Currency','Period end','Cancel at end','Stripe customer ID','Subscription ID'];
@@ -1955,7 +2022,7 @@
   // ── REGISTERED EXPLORERS ──
   // ══════════════════════════════════════════
   let _userData = [];
-  const userSel = makeSelection(['userUpgradeBtn','userDelBtn','userGetSubsBtn'], null);
+  const userSel = makeSelection(['userUpgradeBtn','userResetPwBtn','userDelBtn','userGetSubsBtn'], null);
 
   async function loadUsers() {
     userSel.clear();

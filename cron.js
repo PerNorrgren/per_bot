@@ -190,11 +190,13 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
   });
 
   // ── Cron log prune — once daily, 05:00 UTC ──
-  // Keeps cron_log itself from growing forever. Deliberately not logged
-  // to cron_log — pruning the log about itself is a bit much.
+  // Keeps cron_log and login_log from growing forever. Deliberately not
+  // logged to cron_log — pruning the log about itself is a bit much.
   cron.schedule('0 5 * * *', () => {
     try { db.pruneCronLog(); }
     catch (e) { console.error('[cron] cron_log prune failed:', e.message); }
+    try { db.pruneLoginLog(); }
+    catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
   console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');

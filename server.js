@@ -1588,6 +1588,7 @@ app.post('/api/login', async (req, res) => {
   }
   const token = auth.createToken(user);
   res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+  try { db.logLogin(user.id, user.role, 'login'); } catch(e) { console.error('[login_log] failed:', e.message); }
   if (user.mustChangePassword) return res.json({ redirect: '/change-password' });
 
   // A fresh clone (Path A: one deployment per facilitator/org) sends its
@@ -1826,6 +1827,7 @@ app.post('/api/register', async (req, res) => {
     // Log them in immediately
     const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    try { db.logLogin(id, 'client', 'register'); } catch(e) { console.error('[login_log] failed:', e.message); }
     res.json({ redirect: '/client/' });
   } catch(e) {
     console.error('register error:', e);
@@ -1886,6 +1888,7 @@ app.post('/api/invite/:token/claim', async (req, res) => {
 
     const token = auth.createToken({ role: 'client', id: user.id, name, email: user.email });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    try { db.logLogin(user.id, 'client', 'invite_claim'); } catch(e) { console.error('[login_log] failed:', e.message); }
     res.json({ ok: true, redirect: '/client/' });
   } catch(e) {
     console.error('invite claim error:', e);
@@ -1901,6 +1904,7 @@ app.post('/api/switch-to-client', auth.requireAuthApi(['facilitator', 'admin']),
     if (!user) return res.status(404).json({ error: 'No user record found for this email.' });
     const token = auth.createToken({ role: 'client', id: user.id, name: user.name, email: user.email });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    try { db.logLogin(user.id, 'client', 'role_switch'); } catch(e) { console.error('[login_log] failed:', e.message); }
     res.json({ redirect: '/client/' });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -5190,6 +5194,13 @@ function getChatSession(sessionId, clientId) {
       lastActivityAt: Date.now(),
       finalized: false,
     });
+    // Per Bot 20 — session duration tracking for the Reports hub. This is
+    // deliberately independent of pref_keep_history below: that's about
+    // whether a clinical arc/summary gets built from the content, this is
+    // just "someone used Talk for N minutes" — an operational usage
+    // metric, not personal history, so it's recorded for every session
+    // regardless of that opt-in.
+    if (clientId) { try { db.startTalkSession(sessionId, clientId); } catch(e) { console.error('[talk_sessions] start failed:', e.message); } }
   }
   return chatSessions.get(sessionId);
 }
@@ -5417,6 +5428,7 @@ async function finalizeChatSession(sessionId) {
   const session = chatSessions.get(sessionId);
   if (!session || session.finalized) return;
   session.finalized = true; // mark first — avoids a double-fire race between the beacon and the cron sweep
+  try { db.endTalkSession(sessionId); } catch(e) { console.error('[talk_sessions] end failed:', e.message); }
 
   try {
     if (!session.clientId || !session.transcript.length) return;
@@ -5750,6 +5762,7 @@ app.get('/invite/:token', async (req, res) => {
       // Log them in as client
       const token = auth.createToken({ role: 'client', id: existing.id, name: existing.name, email: existing.email });
       res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+      try { db.logLogin(existing.id, 'client', 'facilitator_invite_accept'); } catch(e) { console.error('[login_log] failed:', e.message); }
       return res.redirect('/client/?notice=invitation_accepted');
     }
 
@@ -6030,8 +6043,10 @@ app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => 
 const REPORTS = {
   migrations:         { title: 'Newsletter Migration', category: 'Growth',  run: () => db.reportMigrations() },
   registrations:       { title: 'Registrations',        category: 'Growth',  run: () => db.reportRegistrations() },
+  logins:              { title: 'Logins',                category: 'Usage',   run: () => db.reportLogins() },
   membership:          { title: 'Membership',           category: 'Finance', run: () => db.reportMembership() },
   content_engagement:  { title: 'Content Engagement',    category: 'Usage',   run: () => db.reportContentEngagement() },
+  talk_usage:          { title: 'Talk to Per Usage',     category: 'Usage',   run: () => db.reportTalkUsage() },
   uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
   cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
 };
