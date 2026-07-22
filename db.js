@@ -768,6 +768,24 @@ async function getDb() {
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Cron job activity log (Per Bot 20) ── One row per scheduled job
+  // run, for the Reports hub's cron activity report. detail is a short
+  // free-text summary (e.g. "3 sent, 1 failed") — enough to spot a job
+  // silently doing nothing without needing to dig through Railway logs.
+  // Kept lean deliberately: this is a health/activity log, not an audit
+  // trail, so old rows are pruned (see pruneCronLog) rather than kept
+  // forever.
+  db.run(`CREATE TABLE IF NOT EXISTS cron_log (
+    id TEXT PRIMARY KEY,
+    job_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ok',
+    detail TEXT,
+    error TEXT,
+    started_at TEXT DEFAULT (datetime('now')),
+    duration_ms INTEGER
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_cron_log_job_time ON cron_log(job_name, started_at)`);
+
   // ── Tomte image library (Per Bot 31) ──
   // Previously, a Tomte photo only ever existed as a side-effect of being
   // uploaded straight into a specific slot (a language+action pair, a
@@ -4774,6 +4792,44 @@ function clearEmailLogForNewsletter(newsletterId) {
   getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
 }
 
+// ── Cron job activity log (Per Bot 20) ──
+// logCronRun: called once per scheduled job, after it finishes (success
+// or failure) — deliberately a single insert rather than pending/update
+// like email_log, since a cron job either completes or throws, there's
+// no meaningful in-between state worth showing an admin.
+function logCronRun(jobName, status, detail, error, durationMs) {
+  getDbSync().run(
+    `INSERT INTO cron_log (id, job_name, status, detail, error, duration_ms) VALUES (?,?,?,?,?,?)`,
+    [crypto.randomUUID(), jobName, status || 'ok', detail || null, error || null, durationMs ?? null]
+  );
+  save();
+}
+function getRecentCronRuns(limit) {
+  return queryAll('SELECT * FROM cron_log ORDER BY started_at DESC LIMIT ?', [limit || 200]);
+}
+// One row per distinct job: its most recent run, plus a rolling 7-day
+// success/failure tally — enough to spot "this job has been silently
+// failing every day this week" at a glance, without opening the full log.
+function getCronJobSummary() {
+  const jobs = queryAll(`SELECT DISTINCT job_name FROM cron_log`);
+  return jobs.map(({ job_name }) => {
+    const last = queryOne(`SELECT * FROM cron_log WHERE job_name=? ORDER BY started_at DESC LIMIT 1`, [job_name]);
+    const counts = queryAll(
+      `SELECT status, COUNT(*) as n FROM cron_log WHERE job_name=? AND started_at > datetime('now','-7 days') GROUP BY status`,
+      [job_name]
+    );
+    const last7Days = { ok: 0, failed: 0 };
+    counts.forEach(c => { last7Days[c.status] = c.n; });
+    return { jobName: job_name, last, last7Days };
+  }).sort((a, b) => (b.last?.started_at || '').localeCompare(a.last?.started_at || ''));
+}
+// Prune old rows so this stays a lightweight activity log, not an
+// ever-growing table — 90 days is plenty for spotting patterns.
+function pruneCronLog() {
+  getDbSync().run(`DELETE FROM cron_log WHERE started_at < datetime('now','-90 days')`);
+  save();
+}
+
 // ── 1:1 video/audio calls (Per Bot 12) ──
 function createCall(id, facilitatorId, clientId, callType) {
   getDbSync().run(
@@ -5131,6 +5187,145 @@ function getUserTierCounts() {
     out[key] = queryOne(`SELECT COUNT(*) as n FROM users WHERE ${clause}`).n;
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Reports hub (Per Bot 20) — one function per report, each returning the
+// same shape: { tiles: [{label,value}], table: {columns,rows}|null,
+// note: string|null }. server.js's REPORTS registry wires these to
+// GET /api/admin/reports/:id; see reports.html for how they're rendered.
+// Kept in db.js alongside the queries they're built from, same pattern
+// as getUserTierCounts above.
+// ═══════════════════════════════════════════════════════════════════
+
+function reportMigrations() {
+  const tierCounts = getUserTierCounts();
+  const sendStats = queryAll(
+    `SELECT status, COUNT(*) as n FROM email_log WHERE created_at > datetime('now','-30 days') GROUP BY status`
+  );
+  const sent = sendStats.find(r => r.status === 'sent')?.n || 0;
+  const failed = sendStats.find(r => r.status === 'failed')?.n || 0;
+  return {
+    tiles: [
+      { label: 'Newsletter only', value: tierCounts.newsletter_only },
+      { label: 'Explorer', value: tierCounts.explorer },
+      { label: 'Member 1', value: tierCounts.member1 },
+      { label: 'Member 2', value: tierCounts.member2 },
+      { label: 'Member 3', value: tierCounts.member3 },
+      { label: 'Emails sent (30d)', value: sent },
+      { label: 'Emails failed (30d)', value: failed },
+    ],
+    table: null,
+    note: null,
+  };
+}
+
+function reportRegistrations() {
+  const since = (days) => queryOne(
+    `SELECT COUNT(*) as n FROM users WHERE registered_at > datetime('now','-${days} days')`
+  ).n;
+  const byDay = queryAll(
+    `SELECT substr(registered_at,1,10) as day, COUNT(*) as n
+     FROM users WHERE registered_at > datetime('now','-30 days')
+     GROUP BY day ORDER BY day DESC`
+  );
+  return {
+    tiles: [
+      { label: 'Last 7 days', value: since(7) },
+      { label: 'Last 30 days', value: since(30) },
+      { label: 'Last 90 days', value: since(90) },
+      { label: 'All time', value: queryOne('SELECT COUNT(*) as n FROM users').n },
+    ],
+    table: { columns: ['Day', 'New registrations'], rows: byDay.map(r => [r.day, r.n]) },
+    note: null,
+  };
+}
+
+function reportMembership() {
+  const tierCounts = getUserTierCounts();
+  const paying = queryOne(`SELECT COUNT(*) as n FROM users WHERE member_tier >= 1`).n;
+  const withStripe = queryOne(`SELECT COUNT(*) as n FROM users WHERE stripe_subscription_id IS NOT NULL`).n;
+  const onTrial = queryOne(`SELECT COUNT(*) as n FROM users WHERE member_tier >= 1 AND trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`).n;
+  const expiringSoon = queryOne(`SELECT COUNT(*) as n FROM users WHERE member_tier >= 1 AND member_expires_at IS NOT NULL AND member_expires_at BETWEEN datetime('now') AND datetime('now','+30 days')`).n;
+  return {
+    tiles: [
+      { label: 'Paying members', value: paying },
+      { label: 'With active Stripe subscription', value: withStripe },
+      { label: 'Currently on trial', value: onTrial },
+      { label: 'Expiring within 30 days', value: expiringSoon },
+      { label: 'Member 1', value: tierCounts.member1 },
+      { label: 'Member 2', value: tierCounts.member2 },
+      { label: 'Member 3', value: tierCounts.member3 },
+    ],
+    table: null,
+    note: 'Real payment amounts and revenue live in Stripe, not mirrored locally — these are account/tier counts, not a revenue ledger.',
+  };
+}
+
+function reportContentEngagement() {
+  const totalOpens = queryOne(`SELECT COUNT(*) as n FROM lesson_file_opens`).n;
+  const opens30d = queryOne(`SELECT COUNT(*) as n FROM lesson_file_opens WHERE opened_at > datetime('now','-30 days')`).n;
+  const uniqueUsers = queryOne(`SELECT COUNT(DISTINCT user_id) as n FROM lesson_file_opens`).n;
+  const uniqueLessonsStarted = queryOne(`SELECT COUNT(DISTINCT lesson_id) as n FROM lesson_file_opens`).n;
+  const topLessons = queryAll(
+    `SELECT l.title as lesson_title, COUNT(*) as opens
+     FROM lesson_file_opens o LEFT JOIN lessons l ON l.id = o.lesson_id
+     GROUP BY o.lesson_id ORDER BY opens DESC LIMIT 15`
+  );
+  return {
+    tiles: [
+      { label: 'Total opens (all time)', value: totalOpens },
+      { label: 'Opens (last 30 days)', value: opens30d },
+      { label: 'Unique users engaging', value: uniqueUsers },
+      { label: 'Distinct lessons ever opened', value: uniqueLessonsStarted },
+    ],
+    table: { columns: ['Lesson', 'Opens'], rows: topLessons.map(r => [r.lesson_title || '(deleted lesson)', r.opens]) },
+    note: 'Covers lessons and tracks opened via the library. Does not cover the live Talk-to-Per voice feature — that isn\'t instrumented yet.',
+  };
+}
+
+function reportUploads() {
+  const totalFiles = queryOne(`SELECT COUNT(*) as n FROM library_files WHERE archived=0`).n;
+  const totalSize = queryOne(`SELECT COALESCE(SUM(file_size),0) as n FROM library_files WHERE archived=0`).n;
+  const last30d = queryOne(`SELECT COUNT(*) as n FROM library_files WHERE created_at > datetime('now','-30 days')`).n;
+  const recent = queryAll(
+    `SELECT title, file_type, file_size, created_at FROM library_files
+     WHERE archived=0 ORDER BY created_at DESC LIMIT 20`
+  );
+  const fmtSize = (bytes) => bytes > 1e9 ? `${(bytes/1e9).toFixed(1)} GB` : bytes > 1e6 ? `${(bytes/1e6).toFixed(1)} MB` : `${(bytes/1e3).toFixed(0)} KB`;
+  return {
+    tiles: [
+      { label: 'Total files', value: totalFiles },
+      { label: 'Total storage', value: fmtSize(totalSize) },
+      { label: 'Uploaded (last 30 days)', value: last30d },
+    ],
+    table: { columns: ['Title', 'Type', 'Size', 'Uploaded'], rows: recent.map(r => [r.title, r.file_type, fmtSize(r.file_size || 0), (r.created_at||'').slice(0,10)]) },
+    note: null,
+  };
+}
+
+function reportCronActivity() {
+  const summary = getCronJobSummary();
+  const failuresLast7d = summary.reduce((sum, j) => sum + (j.last7Days.failed || 0), 0);
+  const runsToday = queryOne(`SELECT COUNT(*) as n FROM cron_log WHERE started_at > datetime('now','-1 day')`).n;
+  return {
+    tiles: [
+      { label: 'Distinct jobs tracked', value: summary.length },
+      { label: 'Runs in last 24h', value: runsToday },
+      { label: 'Failures in last 7 days', value: failuresLast7d },
+    ],
+    table: {
+      columns: ['Job', 'Last run', 'Last status', 'OK (7d)', 'Failed (7d)'],
+      rows: summary.map(j => [
+        j.jobName,
+        j.last ? j.last.started_at : '—',
+        j.last ? j.last.status : '—',
+        j.last7Days.ok || 0,
+        j.last7Days.failed || 0,
+      ]),
+    },
+    note: 'Only jobs that have run at least once since this tracking was added will appear here — history starts from deploy, not retroactively.',
+  };
 }
 
 // segments: array of keys from NEWSLETTER_AUDIENCE_CLAUSES, or the string/array
@@ -5608,6 +5803,8 @@ function getUserConsentHistory(userId) {
 module.exports = {
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
+  logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
+  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,

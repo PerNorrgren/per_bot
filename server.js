@@ -6021,6 +6021,37 @@ app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => 
   res.json(db.getUserTierCounts());
 });
 
+// ── Reports hub (Per Bot 20) ──
+// A registry, not a bespoke route per report — adding a new report later
+// is one db.js function + one entry here, never a new endpoint or a new
+// page. Each run() returns { tiles, table, note } (see the db.js report*
+// functions for the exact shape); the routes below just look the id up
+// and pass the result straight through.
+const REPORTS = {
+  migrations:         { title: 'Newsletter Migration', category: 'Growth',  run: () => db.reportMigrations() },
+  registrations:       { title: 'Registrations',        category: 'Growth',  run: () => db.reportRegistrations() },
+  membership:          { title: 'Membership',           category: 'Finance', run: () => db.reportMembership() },
+  content_engagement:  { title: 'Content Engagement',    category: 'Usage',   run: () => db.reportContentEngagement() },
+  uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
+  cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
+};
+
+app.get('/api/admin/reports', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(Object.entries(REPORTS).map(([id, r]) => ({ id, title: r.title, category: r.category })));
+});
+
+app.get('/api/admin/reports/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  const report = REPORTS[req.params.id];
+  if (!report) return res.status(404).json({ error: 'Unknown report.' });
+  try {
+    const data = report.run();
+    res.json({ id: req.params.id, title: report.title, category: report.category, ...data });
+  } catch (e) {
+    console.error('[reports]', req.params.id, 'failed:', e.message, e.stack);
+    res.status(500).json({ error: 'Could not generate this report: ' + e.message });
+  }
+});
+
 // ── One-off (Per Bot 20) — reclassify existing member_tier=0/no-password
 // rows down to -1 (raw, never invited), so the fixed /upgrade route's
 // success-gated tier bump has a clean starting point to move them back up
@@ -8702,6 +8733,12 @@ app.get('/admin/talk',  auth.requireAuth(['admin']), (req, res) => res.sendFile(
 app.get('/admin/talk/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'talk.html')));
 app.get('/admin/sales',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
 app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
+
+// Per Bot 20 — Reports hub: a single extensible framework (REPORTS
+// registry below) rather than a bespoke page per report, so adding a new
+// report later is a data function + one registry entry, not a new page.
+app.get('/admin/reports',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
+app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 
 // ── Legal document public pages ──
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));

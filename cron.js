@@ -11,25 +11,61 @@
 //
 // Each job is wrapped in try/catch individually — one job failing (e.g. Brevo
 // having a bad moment) must never take down the others or crash the process.
+//
+// Per Bot 20 — every run (success or failure) is also recorded to
+// db.logCronRun(), feeding the Reports hub's cron activity report. This is
+// deliberately a thin addition alongside the existing console.log/error
+// lines, not a replacement for them — Railway's own logs stay the
+// first place to look for a live problem; cron_log is for "has this job
+// quietly been failing all week" questions asked later, from the admin
+// panel, without needing log access at all.
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailMembershipHonouredEnded }) {
+
+  // Records a run to cron_log without ever letting a logging failure
+  // affect the job itself — this is a health log, not core functionality.
+  function record(jobName, status, detail, error, startedAt) {
+    try { db.logCronRun(jobName, status, detail, error, Date.now() - startedAt); }
+    catch (e) { console.error('[cron] failed to record cron_log for', jobName, ':', e.message); }
+  }
+
   // ── Scheduled MOTD send — hourly, on the hour ──
-  // Each run checks which users' motd_days/motd_hour match right now and
-  // sends only to them. See sendScheduledMotd() in server.js for the full
-  // per-user delivery + queue-advance logic.
   cron.schedule('0 * * * *', async () => {
+    const t0 = Date.now();
     try {
       const result = await sendScheduledMotd();
       console.log('[cron] scheduled MOTD:', JSON.stringify(result));
+      record('scheduled_motd', 'ok', JSON.stringify(result), null, t0);
     } catch (e) {
       console.error('[cron] scheduled MOTD send failed:', e.message);
+      record('scheduled_motd', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Expired trial/membership sweep — 06:50 UTC ──
+  cron.schedule('50 6 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const lapsed = db.sweepExpiredMemberships();
+      const membershipEnded = lapsed.filter(u => u._justLapsed === 'membership');
+      for (const user of membershipEnded) {
+        try { await emailMembershipHonouredEnded(user); }
+        catch (e) { console.error('[cron] membership-ended email failed for', user.email, ':', e.message); }
+      }
+      const detail = `${lapsed.length} downgraded (${membershipEnded.length} membership, ${lapsed.length - membershipEnded.length} trial)`;
+      console.log(`[cron] expired trial/membership sweep: ${detail}`);
+      record('expired_trial_membership_sweep', 'ok', detail, null, t0);
+    } catch (e) {
+      console.error('[cron] expired trial/membership sweep failed:', e.message);
+      record('expired_trial_membership_sweep', 'failed', null, e.message, t0);
     }
   });
 
   // ── Trial email sequence — 07:10 UTC ──
   cron.schedule('10 7 * * *', async () => {
+    const t0 = Date.now();
     try {
       const day3 = db.getTrialEmailCandidates(3, 'trial_email_day3_sent');
       for (const user of day3) {
@@ -55,97 +91,113 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
         db.markTrialEmailSent(user.id, 'trial_email_day14_sent');
       }
 
-      console.log(`[cron] trial email sequence: day3=${day3.length} day7=${day7.length} day10=${day10.length} day14=${day14.length}`);
+      const detail = `day3=${day3.length} day7=${day7.length} day10=${day10.length} day14=${day14.length}`;
+      console.log(`[cron] trial email sequence: ${detail}`);
+      record('trial_email_sequence', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] trial email sequence failed:', e.message);
+      record('trial_email_sequence', 'failed', null, e.message, t0);
     }
   });
 
   // ── Inactivity reminders — 07:20 UTC ──
-  // Threshold and subject are config-driven (app_config.reminder_days /
-  // reminder_subject, editable in the admin comms panel) — see
-  // sendInactivityReminders() in server.js.
   cron.schedule('20 7 * * *', async () => {
+    const t0 = Date.now();
     try {
       const result = await sendInactivityReminders();
-      console.log(`[cron] inactivity reminders: sent=${result.sent} threshold=${result.thresholdDays}d`);
+      const detail = `sent=${result.sent} threshold=${result.thresholdDays}d`;
+      console.log(`[cron] inactivity reminders: ${detail}`);
+      record('inactivity_reminders', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] inactivity reminders failed:', e.message);
+      record('inactivity_reminders', 'failed', null, e.message, t0);
     }
   });
 
   // ── Renewal reminders — 07:30 UTC ──
-  // Genuinely new (Per Bot 6) — checks member_expires_at against
-  // app_config.renewal_reminder_days and notifies anyone whose subscription
-  // renews in exactly that many days. See sendRenewalReminders() and
-  // getUpcomingRenewals() for why this only matches active subscriptions
-  // (lifetime members have no expiry to remind about).
   cron.schedule('30 7 * * *', async () => {
+    const t0 = Date.now();
     try {
       const result = await sendRenewalReminders();
-      console.log(`[cron] renewal reminders: matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms} threshold=${result.thresholdDays}d`);
+      const detail = `matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms} threshold=${result.thresholdDays}d`;
+      console.log(`[cron] renewal reminders: ${detail}`);
+      record('renewal_reminders', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] renewal reminders failed:', e.message);
+      record('renewal_reminders', 'failed', null, e.message, t0);
     }
   });
 
   // ── Birthday messages — 07:40 UTC ──
-  // Month/day match only (no year stored anywhere) — providing a DOB at
-  // all is the consent to send this, so there's no preference flag to
-  // check here unlike every other job above. See sendBirthdayMessages()
-  // and getUsersWithBirthdayToday() in server.js/db.js.
   cron.schedule('40 7 * * *', async () => {
+    const t0 = Date.now();
     try {
       const result = await sendBirthdayMessages();
-      console.log(`[cron] birthday messages: matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms}`);
+      const detail = `matched=${result.matched} emails=${result.sentEmail} sms=${result.sentSms}`;
+      console.log(`[cron] birthday messages: ${detail}`);
+      record('birthday_messages', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] birthday messages failed:', e.message);
+      record('birthday_messages', 'failed', null, e.message, t0);
     }
   });
 
   // ── Campaign email steps — 07:50 UTC ──
-  // The one channel campaigns need a cron for — social steps are
-  // scheduled directly with BulkPublish at go-live time instead (see
-  // /api/admin/campaigns/:id/activate in server.js) and never reach here.
   cron.schedule('50 7 * * *', async () => {
+    const t0 = Date.now();
     try {
       const count = await sendDueCampaignEmailSteps();
-      console.log(`[cron] campaign email steps: ${count} step(s) due`);
+      const detail = `${count} step(s) due`;
+      console.log(`[cron] campaign email steps: ${detail}`);
+      record('campaign_email_steps', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] campaign email steps failed:', e.message);
+      record('campaign_email_steps', 'failed', null, e.message, t0);
     }
   });
 
   // ── Savers Protocol — 08:00 UTC ──
-  // Mid/final touchpoints and the actual grace-period downgrade. Day0/
-  // grace0 fire immediately from the Stripe webhook handlers themselves,
-  // not from here — those are event-triggered, not calendar-triggered.
   cron.schedule('0 8 * * *', async () => {
+    const t0 = Date.now();
     try {
       const emailCount = await sendDueSaversEmails();
       const downgradeCount = await processDueSaversDowngrades();
-      console.log(`[cron] savers protocol: ${emailCount} email(s) sent, ${downgradeCount} downgrade(s)`);
+      const detail = `${emailCount} email(s) sent, ${downgradeCount} downgrade(s)`;
+      console.log(`[cron] savers protocol: ${detail}`);
+      record('savers_protocol', 'ok', detail, null, t0);
     } catch (e) {
       console.error('[cron] savers protocol failed:', e.message);
+      record('savers_protocol', 'failed', null, e.message, t0);
     }
   });
 
   // ── Stale chat session sweep — every 10 minutes ──
-  // Safety net for Keep History (Per Bot 6) — catches any automated Talk
-  // conversation that went quiet without the client's own beacon firing
-  // (crashed tab, killed app), so an opted-in person's arc still gets
-  // built from it. Runs often since it's cheap when there's nothing stale
-  // — most sweeps will find zero sessions to finalize.
+  // Only logged to cron_log when it actually did something, same as the
+  // console.log below — otherwise 10-minute runs would flood the report
+  // with 144 identical no-op rows a day.
   cron.schedule('*/10 * * * *', () => {
+    const t0 = Date.now();
     try {
       const result = sweepStaleChatSessions();
-      if (result.swept > 0) console.log(`[cron] chat session sweep: finalized ${result.swept} stale session(s)`);
+      if (result.swept > 0) {
+        console.log(`[cron] chat session sweep: finalized ${result.swept} stale session(s)`);
+        record('stale_chat_sweep', 'ok', `finalized ${result.swept} session(s)`, null, t0);
+      }
     } catch (e) {
       console.error('[cron] chat session sweep failed:', e.message);
+      record('stale_chat_sweep', 'failed', null, e.message, t0);
     }
   });
 
-  console.log('[cron] scheduled: MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min)');
+  // ── Cron log prune — once daily, 05:00 UTC ──
+  // Keeps cron_log itself from growing forever. Deliberately not logged
+  // to cron_log — pruning the log about itself is a bit much.
+  cron.schedule('0 5 * * *', () => {
+    try { db.pruneCronLog(); }
+    catch (e) { console.error('[cron] cron_log prune failed:', e.message); }
+  });
+
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };

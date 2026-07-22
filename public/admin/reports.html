@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reports — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
+
+    .page { max-width:1040px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:28px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    /* Report picker — grouped by category, button-per-report rather than
+       a sidebar, consistent with how the rest of the admin panel favours
+       flat button rows over nested navigation. */
+    .report-group { margin-bottom:16px; }
+    .report-group:last-child { margin-bottom:0; }
+    .report-group-label { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.25); margin-bottom:8px; }
+    .report-btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+    .report-btn { padding:9px 16px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.6); font-size:13px; font-family:'Georgia',serif; cursor:pointer; transition:all 0.15s; }
+    .report-btn:hover { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.85); }
+    .report-btn.active { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.85); }
+
+    .tiles { display:flex; flex-wrap:wrap; gap:14px; padding:20px; }
+    .tile { flex:1 1 150px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:16px 18px; }
+    .tile-value { font-size:26px; color:rgba(180,230,200,0.9); line-height:1.1; }
+    .tile-label { font-size:11px; color:rgba(255,255,255,0.4); margin-top:6px; letter-spacing:0.02em; }
+
+    .table { width:100%; max-height:420px; overflow-y:auto; }
+    .report-table-row { display:flex; align-items:center; padding:11px 20px; border-bottom:1px solid rgba(255,255,255,0.04); gap:14px; font-size:13px; }
+    .report-table-row:last-child { border-bottom:none; }
+    .report-table-row > div { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:rgba(255,255,255,0.6); }
+    .report-table-hdr { display:flex; align-items:center; padding:8px 20px; gap:14px; border-bottom:1px solid rgba(255,255,255,0.06); background:#141a17; position:sticky; top:0; }
+    .report-table-hdr > div { flex:1; font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); }
+
+    .report-note { padding:14px 20px; font-size:12px; color:rgba(255,255,255,0.35); font-style:italic; border-top:1px solid rgba(255,255,255,0.05); }
+    .empty { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .loading { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.2); font-style:italic; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div style="position:relative">
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Reports</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
+      <a href="/admin/content" class="btn">Content</a>
+      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+      <a href="/admin/comms" class="btn">Communications</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+      <a href="/admin/reports" class="btn primary">Reports</a>
+      <a href="/setup" class="btn">Settings</a>
+    </div>
+  </div>
+
+  <div class="page">
+
+    <div>
+      <div class="section-label">Reports</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Choose a report</div>
+        </div>
+        <div style="padding:18px 20px" id="reportPicker">
+          <div class="loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="reportDetailSection" style="display:none">
+      <div class="section-label" id="reportDetailLabel"></div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title" id="reportDetailTitle"></div>
+          <button class="btn sm" onclick="loadReport(_currentReportId)">Refresh</button>
+        </div>
+        <div class="tiles" id="reportTiles"></div>
+        <div class="table" id="reportTable"></div>
+        <div class="report-note" id="reportNote" style="display:none"></div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  async function logout()  { await fetch('/api/logout',{method:'POST'}); location.href='/login'; }
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
+
+  async function loadPeopleNavBadge() {
+    try {
+      const res = await fetch('/api/admin/notification-counts');
+      const data = await res.json();
+      const total = (data.pendingFacilitatorRequests||0) + (data.unseenEnquiries||0);
+      const badge = document.getElementById('peopleNavBadge');
+      if (!badge) return;
+      if (total > 0) { badge.textContent = total > 9 ? '9+' : total; badge.style.display = 'inline-flex'; }
+      else { badge.style.display = 'none'; }
+    } catch(e) { /* quiet -- decorative */ }
+  }
+  loadPeopleNavBadge();
+
+  // ── Reports hub ──
+  // Per Bot 20 — a genuine framework: this page has no report-specific
+  // logic at all. It fetches the list of registered reports from the
+  // server, renders one button per report grouped by category, and
+  // renders whatever shape { tiles, table, note } comes back for
+  // whichever one is selected. Adding a new report later never touches
+  // this file — it's a new function in db.js plus one line in server.js's
+  // REPORTS registry.
+  let _reports = [];
+  let _currentReportId = null;
+
+  async function loadReportList() {
+    try {
+      const res = await fetch('/api/admin/reports');
+      _reports = await res.json();
+      renderReportPicker();
+      if (_reports.length) loadReport(_reports[0].id);
+    } catch(e) {
+      document.getElementById('reportPicker').innerHTML = '<div class="empty">Could not load the report list.</div>';
+    }
+  }
+
+  function renderReportPicker() {
+    const el = document.getElementById('reportPicker');
+    if (!_reports.length) { el.innerHTML = '<div class="empty">No reports registered yet.</div>'; return; }
+    const byCategory = {};
+    _reports.forEach(r => { (byCategory[r.category] = byCategory[r.category] || []).push(r); });
+    el.innerHTML = Object.entries(byCategory).map(([category, reports]) => `
+      <div class="report-group">
+        <div class="report-group-label">${escHtml(category)}</div>
+        <div class="report-btn-row">
+          ${reports.map(r => `<button class="report-btn" id="reportBtn-${r.id}" onclick="loadReport('${r.id}')">${escHtml(r.title)}</button>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function loadReport(id) {
+    _currentReportId = id;
+    document.querySelectorAll('.report-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(`reportBtn-${id}`);
+    if (btn) btn.classList.add('active');
+
+    const section = document.getElementById('reportDetailSection');
+    section.style.display = '';
+    document.getElementById('reportTiles').innerHTML = '<div class="loading">Loading…</div>';
+    document.getElementById('reportTable').innerHTML = '';
+    document.getElementById('reportNote').style.display = 'none';
+
+    try {
+      const res = await fetch(`/api/admin/reports/${id}`);
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        document.getElementById('reportTiles').innerHTML = `<div class="empty">${escHtml(data.error || 'Could not load this report.')}</div>`;
+        return;
+      }
+      document.getElementById('reportDetailLabel').textContent = data.category || '';
+      document.getElementById('reportDetailTitle').textContent = data.title || '';
+
+      document.getElementById('reportTiles').innerHTML = (data.tiles || []).map(t => `
+        <div class="tile">
+          <div class="tile-value">${escHtml(t.value)}</div>
+          <div class="tile-label">${escHtml(t.label)}</div>
+        </div>
+      `).join('') || '<div class="empty">No summary figures for this report.</div>';
+
+      const tableEl = document.getElementById('reportTable');
+      if (data.table && data.table.rows && data.table.rows.length) {
+        tableEl.innerHTML =
+          `<div class="report-table-hdr">${data.table.columns.map(c => `<div>${escHtml(c)}</div>`).join('')}</div>` +
+          data.table.rows.map(row => `<div class="report-table-row">${row.map(cell => `<div>${escHtml(cell)}</div>`).join('')}</div>`).join('');
+      } else if (data.table) {
+        tableEl.innerHTML = '<div class="empty">No data yet for this report.</div>';
+      } else {
+        tableEl.innerHTML = '';
+      }
+
+      if (data.note) {
+        document.getElementById('reportNote').textContent = data.note;
+        document.getElementById('reportNote').style.display = '';
+      }
+    } catch(e) {
+      document.getElementById('reportTiles').innerHTML = '<div class="empty">Could not load this report — try Refresh.</div>';
+    }
+  }
+
+  loadReportList();
+
+</script>
+</body>
+</html>
