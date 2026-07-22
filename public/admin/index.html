@@ -59,6 +59,9 @@
     .col-status { flex:0.6; }
     .col-fac    { flex:1; font-size:12px; color:rgba(255,255,255,0.3); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .col-stripe { flex:0.7; font-size:12px; color:rgba(150,190,255,0.75); }
+    .mode-toggle-btn { padding:9px 16px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.6); font-size:13px; font-family:'Georgia',serif; cursor:pointer; }
+    .mode-toggle-btn:hover { background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.85); }
+    .mode-toggle-btn.active { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.85); }
     .col-created { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
     .col-actions { flex:1.1; display:flex; gap:6px; align-items:center; justify-content:flex-end; }
     .col-actions { display:flex; gap:6px; flex-shrink:0; }
@@ -595,53 +598,123 @@
        separate Add Member / Add Explorer modals (below, now removed) —
        one form, one endpoint, level chosen the same way Bulk Import
        already does it, including Newsletter only (no login at all). -->
+  <!-- Add User Modal (Per Bot 20) — unified single-person AND bulk-upload
+       entry point, one facility rather than two separate modals living on
+       different buttons. Bulk import's own fields/logic (further down)
+       are untouched from before — this only merges the outer containers
+       and adds the mode toggle at the top. -->
   <div class="modal-overlay" id="addUserModal">
     <div class="modal" id="addUserForm">
       <h3>Add user</h3>
-      <div><label>Full name</label><input type="text" id="addUserName" placeholder="e.g. Anna Lindqvist"/></div>
-      <div><label>Email address</label><input type="email" id="addUserEmail" placeholder="anna@example.com"/></div>
-
-      <div style="margin-top:14px">
-        <label>Level</label>
-        <select id="addUserTier" onchange="toggleAddUserFields()">
-          <option value="newsletter_only">Newsletter only (no login)</option>
-          <option value="0">Explorer (free)</option>
-          <option value="1">Member 1</option>
-          <option value="2">Member 2</option>
-          <option value="3">Member 3</option>
-        </select>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="mode-toggle-btn active" id="addUserModeBtnSingle" onclick="switchAddUserMode('single')">Add one person</button>
+        <button class="mode-toggle-btn" id="addUserModeBtnBulk" onclick="switchAddUserMode('bulk')">Bulk upload</button>
       </div>
 
-      <div class="modal-note" style="margin-top:10px" id="addUserNewsletterOnlyNote">A passive contact — receives the newsletter only, no password, no way to log in yet. Shows up in Newsletter Contacts, and moves to Explorer automatically the moment you invite them in from there.</div>
+      <div id="addUserSingleSection">
+        <div><label>Full name</label><input type="text" id="addUserName" placeholder="e.g. Anna Lindqvist"/></div>
+        <div><label>Email address</label><input type="email" id="addUserEmail" placeholder="anna@example.com"/></div>
 
-      <div style="margin-top:14px" id="addUserTrialField">
-        <label>Free weeks before it expires</label>
-        <input type="number" id="addUserTrialWeeks" value="2" min="0" step="1"/>
-        <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry. Otherwise reverts to Explorer if it lapses with no active subscription.</div>
+        <div style="margin-top:14px">
+          <label>Level</label>
+          <select id="addUserTier" onchange="toggleAddUserFields()">
+            <option value="newsletter_only">Newsletter only (no login)</option>
+            <option value="0">Explorer (free)</option>
+            <option value="1">Member 1</option>
+            <option value="2">Member 2</option>
+            <option value="3">Member 3</option>
+          </select>
+        </div>
+
+        <div class="modal-note" style="margin-top:10px" id="addUserNewsletterOnlyNote">A passive contact — receives the newsletter only, no password, no way to log in yet. Shows up in Newsletter Contacts, and moves to Explorer automatically the moment you invite them in from there.</div>
+
+        <div style="margin-top:14px" id="addUserTrialField">
+          <label>Free weeks before it expires</label>
+          <input type="number" id="addUserTrialWeeks" value="2" min="0" step="1"/>
+          <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry. Otherwise reverts to Explorer if it lapses with no active subscription.</div>
+        </div>
+
+        <div style="margin-top:14px" id="addUserOfferField">
+          <label>Offer (optional)</label>
+          <select id="addUserOffer" onchange="toggleAddUserOfferOverride()"><option value="">No offer — use the weeks above</option></select>
+          <div class="modal-note" style="margin-top:6px" id="addUserOfferNote">Tags this person to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
+        </div>
+
+        <div style="margin-top:14px" id="addUserSkinField">
+          <label>Skin</label>
+          <select id="addUserSkin"><option value="">No skin — standard branding</option></select>
+          <div class="modal-note" style="margin-top:6px">If set, their welcome email links straight to that skin's own login page instead of the standard one.</div>
+        </div>
+
+        <div style="margin-top:16px" class="bulk-check-row" id="addUserWelcomeRow">
+          <input type="checkbox" id="addUserSendWelcome" checked onchange="toggleAddUserWelcomeWarning()"/>
+          <label style="text-transform:none;letter-spacing:normal;font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:0">Send a welcome email with login details</label>
+        </div>
+        <div class="bulk-warn" id="addUserWelcomeWarning" style="display:none">If you leave this off, this account is created with a password nobody is told — they'll have no way to log in until you reset a password for them individually later.</div>
+
+        <div class="modal-err" id="addUserErr"></div>
+        <div class="modal-btns">
+          <button class="modal-cancel" onclick="closeModal('addUserModal')">Cancel</button>
+          <button class="modal-ok" id="addUserBtn" onclick="createAddedUser()">Create</button>
+        </div>
       </div>
 
-      <div style="margin-top:14px" id="addUserOfferField">
-        <label>Offer (optional)</label>
-        <select id="addUserOffer" onchange="toggleAddUserOfferOverride()"><option value="">No offer — use the weeks above</option></select>
-        <div class="modal-note" style="margin-top:6px" id="addUserOfferNote">Tags this person to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
-      </div>
+      <div id="addUserBulkSection" style="display:none">
+        <div class="modal-note" style="margin-bottom:14px">Upload a CSV or Excel file with name and email columns (most common header names are recognised automatically). Everyone in the file is added at the same level below. Anyone already in the system is skipped and reported, not duplicated.</div>
 
-      <div style="margin-top:14px" id="addUserSkinField">
-        <label>Skin</label>
-        <select id="addUserSkin"><option value="">No skin — standard branding</option></select>
-        <div class="modal-note" style="margin-top:6px">If set, their welcome email links straight to that skin's own login page instead of the standard one.</div>
-      </div>
+        <div>
+          <label>File</label>
+          <div class="drop-zone" id="bulkDropZone" onclick="document.getElementById('bulkFile').click()">
+            <input type="file" id="bulkFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="updateBulkFileLabel()"/>
+            <div style="font-size:26px;margin-bottom:8px">📂</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.4)">Drop a CSV or Excel file here or click to select</div>
+            <div class="drop-zone-filename" id="bulkFileLabel"></div>
+          </div>
+          <div class="modal-note" style="margin-top:6px"><a href="/assets/bulk-import-sample.xlsx" style="color:rgba(180,230,200,0.75)">Download a sample spreadsheet</a> to see the expected columns — fill it in and upload it straight back, or use it as a template for your own file (CSV or Excel, either works).</div>
+        </div>
 
-      <div style="margin-top:16px" class="bulk-check-row" id="addUserWelcomeRow">
-        <input type="checkbox" id="addUserSendWelcome" checked onchange="toggleAddUserWelcomeWarning()"/>
-        <label style="text-transform:none;letter-spacing:normal;font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:0">Send a welcome email with login details</label>
-      </div>
-      <div class="bulk-warn" id="addUserWelcomeWarning" style="display:none">If you leave this off, this account is created with a password nobody is told — they'll have no way to log in until you reset a password for them individually later.</div>
+        <div style="margin-top:14px">
+          <label>Start everyone at</label>
+          <select id="bulkTier" onchange="toggleBulkTrialField()">
+            <option value="newsletter_only">Newsletter only (no login)</option>
+            <option value="0">Explorer (free)</option>
+            <option value="1">Member 1</option>
+            <option value="2">Member 2</option>
+            <option value="3">Member 3</option>
+          </select>
+        </div>
 
-      <div class="modal-err" id="addUserErr"></div>
-      <div class="modal-btns">
-        <button class="modal-cancel" onclick="closeModal('addUserModal')">Cancel</button>
-        <button class="modal-ok" id="addUserBtn" onclick="createAddedUser()">Create</button>
+        <div class="modal-note" style="margin-top:10px" id="bulkNewsletterOnlyNote">Passive contacts — receive the newsletter only, no password, no way to log in. Good for an existing mailing list you're not ready to invite in yet. They'll automatically show up as "Explorer" instead the moment you give them a real login later.</div>
+
+        <div style="margin-top:14px" id="bulkTrialField">
+          <label>Free weeks before it expires</label>
+          <input type="number" id="bulkTrialWeeks" value="2" min="0" step="1"/>
+          <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry (an admin-granted membership, not a trial). Otherwise it behaves exactly like a normal trial and quietly reverts to Explorer if it lapses with no active subscription.</div>
+        </div>
+
+        <div style="margin-top:14px" id="bulkOfferField">
+          <label>Offer (optional)</label>
+          <select id="bulkOffer" onchange="toggleBulkOfferOverride()"><option value="">No offer — use the weeks above</option></select>
+          <div class="modal-note" style="margin-top:6px" id="bulkOfferNote">Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
+        </div>
+
+        <div style="margin-top:14px" id="bulkSkinField">
+          <label>Skin</label>
+          <select id="bulkSkin"><option value="">No skin — standard branding</option></select>
+          <div class="modal-note" style="margin-top:6px">Applies to everyone in this file — their welcome emails link straight to that skin's own login page.</div>
+        </div>
+
+        <div style="margin-top:16px" class="bulk-check-row" id="bulkWelcomeRow">
+          <input type="checkbox" id="bulkSendWelcome" checked onchange="toggleBulkWelcomeWarning()"/>
+          <label style="text-transform:none;letter-spacing:normal;font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:0">Send a welcome email with login details to each new person</label>
+        </div>
+        <div class="bulk-warn" id="bulkWelcomeWarning" style="display:none">If you leave this off, these accounts are created with a password nobody is told — they'll have no way to log in until you reset a password for them individually later. There's no self-serve "forgot password" yet.</div>
+
+        <div class="modal-err" id="bulkImportErr"></div>
+        <div class="modal-btns">
+          <button class="modal-cancel" onclick="closeModal('addUserModal')">Cancel</button>
+          <button class="modal-ok" id="bulkImportBtn" onclick="runBulkImport()">Import</button>
+        </div>
       </div>
     </div>
 
@@ -657,74 +730,12 @@
         <button class="modal-ok" onclick="closeModal('addUserModal'); loadUsers(); loadMembers(); loadNlContacts(); loadUserCounts();">Done</button>
       </div>
     </div>
-  </div>
-
-  <!-- Bulk Import Modal -->
-  <div class="modal-overlay" id="bulkImportModal">
-    <div class="modal" id="bulkImportForm">
-      <h3>Bulk import members</h3>
-      <div class="modal-note" style="margin-bottom:14px">Upload a CSV or Excel file with name and email columns (most common header names are recognised automatically). Everyone in the file is added at the same level below.</div>
-
-      <div>
-        <label>File</label>
-        <div class="drop-zone" id="bulkDropZone" onclick="document.getElementById('bulkFile').click()">
-          <input type="file" id="bulkFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="updateBulkFileLabel()"/>
-          <div style="font-size:26px;margin-bottom:8px">📂</div>
-          <div style="font-size:14px;color:rgba(255,255,255,0.4)">Drop a CSV or Excel file here or click to select</div>
-          <div class="drop-zone-filename" id="bulkFileLabel"></div>
-        </div>
-        <div class="modal-note" style="margin-top:6px"><a href="/assets/bulk-import-sample.xlsx" style="color:rgba(180,230,200,0.75)">Download a sample spreadsheet</a> to see the expected columns — fill it in and upload it straight back, or use it as a template for your own file (CSV or Excel, either works).</div>
-      </div>
-
-      <div style="margin-top:14px">
-        <label>Start everyone at</label>
-        <select id="bulkTier" onchange="toggleBulkTrialField()">
-          <option value="newsletter_only">Newsletter only (no login)</option>
-          <option value="0">Explorer (free)</option>
-          <option value="1">Member 1</option>
-          <option value="2">Member 2</option>
-          <option value="3">Member 3</option>
-        </select>
-      </div>
-
-      <div class="modal-note" style="margin-top:10px" id="bulkNewsletterOnlyNote">Passive contacts — receive the newsletter only, no password, no way to log in. Good for an existing mailing list you're not ready to invite in yet. They'll automatically show up as "Explorer" instead the moment you give them a real login later.</div>
-
-      <div style="margin-top:14px" id="bulkTrialField">
-        <label>Free weeks before it expires</label>
-        <input type="number" id="bulkTrialWeeks" value="2" min="0" step="1"/>
-        <div class="modal-note" style="margin-top:6px">0 = permanent, no automatic expiry (an admin-granted membership, not a trial). Otherwise it behaves exactly like a normal trial and quietly reverts to Explorer if it lapses with no active subscription.</div>
-      </div>
-
-      <div style="margin-top:14px" id="bulkOfferField">
-        <label>Offer (optional)</label>
-        <select id="bulkOffer" onchange="toggleBulkOfferOverride()"><option value="">No offer — use the weeks above</option></select>
-        <div class="modal-note" style="margin-top:6px" id="bulkOfferNote">Tags everyone in this batch to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
-      </div>
-
-      <div style="margin-top:14px" id="bulkSkinField">
-        <label>Skin</label>
-        <select id="bulkSkin"><option value="">No skin — standard branding</option></select>
-        <div class="modal-note" style="margin-top:6px">Applies to everyone in this file — their welcome emails link straight to that skin's own login page.</div>
-      </div>
-
-      <div style="margin-top:16px" class="bulk-check-row" id="bulkWelcomeRow">
-        <input type="checkbox" id="bulkSendWelcome" checked onchange="toggleBulkWelcomeWarning()"/>
-        <label style="text-transform:none;letter-spacing:normal;font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:0">Send a welcome email with login details to each new person</label>
-      </div>
-      <div class="bulk-warn" id="bulkWelcomeWarning" style="display:none">If you leave this off, these accounts are created with a password nobody is told — they'll have no way to log in until you reset a password for them individually later. There's no self-serve "forgot password" yet.</div>
-
-      <div class="modal-err" id="bulkImportErr"></div>
-      <div class="modal-btns">
-        <button class="modal-cancel" onclick="closeModal('bulkImportModal')">Cancel</button>
-        <button class="modal-ok" id="bulkImportBtn" onclick="runBulkImport()">Import</button>
-      </div>
-    </div>
 
     <div class="modal" id="bulkImportResult" style="display:none">
       <h3>Import complete</h3>
       <div class="bulk-summary" id="bulkImportSummary"></div>
       <div class="modal-btns">
-        <button class="modal-ok" onclick="closeModal('bulkImportModal'); loadMembers();">Done</button>
+        <button class="modal-ok" onclick="closeModal('addUserModal'); loadMembers(); loadUsers(); loadNlContacts(); loadUserCounts();">Done</button>
       </div>
     </div>
   </div>
@@ -1215,6 +1226,7 @@
     document.getElementById('addUserErr').textContent = '';
     document.getElementById('addUserForm').style.display = '';
     document.getElementById('addUserResult').style.display = 'none';
+    document.getElementById('bulkImportResult').style.display = 'none';
     const btn = document.getElementById('addUserBtn');
     btn.disabled = false; btn.textContent = 'Create';
     await populateSkinSelect('addUserSkin');
@@ -1222,7 +1234,34 @@
     toggleAddUserFields();
     toggleAddUserOfferOverride();
     toggleAddUserWelcomeWarning();
+
+    // Per Bot 20 — bulk section reset alongside the single-person one so
+    // switching modes mid-session always shows a clean state, not
+    // whatever was left over from the last time bulk mode was used.
+    document.getElementById('bulkFile').value = '';
+    document.getElementById('bulkFileLabel').textContent = '';
+    document.getElementById('bulkTier').value = 'newsletter_only';
+    document.getElementById('bulkTrialWeeks').value = '2';
+    document.getElementById('bulkSendWelcome').checked = true;
+    document.getElementById('bulkImportErr').textContent = '';
+    const bulkBtn = document.getElementById('bulkImportBtn');
+    bulkBtn.disabled = false; bulkBtn.textContent = 'Import';
+    await populateSkinSelect('bulkSkin');
+    await populateOfferSelect('bulkOffer');
+    toggleBulkTrialField();
+    toggleBulkOfferOverride();
+    toggleBulkWelcomeWarning();
+
+    switchAddUserMode('single');
     openModal('addUserModal');
+  }
+
+  function switchAddUserMode(mode) {
+    const isSingle = mode === 'single';
+    document.getElementById('addUserSingleSection').style.display = isSingle ? '' : 'none';
+    document.getElementById('addUserBulkSection').style.display = isSingle ? 'none' : '';
+    document.getElementById('addUserModeBtnSingle').classList.toggle('active', isSingle);
+    document.getElementById('addUserModeBtnBulk').classList.toggle('active', !isSingle);
   }
 
   function toggleAddUserFields() {
@@ -1305,22 +1344,10 @@
   }
 
 
-  async function openBulkImportModal() {
-    document.getElementById('bulkFile').value = '';
-    document.getElementById('bulkFileLabel').textContent = '';
-    document.getElementById('bulkTier').value = 'newsletter_only';
-    document.getElementById('bulkTrialWeeks').value = '2';
-    document.getElementById('bulkSendWelcome').checked = true;
-    document.getElementById('bulkImportErr').textContent = '';
-    document.getElementById('bulkImportForm').style.display = '';
-    document.getElementById('bulkImportResult').style.display = 'none';
-    await populateSkinSelect('bulkSkin');
-    await populateOfferSelect('bulkOffer');
-    toggleBulkTrialField();
-    toggleBulkOfferOverride();
-    toggleBulkWelcomeWarning();
-    openModal('bulkImportModal');
-  }
+  // openBulkImportModal removed (Per Bot 20) — folded into openAddUserModal
+  // + switchAddUserMode('bulk') above; bulk upload is now a mode within
+  // the single Add User modal rather than a separate entry point.
+
 
   // Per Bot 18 — drag-and-drop for the bulk import file field, same
   // dragover/dragleave/drop pattern as the content library's drop-zone.
@@ -1430,7 +1457,7 @@
         <div>${data.invalid} row${data.invalid === 1 ? '' : 's'} skipped — no valid email</div>
         <div style="margin-top:8px;color:rgba(255,255,255,0.5)">${data.emailQueueCount > 0 ? `Welcome emails are sending in the background to ${data.emailQueueCount} ${data.emailQueueCount === 1 ? 'person' : 'people'} now.` : (isNewsletterOnly ? 'No welcome emails — these are newsletter-only contacts with no login.' : 'No welcome emails were sent.')}</div>
       `;
-      document.getElementById('bulkImportForm').style.display = 'none';
+      document.getElementById('addUserForm').style.display = 'none';
       document.getElementById('bulkImportResult').style.display = '';
     } catch(e) {
       err.textContent = 'Network error — please try again.';
@@ -1634,10 +1661,16 @@
     memberSel.clear();
     const res   = await fetch('/api/admin/users');
     _memberData = (await res.json()).filter(u => (u.member_tier || 0) >= 1);
-    // Per Bot 20 — precomputed so the Stripe column can sort cleanly: only
-    // Stripe-linked members get a value here, so sorting this column never
-    // mixes in manually-set expiry dates from non-Stripe members.
-    _memberData.forEach(u => { u.stripeEndDate = u.stripe_subscription_id ? (u.member_expires_at || '') : ''; });
+    // Per Bot 20 — two separate, genuinely distinct dates in the data:
+    // member_expires_at (a real subscription/membership end — Stripe- backed
+    // when stripe_subscription_id is set) and trial_ends_at (a promo/trial
+    // period, always separate from Stripe). Precomputed here so both
+    // columns sort cleanly on exactly the field they display, never mixing
+    // the two kinds of date together.
+    _memberData.forEach(u => {
+      u.stripeEndDate = u.stripe_subscription_id ? (u.member_expires_at || '') : '';
+      u.promoEndDate  = u.trial_ends_at || '';
+    });
     document.getElementById('memberCount').textContent = ` (${_memberData.length})`;
     renderMembers();
   }
@@ -1657,6 +1690,7 @@
         <div class="table-hdr-cell col-email" onclick="memberSort('email')">Email ${sortIndicator('member','email')}</div>
         <div class="table-hdr-cell col-level" onclick="memberSort('member_tier')">Level ${sortIndicator('member','member_tier')}</div>
         <div class="table-hdr-cell col-stripe" onclick="memberSort('stripeEndDate')">Stripe ${sortIndicator('member','stripeEndDate')}</div>
+        <div class="table-hdr-cell col-stripe" onclick="memberSort('promoEndDate')">Promo ${sortIndicator('member','promoEndDate')}</div>
         <div class="table-hdr-cell col-fac" onclick="memberSort('facilitator_name')">Facilitator ${sortIndicator('member','facilitator_name')}</div>
       </div>` +
       list.map(u => `
@@ -1667,11 +1701,12 @@
           <div class="col-level">
             <span class="status-badge status-active">Member</span>
             ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
-            ${!u.stripe_subscription_id && u.member_expires_at
-              ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually set — not linked to Stripe">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
+            ${!u.stripe_subscription_id && !u.trial_ends_at && u.member_expires_at
+              ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually honoured period — not linked to Stripe, not a promo trial">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
               : ''}
           </div>
           <div class="col-stripe" title="${u.stripe_subscription_id ? 'Linked to a live Stripe subscription' : ''}">${u.stripeEndDate ? escHtml(u.stripeEndDate.slice(0,10)) : '—'}</div>
+          <div class="col-stripe" style="color:rgba(230,190,140,0.85)" title="${u.promoEndDate ? 'Promo/trial access — reverts to Explorer if it lapses with no Stripe subscription' : ''}">${u.promoEndDate ? escHtml(u.promoEndDate.slice(0,10)) : '—'}</div>
           <div class="col-fac">${escHtml(u.facilitator_name)||'—'}</div>
         </div>`).join('');
   }
@@ -1885,17 +1920,18 @@
     const ids = [...userSel.sel]; if (!ids.length) return;
     const names = ids.map(id => _userData.find(x => x.id === id)?.name || id).join(', ');
     showConfirm('Reset password' + (ids.length > 1 ? 's' : ''),
-      `Reset the password for ${names}? They'll be emailed a new temporary password and asked to choose their own the next time they sign in. The temporary password will also be shown here — useful for testing their account yourself first.`,
+      `Reset the password for ${names}? They'll be emailed a new temporary password and asked to choose their own the next time they sign in. The temporary password will also be shown here — useful for testing their account yourself first. Anyone who's never had a password before is moved to Member 1 with the standard trial, same as if they'd used their own invite link.`,
       async () => {
         const results = await Promise.all(ids.map(async id => {
           const res  = await fetch(`/api/admin/users/${id}/reset-password`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
           const data = await res.json();
           const name = _userData.find(x => x.id === id)?.name || id;
           const email = _userData.find(x => x.id === id)?.email || '';
-          return `${name} (${email}): ${data.tempPassword || 'error — ' + (data.error || 'unknown')}`;
+          const trialNote = data.grantedTrial ? ' — moved to Member 1 trial' : '';
+          return `${name} (${email}): ${data.tempPassword || 'error — ' + (data.error || 'unknown')}${trialNote}`;
         }));
         appAlert('Password reset — temporary password below (also emailed):\n\n' + results.join('\n'));
-        userSel.clear(); loadUsers();
+        userSel.clear(); loadUsers(); loadMembers();
       });
   }
 

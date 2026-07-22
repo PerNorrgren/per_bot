@@ -841,7 +841,7 @@ Per`;
   );
 }
 
-function emailWelcomeClient(name, email, tempPassword, language, skinId) {
+function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEndsAt) {
   const b = brand();
   // Per Bot 33r — a member added directly to a skin (individually or via
   // bulk import) needs the welcome email pointing at that skin's own
@@ -850,19 +850,29 @@ function emailWelcomeClient(name, email, tempPassword, language, skinId) {
   // right link separately. Validated against a real skin rather than
   // trusting the id outright.
   const loginUrl = (skinId && db.getSkin(skinId)) ? `${APP_URL}/login/${skinId}` : APP_URL;
+  // Per Bot 20 — this previously said nothing at all about a trial end
+  // date even when one was set, so someone given full paid access as a
+  // timed promo had no way of knowing from this email that it would
+  // ever lapse. Only shown when trialEndsAt is genuinely set — a
+  // permanent Member add (or an Explorer add) gets the plain version.
+  const trialLine = trialEndsAt
+    ? `<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
+       <div style="font-size:15px;color:#1a1a1a">${new Date(trialEndsAt).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
+    : '';
   return sendLocalizedEmail('welcome_client', language, {
     subject: `Welcome to {{brand}}`,
     html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, {{name}}</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready${trialEndsAt ? ' — with full access to everything, as a trial' : ''}.</p>
       <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Email</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">{{email}}</div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
-        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">{{tempPassword}}</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${trialEndsAt ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
+        ${trialLine}
       </div>
       <p style="font-size:14px;line-height:1.7;color:#666">You will be asked to choose a new password when you sign in.</p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
@@ -1641,7 +1651,12 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     const hash = await auth.hashPassword(password);
     const user = db.getUserByResetToken(token);
-    if (user) { db.updateClientPassword(user.id, hash); db.clearUserResetToken(user.id); return res.json({ ok: true }); }
+    if (user) {
+      const grantedTrial = grantFirstPasswordTrialIfEligible(user);
+      db.updateClientPassword(user.id, hash);
+      db.clearUserResetToken(user.id);
+      return res.json({ ok: true, grantedTrial });
+    }
     const fac = db.getFacilitatorByResetToken(token);
     if (fac) { db.updateFacilitatorPassword(fac.id, hash); db.clearFacilitatorResetToken(fac.id); return res.json({ ok: true }); }
     res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one from the login page.' });
@@ -1663,10 +1678,18 @@ app.patch('/api/admin/users/:id/reset-password', auth.requireAuthApi(['admin']),
     if (!user) return res.status(404).json({ error: 'User not found.' });
     const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
     const hash = await auth.hashPassword(tempPassword);
+    // Per Bot 20 — same rule as the self-service reset-password route:
+    // if this Explorer has never had a password before, giving them one
+    // now (however it happens — their own link, forgot-password, or an
+    // admin doing it directly) is the same "first real login" moment, so
+    // it gets the same standard trial. A real Member or Explorer with an
+    // existing password getting a fresh temp password from an admin is
+    // untouched — this only ever fires once, the genuine first time.
+    const grantedTrial = grantFirstPasswordTrialIfEligible(user);
     db.adminResetUserPassword(req.params.id, hash);
     const sendEmail = req.body.sendEmail !== false;
     if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language);
-    res.json({ ok: true, tempPassword, emailSent: sendEmail });
+    res.json({ ok: true, tempPassword, emailSent: sendEmail, grantedTrial });
   } catch(e) {
     console.error('admin reset-password error:', e);
     res.status(500).json({ error: 'Something went wrong.' });
@@ -1701,6 +1724,40 @@ function resolveOfferForSignup(promoCode) {
   const def = db.getDefaultOffer();
   if (def && db.isOfferCurrentlyValid(def)) return { trialDays: def.trial_days, offerId: def.id };
   return { trialDays: 14, offerId: null };
+}
+
+// Per Bot 20 — the same "first real password → standard trial" grant the
+// invite-claim route already does, pulled out into one shared place so it
+// applies identically wherever else someone can set their very first
+// password: the self-service "Forgot password" flow, and an admin-
+// triggered reset. Both of those previously just set a password with no
+// tier change at all — meaning anyone from the newsletter migration who
+// used "Forgot password" instead of their personal invite link (a very
+// findable, very normal thing to do) quietly ended up permanent Explorer
+// with no promo, with no way for them or Per to know anything had been
+// missed.
+//
+// The condition is deliberately narrow: password_hash must have been
+// genuinely NULL before this call (never had one — not "forgot an
+// existing one") AND tier must be EXACTLY 0 — genuinely already invited
+// to Explorer, not -1. That second part matters more here than it does
+// for the invite-claim route: this same check backs the public
+// "Forgot password" form, which anyone can trigger for any email address
+// that exists in the system at all, invited or not. Without pinning it to
+// exactly 0, a raw newsletter contact who was never invited to anything
+// could self-escalate into a full trial just by guessing their own email
+// works there — worse than the thing Per asked to fix, not better. A real
+// Explorer or Member resetting an existing forgotten password never has a
+// null password_hash to begin with, so this never touches their tier
+// either way.
+function grantFirstPasswordTrialIfEligible(userBeforePasswordSet) {
+  const eligible = !userBeforePasswordSet.password_hash && userBeforePasswordSet.member_tier === 0;
+  if (!eligible) return false;
+  const { trialDays, offerId } = resolveOfferForSignup(null);
+  const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+  db.setMemberTier(userBeforePasswordSet.id, 1, null, trialEndsAt, null, null);
+  if (offerId) db.setSignupOfferId(userBeforePasswordSet.id, offerId);
+  return true;
 }
 
 // Public lookup — used by the promo/signup page (and safe to hit directly
@@ -2023,17 +2080,18 @@ app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, 
     if (validSkinId) db.setUserSkin(id, validSkinId);
     if (offerTrialDays !== null) db.setSignupOfferId(id, offerId);
 
+    let trialEndsAt = null;
     if (tier > 0) {
       // Same rule as bulk import: a valid offer's own trial length wins
       // over the manual weeks field, since a batch/person tied to a named
       // campaign should reflect that campaign's real trial length.
       const effectiveDays = offerTrialDays !== null ? offerTrialDays : (Math.max(0, parseInt(trialWeeks, 10) || 0) * 7);
-      const trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
+      trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
       db.setMemberTier(id, tier, null, trialEndsAt, null, null);
     }
 
     if (sendWelcomeEmail !== false) {
-      emailWelcomeClient(name.trim(), emailLower, tempPassword, null, validSkinId);
+      emailWelcomeClient(name.trim(), emailLower, tempPassword, null, validSkinId, trialEndsAt);
     }
 
     res.json({ id, name: name.trim(), email: emailLower, tempPassword });
@@ -2304,18 +2362,19 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
       if (skinId) db.setUserSkin(id, skinId);
       if (offerTrialDays !== null) db.setSignupOfferId(id, batchOfferId);
 
+      let trialEndsAt = null;
       if (tier > 0) {
         // Offer's trial length wins over the manual field when a valid
         // offer is set for this batch — see the comment on offerTrialDays
         // above. A batch offer with trial_days=0 still means "no trial",
         // same as leaving trialWeeks at 0 would.
         const effectiveDays = offerTrialDays !== null ? offerTrialDays : trialWeeks * 7;
-        const trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
+        trialEndsAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 24 * 60 * 60 * 1000).toISOString() : null;
         db.setMemberTier(id, tier, null, trialEndsAt, null, null);
       }
 
       created++;
-      if (sendWelcomeEmail) toEmail.push({ name, email, tempPassword });
+      if (sendWelcomeEmail) toEmail.push({ name, email, tempPassword, trialEndsAt });
     }
 
     fs.unlink(req.file.path, () => {});
@@ -2331,7 +2390,7 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
       (async () => {
         let sent = 0;
         for (const u of toEmail) {
-          try { await emailWelcomeClient(u.name, u.email, u.tempPassword, null, skinId); sent++; }
+          try { await emailWelcomeClient(u.name, u.email, u.tempPassword, null, skinId, u.trialEndsAt); sent++; }
           catch (e) { console.error('bulk-import welcome email failed for', u.email, e.message); }
         }
         console.log(`[bulk-import] welcome emails sent: ${sent}/${toEmail.length}`);
