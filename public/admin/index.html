@@ -58,6 +58,7 @@
     .col-level  { flex:0.8; font-size:11px; color:rgba(255,255,255,0.35); }
     .col-status { flex:0.6; }
     .col-fac    { flex:1; font-size:12px; color:rgba(255,255,255,0.3); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-stripe { flex:0.7; font-size:12px; color:rgba(150,190,255,0.75); }
     .col-created { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
     .col-actions { flex:1.1; display:flex; gap:6px; align-items:center; justify-content:flex-end; }
     .col-actions { display:flex; gap:6px; flex-shrink:0; }
@@ -1633,6 +1634,10 @@
     memberSel.clear();
     const res   = await fetch('/api/admin/users');
     _memberData = (await res.json()).filter(u => (u.member_tier || 0) >= 1);
+    // Per Bot 20 — precomputed so the Stripe column can sort cleanly: only
+    // Stripe-linked members get a value here, so sorting this column never
+    // mixes in manually-set expiry dates from non-Stripe members.
+    _memberData.forEach(u => { u.stripeEndDate = u.stripe_subscription_id ? (u.member_expires_at || '') : ''; });
     document.getElementById('memberCount').textContent = ` (${_memberData.length})`;
     renderMembers();
   }
@@ -1651,6 +1656,7 @@
         <div class="table-hdr-cell col-name" onclick="memberSort('name')">Name ${sortIndicator('member','name')}</div>
         <div class="table-hdr-cell col-email" onclick="memberSort('email')">Email ${sortIndicator('member','email')}</div>
         <div class="table-hdr-cell col-level" onclick="memberSort('member_tier')">Level ${sortIndicator('member','member_tier')}</div>
+        <div class="table-hdr-cell col-stripe" onclick="memberSort('stripeEndDate')">Stripe ${sortIndicator('member','stripeEndDate')}</div>
         <div class="table-hdr-cell col-fac" onclick="memberSort('facilitator_name')">Facilitator ${sortIndicator('member','facilitator_name')}</div>
       </div>` +
       list.map(u => `
@@ -1661,12 +1667,11 @@
           <div class="col-level">
             <span class="status-badge status-active">Member</span>
             ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
-            ${u.stripe_subscription_id
-              ? `<span class="status-badge" style="margin-left:4px;background:rgba(120,170,255,0.12);color:rgba(150,190,255,0.85)" title="Linked to a live Stripe subscription">Stripe · ends ${u.member_expires_at ? escHtml(u.member_expires_at.slice(0,10)) : '—'}</span>`
-              : u.member_expires_at
-                ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually set — not linked to Stripe">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
-                : ''}
+            ${!u.stripe_subscription_id && u.member_expires_at
+              ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually set — not linked to Stripe">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
+              : ''}
           </div>
+          <div class="col-stripe" title="${u.stripe_subscription_id ? 'Linked to a live Stripe subscription' : ''}">${u.stripeEndDate ? escHtml(u.stripeEndDate.slice(0,10)) : '—'}</div>
           <div class="col-fac">${escHtml(u.facilitator_name)||'—'}</div>
         </div>`).join('');
   }
