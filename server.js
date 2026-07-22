@@ -926,19 +926,35 @@ function emailPasswordResetLink(name, email, token, language) {
     </div>`
   }, { brand: b.name, name, email, resetUrl }, email);
 }
-function emailAdminPasswordReset(name, email, tempPassword, language) {
+function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEverPassword, trialEndsAt) {
   const b = brand();
+  // Per Bot 20 — two fixes at once, both flagged earlier this session:
+  // (1) "Your facilitator has reset your password" was always shown even
+  // for someone who never had one before — accurate for a real reset,
+  // odd and slightly confusing for a genuine first-time grant. (2) When
+  // this is the moment someone gets bumped to a trial (see
+  // grantFirstPasswordTrialIfEligible), the email previously said nothing
+  // about it at all — same gap as emailWelcomeClient had, fixed there
+  // earlier this session, now fixed here too.
+  const introLine = isFirstEverPassword
+    ? `Your account is ready${trialEndsAt ? ' — with full access to everything, as a trial' : ''}. Sign in with the temporary password below — you'll be asked to choose your own straight after.`
+    : `Your facilitator has reset your password. Sign in with the temporary password below — you'll be asked to choose your own straight after.`;
+  const trialLine = trialEndsAt
+    ? `<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
+       <div style="font-size:15px;color:#1a1a1a">${new Date(trialEndsAt).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
+    : '';
   return sendLocalizedEmail('admin_password_reset', language, {
     subject: `Your {{brand}} password has been reset`,
     html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hi {{name}}</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your facilitator has reset your password. Sign in with the temporary password below — you'll be asked to choose your own straight after.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${introLine}</p>
       <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
-        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em">{{tempPassword}}</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${trialEndsAt ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
+        ${trialLine}
       </div>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <div style="font-size:12px;color:#aaa">{{brand}}</div>
@@ -1676,6 +1692,7 @@ app.patch('/api/admin/users/:id/reset-password', auth.requireAuthApi(['admin']),
   try {
     const user = db.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found.' });
+    const isFirstEverPassword = !user.password_hash;
     const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
     const hash = await auth.hashPassword(tempPassword);
     // Per Bot 20 — same rule as the self-service reset-password route:
@@ -1688,7 +1705,8 @@ app.patch('/api/admin/users/:id/reset-password', auth.requireAuthApi(['admin']),
     const grantedTrial = grantFirstPasswordTrialIfEligible(user);
     db.adminResetUserPassword(req.params.id, hash);
     const sendEmail = req.body.sendEmail !== false;
-    if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language);
+    const trialEndsAt = grantedTrial ? db.getUser(req.params.id).trial_ends_at : null;
+    if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language, isFirstEverPassword, trialEndsAt);
     res.json({ ok: true, tempPassword, emailSent: sendEmail, grantedTrial });
   } catch(e) {
     console.error('admin reset-password error:', e);
@@ -6288,7 +6306,7 @@ app.patch('/api/admin/users/:id/upgrade', auth.requireAuthApi(['admin']), async 
 
     let welcomeEmailSent = false;
     if (tempPassword && sendWelcomeEmail !== false) {
-      emailWelcomeClient(user.name, user.email, tempPassword);
+      emailWelcomeClient(user.name, user.email, tempPassword, null, null, trialEndsAt);
       welcomeEmailSent = true;
     }
 
