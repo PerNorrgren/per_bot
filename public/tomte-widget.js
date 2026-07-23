@@ -647,7 +647,37 @@
     // room, below otherwise; same idea horizontally — rather than staying
     // pinned to the original bottom-right corner regardless of where the
     // fab was dragged to.
+    //
+    // Per Bot 21 — real bug: with the on-screen keyboard open, the panel's
+    // CSS max-height (60vh) is computed against the full layout viewport,
+    // not the shrunken visual one — so ph could easily be taller than the
+    // space actually left above the keyboard. That made the upper clamp
+    // bound (viewportHeight() - ph - FAB_MARGIN) go negative, which is
+    // smaller than the lower bound (FAB_MARGIN) — clampNum has no way to
+    // satisfy both, and returns the smaller number, sending the panel to
+    // a negative top: off the top of the screen entirely. Detected here
+    // by how much smaller the visual viewport is than the full layout
+    // one; when a keyboard is very likely open, pin the panel directly
+    // above the keyboard's own top edge instead of chasing the fab's
+    // position (which may itself now be hidden behind the keyboard).
     function positionPanel() {
+      const keyboardGap = window.visualViewport ? (window.innerHeight - window.visualViewport.height) : 0;
+      const keyboardLikelyOpen = keyboardGap > 150;
+      if (keyboardLikelyOpen) {
+        const availableHeight = viewportHeight() - FAB_MARGIN * 2;
+        panel.style.maxHeight = Math.max(200, availableHeight) + 'px';
+        const pw = panel.offsetWidth || 320;
+        panel.style.top = 'auto';
+        panel.style.left = 'auto';
+        panel.style.right = FAB_MARGIN + 'px';
+        // Distance from the layout viewport's bottom edge up to the top
+        // of the keyboard — position:fixed's own "bottom" is measured
+        // from that same edge, so this lands the panel just above the
+        // keyboard regardless of where the fab currently sits.
+        panel.style.bottom = (keyboardGap + FAB_MARGIN) + 'px';
+        return;
+      }
+      panel.style.maxHeight = '';
       const r = fab.getBoundingClientRect();
       const pw = panel.offsetWidth || 320;
       const ph = panel.offsetHeight || 400;
