@@ -314,6 +314,25 @@
     // "how many screens will actually see this."
     const tomteTabId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     let lastSeenBroadcastId = null;
+    // Per Bot 21 — same visual pattern as addTipMessage's action link
+    // (a plain <a>, safe innerHTML-free construction since text/labels
+    // are admin-authored, not user input) — broadcasts can optionally
+    // carry a link, e.g. "See what's new" pointing at a changelog page.
+    function addBroadcastMessage(text, linkLabel, linkHref) {
+      const empty = messagesEl.querySelector('.tomte-empty');
+      if (empty) empty.remove();
+      const div = document.createElement('div');
+      div.className = 'tomte-msg tomte-bot';
+      div.textContent = text;
+      if (linkLabel && linkHref) {
+        const a = document.createElement('a');
+        a.href = linkHref; a.className = 'tomte-tip-action'; a.textContent = linkLabel + ' →';
+        div.appendChild(document.createElement('br'));
+        div.appendChild(a);
+      }
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
     async function checkTomteBroadcast() {
       try {
         const res = await fetch('/api/tomte-broadcast?tabId=' + encodeURIComponent(tomteTabId));
@@ -327,7 +346,7 @@
         // of a conversation.
         panel.classList.add('tomte-open');
         positionPanel();
-        addMessage('bot', broadcast.text);
+        addBroadcastMessage(broadcast.text, broadcast.linkLabel, broadcast.linkHref);
         nudgeScrollContainers();
       } catch(e) { /* quietly no-op */ }
     }

@@ -275,6 +275,10 @@
           Pops up instantly as a message from Tomte for anyone with the app open — e.g. "Rebooting in 2 minutes, back shortly." Not saved anywhere and not sent to anyone who isn't already in the app; each browser picks it up within about 15 seconds and shows it once. Sending a new message replaces the old one.
         </div>
         <textarea id="tomteBroadcastText" rows="3" placeholder="e.g. We're rebooting the app now — back in about 2 minutes." style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.85); font-family:Georgia,serif; font-size:13px; resize:vertical; box-sizing:border-box;"></textarea>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+          <input type="text" id="tomteBroadcastLinkLabel" placeholder="Link text (optional) — e.g. See what's new" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:9px 11px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px; box-sizing:border-box;"/>
+          <input type="text" id="tomteBroadcastLinkHref" placeholder="Link URL (optional) — e.g. /client/ or https://…" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:9px 11px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px; box-sizing:border-box;"/>
+        </div>
         <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
           <button class="btn sm primary" onclick="sendTomteBroadcast()" id="tomteBroadcastSendBtn">Send now</button>
           <button class="btn sm" onclick="clearTomteBroadcast()">Clear active message</button>
@@ -3122,7 +3126,8 @@
       countEl.textContent = `● ${data.activeCount} active browser${data.activeCount === 1 ? '' : 's'}`;
       if (broadcast) {
         const mins = Math.max(0, Math.round((Date.now() - broadcast.createdAt) / 60000));
-        statusEl.textContent = `Currently active (sent ${mins === 0 ? 'just now' : mins + ' min ago'}): "${broadcast.text}"`;
+        const linkPart = broadcast.linkLabel && broadcast.linkHref ? ` — link: "${broadcast.linkLabel}" → ${broadcast.linkHref}` : '';
+        statusEl.textContent = `Currently active (sent ${mins === 0 ? 'just now' : mins + ' min ago'}): "${broadcast.text}"${linkPart}`;
         statusEl.style.color = 'rgba(180,230,200,0.75)';
       } else {
         statusEl.textContent = 'No message currently active.';
@@ -3138,6 +3143,8 @@
   setInterval(loadTomteBroadcastStatus, 10000);
   async function sendTomteBroadcast() {
     const textEl = document.getElementById('tomteBroadcastText');
+    const linkLabelEl = document.getElementById('tomteBroadcastLinkLabel');
+    const linkHrefEl = document.getElementById('tomteBroadcastLinkHref');
     const text = textEl.value.trim();
     if (!text) { showFeedback('tomteBroadcastFeedback', 'Write a message first.', 'err'); return; }
     const btn = document.getElementById('tomteBroadcastSendBtn');
@@ -3145,12 +3152,12 @@
     try {
       const res = await fetch('/api/admin/tomte-broadcast', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, linkLabel: linkLabelEl.value.trim(), linkHref: linkHrefEl.value.trim() })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not send.');
       showFeedback('tomteBroadcastFeedback', 'Sent — everyone with the app open will see it within about 15 seconds.', 'ok');
-      textEl.value = '';
+      textEl.value = ''; linkLabelEl.value = ''; linkHrefEl.value = '';
       loadTomteBroadcastStatus();
     } catch(e) {
       showFeedback('tomteBroadcastFeedback', e.message, 'err');

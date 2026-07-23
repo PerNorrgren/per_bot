@@ -4096,7 +4096,7 @@ app.post('/api/my/tomte-tip/seen', auth.requireAuthApi(['client']), (req, res) =
 // with the app merely open in a background tab wouldn't have one.
 // Auto-expires after 30 minutes so a forgotten broadcast doesn't sit
 // around confusing someone who opens the app hours later.
-let currentTomteBroadcast = null; // { id, text, createdAt } | null
+let currentTomteBroadcast = null; // { id, text, linkLabel, linkHref, createdAt } | null
 const TOMTE_BROADCAST_TTL_MS = 30 * 60 * 1000;
 // Active-browser tracking (Per Bot 21) — every poll carries a random
 // per-tab id (see tomteTabId in tomte-widget.js), recorded here with a
@@ -4121,7 +4121,17 @@ app.get('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res)
 app.post('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
   const text = (req.body.text || '').trim();
   if (!text) return res.status(400).json({ error: 'Message required.' });
-  currentTomteBroadcast = { id: uuidv4(), text, createdAt: Date.now() };
+  // Per Bot 21 — an optional link, shown as a clickable action under the
+  // message (same visual pattern as the proactive-tip action links
+  // above). Both fields are optional but travel together — a URL with
+  // no label has nothing to click on, a label with no URL has nowhere
+  // to go, so either both are present or neither is.
+  const linkLabel = (req.body.linkLabel || '').trim();
+  const linkHref = (req.body.linkHref || '').trim();
+  if ((linkLabel && !linkHref) || (linkHref && !linkLabel)) {
+    return res.status(400).json({ error: 'A link needs both link text and a URL.' });
+  }
+  currentTomteBroadcast = { id: uuidv4(), text, linkLabel: linkLabel || null, linkHref: linkHref || null, createdAt: Date.now() };
   res.json({ ok: true, broadcast: currentTomteBroadcast });
 });
 app.delete('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
