@@ -10454,6 +10454,14 @@ app.post('/api/admin/newsletters/test-send', auth.requireAuthApi(['admin']), asy
 
     const b = brand();
     const cfg = db.getAppConfig() || {};
+    // Per Bot 21 — real bug: this line (and the two below it) referred to
+    // a `realUser` variable that no longer exists in this scope since the
+    // Per Bot 19 refactor moved to resolveTestRecipientTokens (which only
+    // returns isReal/tokens, not the raw user row) — a ReferenceError on
+    // every single send, not just an edge case. Fetching it directly
+    // here matches the exact pattern every sibling test-send endpoint
+    // already uses.
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
     const previewUnsubscribe = realUser ? `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(realUser.id)}` : `${APP_URL}/unsubscribe/EXAMPLE-TOKEN-not-a-real-link`;
     const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, previewUnsubscribe);
     await sendEmail(toEmail, `${realUser ? '' : '[TEST] '}${subjectFilled}`, buildNewsletterHtml(subjectFilled, bodyFilled, b, format, footerHtml));
