@@ -1772,6 +1772,14 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_subject TEXT",
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_body TEXT",
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_format TEXT DEFAULT 'plain'",
+    // Stored email body (Per Bot 21) — the rendered HTML actually sent,
+    // captured at send time in sendEmail() so the admin Email Log can show
+    // "what did this actually look like" rather than just subject/status.
+    // Forward-only, same as cron_log/login_log/talk_sessions before it —
+    // nothing retroactive for sends that happened before this column
+    // existed. Deliberately kept out of getRecentEmailLog's SELECT list
+    // (see below) so the list view stays light; fetched on demand per row.
+    "ALTER TABLE email_log ADD COLUMN body_html TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3560,80 +3568,110 @@ function getUserByUnsubscribeToken(token) {
 // ── Trial / membership expiry ──
 // Called on every login and on every /api/my/profile fetch for
 // client-role users, so a long-lived session gets caught too, not only a
-// fresh login. If either date has lapsed and no paid subscription picked
-// it up (no stripe_subscription_id), drop back to Explorer.
-// Leaves member_since alone — that's a historical fact, not a current-tier signal.
+// fresh login. Leaves member_since alone — that's a historical fact, not
+// a current-tier signal.
 //
 // Per Bot 18 — this used to only check trial_ends_at, which meant it
 // never actually caught member_expires_at lapsing at all — the field
 // People admin's manual expiry override (setMemberExpiry, used for
 // honouring a carried-over legacy membership) actually writes to. Someone
 // given a hand-set expiry date would never have been auto-downgraded by
-// anything, ever. Now checks both, and reports which one fired so the
-// login route can send the right invitation-to-subscribe email — someone
-// whose manually-honoured time just ran out is a very different moment
-// from an ordinary trial ending (which already has its own day-14 email).
+// anything, ever. Now checks both.
+//
+// Per Bot 21 — the two now genuinely diverge, mirroring
+// sweepExpiredMemberships: a trial lapsing still downgrades immediately
+// (the day-14 trial email already covers that moment). A real paid-until
+// date lapsing (member_expires_at — Stripe-backed or a manual/PayPal
+// override, source doesn't matter) instead enters the same 14-day
+// Savers grace sequence a Stripe cancellation reaching term-end already
+// gets, rather than dropping someone the instant they happen to log in
+// past their date. Guarded by savers_type so a session that revisits
+// this mid-grace doesn't restart the clock or re-send the entry email.
 function checkTrialExpiry(userId) {
   const user = getUser(userId);
   if (!user) return user;
-  const noActiveSubscription = !user.stripe_subscription_id;
-  const trialLapsed = user.trial_ends_at && new Date(user.trial_ends_at) < new Date();
+  const hasLiveStripeSub = !!user.stripe_subscription_id;
+  const trialLapsed = !user.member_expires_at && user.trial_ends_at && new Date(user.trial_ends_at) < new Date();
   const membershipLapsed = user.member_expires_at && new Date(user.member_expires_at) < new Date();
-  if ((trialLapsed || membershipLapsed) && noActiveSubscription && user.member_tier > 0) {
-    const lapsedReason = membershipLapsed ? 'membership' : 'trial';
+
+  if (trialLapsed && !hasLiveStripeSub && user.member_tier > 0) {
     getDbSync().run(
       `UPDATE users SET member_tier=0, trial_ends_at=NULL, member_expires_at=NULL WHERE id=?`,
       [userId]
     );
     save();
-    return { ...getUser(userId), _justLapsed: lapsedReason };
+    return { ...getUser(userId), _justLapsed: 'trial' };
   }
+
+  if (membershipLapsed && !hasLiveStripeSub && user.member_tier > 0 && !user.savers_type) {
+    startSaversGrace(userId, 'cancellation', user.member_tier || 1);
+    return { ...getUser(userId), _enteredSaversGrace: true };
+  }
+
   return user;
 }
 
-// Per Bot 20 — the daily, login-independent counterpart to checkTrialExpiry
-// above. That function only ever runs when the person themselves hits
-// /api/login or /api/my/profile — someone who trials in and never comes
-// back stays at their prior tier indefinitely, not from the actual day
-// their access should have lapsed. This finds everyone currently past
-// their trial_ends_at or member_expires_at with no active Stripe
-// subscription, in one pass, and downgrades all of them to Explorer —
-// same effect as checkTrialExpiry, just calendar-triggered instead of
-// visit-triggered. Returns the list of who lapsed (with _justLapsed
-// still set per person) so the caller can send the same
-// membership-honoured-ended email checkTrialExpiry's callers already do,
-// for the 'membership' case only — ordinary trial lapses already have
-// their own day-14 email from the trial sequence, nothing extra needed.
+// Per Bot 20 (rewritten Per Bot 21) — the daily, login-independent
+// counterpart to checkTrialExpiry above. That function only ever runs
+// when the person themselves hits /api/login or /api/my/profile —
+// someone who trials in and never comes back stays at their prior tier
+// indefinitely, not from the actual day their access should have
+// lapsed. This finds everyone currently past their trial_ends_at or
+// member_expires_at with no live Stripe subscription, calendar-
+// triggered instead of visit-triggered.
+//
+// Per Bot 21 — these two cases now genuinely diverge, per Per's call:
+// promo/trial lapsing is its own distinct pre-end process (the day
+// 3/7/10/14 trial sequence already exists for that) and still downgrades
+// immediately here, same as before. But a real paid-until date
+// (member_expires_at) lapsing — regardless of whether that date came
+// from a live Stripe subscription, a manually carried-over legacy
+// subscriber, or a PayPal override entered by hand — is now treated
+// exactly like a Stripe subscription reaching its natural term-end:
+// it enters the same 14-day Savers grace sequence (type 'cancellation',
+// reused end-to-end, same copy, same mid/final emails, same eventual
+// downgrade) rather than being downgraded on the spot with a single
+// one-off email. The paid-until date is what drives this now, not the
+// source — source is a reporting question, answered elsewhere.
+// savers_type IS NULL guards the paid-lapse branch so a daily re-run
+// never restarts someone's grace clock while they're already mid-way
+// through it.
 function sweepExpiredMemberships() {
   const now = new Date().toISOString();
-  const candidates = queryAll(
+
+  const trialCandidates = queryAll(
     `SELECT * FROM users
      WHERE member_tier > 0
-       AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')
-       AND (
-         (trial_ends_at IS NOT NULL AND trial_ends_at < ?)
-         OR (member_expires_at IS NOT NULL AND member_expires_at < ?)
-       )`,
-    [now, now]
+       AND member_expires_at IS NULL
+       AND trial_ends_at IS NOT NULL AND trial_ends_at < ?
+       AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')`,
+    [now]
   );
-  if (!candidates.length) return [];
-  const lapsed = [];
-  for (const user of candidates) {
-    const membershipLapsed = user.member_expires_at && new Date(user.member_expires_at) < new Date();
-    lapsed.push({ ...user, _justLapsed: membershipLapsed ? 'membership' : 'trial' });
+  if (trialCandidates.length) {
+    getDbSync().run(
+      `UPDATE users SET member_tier=0, trial_ends_at=NULL, member_expires_at=NULL
+       WHERE member_tier > 0
+         AND member_expires_at IS NULL
+         AND trial_ends_at IS NOT NULL AND trial_ends_at < ?
+         AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')`,
+      [now]
+    );
+    save();
   }
-  getDbSync().run(
-    `UPDATE users SET member_tier=0, trial_ends_at=NULL, member_expires_at=NULL
+
+  const membershipCandidates = queryAll(
+    `SELECT * FROM users
      WHERE member_tier > 0
+       AND member_expires_at IS NOT NULL AND member_expires_at < ?
        AND (stripe_subscription_id IS NULL OR stripe_subscription_id = '')
-       AND (
-         (trial_ends_at IS NOT NULL AND trial_ends_at < ?)
-         OR (member_expires_at IS NOT NULL AND member_expires_at < ?)
-       )`,
-    [now, now]
+       AND savers_type IS NULL`,
+    [now]
   );
-  save();
-  return lapsed;
+  for (const user of membershipCandidates) {
+    startSaversGrace(user.id, 'cancellation', user.member_tier || 1);
+  }
+
+  return { trialLapsed: trialCandidates, enteredGrace: membershipCandidates };
 }
 
 // ── Referrals (Per Bot 22) ──
@@ -4800,10 +4838,15 @@ function logEmailResult(id, kind, email, subject, newsletterId, userId, status, 
     [id, kind, email, subject || '', newsletterId || null, userId || null, status, scalewayEmailId || null, error || null]
   ); save();
 }
-function updateEmailLogResult(id, status, scalewayEmailId, error) {
+// bodyHtml (Per Bot 21) — the rendered HTML this specific send used, passed
+// in from sendEmail() where it's already been built. Optional so every
+// existing call site keeps working unchanged; only sendEmail() actually
+// has a body to pass. Stored even on a failed send — seeing what content
+// failed to go out is more useful than nothing.
+function updateEmailLogResult(id, status, scalewayEmailId, error, bodyHtml) {
   getDbSync().run(
-    `UPDATE email_log SET status=?, scaleway_email_id=?, error=?, updated_at=datetime('now') WHERE id=?`,
-    [status, scalewayEmailId || null, error || null, id]
+    `UPDATE email_log SET status=?, scaleway_email_id=?, error=?, body_html=COALESCE(?, body_html), updated_at=datetime('now') WHERE id=?`,
+    [status, scalewayEmailId || null, error || null, bodyHtml || null, id]
   ); save();
 }
 function getEmailLogForNewsletter(newsletterId) {
@@ -4817,11 +4860,27 @@ function getEmailLogCountsForNewsletter(newsletterId) {
 }
 // General admin view across every kind of email the app sends, not just
 // newsletters — welcome, password reset, reminders, renewals, alerts.
+// Per Bot 21: deliberately selects columns rather than * — body_html can
+// be a full rendered email per row, and this list can return up to 2000
+// rows at once, so it's excluded here and fetched individually per row
+// via getEmailLogById instead. has_body tells the admin UI whether a
+// "View" action has anything to show.
+const EMAIL_LOG_LIST_COLS = `id,kind,newsletter_id,user_id,email,subject,status,scaleway_email_id,error,created_at,updated_at,(body_html IS NOT NULL) AS has_body`;
 function getRecentEmailLog(limit, kind) {
-  if (kind) return queryAll('SELECT * FROM email_log WHERE kind=? ORDER BY created_at DESC LIMIT ?', [kind, limit || 100]);
-  return queryAll('SELECT * FROM email_log ORDER BY created_at DESC LIMIT ?', [limit || 100]);
+  if (kind) return queryAll(`SELECT ${EMAIL_LOG_LIST_COLS} FROM email_log WHERE kind=? ORDER BY created_at DESC LIMIT ?`, [kind, limit || 100]);
+  return queryAll(`SELECT ${EMAIL_LOG_LIST_COLS} FROM email_log ORDER BY created_at DESC LIMIT ?`, [limit || 100]);
 }
 function getEmailLogById(id) { return queryOne('SELECT * FROM email_log WHERE id=?', [id]); }
+// Per Bot 21 — clears stored bodies for anything older than daysOld,
+// keeping the metadata row (subject/status/etc, still needed for the
+// Migrations/Registrations-style reports) intact. Not wired into cron.js
+// yet — Per's call whether/when this is needed once real volume shows
+// whether body_html actually becomes a size problem.
+function archiveOldEmailBodies(daysOld) {
+  const days = daysOld || 90;
+  getDbSync().run(`UPDATE email_log SET body_html=NULL WHERE body_html IS NOT NULL AND created_at < datetime('now','-${days} days')`);
+  save();
+}
 function clearEmailLogForNewsletter(newsletterId) {
   getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
 }
@@ -5495,17 +5554,21 @@ function markReminderSent(userId) {
 // anything for it. member_expires_at is kept in sync by the Stripe webhook
 // handler (extended on invoice.payment_succeeded, cleared to Explorer on
 // cancellation), so it's a reliable field to build this on rather than
-// needing a fresh Stripe API call per check. Only matches users with an
-// active subscription (stripe_subscription_id set) — lifetime members have
-// no expiry to remind about, and someone already dropped to Explorer
-// wouldn't have a subscription id left to match on anyway.
+// needing a fresh Stripe API call per check.
+//
+// Per Bot 21 — deliberately no longer requires stripe_subscription_id.
+// The thing that should drive a renewal reminder is having a real
+// paid-until date at all, not how that date got there — a manually
+// carried-over legacy subscriber (see the manual /expiry override) needs
+// exactly the same "your membership renews soon" nudge a live Stripe
+// subscriber gets. Source (Stripe vs manual vs PayPal) is a reporting
+// question, answered elsewhere, never a behavioural gate here.
 function getUpcomingRenewals(daysBefore) {
   return queryAll(
     `SELECT id, name, email, phone, pref_email_renewal, pref_sms_renewal, member_expires_at, member_tier
      FROM users
      WHERE archived=0
        AND (pref_email_renewal=1 OR pref_sms_renewal=1)
-       AND stripe_subscription_id IS NOT NULL
        AND member_expires_at IS NOT NULL
        AND date(member_expires_at) = date('now', '+' || ? || ' days')
        AND (renewal_reminder_sent_for IS NULL OR renewal_reminder_sent_for != member_expires_at)`,
@@ -6058,7 +6121,7 @@ module.exports = {
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
-  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter,
+  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,

@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailMembershipHonouredEnded }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0 }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -45,16 +45,20 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
   });
 
   // ── Expired trial/membership sweep — 06:50 UTC ──
+  // Per Bot 21 — trial lapses still downgrade on the spot (unchanged);
+  // anyone whose real paid-until date has lapsed with no live Stripe
+  // subscription now enters the same 14-day Savers grace sequence a
+  // Stripe cancellation reaching term-end gets, rather than being
+  // downgraded immediately — see sweepExpiredMemberships in db.js.
   cron.schedule('50 6 * * *', async () => {
     const t0 = Date.now();
     try {
-      const lapsed = db.sweepExpiredMemberships();
-      const membershipEnded = lapsed.filter(u => u._justLapsed === 'membership');
-      for (const user of membershipEnded) {
-        try { await emailMembershipHonouredEnded(user); }
-        catch (e) { console.error('[cron] membership-ended email failed for', user.email, ':', e.message); }
+      const { trialLapsed, enteredGrace } = db.sweepExpiredMemberships();
+      for (const user of enteredGrace) {
+        try { await emailSaversCancelGrace0(user); }
+        catch (e) { console.error('[cron] savers grace-entry email failed for', user.email, ':', e.message); }
       }
-      const detail = `${lapsed.length} downgraded (${membershipEnded.length} membership, ${lapsed.length - membershipEnded.length} trial)`;
+      const detail = `${trialLapsed.length} trial downgraded, ${enteredGrace.length} entered savers grace (paid-until lapsed)`;
       console.log(`[cron] expired trial/membership sweep: ${detail}`);
       record('expired_trial_membership_sweep', 'ok', detail, null, t0);
     } catch (e) {

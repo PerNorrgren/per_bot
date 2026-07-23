@@ -670,7 +670,7 @@ async function sendEmail(to, subject, html, meta = {}) {
   if (!meta.logId) db.logEmailPending(id, kind, to, subject, meta.newsletterId, meta.userId);
   if (!SCW_SECRET_KEY || !SCW_PROJECT_ID) {
     console.log('SCW_SECRET_KEY/SCW_PROJECT_ID not set — skipping email to', to);
-    db.updateEmailLogResult(id, 'failed', null, 'Email not configured (missing Scaleway credentials).');
+    db.updateEmailLogResult(id, 'failed', null, 'Email not configured (missing Scaleway credentials).', html);
     return { ok: false, error: 'Email not configured.' };
   }
   try {
@@ -690,7 +690,7 @@ async function sendEmail(to, subject, html, meta = {}) {
     if (!res.ok) {
       console.error('Scaleway TEM error:', res.status, data);
       const errMsg = (data && (data.message || JSON.stringify(data))) || `HTTP ${res.status}`;
-      db.updateEmailLogResult(id, 'failed', null, errMsg);
+      db.updateEmailLogResult(id, 'failed', null, errMsg, html);
       return { ok: false, error: errMsg };
     }
     // Scaleway wraps the result in an `emails` array (even for a single
@@ -698,11 +698,11 @@ async function sendEmail(to, subject, html, meta = {}) {
     // handling both shapes here rather than assuming one.
     const scalewayId = (data && data.emails && data.emails[0] && data.emails[0].id) || (data && data.id) || null;
     console.log('Email sent to', to);
-    db.updateEmailLogResult(id, 'sent', scalewayId, null);
+    db.updateEmailLogResult(id, 'sent', scalewayId, null, html);
     return { ok: true, id: scalewayId };
   } catch (e) {
     console.error('Email error:', e.message);
-    db.updateEmailLogResult(id, 'failed', null, e.message);
+    db.updateEmailLogResult(id, 'failed', null, e.message, html);
     return { ok: false, error: e.message };
   }
 }
@@ -1610,7 +1610,7 @@ app.post('/api/login', async (req, res) => {
   // long-lived sessions that don't re-login often.
   if (user.role === 'client') {
     const checked = db.checkTrialExpiry(user.id);
-    if (checked._justLapsed === 'membership') emailMembershipHonouredEnded(checked).catch(e => console.error('[expiry] membership-ended email failed:', e.message));
+    if (checked._enteredSaversGrace) emailSaversCancelGrace0(checked).catch(e => console.error('[expiry] savers grace-entry email failed:', e.message));
   }
   const token = auth.createToken(user);
   res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
@@ -2478,7 +2478,7 @@ app.get('/api/my/profile', auth.requireAuthApi(['client']), (req, res) => {
   // without a fresh login, so an expired trial/membership doesn't sit
   // silently un-downgraded until they happen to log out and back in.
   const checked = db.checkTrialExpiry(req.user.id);
-  if (checked._justLapsed === 'membership') emailMembershipHonouredEnded(checked).catch(e => console.error('[expiry] membership-ended email failed:', e.message));
+  if (checked._enteredSaversGrace) emailSaversCancelGrace0(checked).catch(e => console.error('[expiry] savers grace-entry email failed:', e.message));
   res.json({ ...db.getUser(req.user.id), sessions: db.getClientSessionsForClient(req.user.id), practices: db.getPracticesForClient(req.user.id) });
 });
 
@@ -6105,6 +6105,17 @@ app.get('/api/admin/email-log', auth.requireAuthApi(['admin']), (req, res) => {
   const kind = req.query.kind || null;
   const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
   res.json(db.getRecentEmailLog(limit, kind));
+});
+
+// Per Bot 21 — the stored HTML body for one email log row, fetched on
+// demand from the "View" action rather than bundled into the list above.
+// Returns html:null (not a 404) for anything sent before body_html
+// existed, or for a genuinely missing id, so the frontend can show one
+// consistent "nothing stored for this one" message either way.
+app.get('/api/admin/email-log/:id/body', auth.requireAuthApi(['admin']), (req, res) => {
+  const row = db.getEmailLogById(req.params.id);
+  if (!row) return res.json({ html: null });
+  res.json({ id: row.id, email: row.email, subject: row.subject, created_at: row.created_at, status: row.status, html: row.body_html || null });
 });
 
 app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => {
@@ -10538,7 +10549,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailMembershipHonouredEnded });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0 });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

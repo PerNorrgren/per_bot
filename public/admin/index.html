@@ -90,6 +90,7 @@
     .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
     .modal-overlay.open { display:flex; }
     .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:420px; display:flex; flex-direction:column; gap:16px; }
+    .modal-wide { max-width:720px; }
     .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
     .modal label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
     .modal input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none; }
@@ -472,6 +473,20 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('confirmModal')">Cancel</button>
         <button class="btn danger" id="confirmOkBtn" style="padding:8px 18px;border-radius:8px;font-family:Georgia,serif;font-size:13px" onclick="confirmAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Email Preview Modal (Per Bot 21) -->
+  <div class="modal-overlay" id="emailPreviewModal" onclick="if(event.target===this)closeModal('emailPreviewModal')">
+    <div class="modal modal-wide">
+      <h3>Email preview</h3>
+      <div class="modal-note" id="emailPreviewMeta" style="margin-top:-10px"></div>
+      <div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.12)">
+        <iframe id="emailPreviewFrame" sandbox="" style="width:100%;height:60vh;border:0;background:#fff;display:block"></iframe>
+      </div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('emailPreviewModal')">Close</button>
       </div>
     </div>
   </div>
@@ -2334,6 +2349,7 @@
         <div class="table-hdr-cell col-name" onclick="emailLogSort('subject')">Subject ${sortIndicator('emailLog','subject')}</div>
         <div class="table-hdr-cell col-created" onclick="emailLogSort('created_at')">Sent at ${sortIndicator('emailLog','created_at')}</div>
         <div class="table-hdr-cell" style="flex:0 0 90px" onclick="emailLogSort('status')">Status ${sortIndicator('emailLog','status')}</div>
+        <div class="table-hdr-cell" style="flex:0 0 56px"></div>
       </div>` +
       list.map(r => `
         <div class="table-row">
@@ -2341,10 +2357,32 @@
           <div class="col-name">${escHtml(r.subject||'')}</div>
           <div class="col-created">${r.created_at}</div>
           <div style="flex:0 0 90px;color:${r.status==='sent'?'rgba(180,230,200,0.85)':'rgba(255,140,120,0.9)'}">${r.status}</div>
+          <div style="flex:0 0 56px;text-align:right">${r.has_body ? `<span style="cursor:pointer;color:rgba(180,230,200,0.75);text-decoration:underline;font-size:12px" onclick="viewEmailBody('${r.id}')">View</span>` : ''}</div>
         </div>
       `).join('');
   }
   function emailLogSort(col) { setSort('emailLog', col); renderEmailLog(); }
+  // Per Bot 21 — fetches and renders the stored HTML for one email log row
+  // inside a sandboxed iframe (via srcdoc), so it displays the way it
+  // actually looked in an inbox rather than as escaped/plain text.
+  // sandbox="" blocks scripts, forms, and top-level navigation from
+  // anything the stored HTML contains, while still allowing images and
+  // styling to render normally.
+  async function viewEmailBody(id) {
+    try {
+      const res = await fetch(`/api/admin/email-log/${id}/body`);
+      const data = await res.json();
+      if (!data.html) {
+        alert('No stored copy for this email — either it was sent before this feature existed, or the body was archived off.');
+        return;
+      }
+      document.getElementById('emailPreviewMeta').textContent = `${data.email}  ·  ${data.subject || ''}  ·  ${data.created_at}`;
+      document.getElementById('emailPreviewFrame').srcdoc = data.html;
+      openModal('emailPreviewModal');
+    } catch(e) {
+      alert('Could not load this email.');
+    }
+  }
 
   async function loadUserCounts() {
     try {
