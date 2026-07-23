@@ -4451,9 +4451,17 @@ tomteWss.on('connection', (ws, req) => {
   let tomteVoiceId = VOICE_ID;
   let tomtePersonalImage = null;
   let tomteSkinId = null;
+  // Per Bot 21 — kept in scope (not just inside the try block below) so
+  // greet() can re-resolve tomteName fresh right before speaking, rather
+  // than trusting whatever was true the moment this connection first
+  // opened. Real bug this fixes: a long-lived tab's WebSocket stays
+  // open across opening/closing the panel — only a full page reload
+  // used to pick up a name changed in My Account since connecting.
+  let sessionPayload = null;
   try {
     const cookies = parseCookies(req.headers.cookie);
-    const payload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
+    sessionPayload = auth.verifyToken(cookies[auth.COOKIE_NAME]);
+    const payload = sessionPayload;
     console.log(`[tomte] cookie present: ${!!cookies[auth.COOKIE_NAME]}, valid session: ${!!payload}${payload ? `, role=${payload.role} id=${payload.id}` : ''}`);
     if (payload) {
       const settings = db.getTomteSettings(payload.role, payload.id);

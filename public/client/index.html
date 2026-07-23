@@ -5436,17 +5436,24 @@
         }).join('')}
       </div>
       ${(() => {
-        // Next Lesson — only rendered when we actually know the course's
+        // Previous/Next — only rendered when we actually know the course's
         // lesson order (cached from the last openCourseDetail call) and
-        // there's genuinely another lesson after this one. Navigates
+        // there's genuinely a lesson on that side. Both navigate
         // regardless of lock state, same as browsing the course list
         // directly would — sequencing only blocks playback, not
-        // visibility, so this button follows that same rule rather than
-        // hiding itself for a locked next lesson.
+        // visibility. Next runs the same completion-check goToNextLesson
+        // always did; Previous is a plain jump back — going backward
+        // isn't "finishing" the lesson you're leaving, so there's
+        // nothing to mark complete on the way.
         const idx = _currentCourseLessons.findIndex(l => l.id === lesson.id);
+        const prev = idx > 0 ? _currentCourseLessons[idx - 1] : null;
         const next = idx >= 0 ? _currentCourseLessons[idx + 1] : null;
-        if (!next) return '';
-        return `<button class="doc-link" style="display:block;width:100%;margin-top:14px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="goToNextLesson('${next.id}')">Next Lesson: ${next.title} →</button>`;
+        if (!prev && !next) return '';
+        const btnStyle = 'display:block;flex:1;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)';
+        return `<div style="display:flex;gap:10px;margin-top:14px">
+          ${prev ? `<button class="doc-link" style="${btnStyle}" onclick="openLesson('${prev.id}')">← Previous</button>` : '<div style="flex:1"></div>'}
+          ${next ? `<button class="doc-link" style="${btnStyle}" onclick="goToNextLesson('${next.id}')">Next →</button>` : '<div style="flex:1"></div>'}
+        </div>`;
       })()}
     `;
     pushPlayerHistoryState();

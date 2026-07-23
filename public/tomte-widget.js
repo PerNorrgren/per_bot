@@ -257,26 +257,34 @@
       img.onerror = () => { img.onerror = null; img.src = '/assets/tomte.png'; };
       img.src = url;
     }
-    (async function applyPersonalization() {
+    // Per Bot 21 — two real gaps found: (1) this only ever ran once at
+    // page load, so clearing your name in My Account never showed up
+    // until a hard refresh — reopening or closing Tomte didn't help,
+    // since nothing ever re-fetched. Now also re-run from openPanel()
+    // below. (2) it only ever updated the title/placeholder when a name
+    // was actually SET — clearing the name back to blank (data.name
+    // becomes null) fell through and left whatever was already showing
+    // untouched, rather than resetting to the "Tomte" default. Same
+    // reasoning for the image.
+    async function applyPersonalization() {
       try {
         const res = await fetch('/api/my/tomte-settings');
         if (!res.ok) return; // not logged in — defaults stay as-is
         const data = await res.json();
-        if (data.name) {
-          helperName = data.name;
-          document.querySelectorAll('#tomte-header .tomte-title').forEach(el => el.textContent = data.name);
-          fab.title = `Ask ${data.name} how this works`;
-          inputEl.placeholder = `Ask ${data.name}…`;
-        }
-        if (data.imageUrl) {
-          defaultImageUrl = data.imageUrl;
-          document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, data.imageUrl));
-        }
+        const nameToShow = data.name || 'Tomte';
+        helperName = nameToShow;
+        document.querySelectorAll('#tomte-header .tomte-title').forEach(el => el.textContent = nameToShow);
+        fab.title = `Ask ${nameToShow} how this works`;
+        inputEl.placeholder = `Ask ${nameToShow}…`;
+        const imageToShow = data.imageUrl || '/assets/tomte.png';
+        defaultImageUrl = imageToShow;
+        document.querySelectorAll('#tomte-fab img, #tomte-header img').forEach(img => setImgWithFallback(img, imageToShow));
         voiceEnabled = !!data.voiceEnabled;
         updateVoiceToggleUI();
         if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
       } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
-    })();
+    }
+    applyPersonalization();
 
     // Per Bot 18 — proactive tips. Same silent-no-op-if-not-logged-in
     // pattern as applyPersonalization above (tomte-widget.js loads on
@@ -313,7 +321,20 @@
     // and a laptop counts as two, which is the more useful number for
     // "how many screens will actually see this."
     const tomteTabId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    // Per Bot 21 — real bug found: this used to be a plain JS variable,
+    // which only ever lived for as long as the current page stayed
+    // loaded. Every full page load (a refresh, or simply navigating to
+    // a different page in this multi-page app — most navigation here
+    // IS a fresh page load, not an SPA route change) reset it to null,
+    // so a broadcast that was still active kept popping up again and
+    // again on every single navigation, not just once. sessionStorage
+    // survives navigation/refresh within the same browser tab while
+    // still resetting the moment the tab actually closes — "not saved
+    // for the user" still holds (nothing server-side, nothing account-
+    // tied, nothing that outlives this browsing session).
+    const TOMTE_SEEN_BROADCAST_KEY = 'tomte_seen_broadcast_id';
     let lastSeenBroadcastId = null;
+    try { lastSeenBroadcastId = sessionStorage.getItem(TOMTE_SEEN_BROADCAST_KEY); } catch(e) {}
     // Per Bot 21 — same visual pattern as addTipMessage's action link
     // (a plain <a>, safe innerHTML-free construction since text/labels
     // are admin-authored, not user input) — broadcasts can optionally
@@ -340,6 +361,7 @@
         const broadcast = await res.json();
         if (!broadcast || broadcast.id === lastSeenBroadcastId) return;
         lastSeenBroadcastId = broadcast.id;
+        try { sessionStorage.setItem(TOMTE_SEEN_BROADCAST_KEY, broadcast.id); } catch(e) {}
         // Opens the panel directly rather than going through openPanel()
         // — that also connects the WebSocket and sends a "greet", neither
         // of which apply here; this is a one-way notice, not the start
@@ -555,6 +577,9 @@
       connect();
       inputEl.focus();
       nudgeScrollContainers();
+      // Per Bot 21 — catches a name/photo change made in My Account
+      // without needing a hard refresh first.
+      applyPersonalization();
       // A pending tip counts as this session's greeting — showing both
       // back to back would feel cluttered for what's meant to be one
       // quiet, easy-to-ignore observation, not two things landing at once.
