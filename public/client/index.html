@@ -4427,7 +4427,7 @@
         label: 'Courses',
         rows: courses,
         cardHtml: (c) => `
-          <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}')">
+          <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}', ${c.enrolled ? 'true' : 'false'})">
             <div class="shelf-card-title">${c.title}</div>
             <div class="shelf-card-meta">${c.category_name || 'Course'}</div>
           </div>
@@ -4526,9 +4526,17 @@
       if (listEl) { listEl.style.overflowY = 'hidden'; void listEl.offsetHeight; listEl.style.overflowY = 'auto'; }
     });
   }
-  function openFeaturedCourse(instanceId) {
+  // Per Bot 21 — real bug: this used to always call openCourseDetail
+  // directly, with no enrolment step, unlike the normal Courses tab
+  // list (which calls enrolInCourse for anything not yet started).
+  // Clicking a not-yet-started course from the splash carousel just hit
+  // the raw "You are not enrolled" error instead of enrolling (free or
+  // Stripe checkout, same as enrolInCourse already handles) and opening
+  // it — this brings the carousel in line with that same flow.
+  function openFeaturedCourse(instanceId, enrolled) {
     switchTab('courses');
-    openCourseDetail(instanceId);
+    if (enrolled) openCourseDetail(instanceId);
+    else enrolInCourse(instanceId);
   }
   function openFeaturedContentById(id) {
     const f = _featuredContentData.find(x => x.id === id);
@@ -5300,9 +5308,24 @@
   // Logs that a file was opened (feeds green ticks, % complete, the
   // mandatory-files completion gate, and file-sequence unlocking). Fires
   // in the background — never blocks actually opening/playing the file.
+  //
+  // Per Bot 21 — real bug found: returning to the chooser after closing
+  // a file (handleAudioStopped / closePlayerOverlay) re-renders it from
+  // this same _lessonChooserFiles array, not a fresh server fetch — so
+  // marking THIS file opened here also has to clear the NEXT file's
+  // stale `locked` flag right here, or it stays showing 🔒 forever even
+  // though the file that was supposed to unlock it has now been opened.
+  // Mirrors the server's own sequencing rule (file N+1 unlocks once file
+  // N is opened) — a no-op when sequencing isn't enabled for this lesson,
+  // since next.locked would already be false in that case.
   async function logLessonFileOpen(lessonId, fileId) {
-    const f = _lessonChooserFiles.find(x => x.id === fileId);
-    if (f) f.opened = true; // immediate UI feedback, don't wait on the network
+    const idx = _lessonChooserFiles.findIndex(x => x.id === fileId);
+    const f = idx !== -1 ? _lessonChooserFiles[idx] : null;
+    if (f) {
+      f.opened = true; // immediate UI feedback, don't wait on the network
+      const next = _lessonChooserFiles[idx + 1];
+      if (next && next.locked) next.locked = false;
+    }
     try {
       const res = await fetch('/api/client/lesson-file-opens', { method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ lessonId, fileId }) });

@@ -2826,7 +2826,15 @@ function setCourseSortOrder(id, sortOrder) {
 // reorder every featured course regardless of who could actually see it.
 // The client-facing /api/client/featured call is the one that passes
 // userTier/skinId, same tier/skin rules as the main course list.
-function getFeaturedCourses({ userTier, skinId } = {}) {
+// Per Bot 21 — added userId (optional, backward compatible) so each
+// course can carry its own `enrolled` flag. Real bug this fixes:
+// openFeaturedCourse (the splash-page carousel) was calling
+// openCourseDetail directly with no enrolment step first, unlike the
+// normal Courses tab list which always goes through enrolInCourse for
+// anything not yet started — so clicking a not-yet-started course from
+// the carousel just hit the raw "You are not enrolled" error instead of
+// enrolling (free or Stripe checkout) and opening it.
+function getFeaturedCourses({ userTier, skinId, userId } = {}) {
   const rows = queryAll(`SELECT c.*, cat.name as category_name, ci.id as instance_id
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
@@ -2834,12 +2842,13 @@ function getFeaturedCourses({ userTier, skinId } = {}) {
     WHERE c.featured=1
     GROUP BY c.id
     ORDER BY c.sort_order, c.title`);
-  if (userTier === undefined && skinId === undefined) return rows;
-  return rows.filter(c => {
+  const filtered = (userTier === undefined && skinId === undefined) ? rows : rows.filter(c => {
     if (c.skin_id && c.skin_id !== skinId) return false;
     if (c.required_tier !== null && c.required_tier !== undefined && (userTier || 0) < c.required_tier && c.hide_when_locked) return false;
     return true;
   });
+  if (!userId) return filtered;
+  return filtered.map(c => ({ ...c, enrolled: !!getEnrolmentForUserAndInstance(userId, c.instance_id) }));
 }
 function deleteCourse(id) {
   const lessons = queryAll('SELECT id FROM lessons WHERE course_id=?', [id]);
@@ -3076,6 +3085,14 @@ function createEnrolment(id, userId, courseInstanceId, paymentStatus, amountPaid
 function getEnrolment(id) { return queryOne('SELECT * FROM enrolments WHERE id=?', [id]); }
 function getEnrolmentForUserAndInstance(userId, courseInstanceId) {
   return queryOne('SELECT * FROM enrolments WHERE user_id=? AND course_instance_id=?', [userId, courseInstanceId]);
+}
+// Per Bot 21 — true when this email also belongs to a facilitator or
+// admin account (same table holds both, distinguished by role). Used to
+// let a staff member's own client identity (the "choose role" duality —
+// same person, two separate account rows) preview any course without
+// needing a real paid/free enrolment first.
+function isStaffEmail(email) {
+  return !!queryOne('SELECT 1 FROM facilitators WHERE lower(email)=lower(?)', [email]);
 }
 // For the client's own "My Courses" list — course/instance info plus a live
 // % complete computed from lesson_progress, never stored/stale.
@@ -6116,7 +6133,7 @@ module.exports = {
   createCourseInstance, getCourseInstance, getInstancesForCourse, getAllCourseInstances,
   updateCourseInstance, deleteCourseInstance,
   // Enrolments
-  createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser,
+  createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard,

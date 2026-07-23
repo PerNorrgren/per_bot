@@ -2518,7 +2518,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
     const userFlags = db.userFlagsFromRecord(userRecord, 'client');
     const content = db.getFeaturedLibraryFiles(userFlags, req.user.id).map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
     res.json({
-      courses: db.getFeaturedCourses({ userTier: userRecord?.member_tier || 0, skinId: userRecord?.skin_id || null }),
+      courses: db.getFeaturedCourses({ userTier: userRecord?.member_tier || 0, skinId: userRecord?.skin_id || null, userId: req.user.id }),
       content,
       recentPoems: db.getRecentStandaloneFiles('poem', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
@@ -2603,6 +2603,23 @@ app.get('/api/client/resume', auth.requireAuthApi(['client']), (req, res) => {
   try { res.json(db.getDashboardResumeCard(req.user.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// Per Bot 21 — an admin or facilitator's own linked client identity
+// (the "choose role" duality — same person, two separate account rows,
+// matched by email) previewing course content shouldn't need a real
+// paid/free enrolment first. This checks for an existing enrolment as
+// normal, and only for a staff email, auto-creates a free one on the
+// spot rather than blocking with "You are not enrolled" — an ordinary
+// client's account is completely unaffected, since isStaffEmail would
+// never match theirs.
+function ensureEnrolmentForStaffPreview(userId, instanceId) {
+  const existing = db.getEnrolmentForUserAndInstance(userId, instanceId);
+  if (existing) return existing;
+  const user = db.getUser(userId);
+  if (!user || !user.email || !db.isStaffEmail(user.email)) return null;
+  db.createEnrolment(uuidv4(), userId, instanceId, 'free', 0, null);
+  return db.getEnrolmentForUserAndInstance(userId, instanceId);
+}
 
 // Enrol — free immediately for Members regardless of instance price; for
 // Explorers, free instances enrol immediately too, but a priced instance
@@ -2696,7 +2713,7 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
   try {
     const instance = db.getCourseInstance(req.params.instanceId);
     if (!instance) return res.status(404).json({ error: 'Not found.' });
-    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
+    const enrolment = ensureEnrolmentForStaffPreview(req.user.id, req.params.instanceId);
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
     const course = db.getCourse(instance.course_id);
@@ -2764,7 +2781,7 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
     const { instanceId } = req.query;
     if (!instanceId) return res.status(400).json({ error: 'instanceId is required.' });
     const instance = db.getCourseInstance(instanceId);
-    const enrolment = instance ? db.getEnrolmentForUserAndInstance(req.user.id, instanceId) : null;
+    const enrolment = instance ? ensureEnrolmentForStaffPreview(req.user.id, instanceId) : null;
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
     const lesson = db.getLesson(req.params.lessonId);
@@ -2849,7 +2866,7 @@ app.post('/api/client/progress', auth.requireAuthApi(['client']), (req, res) => 
   try {
     const { instanceId, lessonId, status, lastPosition } = req.body;
     if (!instanceId || !lessonId || !status) return res.status(400).json({ error: 'instanceId, lessonId, and status are required.' });
-    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, instanceId);
+    const enrolment = ensureEnrolmentForStaffPreview(req.user.id, instanceId);
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
     db.upsertLessonProgress(uuidv4(), enrolment.id, lessonId, status, lastPosition || null);
@@ -2871,7 +2888,7 @@ app.post('/api/client/quizzes/:quizId/attempt', auth.requireAuthApi(['client']),
   try {
     const { instanceId, answers } = req.body;
     if (!instanceId || !answers) return res.status(400).json({ error: 'instanceId and answers are required.' });
-    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, instanceId);
+    const enrolment = ensureEnrolmentForStaffPreview(req.user.id, instanceId);
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
 
     const quiz = db.getFullQuiz(req.params.quizId);
