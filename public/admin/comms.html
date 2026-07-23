@@ -2138,34 +2138,56 @@
     // separately, automatically shows that same cramped tooltip the
     // moment you click on top of any EXISTING link or button already in
     // the document — a completely different code path the earlier fix
-    // never touched. That tooltip visually truncates long URLs for
-    // display, and saving through it can write the truncated preview
-    // back as the real href — exactly what was happening to the Zoom
-    // link after duplicating and re-editing it. Capture-phase, same
-    // reasoning as the paste fix below: stopping it here means Quill's
-    // own tooltip never gets to see the click at all, for both plain
-    // links and nl-buttons, replaced with the same appPrompt flow
-    // (pre-filled with the current value) used for creating one.
+    // never touched. Capture-phase, same reasoning as the paste fix
+    // below: stopping it here means Quill's own tooltip never gets to
+    // see the click at all, replaced with the same appPrompt flow used
+    // for creating one.
+    //
+    // First attempt at this fix set a.setAttribute('href', ...) directly
+    // on the DOM node — which looked right immediately, but didn't
+    // survive: Quill 1.3.7 keeps its own internal Delta as the real
+    // source of truth and periodically re-renders the DOM from it. A
+    // plain DOM edit made outside Quill's own API is exactly the kind of
+    // change its MutationObserver "corrects" back to whatever the Delta
+    // still says — which was the OLD truncated value, since nothing had
+    // told Quill's actual model to update. Root(); Quill.find(a) resolves
+    // the clicked node back to its Blot so quill.formatText/deleteText/
+    // insertText can update the real Delta instead — the only way a
+    // change here reliably survives a subsequent save and reopen.
     quillInstance.root.addEventListener('click', async (e) => {
       const a = e.target.closest('a');
       if (!a || !quillInstance.root.contains(a)) return;
       e.preventDefault();
       e.stopPropagation();
+      const quill = getQuill();
+      const blot = Quill.find(a);
+      if (!blot) return;
+      const index = blot.offset(quill.scroll);
+      const length = blot.length();
       const isButton = a.classList.contains('nl-button');
       const currentHref = a.getAttribute('href') || '';
       if (isButton) {
-        const newLabel = await appPrompt('Button text:', a.textContent || '');
+        const currentLabel = a.textContent || '';
+        const color = a.style.background || '#2d6a4f';
+        const newLabel = await appPrompt('Button text:', currentLabel);
         if (newLabel === null) return;
         const newUrl = await appPrompt('Button link (https://...):', currentHref);
         if (newUrl === null) return;
-        if (newLabel.trim()) a.textContent = newLabel.trim();
-        if (newUrl.trim()) a.setAttribute('href', newUrl.trim());
+        const finalLabel = newLabel.trim() || currentLabel;
+        const finalUrl = newUrl.trim() || currentHref;
+        // Deletes and re-inserts the whole run through Quill's own API —
+        // rewrites the real Delta (text + link format together), not
+        // just the DOM, so the color-picker button below survives too.
+        quill.deleteText(index, length);
+        quill.insertText(index, finalLabel, 'buttonLink', finalUrl);
+        quill.setSelection(index + finalLabel.length);
+        const leaf = quill.getLeaf(index)[0];
+        if (leaf && leaf.domNode) leaf.domNode.style.background = color;
         return;
       }
       const newUrl = await appPrompt('Link this text to (leave blank to remove the link):', currentHref);
       if (newUrl === null) return;
-      if (newUrl.trim()) a.setAttribute('href', newUrl.trim());
-      else { a.replaceWith(...a.childNodes); }
+      quill.formatText(index, length, 'link', newUrl.trim() || false);
     }, true);
 
     // Paste-into-column fix — Quill treats the whole columns block as one
