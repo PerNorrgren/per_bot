@@ -4098,9 +4098,25 @@ app.post('/api/my/tomte-tip/seen', auth.requireAuthApi(['client']), (req, res) =
 // around confusing someone who opens the app hours later.
 let currentTomteBroadcast = null; // { id, text, createdAt } | null
 const TOMTE_BROADCAST_TTL_MS = 30 * 60 * 1000;
+// Active-browser tracking (Per Bot 21) — every poll carries a random
+// per-tab id (see tomteTabId in tomte-widget.js), recorded here with a
+// last-seen timestamp. Counted (and pruned of anything stale) whenever
+// the admin checks — not on a timer, since nobody's reading the count
+// except when the broadcast card is actually open. A generous window
+// relative to the 15s poll interval absorbs normal network jitter
+// without underselling the count.
+const activeTomteTabs = new Map(); // tabId -> lastSeenTimestamp
+const TOMTE_ACTIVE_TAB_WINDOW_MS = 40 * 1000;
+function countActiveTomteTabs() {
+  const cutoff = Date.now() - TOMTE_ACTIVE_TAB_WINDOW_MS;
+  for (const [id, ts] of activeTomteTabs) {
+    if (ts < cutoff) activeTomteTabs.delete(id);
+  }
+  return activeTomteTabs.size;
+}
 app.get('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
   if (currentTomteBroadcast && Date.now() - currentTomteBroadcast.createdAt > TOMTE_BROADCAST_TTL_MS) currentTomteBroadcast = null;
-  res.json(currentTomteBroadcast);
+  res.json({ broadcast: currentTomteBroadcast, activeCount: countActiveTomteTabs() });
 });
 app.post('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
   const text = (req.body.text || '').trim();
@@ -4118,8 +4134,11 @@ app.delete('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, r
 // tracks what it's already shown itself, client-side only.
 app.get('/api/tomte-broadcast', auth.requireAuthApi(), (req, res) => {
   if (currentTomteBroadcast && Date.now() - currentTomteBroadcast.createdAt > TOMTE_BROADCAST_TTL_MS) currentTomteBroadcast = null;
+  const tabId = (req.query.tabId || '').toString().slice(0, 100);
+  if (tabId) activeTomteTabs.set(tabId, Date.now());
   res.json(currentTomteBroadcast);
 });
+
 
 // Self-service voice-output toggle (Per Bot 11) — replaces the old
 // per-browser localStorage flag. Any logged-in role can flip their own

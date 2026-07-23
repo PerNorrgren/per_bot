@@ -305,10 +305,18 @@
     // through it. Deliberately no seen-tracking on the server at all —
     // lastSeenBroadcastId lives only in this tab's memory and resets on
     // reload, matching "not saved for the user, just in the moment."
+    //
+    // tomteTabId — a fresh random id each page load, sent with every
+    // poll purely so the admin side can count distinct active browsers
+    // (see /api/admin/tomte-broadcast). Never stored anywhere client-
+    // side, never tied to the account — same account open on a phone
+    // and a laptop counts as two, which is the more useful number for
+    // "how many screens will actually see this."
+    const tomteTabId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     let lastSeenBroadcastId = null;
     async function checkTomteBroadcast() {
       try {
-        const res = await fetch('/api/tomte-broadcast');
+        const res = await fetch('/api/tomte-broadcast?tabId=' + encodeURIComponent(tomteTabId));
         if (!res.ok) return;
         const broadcast = await res.json();
         if (!broadcast || broadcast.id === lastSeenBroadcastId) return;
@@ -325,6 +333,13 @@
     }
     checkTomteBroadcast();
     setInterval(checkTomteBroadcast, 15000);
+    // Mobile browsers suspend timers on a backgrounded tab — coming back
+    // to the app would otherwise wait up to 15s for the next natural
+    // tick before checking. This catches it the moment the tab is
+    // actually looked at again.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') checkTomteBroadcast();
+    });
 
     // Expressions (Per Bot 8) — swaps to whatever image the server resolved
     // for this action (shrug, smile, thinking, etc.), then quietly reverts
