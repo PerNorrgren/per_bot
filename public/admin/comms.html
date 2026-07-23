@@ -258,6 +258,32 @@
     </div>
   </div>
 
+  <!-- ── Live broadcast via Tomte (Per Bot 21) ── Deliberately not part
+       of the newsletter/campaign machinery below — this is for
+       something happening right now (a reboot, a brief outage), shown
+       instantly to whoever has the app open, and never saved anywhere.
+       See /api/admin/tomte-broadcast in server.js. -->
+  <div>
+    <div class="section-label">Live broadcast (Tomte)</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Message everyone active right now</div>
+      </div>
+      <div class="card-body" style="padding:16px 20px">
+        <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+          Pops up instantly as a message from Tomte for anyone with the app open — e.g. "Rebooting in 2 minutes, back shortly." Not saved anywhere and not sent to anyone who isn't already in the app; each browser picks it up within about 15 seconds and shows it once. Sending a new message replaces the old one.
+        </div>
+        <textarea id="tomteBroadcastText" rows="3" placeholder="e.g. We're rebooting the app now — back in about 2 minutes." style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.85); font-family:Georgia,serif; font-size:13px; resize:vertical; box-sizing:border-box;"></textarea>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+          <button class="btn sm primary" onclick="sendTomteBroadcast()" id="tomteBroadcastSendBtn">Send now</button>
+          <button class="btn sm" onclick="clearTomteBroadcast()">Clear active message</button>
+        </div>
+        <div id="tomteBroadcastStatus" style="font-size:11.5px; color:rgba(255,255,255,0.35); margin-top:10px;"></div>
+        <div class="feedback" id="tomteBroadcastFeedback"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Message of the Day ── -->
   <div>
     <div class="section-label">Message of the day</div>
@@ -3084,10 +3110,59 @@
     }
   }
 
+  // ── Live broadcast via Tomte (Per Bot 21) ──
+  async function loadTomteBroadcastStatus() {
+    const statusEl = document.getElementById('tomteBroadcastStatus');
+    try {
+      const res = await fetch('/api/admin/tomte-broadcast');
+      const broadcast = await res.json();
+      if (broadcast) {
+        const mins = Math.max(0, Math.round((Date.now() - broadcast.createdAt) / 60000));
+        statusEl.textContent = `Currently active (sent ${mins === 0 ? 'just now' : mins + ' min ago'}): "${broadcast.text}"`;
+        statusEl.style.color = 'rgba(180,230,200,0.75)';
+      } else {
+        statusEl.textContent = 'No message currently active.';
+        statusEl.style.color = 'rgba(255,255,255,0.35)';
+      }
+    } catch(e) { statusEl.textContent = ''; }
+  }
+  async function sendTomteBroadcast() {
+    const textEl = document.getElementById('tomteBroadcastText');
+    const text = textEl.value.trim();
+    if (!text) { showFeedback('tomteBroadcastFeedback', 'Write a message first.', 'err'); return; }
+    const btn = document.getElementById('tomteBroadcastSendBtn');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await fetch('/api/admin/tomte-broadcast', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not send.');
+      showFeedback('tomteBroadcastFeedback', 'Sent — everyone with the app open will see it within about 15 seconds.', 'ok');
+      textEl.value = '';
+      loadTomteBroadcastStatus();
+    } catch(e) {
+      showFeedback('tomteBroadcastFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send now';
+    }
+  }
+  async function clearTomteBroadcast() {
+    try {
+      await fetch('/api/admin/tomte-broadcast', { method: 'DELETE' });
+      showFeedback('tomteBroadcastFeedback', 'Cleared.', 'ok');
+      loadTomteBroadcastStatus();
+    } catch(e) {
+      showFeedback('tomteBroadcastFeedback', 'Could not clear.', 'err');
+    }
+  }
+
   // ── Boot ──
   checkAuth().then(() => {
     loadMotd();
     loadTestDestination();
+    loadTomteBroadcastStatus();
     loadReminderConfig();
     loadRenewalConfig();
     loadBirthdayConfig();

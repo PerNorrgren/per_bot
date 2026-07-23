@@ -86,6 +86,36 @@
       color: rgba(255,224,185,0.95); border-radius: 6px; padding: 4px 14px;
       font-size: 12px; cursor: pointer; flex-shrink: 0;
     }
+
+    /* Per Bot 21 — welcome tour overlay: a small number of Per's own
+       phone photos with a caption each, walked through one at a time.
+       Deliberately full-screen and separate from the chat panel — this
+       is a one-off orientation moment, not a conversation. */
+    #tomte-tour-overlay {
+      position: fixed; inset: 0; background: rgba(6,9,8,0.96); z-index: 100000;
+      display: none; flex-direction: column; align-items: center; justify-content: center;
+      padding: 24px; font-family: Georgia, serif;
+    }
+    #tomte-tour-overlay.tomte-tour-open { display: flex; }
+    #tomte-tour-close {
+      position: absolute; top: 18px; right: 18px; background: none; border: none;
+      color: rgba(255,255,255,0.5); font-size: 26px; cursor: pointer; line-height: 1; padding: 6px;
+    }
+    #tomte-tour-close:hover { color: rgba(255,255,255,0.85); }
+    #tomte-tour-progress { color: rgba(255,255,255,0.35); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 14px; }
+    #tomte-tour-image-wrap { max-width: min(88vw, 420px); max-height: 55vh; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
+    #tomte-tour-image-wrap img { max-width: 100%; max-height: 55vh; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+    #tomte-tour-caption { color: rgba(255,255,255,0.85); font-size: 15px; line-height: 1.6; text-align: center; max-width: 420px; min-height: 24px; margin-bottom: 26px; }
+    #tomte-tour-nav { display: flex; align-items: center; gap: 16px; }
+    .tomte-tour-btn {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.8); border-radius: 20px; padding: 9px 20px;
+      font-family: Georgia, serif; font-size: 13px; cursor: pointer;
+    }
+    .tomte-tour-btn:hover { background: rgba(255,255,255,0.12); }
+    .tomte-tour-btn:disabled { opacity: 0.3; cursor: default; }
+    .tomte-tour-btn.tomte-tour-primary { background: rgba(230,175,90,0.18); border-color: rgba(230,175,90,0.5); color: rgba(255,224,185,0.95); }
+    .tomte-tour-btn.tomte-tour-primary:hover { background: rgba(230,175,90,0.28); }
   `;
 
   function injectStyle() {
@@ -126,6 +156,24 @@
 
     document.body.appendChild(fab);
     document.body.appendChild(panel);
+
+    // Per Bot 21 — the tour overlay lives outside #tomte-panel entirely
+    // (full-screen, its own z-index) since it needs to sit above
+    // everything, chat panel included.
+    const tour = document.createElement('div');
+    tour.id = 'tomte-tour-overlay';
+    tour.innerHTML = `
+      <button id="tomte-tour-close" aria-label="Close">×</button>
+      <div id="tomte-tour-progress"></div>
+      <div id="tomte-tour-image-wrap"><img id="tomte-tour-image" alt=""/></div>
+      <div id="tomte-tour-caption"></div>
+      <div id="tomte-tour-nav">
+        <button class="tomte-tour-btn" id="tomte-tour-back">← Back</button>
+        <button class="tomte-tour-btn tomte-tour-primary" id="tomte-tour-next">Next →</button>
+      </div>
+    `;
+    document.body.appendChild(tour);
+
     return { fab, panel };
   }
 
@@ -248,6 +296,36 @@
       } catch(e) { /* quietly no-op */ }
     })();
 
+    // Per Bot 21 — live broadcast: Per's own one-off message from Comms
+    // admin ("rebooting in 2 minutes"), pushed to anyone with the app
+    // open right now. Unlike the tip above, this genuinely polls rather
+    // than checking once — Tomte's WebSocket only connects once someone
+    // actually opens/uses the widget, so most people sitting on a page
+    // with it merely loaded in the background wouldn't be reachable
+    // through it. Deliberately no seen-tracking on the server at all —
+    // lastSeenBroadcastId lives only in this tab's memory and resets on
+    // reload, matching "not saved for the user, just in the moment."
+    let lastSeenBroadcastId = null;
+    async function checkTomteBroadcast() {
+      try {
+        const res = await fetch('/api/tomte-broadcast');
+        if (!res.ok) return;
+        const broadcast = await res.json();
+        if (!broadcast || broadcast.id === lastSeenBroadcastId) return;
+        lastSeenBroadcastId = broadcast.id;
+        // Opens the panel directly rather than going through openPanel()
+        // — that also connects the WebSocket and sends a "greet", neither
+        // of which apply here; this is a one-way notice, not the start
+        // of a conversation.
+        panel.classList.add('tomte-open');
+        positionPanel();
+        addMessage('bot', broadcast.text);
+        nudgeScrollContainers();
+      } catch(e) { /* quietly no-op */ }
+    }
+    checkTomteBroadcast();
+    setInterval(checkTomteBroadcast, 15000);
+
     // Expressions (Per Bot 8) — swaps to whatever image the server resolved
     // for this action (shrug, smile, thinking, etc.), then quietly reverts
     // to the person's own default a few seconds later so it doesn't get
@@ -369,13 +447,23 @@
     // bubble, not just plain text — content here is always our own
     // hand-written copy from TOMTE_TIPS server-side, never user input, so
     // innerHTML is safe.
+    // Per Bot 21 — tips can now carry action:'open-tour' instead of a
+    // plain actionHref, which renders a button that opens the tour
+    // overlay in place rather than navigating anywhere.
     function addTipMessage(tip) {
       const empty = messagesEl.querySelector('.tomte-empty');
       if (empty) empty.remove();
       const div = document.createElement('div');
       div.className = 'tomte-msg tomte-bot';
       div.textContent = tip.text;
-      if (tip.actionLabel && tip.actionHref) {
+      if (tip.actionLabel && tip.action === 'open-tour') {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'tomte-tip-action'; btn.style.background = 'none'; btn.style.border = 'none'; btn.style.font = 'inherit'; btn.style.padding = '0';
+        btn.textContent = tip.actionLabel + ' →';
+        btn.addEventListener('click', openTour);
+        div.appendChild(document.createElement('br'));
+        div.appendChild(btn);
+      } else if (tip.actionLabel && tip.actionHref) {
         const a = document.createElement('a');
         a.href = tip.actionHref; a.className = 'tomte-tip-action'; a.textContent = tip.actionLabel + ' →';
         div.appendChild(document.createElement('br'));
@@ -384,6 +472,48 @@
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+
+    // Per Bot 21 — the welcome tour itself: fetches Per's uploaded
+    // slides once, walks through them one at a time. Closing the panel
+    // (if it happened to be open behind it) isn't necessary — the
+    // overlay sits above everything regardless.
+    let tourSlides = [];
+    let tourIndex = 0;
+    const tourOverlay = document.getElementById('tomte-tour-overlay');
+    const tourImage = document.getElementById('tomte-tour-image');
+    const tourCaption = document.getElementById('tomte-tour-caption');
+    const tourProgress = document.getElementById('tomte-tour-progress');
+    const tourBackBtn = document.getElementById('tomte-tour-back');
+    const tourNextBtn = document.getElementById('tomte-tour-next');
+    const tourCloseBtn = document.getElementById('tomte-tour-close');
+    function renderTourSlide() {
+      const slide = tourSlides[tourIndex];
+      if (!slide) return;
+      tourImage.src = slide.url;
+      tourCaption.textContent = slide.caption || '';
+      tourProgress.textContent = `${tourIndex + 1} of ${tourSlides.length}`;
+      tourBackBtn.disabled = tourIndex === 0;
+      tourNextBtn.textContent = tourIndex === tourSlides.length - 1 ? 'Done' : 'Next →';
+    }
+    async function openTour() {
+      try {
+        const res = await fetch('/api/onboarding-tour');
+        if (!res.ok) return;
+        const slides = await res.json();
+        if (!Array.isArray(slides) || !slides.length) return;
+        tourSlides = slides;
+        tourIndex = 0;
+        renderTourSlide();
+        tourOverlay.classList.add('tomte-tour-open');
+      } catch(e) { /* quietly no-op — worst case, nothing opens */ }
+    }
+    function closeTour() { tourOverlay.classList.remove('tomte-tour-open'); }
+    tourCloseBtn.addEventListener('click', closeTour);
+    tourBackBtn.addEventListener('click', () => { if (tourIndex > 0) { tourIndex--; renderTourSlide(); } });
+    tourNextBtn.addEventListener('click', () => {
+      if (tourIndex < tourSlides.length - 1) { tourIndex++; renderTourSlide(); }
+      else closeTour();
+    });
 
     function openPanel() {
       panel.classList.add('tomte-open');

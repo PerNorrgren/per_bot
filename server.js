@@ -3271,6 +3271,44 @@ app.delete('/api/admin/tomte-library/:id', auth.requireAuthApi(['admin']), (req,
   db.deleteTomteImageFromLibrary(req.params.id);
   res.json({ ok: true });
 });
+
+// ── Onboarding tour slides (Per Bot 21) ── Per's own phone photos of the
+// app, one caption each, in a deliberate walkthrough order — offered by
+// Tomte as a one-time tip once at least one slide exists (see
+// TOMTE_TIPS below). Same R2-backed upload pattern as the Tomte image
+// library above.
+app.get('/api/admin/onboarding-tour', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getOnboardingTourSlides().map(r => ({ ...r, url: tomteImageUrl(r.filename) })));
+});
+app.post('/api/admin/onboarding-tour', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    const id = uuidv4();
+    db.addOnboardingTourSlide(id, stored, (req.body.caption || '').trim() || null);
+    res.json({ ok: true, id, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('onboarding-tour upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload image right now — please try again.' });
+  }
+});
+app.patch('/api/admin/onboarding-tour/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.updateOnboardingTourSlideCaption(req.params.id, (req.body.caption || '').trim());
+  res.json({ ok: true });
+});
+app.delete('/api/admin/onboarding-tour/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.deleteOnboardingTourSlide(req.params.id);
+  res.json({ ok: true });
+});
+app.post('/api/admin/onboarding-tour/reorder', auth.requireAuthApi(['admin']), (req, res) => {
+  db.reorderOnboardingTourSlides(Array.isArray(req.body.order) ? req.body.order : []);
+  res.json({ ok: true });
+});
+// Client-facing read — what Tomte's tour overlay actually fetches once
+// someone taps "Show me around".
+app.get('/api/onboarding-tour', auth.requireAuthApi(['client']), (req, res) => {
+  res.json(db.getOnboardingTourSlides().map(r => ({ id: r.id, url: tomteImageUrl(r.filename), caption: r.caption })));
+});
 // Assigns an EXISTING library photo to a language+action, no upload
 // involved — this is what makes a photo able to just sit in the library
 // without being forced to be something the moment it's added.
@@ -4011,6 +4049,19 @@ app.get('/api/my/tomte-settings', auth.requireAuthApi(), (req, res) => {
 // link/label. Checked in order; the first unseen relevant one wins — so
 // order here doubles as priority if more than one ever applies at once.
 const TOMTE_TIPS = [
+  // Per Bot 21 — deliberately first in the list (order = priority when
+  // more than one tip could apply). Gated on slides actually existing so
+  // this never fires and opens an empty tour before Per's uploaded
+  // anything — see /api/admin/onboarding-tour. condition ignores userId
+  // since slide existence isn't per-person, but keeps the same (userId)
+  // signature as every other tip here.
+  {
+    id: 'welcome-tour',
+    condition: () => db.getOnboardingTourSlides().length > 0,
+    text: "Welcome — I'm Tomte. If it would help, I can walk you through the app with a few pictures showing what everything does.",
+    actionLabel: 'Show me around',
+    action: 'open-tour',
+  },
   {
     id: 'try-talk',
     condition: (userId) => !db.hasEverUsedTalk(userId),
@@ -4023,7 +4074,7 @@ app.get('/api/my/tomte-tip', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const tip = TOMTE_TIPS.find(t => !db.hasSeenTomteTip(req.user.id, t.id) && t.condition(req.user.id));
     if (!tip) return res.json(null);
-    res.json({ tipId: tip.id, text: tip.text, actionLabel: tip.actionLabel || null, actionHref: tip.actionHref || null });
+    res.json({ tipId: tip.id, text: tip.text, actionLabel: tip.actionLabel || null, actionHref: tip.actionHref || null, action: tip.action || null });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/my/tomte-tip/seen', auth.requireAuthApi(['client']), (req, res) => {
@@ -4033,6 +4084,43 @@ app.post('/api/my/tomte-tip/seen', auth.requireAuthApi(['client']), (req, res) =
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Tomte live broadcast (Per Bot 21) ── Deliberately NOT a database
+// table — this is genuinely ephemeral, in-the-moment only ("we're
+// rebooting in 2 minutes"), never saved against any user, never meant
+// to persist past a server restart or be seen by someone who opens the
+// app later. A single in-memory slot: sending a new one just replaces
+// whatever was there. Client widgets poll for it (see /api/tomte-
+// broadcast below) rather than relying on Tomte's WebSocket, since that
+// only connects once someone actually opens/uses Tomte — most people
+// with the app merely open in a background tab wouldn't have one.
+// Auto-expires after 30 minutes so a forgotten broadcast doesn't sit
+// around confusing someone who opens the app hours later.
+let currentTomteBroadcast = null; // { id, text, createdAt } | null
+const TOMTE_BROADCAST_TTL_MS = 30 * 60 * 1000;
+app.get('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
+  if (currentTomteBroadcast && Date.now() - currentTomteBroadcast.createdAt > TOMTE_BROADCAST_TTL_MS) currentTomteBroadcast = null;
+  res.json(currentTomteBroadcast);
+});
+app.post('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Message required.' });
+  currentTomteBroadcast = { id: uuidv4(), text, createdAt: Date.now() };
+  res.json({ ok: true, broadcast: currentTomteBroadcast });
+});
+app.delete('/api/admin/tomte-broadcast', auth.requireAuthApi(['admin']), (req, res) => {
+  currentTomteBroadcast = null;
+  res.json({ ok: true });
+});
+// Client-facing poll — any authenticated role (client, facilitator,
+// admin), since anyone with the app open right now is exactly who this
+// is for. No seen-tracking here at all, on purpose — each browser tab
+// tracks what it's already shown itself, client-side only.
+app.get('/api/tomte-broadcast', auth.requireAuthApi(), (req, res) => {
+  if (currentTomteBroadcast && Date.now() - currentTomteBroadcast.createdAt > TOMTE_BROADCAST_TTL_MS) currentTomteBroadcast = null;
+  res.json(currentTomteBroadcast);
+});
+
 // Self-service voice-output toggle (Per Bot 11) — replaces the old
 // per-browser localStorage flag. Any logged-in role can flip their own
 // preference here; an admin can also set the same field from the user
