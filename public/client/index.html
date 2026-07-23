@@ -5366,6 +5366,26 @@
     _upgradeNoticeTimer = setTimeout(() => { el.style.display = 'none'; }, 7000);
   }
 
+  // Per Bot 21 — real bug found: "Next Lesson →" used to call openLesson
+  // directly, completely bypassing the completion-check/mark flow that
+  // the Close button goes through (see closePlayerOverlay's
+  // ctx.askToComplete() call below). Effect: taking the shortcut to the
+  // next lesson meant THIS lesson's progress silently stayed
+  // 'in_progress' forever, no matter how much was actually read/heard —
+  // so with sequential unlocking on, the next lesson (and everything
+  // after it) stayed locked permanently, even though nothing was
+  // actually left undone. Now runs the same check first — which itself
+  // already handles "mandatory files still outstanding" (prompt simply
+  // doesn't appear) and the completion confirm — before moving on.
+  async function goToNextLesson(nextLessonId) {
+    const ctx = _lessonCtx;
+    if (ctx && ctx.askToComplete) {
+      _lessonCtx = null;
+      _inChooserView = false;
+      await ctx.askToComplete();
+    }
+    openLesson(nextLessonId);
+  }
   function openLessonChooser(lesson, files, lessonLocked) {
     // Preserve whatever lock state was already known (from the initial API
     // response) across re-renders that don't pass it explicitly — e.g. the
@@ -5426,7 +5446,7 @@
         const idx = _currentCourseLessons.findIndex(l => l.id === lesson.id);
         const next = idx >= 0 ? _currentCourseLessons[idx + 1] : null;
         if (!next) return '';
-        return `<button class="doc-link" style="display:block;width:100%;margin-top:14px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="openLesson('${next.id}')">Next Lesson: ${next.title} →</button>`;
+        return `<button class="doc-link" style="display:block;width:100%;margin-top:14px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="goToNextLesson('${next.id}')">Next Lesson: ${next.title} →</button>`;
       })()}
     `;
     pushPlayerHistoryState();
