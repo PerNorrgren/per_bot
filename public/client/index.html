@@ -751,10 +751,20 @@
            has actually started this session (_talkEngaged) — from then
            on, talkChatContent takes over exactly as before. -->
       <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:flex-start; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
-        <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
+        <!-- Per Bot 21 — three specific gaps halved (26px → 13px) per
+             Per's request, via margin-bottom:-13px on the element right
+             before each gap rather than changing the container's own
+             26px gap (which would've shrunk every gap on the page, not
+             just these three). Using margin-bottom on the PRIOR element
+             (not margin-top on the next one) for the Hear Calming Sounds
+             gap specifically, since what follows it varies — the resume
+             card below only renders when there's a course in progress,
+             so a margin-top approach on it would silently stop applying
+             whenever it's hidden. -->
+        <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase; margin-bottom:-13px;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
-        <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
+        <div style="width:60px; height:1px; background:rgba(255,255,255,0.15); margin-bottom:-13px;"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
           <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">Quick practice</div>
           <div style="display:flex; gap:8px; justify-content:center;">
@@ -763,7 +773,17 @@
             <button type="button" onclick="playQuickPractice('calm-breath', QUICK_PRACTICE_SCRIPTS.breath)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the breath</button>
           </div>
         </div>
-        <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
+        <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer; margin-bottom:-13px;">♪ Hear Calming Sounds</button>
+
+        <!-- Per Bot 21 — moved here from the Talk page per Per's request;
+             loadResumeCard() already runs on general app boot regardless
+             of which tab is open, so nothing about the loading logic
+             needed to change, only where the markup lives. -->
+        <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
+          <div class="resume-card-label">Continue</div>
+          <div class="resume-card-title" id="resumeCardTitle"></div>
+          <div class="resume-card-sub" id="resumeCardSub"></div>
+        </div>
 
         <!-- Curated shelves (Per Bot 28) — horizontally-scrollable rows,
              one per featured category, only ever showing what's been
@@ -788,25 +808,9 @@
 
       <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
         <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
-        <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
-          <div class="resume-card-label">Continue</div>
-          <div class="resume-card-title" id="resumeCardTitle"></div>
-          <div class="resume-card-sub" id="resumeCardSub"></div>
-        </div>
-        <!-- Talk's own past summaries (Per Bot 18) — same self-guided
-             session summaries that already existed (gated behind Keep
-             History), just now viewable on their own rather than only
-             ever surfacing mixed into the general Library. Talk is a
-             facilitator like any other here, so it gets the same
-             "Practices" concept a real facilitator's detail pane has. -->
-        <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer">📄 Past summaries</button>
-        <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
-          <div class="practices-scroll" id="talkSummariesList"></div>
-        </div>
         <div class="transcript-area" id="transcriptArea">
           <p class="transcript-text" id="transcript">—</p>
         </div>
-        <div class="transcript-toggle" id="transcriptToggleBtn" onclick="toggleTranscriptVisible()">Show text</div>
         <div style="display:flex; gap:8px; justify-content:center">
           <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
           <button type="button" id="shareTalkBtn" class="save-talk-btn" style="display:none" onclick="shareMoment(lastBotReply)">Share</button>
@@ -828,10 +832,26 @@
             <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
           </button>
         </div>
+        <!-- Per Bot 21 — moved below the mic and left-aligned per Per's
+             request (was centred, between the transcript and Save/Share
+             above). align-self:flex-start pulls just this one item to
+             the left edge of the column; nothing else in the layout
+             changes. -->
+        <div class="transcript-toggle" id="transcriptToggleBtn" onclick="toggleTranscriptVisible()" style="align-self:flex-start; margin-top:-10px;">Show text</div>
         <div class="status" id="status"></div>
         <div class="thinking" id="thinking">
           <div class="thinking-dots"><span></span><span></span><span></span></div>
           <div class="thinking-text">Getting ready…</div>
+        </div>
+
+        <!-- Per Bot 21 — Past summaries moved to the bottom of the page
+             per Per's request. margin-top:auto pins it (and the panel
+             below it) to the bottom of talkChatContent's flex column
+             whenever there's spare height, and simply falls in as the
+             last item otherwise (long conversation, small screen). -->
+        <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer; margin-top:auto;">📄 Past summaries</button>
+        <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
+          <div class="practices-scroll" id="talkSummariesList"></div>
         </div>
       </div>
 
