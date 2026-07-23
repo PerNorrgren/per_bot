@@ -263,7 +263,7 @@
     .dots span:nth-child(3){animation-delay:0.4s}
     @keyframes db { 0%,80%,100%{transform:translateY(0);opacity:0.35} 40%{transform:translateY(-6px);opacity:1} }
 
-    .mic-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
+    .mic-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; position:relative; }
 
     /* Prompts the person that it's their turn — appears when the app is
        waiting for a tap and nothing else is happening, disappears the
@@ -275,12 +275,60 @@
     @keyframes tapPulse { 0%,100% { opacity:0.55; } 50% { opacity:1; } }
     .mic-btn { width:68px; height:68px; border-radius:50%; border:1.5px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.06); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.25s ease; outline:none; }
     .mic-btn:hover { background:rgba(255,255,255,0.12); border-color:rgba(255,255,255,0.38); }
-    .mic-btn.active { background:rgba(180,230,200,0.13); border-color:rgba(180,230,200,0.5); animation:pulse 2s ease-in-out infinite; }
-    @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(180,230,200,0.4)} 70%{box-shadow:0 0 0 16px rgba(180,230,200,0)} 100%{box-shadow:0 0 0 0 rgba(180,230,200,0)} }
+    /* Per Bot 21 — three genuinely distinct colours/animations, one per
+       state, instead of a single shared "active" class. The complaint
+       being addressed: it wasn't obvious at a glance whether the app was
+       listening, thinking, or speaking — a colour-blind-friendly set of
+       cues (coral=listening, amber=thinking/static, green=speaking) plus
+       the bigger text label below now carry that signal redundantly. */
+    .mic-btn.listening { background:rgba(255,140,120,0.16); border-color:rgba(255,140,120,0.6); animation:pulse-listening 1.3s ease-in-out infinite; }
+    .mic-btn.listening svg { fill:rgba(255,160,140,0.95); }
+    @keyframes pulse-listening { 0%{box-shadow:0 0 0 0 rgba(255,140,120,0.45)} 70%{box-shadow:0 0 0 18px rgba(255,140,120,0)} 100%{box-shadow:0 0 0 0 rgba(255,140,120,0)} }
+    .mic-btn.processing { background:rgba(230,175,90,0.14); border-color:rgba(230,175,90,0.55); cursor:default; }
+    .mic-btn.processing svg { fill:rgba(230,185,120,0.9); }
+    .mic-btn.speaking { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.55); animation:pulse-speaking 1.6s ease-in-out infinite; }
+    .mic-btn.speaking svg { fill:rgba(180,230,200,0.95); }
+    @keyframes pulse-speaking { 0%{box-shadow:0 0 0 0 rgba(180,230,200,0.35)} 70%{box-shadow:0 0 0 14px rgba(180,230,200,0)} 100%{box-shadow:0 0 0 0 rgba(180,230,200,0)} }
     .mic-btn svg { width:26px; height:26px; fill:rgba(255,255,255,0.65); transition:fill 0.25s; }
-    .mic-btn.active svg { fill:rgba(180,230,200,0.9); }
-    .status { font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.25); text-transform:uppercase; height:14px; }
-    .status.on { color:rgba(180,230,200,0.65); }
+    /* Per Bot 21 — one clear, readable line, always in the same place,
+       always saying in plain words what's happening right now. Replaces
+       the old tiny 11px uppercase label that only ever said "listening"
+       (with no equivalent text at all during "speaking"). */
+    .status { font-size:14.5px; letter-spacing:0.02em; color:rgba(255,255,255,0.35); text-transform:none; height:20px; transition:color 0.25s; }
+    .status.on { color:rgba(255,160,140,0.9); }
+    .status.processing { color:rgba(230,185,120,0.9); }
+    .status.speaking { color:rgba(180,230,200,0.9); }
+
+    /* First-visit coach-mark — a small speech bubble pointing straight at
+       the mic button, shown once per browser (see TALK_COACHMARK_KEY),
+       dismissed the moment someone actually taps the mic or the "Got it"
+       button on the bubble itself. Deliberately plain, low-key wording —
+       this is pointing at something, not selling a feature. */
+    .mic-coachmark {
+      position:absolute; bottom:calc(100% + 14px); left:50%; transform:translateX(-50%);
+      width:200px; background:rgba(20,26,23,0.97); border:1px solid rgba(180,230,200,0.4);
+      border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.5;
+      color:rgba(255,255,255,0.85); text-align:center; box-shadow:0 6px 24px rgba(0,0,0,0.4);
+      z-index:5; opacity:0; pointer-events:none; transition:opacity 0.3s ease;
+    }
+    .mic-coachmark.visible { opacity:1; pointer-events:auto; }
+    .mic-coachmark::after {
+      content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+      border:7px solid transparent; border-top-color:rgba(180,230,200,0.4);
+    }
+    .mic-coachmark::before {
+      content:''; position:absolute; top:calc(100% - 1px); left:50%; transform:translateX(-50%);
+      border:6px solid transparent; border-top-color:#141a17;
+    }
+    .mic-coachmark-dismiss { display:block; margin:8px auto 0; background:none; border:none; color:rgba(180,230,200,0.85); font-size:12px; text-decoration:underline; cursor:pointer; padding:2px; }
+
+    /* Show/hide transcript toggle (Per Bot 21) — "listen is enough" by
+       default: the spoken reply is the primary experience, the on-screen
+       text is now an optional aid rather than something competing for
+       attention throughout every session. Remembered per-browser. */
+    .transcript-toggle { display:flex; align-items:center; justify-content:center; gap:6px; font-size:11.5px; letter-spacing:0.05em; color:rgba(255,255,255,0.35); cursor:pointer; text-transform:uppercase; padding:4px 0; }
+    .transcript-toggle:hover { color:rgba(255,255,255,0.6); }
+    .transcript-area.transcript-hidden { display:none; }
 
     /* Practices */
     .practices-view { display:none; flex-direction:column; overflow:hidden; }
@@ -705,10 +753,6 @@
       <div id="calmLanding" style="display:none; flex-direction:column; align-items:center; justify-content:flex-start; gap:26px; flex:1; width:100%; min-height:0; padding:10px 20px; text-align:center;">
         <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
-        <button type="button" id="calmMainBtn" onclick="startLiveTalk()" style="width:150px; height:150px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:16px; line-height:1.5; cursor:pointer;">Talk to<br/>Per</button>
-        <button type="button" id="calmTalkBtn" onclick="startLiveTalk()" title="Talk to Per" style="width:52px; height:52px; border-radius:50%; background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.4); color:rgba(190,235,210,0.95); cursor:pointer; display:flex; align-items:center; justify-content:center; margin-top:-6px;">
-          <svg viewBox="0 0 24 24" style="width:22px; height:22px; fill:rgba(190,235,210,0.95)"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
-        </button>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
@@ -730,6 +774,18 @@
         <div id="featuredShelves" style="width:100%; display:flex; flex-direction:column; gap:22px; margin-top:8px;"></div>
       </div>
 
+      <!-- Talk to Per — dedicated screen (Per Bot 21) — reached only by
+           choosing "Talk to Per" from the bottom-nav menu, never shown on
+           the splash/home page. Deliberately just this: a big microphone,
+           nothing else — one action, nothing to figure out. Tapping it
+           calls startLiveTalk(), same conversation flow as before. -->
+      <div id="talkMicOnly" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:22px; flex:1; width:100%;">
+        <button type="button" id="talkMicOnlyBtn" onclick="beginTalkFromMicOnly()" title="Talk to Per" style="width:170px; height:170px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); cursor:pointer; display:flex; align-items:center; justify-content:center;">
+          <svg viewBox="0 0 24 24" style="width:56px; height:56px; fill:rgba(255,255,255,0.85)"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
+        </button>
+        <div style="font-size:13px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;">Tap to Talk</div>
+      </div>
+
       <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
         <div class="talk-hint-banner" id="talkHintBanner" style="display:none"></div>
         <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
@@ -747,9 +803,10 @@
         <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
           <div class="practices-scroll" id="talkSummariesList"></div>
         </div>
-        <div class="transcript-area">
+        <div class="transcript-area" id="transcriptArea">
           <p class="transcript-text" id="transcript">—</p>
         </div>
+        <div class="transcript-toggle" id="transcriptToggleBtn" onclick="toggleTranscriptVisible()">Show text</div>
         <div style="display:flex; gap:8px; justify-content:center">
           <button type="button" id="saveTalkBtn" class="save-talk-btn" style="display:none" onclick="saveTalkAsPractice()">Save this to my practices</button>
           <button type="button" id="shareTalkBtn" class="save-talk-btn" style="display:none" onclick="shareMoment(lastBotReply)">Share</button>
@@ -763,6 +820,10 @@
         </div>
         <div class="mic-wrap">
           <div class="tap-hint" id="tapHint">Tap to Talk</div>
+          <div class="mic-coachmark" id="micCoachmark">
+            Tap the microphone to speak with Per
+            <button type="button" class="mic-coachmark-dismiss" id="micCoachmarkDismiss">Got it</button>
+          </div>
           <button class="mic-btn" id="micBtn">
             <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
           </button>
@@ -2072,16 +2133,60 @@
   // its own wording. See begin() below for where this gets set.
   function setThinkingText(t) { thinkingTextEl.textContent = t; }
 
+  // Per Bot 21 — a facilitator (Patricia) trying Talk herself found the
+  // state changes hard to notice: the mic button barely changed
+  // appearance between states, and there was no text at all during
+  // "speaking" (only silent wave bars). Now every state gets its own
+  // mic-btn colour/animation AND the same plain-language line in
+  // #status, so the signal is redundant rather than resting on one
+  // subtle cue someone has to already know to look for.
   function setState(s) {
     waveEl.classList.remove('on'); dotsEl.classList.remove('on');
-    micBtn.classList.remove('active'); statusEl.classList.remove('on');
+    micBtn.classList.remove('listening','processing','speaking');
+    statusEl.classList.remove('on','processing','speaking');
     thinkingEl.classList.remove('visible');
     tapHintEl.classList.remove('visible');
-    if (s === 'idle')       { setStatus(''); tapHintEl.classList.add('visible'); }
-    if (s === 'listening')  { micBtn.classList.add('active'); statusEl.classList.add('on'); setStatus('listening'); }
-    if (s === 'processing') { thinkingEl.classList.add('visible'); setStatus(''); }
-    if (s === 'speaking')   { waveEl.classList.add('on'); setStatus(''); }
+    if (s === 'idle')       { setStatus(''); tapHintEl.classList.add('visible'); maybeShowMicCoachmark(); }
+    if (s === 'listening')  { micBtn.classList.add('listening'); statusEl.classList.add('on'); setStatus('Listening…'); }
+    if (s === 'processing') { micBtn.classList.add('processing'); statusEl.classList.add('processing'); thinkingEl.classList.add('visible'); setStatus('Thinking…'); }
+    if (s === 'speaking')   { micBtn.classList.add('speaking'); statusEl.classList.add('speaking'); waveEl.classList.add('on'); setStatus('Per is speaking…'); }
   }
+
+  // ── Mic coach-mark (Per Bot 21) ── Shown once per browser, pointing
+  // straight at the mic button, so a first-time person doesn't have to
+  // guess what the circle does. Dismissed by its own "Got it" button or
+  // simply by using the mic — either way counts as "found it."
+  const TALK_COACHMARK_KEY = 'talk_mic_coachmark_dismissed_v1';
+  const micCoachmarkEl = document.getElementById('micCoachmark');
+  function dismissMicCoachmark() {
+    micCoachmarkEl.classList.remove('visible');
+    try { localStorage.setItem(TALK_COACHMARK_KEY, '1'); } catch(e) {}
+  }
+  function maybeShowMicCoachmark() {
+    let dismissed = false;
+    try { dismissed = localStorage.getItem(TALK_COACHMARK_KEY) === '1'; } catch(e) {}
+    if (!dismissed) micCoachmarkEl.classList.add('visible');
+  }
+  document.getElementById('micCoachmarkDismiss').addEventListener('click', (e) => { e.stopPropagation(); dismissMicCoachmark(); });
+
+  // ── Transcript show/hide (Per Bot 21) ── "Listen is enough" by default —
+  // the spoken reply is the point, on-screen text is now an optional aid
+  // rather than something always sitting there competing for attention.
+  // Remembered per-browser, same pattern as the coach-mark above.
+  const TALK_TRANSCRIPT_KEY = 'talk_transcript_visible_v1';
+  const transcriptAreaEl = document.getElementById('transcriptArea');
+  const transcriptToggleBtn = document.getElementById('transcriptToggleBtn');
+  function setTranscriptVisible(visible) {
+    transcriptAreaEl.classList.toggle('transcript-hidden', !visible);
+    transcriptToggleBtn.textContent = visible ? 'Hide text' : 'Show text';
+    try { localStorage.setItem(TALK_TRANSCRIPT_KEY, visible ? '1' : '0'); } catch(e) {}
+  }
+  function toggleTranscriptVisible() { setTranscriptVisible(transcriptAreaEl.classList.contains('transcript-hidden')); }
+  (function initTranscriptVisibility() {
+    let stored = null;
+    try { stored = localStorage.getItem(TALK_TRANSCRIPT_KEY); } catch(e) {}
+    setTranscriptVisible(stored === '1'); // default OFF — nothing stored yet means hidden
+  })();
 
   // ── Speak — identical to Mare Bot ──
   // Fetches and plays ONE piece of text through the shared, unlocked audio
@@ -2521,6 +2626,7 @@
     setState('idle');
   }
   micBtn.addEventListener('click', () => {
+    dismissMicCoachmark();
     if (micActive) {
       stopMic();
     } else {
@@ -4502,12 +4608,21 @@
     stopCalmingSoundsIfPlaying();
     _talkEngaged = true;
     document.getElementById('calmLanding').style.display = 'none';
+    document.getElementById('talkMicOnly').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'flex';
     document.getElementById('saveTalkBtn').style.display = 'none';
     document.getElementById('shareTalkBtn').style.display = 'none';
     unlockAudioPlayback();
     setState('processing');
     await sendToBot('[START]');
+  }
+  // Per Bot 21 — the only entry point into a conversation from the new
+  // dedicated Talk screen. Kept as its own tiny function (rather than
+  // wiring talkMicOnlyBtn straight to startLiveTalk) so the screen swap
+  // happens immediately on tap, not after startLiveTalk's async work.
+  function beginTalkFromMicOnly() {
+    document.getElementById('talkMicOnly').style.display = 'none';
+    startLiveTalk();
   }
 
   async function startGroundingPractice() {
@@ -4642,16 +4757,47 @@
     _activeFacilitatorId = 'talk';
     renderFacMenu();
     document.getElementById('calmLanding').style.display = 'flex';
+    document.getElementById('talkMicOnly').style.display = 'none';
     document.getElementById('talkChatContent').style.display = 'none';
     document.getElementById('facDetailPane').style.display = 'none';
     loadFeaturedShelves();
   }
   function toggleFacMenu() {
-    if (_facList.length <= 1) { goHome(); return; }
+    // Per Bot 21 — "Talk to Per" now has its own dedicated screen
+    // (talkMicOnly), separate from the splash/home landing — the splash
+    // page keeps its MOTD/quick practices/calming sounds/shelves exactly
+    // as before, it just no longer contains a way to start Talk itself.
+    // So choosing "Talk" from the bottom nav always goes to that
+    // dedicated screen (or resumes an in-progress conversation), never
+    // to the splash landing — goHome() and the splash page are reached
+    // only via the 🏠 icon now, a separate, deliberate action.
+    if (_facList.length <= 1) {
+      closeFacMenu();
+      switchTab('talk');
+      if (_talkEngaged) {
+        document.getElementById('calmLanding').style.display = 'none';
+        document.getElementById('talkMicOnly').style.display = 'none';
+        document.getElementById('talkChatContent').style.display = 'flex';
+        document.getElementById('facDetailPane').style.display = 'none';
+        return;
+      }
+      showTalkMicOnly();
+      return;
+    }
     const opening = !_facMenuOpen;
     if (opening) switchTab('talk'); // runs closeFacMenu() first (harmless no-op here) then switches tab content — the actual open happens after, below
     _facMenuOpen = opening;
     document.getElementById('facMenuDropdown').style.display = _facMenuOpen ? 'block' : 'none';
+  }
+  // Per Bot 21 — shows only the dedicated Talk screen (calmLanding and
+  // talkChatContent both hidden). Split out from toggleFacMenu so
+  // selectFacilitator's "Talk to Per" dropdown entry can reach the same
+  // screen for consistency, not just the bottom-nav button.
+  function showTalkMicOnly() {
+    document.getElementById('calmLanding').style.display = 'none';
+    document.getElementById('talkChatContent').style.display = 'none';
+    document.getElementById('facDetailPane').style.display = 'none';
+    document.getElementById('talkMicOnly').style.display = 'flex';
   }
   function closeFacMenu() {
     _facMenuOpen = false;
@@ -4720,6 +4866,26 @@
   function chooseFacMenuEntry(id) {
     closeFacMenu();
     switchTab('talk');
+    // Per Bot 21 — a deliberate pick from this dropdown, same as tapping
+    // the bottom-nav Talk button — the Talk/Per entry goes to the
+    // dedicated mic-only screen (or resumes if already engaged), not
+    // selectFacilitator's default splash-landing behaviour, which stays
+    // reserved for the cold-boot case only.
+    const entry = _facList.find(f => f.id === id);
+    const isTalk = !entry || entry.isTalk;
+    if (isTalk) {
+      _activeFacilitatorId = id;
+      renderFacMenu();
+      if (_talkEngaged) {
+        document.getElementById('calmLanding').style.display = 'none';
+        document.getElementById('talkMicOnly').style.display = 'none';
+        document.getElementById('talkChatContent').style.display = 'flex';
+        document.getElementById('facDetailPane').style.display = 'none';
+      } else {
+        showTalkMicOnly();
+      }
+      return;
+    }
     selectFacilitator(id);
   }
   async function selectFacilitator(id) {
@@ -4727,7 +4893,15 @@
     renderFacMenu();
     const entry = _facList.find(f => f.id === id);
     const isTalk = !entry || entry.isTalk;
+    // Per Bot 21 — NOTE: this function is also called once automatically
+    // at cold boot (initFacStrip → selectFacilitator('talk')), so it
+    // must keep landing on the splash/calm-landing exactly as before —
+    // the dedicated mic-only Talk screen is only ever reached through a
+    // deliberate action (chooseFacMenuEntry below, or the bottom-nav
+    // Talk button via toggleFacMenu), never as this function's own
+    // default behaviour.
     document.getElementById('calmLanding').style.display = isTalk && _useCalmLanding && !_talkEngaged ? 'flex' : 'none';
+    document.getElementById('talkMicOnly').style.display = 'none';
     document.getElementById('talkChatContent').style.display = isTalk && (!_useCalmLanding || _talkEngaged) ? 'flex' : 'none';
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
     if (isTalk) return;
