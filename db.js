@@ -839,6 +839,22 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // Per Bot 21 — welcome tour slides: Per's own phone photos of the app
+  // with a caption explaining each one, offered by Tomte as a one-time
+  // "want a quick walkthrough?" tip (see TOMTE_TIPS in server.js). Same
+  // R2-backed upload pattern as tomte_image_library above — filename
+  // stored, actual bytes live in R2, served through the same
+  // /tomte-images/:key route. sort_order is a plain integer set by the
+  // admin reorder endpoint, not alphabetical/created_at — the sequence
+  // is a deliberate walkthrough order, not a gallery.
+  db.run(`CREATE TABLE IF NOT EXISTS onboarding_tour_slides (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    caption TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Tomte language + action image defaults (Per Bot 8) ── One row per
   // (language, action) pair — e.g. Dutch+shrug, Dutch+smile — each with its
   // own image. 'default' is the plain neutral pose and also the fallback
@@ -2330,6 +2346,35 @@ function findDuplicateLibraryFiles() {
     groups[key].push(f);
   });
   return Object.values(groups).filter(g => g.length > 1);
+}
+
+// Per Bot 21 — domain migration check: WordPress-era content (course/
+// lesson/library descriptions) can carry hand-embedded absolute links
+// or images pointing at the old domain, which the R2/library-file
+// migration never touched since those live as free text/HTML inside
+// these description fields, not as tracked file references. Read-only
+// report — fixing a broken embedded link needs a human to see it in
+// context, not an automated find/replace across arbitrary HTML.
+function scanDescriptionsForDomainRefs(term) {
+  const needle = `%${term}%`;
+  const results = [];
+  queryAll(`SELECT id, title, description FROM courses WHERE description LIKE ?`, [needle])
+    .forEach(r => results.push({ type: 'course', id: r.id, title: r.title, snippet: extractSnippet(r.description, term) }));
+  queryAll(`SELECT id, title, description FROM lessons WHERE description LIKE ?`, [needle])
+    .forEach(r => results.push({ type: 'lesson', id: r.id, title: r.title, snippet: extractSnippet(r.description, term) }));
+  queryAll(`SELECT id, title, description FROM library_files WHERE description LIKE ? AND archived=0`, [needle])
+    .forEach(r => results.push({ type: 'library_file', id: r.id, title: r.title, snippet: extractSnippet(r.description, term) }));
+  return results;
+}
+// A short window of text around the first match, so the admin report
+// shows enough context to judge whether it matters without opening
+// every single item individually.
+function extractSnippet(text, term) {
+  const idx = (text || '').toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return '';
+  const start = Math.max(0, idx - 60);
+  const end = Math.min(text.length, idx + term.length + 60);
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '');
 }
 function getLibraryFiles(filters = {}) {
   let sql = `SELECT f.*,
@@ -5078,6 +5123,36 @@ function deleteTomteImageFromLibrary(id) {
   getDbSync().run('DELETE FROM tomte_image_library WHERE id=?', [id]);
   save();
 }
+
+// Per Bot 21 — welcome tour slides. Same shape as the tomte image
+// library above (upload adds a row, nothing else) but ordered by a
+// deliberate sort_order rather than recency, since this is a fixed
+// walkthrough sequence, not a gallery.
+function getOnboardingTourSlides() {
+  return queryAll('SELECT * FROM onboarding_tour_slides ORDER BY sort_order ASC, created_at ASC');
+}
+function addOnboardingTourSlide(id, filename, caption) {
+  const existing = getOnboardingTourSlides();
+  const nextOrder = existing.length ? Math.max(...existing.map(s => s.sort_order)) + 1 : 0;
+  getDbSync().run('INSERT INTO onboarding_tour_slides (id, filename, caption, sort_order) VALUES (?,?,?,?)', [id, filename, caption || null, nextOrder]);
+  save();
+}
+function updateOnboardingTourSlideCaption(id, caption) {
+  getDbSync().run('UPDATE onboarding_tour_slides SET caption=? WHERE id=?', [caption || null, id]);
+  save();
+}
+function deleteOnboardingTourSlide(id) {
+  getDbSync().run('DELETE FROM onboarding_tour_slides WHERE id=?', [id]);
+  save();
+}
+// Takes a full ordered list of slide IDs and rewrites sort_order to match
+// — simplest reorder model for a small up/down-arrow admin UI, no
+// drag-and-drop library needed.
+function reorderOnboardingTourSlides(orderedIds) {
+  const run = getDbSync();
+  (orderedIds || []).forEach((id, i) => run.run('UPDATE onboarding_tour_slides SET sort_order=? WHERE id=?', [i, id]));
+  save();
+}
 function getAllTomteImages() {
   const rows = [
     ...queryAll(`SELECT filename FROM tomte_image_library`),
@@ -6011,7 +6086,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles,
+  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,
@@ -6130,6 +6205,7 @@ module.exports = {
   getAllSignalScripts, getSignalScriptMenu, getSignalScript, createSignalScript, updateSignalScript, deleteSignalScript, setSignalScriptCachedAudio,
   getAllContextDocuments, getContextDocumentsForSkin, createContextDocument, deleteContextDocument,
   getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
+  getOnboardingTourSlides, addOnboardingTourSlide, updateOnboardingTourSlideCaption, deleteOnboardingTourSlide, reorderOnboardingTourSlides,
   // Reminders
   getInactiveUsers,
   markReminderSent,

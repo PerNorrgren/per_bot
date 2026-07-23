@@ -240,6 +240,7 @@
           </div>
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
           <button class="btn" onclick="openDuplicatesScan()">Scan for duplicate files</button>
+          <button class="btn" onclick="openDomainRefsScan()">Scan for old domain links</button>
           <button class="btn primary" onclick="openUpload()">↑ Upload files</button>
         </div>
         <div class="bulk-bar" id="bulkBar">
@@ -554,6 +555,26 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('duplicatesModal')">Close</button>
       <button class="modal-ok" id="dupDeleteBtn" onclick="applyDuplicatesDelete()" style="display:none;background:rgba(255,100,80,0.12);border-color:rgba(255,100,80,0.4);color:rgba(255,140,120,0.9)">Delete checked copies</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 21 — old-domain-link scan: read-only report, no auto-fix.
+     Defaults to "wp-content" — the actual WordPress-specific signal
+     that would break if the old hosting is ever decommissioned, since
+     the live domain name itself is still correct and in current use. -->
+<div class="modal-overlay" id="domainRefsModal">
+  <div class="modal" style="max-width:720px">
+    <h3>Scan for old domain links</h3>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:8px">Searches course, lesson, and library descriptions for embedded links that may point at the old WordPress hosting rather than R2 — a human needs to look at each one, so nothing here gets changed automatically.</div>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <input type="text" id="domainRefsTerm" value="wp-content" placeholder="Search term" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:7px 9px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+      <button class="btn sm" onclick="runDomainRefsScan()">Search</button>
+    </div>
+    <div id="domainRefsBody" style="max-height:440px;overflow-y:auto"></div>
+    <div class="modal-err" id="domainRefsErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('domainRefsModal')">Close</button>
     </div>
   </div>
 </div>
@@ -1777,6 +1798,42 @@ async function applyDuplicatesDelete() {
   } finally {
     btn.disabled = false; btn.textContent = 'Delete checked copies';
   }
+}
+
+// Per Bot 21 — old-domain-link scan. Read-only report: each hit links
+// straight to editing that course/lesson/library file so fixing it is
+// one click away, but nothing here rewrites content automatically —
+// embedded HTML in a free-text field needs a human glance, not a blind
+// find/replace.
+async function openDomainRefsScan() {
+  openModal('domainRefsModal');
+  runDomainRefsScan();
+}
+async function runDomainRefsScan() {
+  const term = document.getElementById('domainRefsTerm').value.trim() || 'wp-content';
+  document.getElementById('domainRefsBody').innerHTML = '<div style="padding:20px;color:rgba(255,255,255,0.4);font-size:13px">Scanning…</div>';
+  document.getElementById('domainRefsErr').textContent = '';
+  try {
+    const res = await fetch(`/api/admin/scan-domain-refs?term=${encodeURIComponent(term)}`);
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('domainRefsErr').textContent = data.error || 'Scan failed.'; document.getElementById('domainRefsBody').innerHTML = ''; return; }
+    renderDomainRefsResults(data.results || []);
+  } catch (e) {
+    document.getElementById('domainRefsErr').textContent = 'Scan failed — network error.';
+    document.getElementById('domainRefsBody').innerHTML = '';
+  }
+}
+function renderDomainRefsResults(results) {
+  const body = document.getElementById('domainRefsBody');
+  if (!results.length) { body.innerHTML = '<div style="padding:20px;color:rgba(180,230,200,0.6);font-size:13px">No matches found.</div>'; return; }
+  const typeLabel = { course: 'Course', lesson: 'Lesson', library_file: 'Library file' };
+  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:10px">${results.length} match${results.length!==1?'es':''} found.</div>` +
+    results.map(r => `
+      <div style="padding:10px 12px; margin-bottom:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px;">
+        <div style="font-size:12px; color:rgba(255,255,255,0.85); margin-bottom:4px;"><span style="color:rgba(255,255,255,0.4); text-transform:uppercase; font-size:10.5px; letter-spacing:0.05em;">${typeLabel[r.type] || r.type}</span> — ${escHtml(r.title || '(untitled)')}</div>
+        <div style="font-size:11.5px; color:rgba(255,190,175,0.85); font-family:monospace; word-break:break-word;">${escHtml(r.snippet)}</div>
+      </div>
+    `).join('');
 }
 
 // Per Bot 16 — mojibake scan/fix UI. escHtml on the before/after snippets

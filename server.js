@@ -7499,6 +7499,27 @@ app.get('/api/admin/library/duplicates-scan', auth.requireAuthApi(['admin']), (r
   }
 });
 
+// Per Bot 21 — domain migration check: searches course/lesson/library
+// descriptions for hand-embedded links pointing at old WordPress-hosted
+// paths, since that content was migrated as free-text/HTML and the R2
+// file migration never touched anything living inside a description
+// field. Defaults to "wp-content" rather than the bare domain name —
+// deepermindfulness.org is the correct, still-in-use domain now, so
+// searching for it would flag every legitimate current link too;
+// wp-content is the actual WordPress-specific signal that would break
+// if that old hosting is ever decommissioned. Read-only — a human
+// needs to judge each hit, not an automated find/replace.
+app.get('/api/admin/scan-domain-refs', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const term = (req.query.term || 'wp-content').trim();
+    if (!term) return res.status(400).json({ error: 'Search term required.' });
+    res.json({ results: db.scanDescriptionsForDomainRefs(term) });
+  } catch (e) {
+    console.error('domain-refs scan error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/admin/library/mojibake-scan', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const candidates = db.getAllTextHtmlFiles();
