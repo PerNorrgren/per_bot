@@ -5268,6 +5268,16 @@
       }
 
       const askToComplete = async () => {
+        // Per Bot 21 — real bug: revisiting an already-completed lesson
+        // and moving on used to ask "Mark as complete?" every single
+        // time, since this never checked whether it already was.  Now
+        // skips straight past for anything already completed — nothing
+        // left to ask.
+        if (data.progress.status === 'completed') {
+          openCourseDetail(currentInstanceId);
+          loadResumeCard();
+          return;
+        }
         // Mandatory files still outstanding — per Per's request, the
         // completion prompt simply doesn't appear at all in that case,
         // rather than appearing and blocking/warning.
