@@ -2130,6 +2130,44 @@
       if (e.target && e.target.tagName === 'IMG') lastClickedImage = e.target;
     });
 
+    // Per Bot 21 — real bug found: the comment above the 'link' handler
+    // already explains why NEW links go through appPrompt instead of
+    // Quill's own Snow-theme tooltip ("only has room for a few
+    // characters of the URL") — but that fix only ever covered
+    // *creating* a link from the toolbar button. Quill's Snow theme
+    // separately, automatically shows that same cramped tooltip the
+    // moment you click on top of any EXISTING link or button already in
+    // the document — a completely different code path the earlier fix
+    // never touched. That tooltip visually truncates long URLs for
+    // display, and saving through it can write the truncated preview
+    // back as the real href — exactly what was happening to the Zoom
+    // link after duplicating and re-editing it. Capture-phase, same
+    // reasoning as the paste fix below: stopping it here means Quill's
+    // own tooltip never gets to see the click at all, for both plain
+    // links and nl-buttons, replaced with the same appPrompt flow
+    // (pre-filled with the current value) used for creating one.
+    quillInstance.root.addEventListener('click', async (e) => {
+      const a = e.target.closest('a');
+      if (!a || !quillInstance.root.contains(a)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const isButton = a.classList.contains('nl-button');
+      const currentHref = a.getAttribute('href') || '';
+      if (isButton) {
+        const newLabel = await appPrompt('Button text:', a.textContent || '');
+        if (newLabel === null) return;
+        const newUrl = await appPrompt('Button link (https://...):', currentHref);
+        if (newUrl === null) return;
+        if (newLabel.trim()) a.textContent = newLabel.trim();
+        if (newUrl.trim()) a.setAttribute('href', newUrl.trim());
+        return;
+      }
+      const newUrl = await appPrompt('Link this text to (leave blank to remove the link):', currentHref);
+      if (newUrl === null) return;
+      if (newUrl.trim()) a.setAttribute('href', newUrl.trim());
+      else { a.replaceWith(...a.childNodes); }
+    }, true);
+
     // Paste-into-column fix — Quill treats the whole columns block as one
     // atomic embed (see ColumnsBlot above) and has no concept of a cursor
     // position *inside* a cell, so its own paste handler (bubble-phase, on
