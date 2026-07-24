@@ -6298,6 +6298,29 @@ app.get('/api/admin/user-counts', auth.requireAuthApi(['admin']), (req, res) => 
   res.json(db.getUserTierCounts());
 });
 
+// Per Bot 22 — "logged in active users" for the People page summary bar.
+// Count comes from auth.js's in-memory session tracker (see
+// getActiveIdsForRole), not a database query — this is live presence,
+// not a historical report (that's what the Logins report is for).
+// Status/end-date logic mirrors emailWelcomeClient/emailAdminPasswordReset's
+// access-until reasoning: trial_ends_at wins if present (a trial in
+// progress), otherwise member_expires_at (paid subscription or manual
+// expiry — labelled "Renews" if there's a live Stripe subscription
+// behind it, "Paid until" if not), otherwise no end date at all
+// (Explorer, or a permanent admin-granted membership).
+app.get('/api/admin/active-users', auth.requireAuthApi(['admin']), (req, res) => {
+  const ids = auth.getActiveIdsForRole('client');
+  const users = ids.map(id => db.getUser(id)).filter(Boolean).map(u => {
+    const statusLabel = u.member_tier > 0 ? `Member ${u.member_tier}` : 'Explorer';
+    let endLabel = null, endDate = null;
+    if (u.trial_ends_at) { endLabel = 'Trial ends'; endDate = u.trial_ends_at; }
+    else if (u.member_expires_at) { endLabel = u.stripe_subscription_id ? 'Renews' : 'Paid until'; endDate = u.member_expires_at; }
+    return { id: u.id, name: u.name, email: u.email, status: statusLabel, endLabel, endDate };
+  });
+  users.sort((a, b) => a.name.localeCompare(b.name));
+  res.json({ count: users.length, users });
+});
+
 // ── Reports hub (Per Bot 20) ──
 // A registry, not a bespoke route per report — adding a new report later
 // is one db.js function + one entry here, never a new endpoint or a new

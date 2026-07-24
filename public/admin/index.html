@@ -340,6 +340,24 @@
    </div>
 
   <!-- Upgrade Explorer Modal -->
+  <!-- Per Bot 22 — Active now: who's actually logged in and using the
+       app right now (in-memory presence, 15-min window — see
+       /api/admin/active-users), triggered by clicking the pill in the
+       People page summary bar. Wider than the default 420px modal since
+       it's a 4-column list, not a form. -->
+  <div class="modal-overlay" id="activeUsersModal" onclick="if(event.target===this)closeModal('activeUsersModal')">
+    <div class="modal" style="max-width:640px">
+      <h3>Active now</h3>
+      <div class="modal-note" style="margin-top:-6px">Logged in and using the app within the last 15 minutes.</div>
+      <div id="activeUsersList" style="max-height:60vh;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:10px">
+        <div class="empty">Loading…</div>
+      </div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('activeUsersModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="upgradeModal" onclick="if(event.target===this)closeModal('upgradeModal')">
     <div class="modal">
       <h3>Upgrade user</h3>
@@ -2448,17 +2466,54 @@
 
   async function loadUserCounts() {
     try {
-      const res = await fetch('/api/admin/user-counts');
-      const c = await res.json();
+      const [countsRes, activeRes] = await Promise.all([
+        fetch('/api/admin/user-counts'),
+        fetch('/api/admin/active-users')
+      ]);
+      const c = await countsRes.json();
+      // Per Bot 22 — active count fetched alongside the tier counts so
+      // both land in the bar together rather than the pill popping in
+      // late; if this call fails for any reason the rest of the bar
+      // still renders fine, just without the pill.
+      const activeCount = activeRes.ok ? (await activeRes.json()).count : null;
       document.getElementById('userCountsBar').innerHTML = `
         <span><strong>${c.newsletter_only ?? 0}</strong> Newsletter only</span>
         <span><strong>${c.explorer ?? 0}</strong> Explorer</span>
         <span><strong>${c.member1 ?? 0}</strong> Member 1</span>
         <span><strong>${c.member2 ?? 0}</strong> Member 2</span>
         <span><strong>${c.member3 ?? 0}</strong> Member 3</span>
+        ${activeCount !== null ? `<span style="cursor:pointer;color:rgba(180,230,200,0.85)" onclick="openActiveUsersModal()" title="Logged in and using the app within the last 15 minutes"><strong>${activeCount}</strong> Active now</span>` : ''}
       `;
     } catch(e) {
       document.getElementById('userCountsBar').innerHTML = '<span>Counts unavailable right now.</span>';
+    }
+  }
+
+  // Per Bot 22 — Active now modal, opened from the summary bar pill above.
+  async function openActiveUsersModal() {
+    openModal('activeUsersModal');
+    const el = document.getElementById('activeUsersList');
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    try {
+      const res = await fetch('/api/admin/active-users');
+      const data = await res.json();
+      if (!data.users || !data.users.length) { el.innerHTML = '<div class="empty">Nobody active right now.</div>'; return; }
+      el.innerHTML =
+        `<div class="table-hdr">
+          <div class="col-name">Name</div>
+          <div class="col-email">Email</div>
+          <div style="flex:0.7;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25)">Status</div>
+          <div style="flex:0.9;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25)">Ends</div>
+        </div>` +
+        data.users.map(u => `
+          <div class="table-row">
+            <div class="col-name">${escHtml(u.name)}</div>
+            <div class="col-email">${escHtml(u.email)}</div>
+            <div style="flex:0.7;font-size:12px;color:rgba(255,255,255,0.6)"><span class="status-badge ${u.status==='Explorer'?'status-archived':'status-active'}">${escHtml(u.status)}</span></div>
+            <div style="flex:0.9;font-size:12px;color:rgba(255,255,255,0.5)">${u.endDate ? `${escHtml(u.endLabel)} ${escHtml(u.endDate.slice(0,10))}` : 'No end date'}</div>
+          </div>`).join('');
+    } catch(e) {
+      el.innerHTML = '<div class="empty">Could not load right now.</div>';
     }
   }
 

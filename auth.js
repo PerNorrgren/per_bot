@@ -26,6 +26,37 @@ const GUEST_COOKIE_OPTIONS = {
   maxAge: 30 * 24 * 60 * 60 * 1000
 };
 
+// ── Active-session tracking (Per Bot 22) ──
+// "Who's actually using the app right now" for the admin People page.
+// In-memory only, on purpose — same convention as the Tomte active-tab
+// counter in server.js: ephemeral presence data, not meant to survive a
+// restart or be written to the database. A Map write on every
+// authenticated request costs nothing next to the disk-backed sql.js
+// writes elsewhere in this app, so no throttling needed here unlike a
+// real DB column would need.
+const activeSessions = new Map(); // `${role}:${id}` -> lastSeenTimestamp
+const ACTIVE_SESSION_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function touchActiveSession(role, id) {
+  if (!role || !id) return;
+  activeSessions.set(`${role}:${id}`, Date.now());
+}
+
+// Prunes anything outside the window, then returns the ids still active
+// for a given role — 'client' is what the People page cares about, but
+// this stays role-generic in case facilitator/admin presence is ever
+// wanted too.
+function getActiveIdsForRole(role) {
+  const cutoff = Date.now() - ACTIVE_SESSION_WINDOW_MS;
+  const ids = [];
+  for (const [key, ts] of activeSessions) {
+    if (ts < cutoff) { activeSessions.delete(key); continue; }
+    const sep = key.indexOf(':');
+    if (key.slice(0, sep) === role) ids.push(key.slice(sep + 1));
+  }
+  return ids;
+}
+
 // ── Hash and verify passwords ──
 async function hashPassword(password) {
   return bcrypt.hash(password, 12);
@@ -117,6 +148,7 @@ function requireAuth(roles = []) {
     }
 
     req.user = payload;
+    touchActiveSession(payload.role, payload.id);
     next();
   };
 }
@@ -135,6 +167,7 @@ function requireAuthApi(roles = []) {
     }
 
     req.user = payload;
+    touchActiveSession(payload.role, payload.id);
     next();
   };
 }
@@ -153,4 +186,5 @@ module.exports = {
   requireGuestIdentity,
   GUEST_COOKIE_NAME,
   GUEST_COOKIE_OPTIONS,
+  getActiveIdsForRole,
 };
