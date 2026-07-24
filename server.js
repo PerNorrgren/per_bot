@@ -8674,6 +8674,34 @@ app.get('/api/admin/membership/plans', auth.requireAuthApi(['admin']), (req, res
   try { res.json(db.getMembershipPlans(false)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per Bot 21 — how many people are actually on each plan right now.
+// Deliberately a separate, on-demand endpoint rather than bundled into
+// the plan list above: this calls out to Stripe once per plan that has
+// a Price ID, which is slower than a local DB read and shouldn't hold
+// up the main table rendering. Counts are live from Stripe (status =
+// active only — a trialing subscriber hasn't actually paid for this
+// plan yet, so isn't counted as "on" it), not anything cached locally,
+// since that's the only place billing-cycle-level detail actually
+// lives — the app's own user records track tier, not which specific
+// Price a person is subscribed under.
+app.get('/api/admin/membership/plans/member-counts', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!stripe) return res.json({});
+    const plans = db.getMembershipPlans(false).filter(p => p.stripe_price_id);
+    const counts = {};
+    await Promise.all(plans.map(async (p) => {
+      try {
+        const subs = await stripe.subscriptions.list({ price: p.stripe_price_id, status: 'active', limit: 100 }).autoPagingToArray({ limit: 1000 });
+        counts[p.id] = subs.length;
+      } catch (e) {
+        counts[p.id] = null; // couldn't fetch this one — shown as unknown, not zero
+      }
+    }));
+    res.json(counts);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const fields = { ...req.body };
@@ -10364,6 +10392,67 @@ app.post('/api/admin/birthday/test-sms', auth.requireAuthApi(['admin']), async (
 // so the list now reports a live count from there instead of trusting the
 // stored snapshot — same source Progress already uses, just surfaced here
 // too instead of only on demand.
+// ── Scheduled (recurring) messages (Per Bot 21) ──
+app.get('/api/admin/scheduled-messages', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const list = db.getAllScheduledMessages().map(m => ({ ...m, recurrence_config: JSON.parse(m.recurrence_config || '{}') }));
+    res.json(list);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/scheduled-messages', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { subject, body, format, audience, recurrence_type, recurrence_config, send_hour, active } = req.body;
+    if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
+    if (!body || !body.trim()) return res.status(400).json({ error: 'Message body is required.' });
+    if (!['daily','weekly','monthly_date','monthly_nth_weekday','yearly'].includes(recurrence_type)) {
+      return res.status(400).json({ error: 'Unrecognised recurrence type.' });
+    }
+    const id = uuidv4();
+    db.createScheduledMessage(id, { subject: subject.trim(), body, format, audience, recurrence_type, recurrence_config, send_hour, active });
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/scheduled-messages/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.updateScheduledMessage(req.params.id, req.body);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/scheduled-messages/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.deleteScheduledMessage(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Send-now — a real send this instant (same pipeline, same recipients as
+// the real schedule would use), for checking a scheduled message actually
+// looks right without waiting for its next due date. Deliberately does
+// NOT touch last_sent_date, so it has no effect on when the real
+// schedule next fires — this is a preview-by-actually-sending, not an
+// occurrence in its own right.
+app.post('/api/admin/scheduled-messages/:id/send-now', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (IS_STAGING) return res.status(403).json({ error: 'Sending is disabled on staging.' });
+    const msg = db.getScheduledMessage(req.params.id);
+    if (!msg) return res.status(404).json({ error: 'Not found.' });
+    const newsletterId = uuidv4();
+    db.addNewsletter(newsletterId, msg.subject, msg.body, msg.audience, msg.format, null, null, msg.id);
+    const newsletter = db.getNewsletter(newsletterId);
+    const recipients = db.getNewsletterRecipients(newsletter.audience);
+    const logRowsByUserId = {};
+    for (const user of recipients) {
+      const id = uuidv4();
+      logRowsByUserId[user.id] = id;
+      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
+    }
+    db.updateNewsletterStatus(newsletter.id, 'sending');
+    res.json({ ok: true, started: true, recipientCount: recipients.length });
+    runNewsletterSend(newsletter, recipients, logRowsByUserId).catch(e => {
+      console.error('scheduled-message send-now background error:', e.message);
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const list = db.getAllNewsletters().map(n => {
@@ -10534,6 +10623,48 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   // finish cleanly at any real scale).
   db.markNewsletterSent(newsletter.id, sentCount);
   console.log(`Newsletter ${newsletter.id} send complete: ${sentCount} sent, ${failedCount} failed, ${recipients.length} total.`);
+}
+
+// Per Bot 21 — checks every active scheduled_messages row against
+// today's date/hour and, for whichever ones are due, creates a real
+// newsletter row and runs it through the exact same send pipeline a
+// manual "Send" click already uses (runNewsletterSend above) — no
+// separate, parallel sending logic to keep in sync with the real one.
+// Guarded by IS_STAGING same as the manual endpoint below, and by
+// last_sent_date so a slow run or an extra cron tick within the same
+// hour never double-sends the same occurrence.
+async function sendDueScheduledMessages() {
+  if (IS_STAGING) return { skipped: 'staging' };
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const currentHour = now.getUTCHours();
+  const messages = db.getAllScheduledMessages().filter(m => m.active);
+  let firedCount = 0;
+  const fired = [];
+  for (const msg of messages) {
+    if (msg.last_sent_date === todayStr) continue;
+    if (Number(msg.send_hour) !== currentHour) continue;
+    let config = {};
+    try { config = JSON.parse(msg.recurrence_config || '{}'); } catch(e) {}
+    if (!db.scheduledMessageMatchesDate(msg.recurrence_type, config, now)) continue;
+
+    const newsletterId = uuidv4();
+    db.addNewsletter(newsletterId, msg.subject, msg.body, msg.audience, msg.format, null, null, msg.id);
+    const newsletter = db.getNewsletter(newsletterId);
+    const recipients = db.getNewsletterRecipients(newsletter.audience);
+    const logRowsByUserId = {};
+    for (const user of recipients) {
+      const id = uuidv4();
+      logRowsByUserId[user.id] = id;
+      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
+    }
+    db.updateNewsletterStatus(newsletter.id, 'sending');
+    await runNewsletterSend(newsletter, recipients, logRowsByUserId);
+    db.markScheduledMessageSent(msg.id, todayStr);
+    firedCount++;
+    fired.push({ id: msg.id, subject: msg.subject, recipientCount: recipients.length });
+  }
+  return { checked: messages.length, fired: firedCount, details: fired };
 }
 
 app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), async (req, res) => {
@@ -10720,7 +10851,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0 });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

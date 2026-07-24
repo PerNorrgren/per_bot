@@ -1331,9 +1331,7 @@
   async function runAiPolish(quill, btn) {
     if (!btn) return;
     if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
-    const orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '…';
+    setBtnLoading(btn, true, 'Polishing…');
     try {
       const res  = await fetch('/api/ai-polish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1345,8 +1343,7 @@
     } catch(e) {
       appAlert('Something went wrong — please try again.');
     } finally {
-      btn.disabled = false;
-      btn.textContent = orig;
+      setBtnLoading(btn, false);
     }
   }
 
@@ -2079,7 +2076,7 @@
     const shareWithBot = document.getElementById('journalShareBot').checked;
     const shareWithFacilitator = document.getElementById('journalShareFacilitator').checked;
 
-    btn.disabled = true; btn.textContent = 'Saving…';
+    setBtnLoading(btn, true, 'Saving…');
     try {
       let res;
       if (journalUploadedFile) {
@@ -2091,7 +2088,7 @@
         res = await fetch('/api/journal/upload', { method: 'POST', body: formData });
       } else {
         const content = document.getElementById('journalContent').value.trim();
-        if (!content) { msg.textContent = 'Write something, or choose a file to upload.'; btn.disabled = false; btn.textContent = 'Save entry'; return; }
+        if (!content) { msg.textContent = 'Write something, or choose a file to upload.'; setBtnLoading(btn, false); return; }
         res = await fetch('/api/journal', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, content, shareWithBot, shareWithFacilitator })
@@ -2103,7 +2100,7 @@
     } catch(e) {
       msg.textContent = 'Network error — could not save.';
     } finally {
-      btn.disabled = false; btn.textContent = 'Save entry';
+      setBtnLoading(btn, false);
     }
   }
 

@@ -96,6 +96,65 @@
     return buildDialog(message, { title: title, showCancel: true, showInput: true, defaultValue: defaultValue, okText: 'OK', cancelText: 'Cancel' });
   };
 
+  // Per Bot 21 — two fields in one dialog instead of chaining two
+  // appPrompt() calls back to back, for anything where both values
+  // belong together and get edited as one action (a button's visible
+  // text alongside its link, most immediately). fields: array of
+  // {label, defaultValue}. Resolves to an array of the entered strings,
+  // in the same order as fields — or null if cancelled.
+  window.appPromptMulti = function (fields, opts) {
+    opts = opts || {};
+    return configPromise.then(function (appName) {
+      return new Promise(function (resolve) {
+        injectStyle();
+        var overlay = document.createElement('div');
+        overlay.className = 'app-dialog-overlay';
+        var inputsHtml = fields.map(function (f, i) {
+          return '<div style="margin:0 20px 12px">' +
+            '<label style="display:block;font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:4px">' + (f.label || '') + '</label>' +
+            '<input type="text" class="app-dialog-input app-dialog-multi-input" data-i="' + i + '" style="margin:0"/>' +
+          '</div>';
+        }).join('');
+        overlay.innerHTML =
+          '<div class="app-dialog" role="dialog" aria-modal="true">' +
+            '<div class="app-dialog-title"></div>' +
+            '<div class="app-dialog-body"></div>' +
+            inputsHtml +
+            '<div class="app-dialog-btns">' +
+              '<button class="app-dialog-cancel"></button>' +
+              '<button class="app-dialog-ok primary"></button>' +
+            '</div>' +
+          '</div>';
+        overlay.querySelector('.app-dialog-title').textContent = opts.title || appName;
+        overlay.querySelector('.app-dialog-body').textContent = opts.message || '';
+        var okBtn = overlay.querySelector('.app-dialog-ok');
+        var cancelBtn = overlay.querySelector('.app-dialog-cancel');
+        var inputs = Array.prototype.slice.call(overlay.querySelectorAll('.app-dialog-multi-input'));
+        okBtn.textContent = opts.okText || 'OK';
+        cancelBtn.textContent = opts.cancelText || 'Cancel';
+        fields.forEach(function (f, i) { inputs[i].value = f.defaultValue || ''; });
+
+        document.body.appendChild(overlay);
+
+        function close(result) {
+          overlay.remove();
+          document.removeEventListener('keydown', onKey);
+          resolve(result);
+        }
+        function collect() { return inputs.map(function (inp) { return inp.value; }); }
+        function onKey(e) {
+          if (e.key === 'Escape') close(null);
+          else if (e.key === 'Enter') close(collect());
+        }
+        okBtn.addEventListener('click', function () { close(collect()); });
+        cancelBtn.addEventListener('click', function () { close(null); });
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) close(null); });
+        document.addEventListener('keydown', onKey);
+        if (inputs[0]) { inputs[0].focus(); inputs[0].select(); }
+      });
+    });
+  };
+
   // ── appShareSheet (Per Bot 23) ──
   // A consistent, custom "who to share with" popup — used everywhere
   // instead of the browser's native navigator.share(), which sounds like

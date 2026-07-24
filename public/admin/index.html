@@ -1323,13 +1323,13 @@
     }
 
     const btn = document.getElementById('addUserBtn');
-    btn.disabled = true; btn.textContent = 'Creating…';
+    setBtnLoading(btn, true, 'Creating…');
     try {
       const res  = await fetch('/api/admin/users/create', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await res.json();
       if (!res.ok || data.error) {
         err.textContent = data.error || 'Something went wrong.';
-        btn.disabled = false; btn.textContent = 'Create';
+        setBtnLoading(btn, false);
         return;
       }
       document.getElementById('addUserForm').style.display = 'none';
@@ -1449,7 +1449,7 @@
     const sendWelcomeEmail = isNewsletterOnly ? false : document.getElementById('bulkSendWelcome').checked;
 
     const btn = document.getElementById('bulkImportBtn');
-    btn.disabled = true; btn.textContent = 'Importing…';
+    setBtnLoading(btn, true, 'Importing…');
     err.textContent = '';
 
     const formData = new FormData();
@@ -1463,7 +1463,7 @@
     try {
       const res  = await fetch('/api/admin/members/bulk-import', { method: 'POST', body: formData });
       const data = await res.json();
-      if (!data.ok) { err.textContent = data.error || 'Import failed.'; btn.disabled = false; btn.textContent = 'Import'; return; }
+      if (!data.ok) { err.textContent = data.error || 'Import failed.'; setBtnLoading(btn, false); return; }
 
       const tierNames = { 'newsletter_only': 'Newsletter only', '0': 'Explorer', '1': 'Member 1', '2': 'Member 2', '3': 'Member 3' };
       document.getElementById('bulkImportSummary').innerHTML = `
@@ -1676,14 +1676,17 @@
     memberSel.clear();
     const res   = await fetch('/api/admin/users');
     _memberData = (await res.json()).filter(u => (u.member_tier || 0) >= 1);
-    // Per Bot 20 — two separate, genuinely distinct dates in the data:
-    // member_expires_at (a real subscription/membership end — Stripe- backed
-    // when stripe_subscription_id is set) and trial_ends_at (a promo/trial
-    // period, always separate from Stripe). Precomputed here so both
-    // columns sort cleanly on exactly the field they display, never mixing
-    // the two kinds of date together.
+    // Per Bot 20 (revised Per Bot 21) — member_expires_at is the single
+    // "paid until" date now, regardless of source (Stripe, PayPal, or a
+    // manual legacy override) — Per's call: the paid-until date is what
+    // drives renewal reminders and Savers grace, not where the date came
+    // from. trial_ends_at (Promo) stays a genuinely separate thing — a
+    // free/discounted trial, not paid access, so it keeps its own column.
+    // Source is precomputed here purely for display/reporting, never as
+    // a behavioural signal.
     _memberData.forEach(u => {
-      u.stripeEndDate = u.stripe_subscription_id ? (u.member_expires_at || '') : '';
+      u.paidUntilDate = u.member_expires_at || '';
+      u.paidSource    = u.stripe_subscription_id ? 'Stripe' : (u.member_expires_at ? 'Manual' : '');
       u.promoEndDate  = u.trial_ends_at || '';
     });
     document.getElementById('memberCount').textContent = ` (${_memberData.length})`;
@@ -1704,7 +1707,7 @@
         <div class="table-hdr-cell col-name" onclick="memberSort('name')">Name ${sortIndicator('member','name')}</div>
         <div class="table-hdr-cell col-email" onclick="memberSort('email')">Email ${sortIndicator('member','email')}</div>
         <div class="table-hdr-cell col-level" onclick="memberSort('member_tier')">Level ${sortIndicator('member','member_tier')}</div>
-        <div class="table-hdr-cell col-stripe" onclick="memberSort('stripeEndDate')">Stripe ${sortIndicator('member','stripeEndDate')}</div>
+        <div class="table-hdr-cell col-stripe" onclick="memberSort('paidUntilDate')">Paid until ${sortIndicator('member','paidUntilDate')}</div>
         <div class="table-hdr-cell col-stripe" onclick="memberSort('promoEndDate')">Promo ${sortIndicator('member','promoEndDate')}</div>
         <div class="table-hdr-cell col-fac" onclick="memberSort('facilitator_name')">Facilitator ${sortIndicator('member','facilitator_name')}</div>
       </div>` +
@@ -1716,11 +1719,11 @@
           <div class="col-level">
             <span class="status-badge status-active">Member</span>
             ${u.is_client?'<span class="status-badge status-active" style="margin-left:4px">Client</span>':''}
-            ${!u.stripe_subscription_id && !u.trial_ends_at && u.member_expires_at
-              ? `<span class="status-badge" style="margin-left:4px;background:rgba(255,200,120,0.1);color:rgba(230,190,140,0.85)" title="Manually honoured period — not linked to Stripe, not a promo trial">Expires ${escHtml(u.member_expires_at.slice(0,10))}</span>`
-              : ''}
           </div>
-          <div class="col-stripe" title="${u.stripe_subscription_id ? 'Linked to a live Stripe subscription' : ''}">${u.stripeEndDate ? escHtml(u.stripeEndDate.slice(0,10)) : '—'}</div>
+          <div class="col-stripe" title="${u.paidSource ? 'Source: ' + u.paidSource : ''}">
+            ${u.paidUntilDate ? escHtml(u.paidUntilDate.slice(0,10)) : '—'}
+            ${u.paidUntilDate ? `<span style="font-size:10px;letter-spacing:0.05em;color:rgba(255,255,255,0.35);margin-left:5px">${u.paidSource === 'Stripe' ? 'STRIPE' : 'MANUAL'}</span>` : ''}
+          </div>
           <div class="col-stripe" style="color:rgba(230,190,140,0.85)" title="${u.promoEndDate ? 'Promo/trial access — reverts to Explorer if it lapses with no Stripe subscription' : ''}">${u.promoEndDate ? escHtml(u.promoEndDate.slice(0,10)) : '—'}</div>
           <div class="col-fac">${escHtml(u.facilitator_name)||'—'}</div>
         </div>`).join('');
@@ -1986,7 +1989,7 @@
     if (ids.length > 100) { showConfirm('Too many selected', 'Please select 100 people or fewer at a time.', ()=>{}); return; }
     _subsResultRequestedCount = ids.length;
     const btn = document.getElementById(btnId);
-    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Looking up…';
+    setBtnLoading(btn, true, 'Looking up…');
     try {
       const res = await fetch('/api/admin/stripe/lookup-subscriptions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2000,7 +2003,7 @@
     } catch(e) {
       showConfirm('Lookup failed', e.message, ()=>{});
     } finally {
-      btn.disabled = false; btn.textContent = orig;
+      setBtnLoading(btn, false);
     }
   }
   function renderSubsResult() {
@@ -2042,7 +2045,7 @@
     const btn = document.getElementById('linkSubBtn');
     const err = document.getElementById('linkSubErr');
     err.textContent = '';
-    btn.disabled = true; btn.textContent = 'Linking…';
+    setBtnLoading(btn, true, 'Linking…');
     try {
       const res = await fetch('/api/admin/stripe/link-subscription', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2056,7 +2059,7 @@
       loadUsers();
     } catch(e) {
       err.textContent = e.message;
-      btn.disabled = false; btn.textContent = 'Link';
+      setBtnLoading(btn, false);
     }
   }
 

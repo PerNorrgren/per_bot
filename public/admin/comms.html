@@ -686,7 +686,21 @@
         <div class="card-title">Sent &amp; drafts</div>
         <button class="btn primary" onclick="openNewsletterModal()">+ Write newsletter</button>
       </div>
+      <div id="newsletterListFilter" style="display:flex; gap:8px; padding:12px 20px 0;"></div>
       <div id="newsletterList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ── Scheduled messages (Per Bot 21) ── -->
+  <div>
+    <div class="section-label">Scheduled messages</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Repeating sends</div>
+        <button class="btn primary" onclick="openNewsletterModal(); document.getElementById('newsletterRecurringToggle').checked = true; toggleNewsletterRecurring(true); document.getElementById('newsletterModalTitle').textContent = 'New scheduled message';">+ New scheduled message</button>
+      </div>
+      <div style="padding:0 20px 12px; font-size:12px; color:rgba(255,255,255,0.4);">Each one fires automatically — checked every hour, sent once per matching day to whoever currently fits "Who receives this." Every send it makes shows up in Newsletters above too, tagged 🔁 Scheduled.</div>
+      <div id="scheduledMessagesList"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -741,6 +755,7 @@
   <div class="modal">
     <h3 id="newsletterModalTitle">Write a newsletter</h3>
     <input type="hidden" id="newsletterEditId"/>
+    <input type="hidden" id="scheduledMessageEditId"/>
     <div>
       <label>Subject</label>
       <div style="display:flex;gap:6px;align-items:center">
@@ -787,21 +802,50 @@
       </div>
       <div class="modal-note" style="margin-top:6px" id="newsletterAudienceCount">Loading recipient count…</div>
     </div>
-    <div style="margin-top:14px">
+
+    <!-- ── Repeat this message (Per Bot 21) ── Reuses this same editor/
+         audience picker rather than a second copy — the underlying
+         Quill instance is a singleton, and one editor is genuinely
+         enough since only one of these modals is ever open at a time.
+         Saving with this checked creates/updates a scheduled_messages
+         row instead of a one-off newsletter draft; see saveNewsletter. -->
+    <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="newsletterRecurringToggle" onchange="toggleNewsletterRecurring(this.checked)"/>
+        Repeat this message on a schedule, instead of sending it once
+      </label>
+      <div id="newsletterRecurringFields" style="display:none; margin-top:12px;">
+        <select id="recurrenceType" onchange="renderRecurrenceSubFields()" style="width:100%">
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week, on certain days</option>
+          <option value="monthly_date">Every month, on a specific date</option>
+          <option value="monthly_nth_weekday">Every month, on a specific week + day (e.g. "1st Monday")</option>
+          <option value="yearly">Every year, on a specific date</option>
+        </select>
+        <div id="recurrenceSubFields" style="margin-top:10px"></div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="margin:0">Send at</label>
+          <select id="recurrenceSendHour" style="width:auto"></select>
+          <span class="modal-note" style="margin:0">UTC</span>
+        </div>
+        <div class="modal-note" style="margin-top:8px">Checked every hour — if today matches the pattern above and it's this hour (UTC), it sends automatically, once, to whoever currently matches "Who receives this" above. It won't send twice in the same day even if the pattern matches more than once.</div>
+      </div>
+    </div>
+    <div style="margin-top:14px" id="newsletterOfferSection">
       <label>Tie this send to an offer (optional)</label>
       <select id="newsletterOffer"><option value="">No offer — {{invite_link}} uses the old fixed 14-day trial, untracked</option></select>
       <input class="inline-input" type="text" id="newsletterSourceTag" style="width:100%;margin-top:6px" placeholder="Source tag for the funnel report, e.g. mailing-list-2026-07"/>
       <div class="modal-note" style="margin-top:6px">When set, {{invite_link}} for anyone without a login yet carries this offer's real trial length and shows up in the Funnel report (Sales &amp; Marketing) the same way any other promo link does.</div>
     </div>
     <div class="modal-err" id="newsletterErr"></div>
-    <div class="test-send-row">
+    <div class="test-send-row" id="newsletterTestSendRow">
       <input type="email" id="newsletterTestTo" placeholder="Defaults to your own email — override to test another address"/>
       <button class="btn sm" id="newsletterTestBtn" onclick="testSendNewsletter()">Send test</button>
     </div>
     <div class="feedback" id="newsletterTestFeedback"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newsletterModal')">Cancel</button>
-      <button class="modal-ok" onclick="saveNewsletter()">Save as draft</button>
+      <button class="modal-ok" id="newsletterSaveBtn" onclick="saveNewsletter()">Save as draft</button>
     </div>
   </div>
 </div>
@@ -1799,6 +1843,93 @@
   let newslettersData = [];
   const AUDIENCE_LABELS = { newsletter_only: 'Newsletter-only', explorer: 'Explorer', member1: 'Member 1', member2: 'Member 2', member3: 'Member 3' };
 
+  // ════════════════════════════════════
+  // Scheduled (recurring) messages
+  // ════════════════════════════════════
+  let scheduledMessagesData = [];
+  const WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  async function loadScheduledMessages() {
+    const res = await fetch('/api/admin/scheduled-messages');
+    scheduledMessagesData = await res.json();
+    renderScheduledMessagesList();
+  }
+  // Turns a recurrence_type + recurrence_config back into a plain-English
+  // line for the list — the whole point of building the picker UI is
+  // that nobody should have to mentally decode a JSON blob to know what
+  // a given row actually does.
+  function recurrenceSummary(m) {
+    const cfg = m.recurrence_config || {};
+    const at = `${String(m.send_hour ?? 7).padStart(2,'0')}:00 UTC`;
+    if (m.recurrence_type === 'daily') return `Every day at ${at}`;
+    if (m.recurrence_type === 'weekly') {
+      const days = (cfg.daysOfWeek || []).slice().sort().map(d => WEEKDAY_SHORT[d]).join(', ');
+      return `Every ${days || '—'} at ${at}`;
+    }
+    if (m.recurrence_type === 'monthly_date') {
+      return `Monthly on the ${cfg.dayOfMonth === 'last' ? 'last day' : `${cfg.dayOfMonth}${ordinalSuffix(cfg.dayOfMonth)}`} at ${at}`;
+    }
+    if (m.recurrence_type === 'monthly_nth_weekday') {
+      const nthLabel = { 1:'1st', 2:'2nd', 3:'3rd', 4:'4th', '-1':'last' }[String(cfg.nth)] || cfg.nth;
+      return `Monthly, the ${nthLabel} ${WEEKDAY_NAMES[cfg.weekday] || ''} at ${at}`;
+    }
+    if (m.recurrence_type === 'yearly') {
+      const monthName = ['','January','February','March','April','May','June','July','August','September','October','November','December'][cfg.month] || '';
+      return `Every year on ${monthName} ${cfg.day} at ${at}`;
+    }
+    return 'Unknown schedule';
+  }
+  function ordinalSuffix(n) {
+    n = Number(n);
+    if (n % 10 === 1 && n !== 11) return 'st';
+    if (n % 10 === 2 && n !== 12) return 'nd';
+    if (n % 10 === 3 && n !== 13) return 'rd';
+    return 'th';
+  }
+  function renderScheduledMessagesList() {
+    const el = document.getElementById('scheduledMessagesList');
+    if (!scheduledMessagesData.length) { el.innerHTML = '<div class="empty">No scheduled messages yet.</div>'; return; }
+    el.innerHTML = scheduledMessagesData.map(m => `
+      <div class="doc-row">
+        <div class="doc-title">
+          ${escHtml(m.subject)}
+          <span class="badge ${m.active ? '' : 'badge-draft'}" style="margin-left:6px">${m.active ? 'active' : 'paused'}</span>
+        </div>
+        <div class="doc-consent">
+          ${recurrenceSummary(m)} · ${audienceSummary(m.audience)}
+          ${m.last_sent_date ? ` · last sent ${m.last_sent_date}` : ' · never sent yet'}
+        </div>
+        <div class="doc-actions">
+          <button class="btn sm" onclick="editScheduledMessage('${m.id}')">Edit</button>
+          <button class="btn sm" onclick="sendScheduledMessageNow('${m.id}', this)" title="Sends immediately, to whoever currently matches the audience — doesn't affect when the real schedule next fires">Send now</button>
+          <button class="btn sm" onclick="toggleScheduledMessageActive('${m.id}', ${m.active})">${m.active ? 'Pause' : 'Resume'}</button>
+          <button class="btn sm danger" onclick="deleteScheduledMessageRow('${m.id}', '${escHtml(m.subject).replace(/'/g,"\\'")}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  async function toggleScheduledMessageActive(id, currentlyActive) {
+    await fetch(`/api/admin/scheduled-messages/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ active: currentlyActive ? 0 : 1 }) });
+    loadScheduledMessages();
+  }
+  async function deleteScheduledMessageRow(id, subject) {
+    if (!(await appConfirm(`Delete the scheduled message "${subject}"? Sends it's already made stay in Newsletters — this only stops future ones.`))) return;
+    await fetch(`/api/admin/scheduled-messages/${id}`, { method: 'DELETE' });
+    loadScheduledMessages();
+  }
+  async function sendScheduledMessageNow(id, btn) {
+    setBtnLoading(btn, true, 'Sending…');
+    try {
+      const res = await fetch(`/api/admin/scheduled-messages/${id}/send-now`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) { appAlert(`Sent — reaching ${data.recipientCount} recipient${data.recipientCount === 1 ? '' : 's'} now. Check Newsletters below for progress.`); loadNewsletters(); }
+      else appAlert(data.error || 'Could not send.');
+    } catch(e) {
+      appAlert('Network error — please try again.');
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  }
+
   async function loadNewsletters() {
     const res = await fetch('/api/admin/newsletters');
     newslettersData = await res.json();
@@ -1810,15 +1941,35 @@
     return audience.split(',').map(s => AUDIENCE_LABELS[s] || s).join(', ');
   }
 
+  let newsletterListFilter = 'all'; // 'all' | 'manual' | 'scheduled'
+  function setNewsletterListFilter(f) { newsletterListFilter = f; renderNewsletterList(); }
+
   function renderNewsletterList() {
     const el = document.getElementById('newsletterList');
-    if (!newslettersData.length) { el.innerHTML = '<div class="empty">No newsletters yet.</div>'; return; }
+    const filterEl = document.getElementById('newsletterListFilter');
+    // Per Bot 21 — scheduled messages spawn a real row here every time
+    // they fire, same as any other newsletter (see scheduled_message_id
+    // on the newsletters table) — this filter and the "🔁 Scheduled"
+    // badge below are purely so a growing list of recurring auto-sends
+    // doesn't bury the one-off newsletters you compose by hand.
+    if (filterEl) {
+      filterEl.innerHTML = ['all','manual','scheduled'].map(f => `
+        <span class="day-chip ${newsletterListFilter === f ? 'active' : ''}" onclick="setNewsletterListFilter('${f}')">${f === 'all' ? 'All' : f === 'manual' ? 'Manual' : '🔁 Scheduled'}</span>
+      `).join('');
+    }
+    const filtered = newslettersData.filter(n =>
+      newsletterListFilter === 'all' ? true :
+      newsletterListFilter === 'scheduled' ? !!n.scheduled_message_id :
+      !n.scheduled_message_id
+    );
+    if (!filtered.length) { el.innerHTML = `<div class="empty">No ${newsletterListFilter === 'all' ? '' : newsletterListFilter + ' '}newsletters yet.</div>`; return; }
 
-    el.innerHTML = newslettersData.map(n => `
+    el.innerHTML = filtered.map(n => `
       <div class="doc-row">
         <div class="doc-title">
           ${escHtml(n.subject)}
           <span class="badge ${n.status === 'sent' ? '' : 'badge-draft'}" style="margin-left:6px">${n.status}</span>
+          ${n.scheduled_message_id ? `<span class="badge" style="margin-left:6px;background:rgba(230,175,90,0.15);color:rgba(255,210,140,0.9)" title="Sent automatically by a recurring schedule">🔁 Scheduled</span>` : ''}
         </div>
         <div class="doc-consent">
           ${n.status === 'sent' ? `${n.live_sent_count ?? n.recipient_count ?? 0} recipients · ${fmtDate(n.sent_at)}` : n.status === 'sending' ? `Sending now — started ${fmtDate(n.created_at)}` : `Created ${fmtDate(n.created_at)}`}
@@ -2169,12 +2320,14 @@
       if (isButton) {
         const currentLabel = a.textContent || '';
         const color = a.style.background || '#2d6a4f';
-        const newLabel = await appPrompt('Button text:', currentLabel);
-        if (newLabel === null) return;
-        const newUrl = await appPrompt('Button link (https://...):', currentHref);
-        if (newUrl === null) return;
-        const finalLabel = newLabel.trim() || currentLabel;
-        const finalUrl = newUrl.trim() || currentHref;
+        const result = await appPromptMulti([
+          { label: 'Button text', defaultValue: currentLabel },
+          { label: 'Button link (https://...)', defaultValue: currentHref },
+        ]);
+        if (result === null) return;
+        const [newLabel, newUrl] = result;
+        const finalLabel = (newLabel || '').trim() || currentLabel;
+        const finalUrl = (newUrl || '').trim() || currentHref;
         // Deletes and re-inserts the whole run through Quill's own API —
         // rewrites the real Delta (text + link format together), not
         // just the DOM, so the color-picker button below survives too.
@@ -2340,9 +2493,13 @@
   }
 
   async function insertNewsletterButton() {
-    const text = await appPrompt('Button text:');
+    const result = await appPromptMulti([
+      { label: 'Button text' },
+      { label: 'Button link (https://...)' },
+    ]);
+    if (result === null) return;
+    const [text, url] = result;
     if (!text || !text.trim()) return;
-    const url = await appPrompt('Button link (https://...):');
     if (!url || !url.trim()) return;
     const label = text.trim();
     const linkUrl = url.trim();
@@ -2579,6 +2736,7 @@
   function openNewsletterModal() {
     document.getElementById('newsletterModalTitle').textContent = 'Write a newsletter';
     document.getElementById('newsletterEditId').value = '';
+    document.getElementById('scheduledMessageEditId').value = '';
     document.getElementById('newsletterSubject').value = '';
     document.getElementById('newsletterBody').value = '';
     if (quillInstance) quillInstance.setContents([]);
@@ -2589,6 +2747,8 @@
     setSelectedAudience('all'); // no chips active = everyone, matches backend default
     document.getElementById('newsletterOffer').value = '';
     document.getElementById('newsletterSourceTag').value = '';
+    document.getElementById('newsletterRecurringToggle').checked = false;
+    toggleNewsletterRecurring(false);
     refreshAudienceCount();
     openModal('newsletterModal');
   }
@@ -2598,6 +2758,9 @@
     if (!n) return;
     document.getElementById('newsletterModalTitle').textContent = 'Edit newsletter';
     document.getElementById('newsletterEditId').value = id;
+    document.getElementById('scheduledMessageEditId').value = '';
+    document.getElementById('newsletterRecurringToggle').checked = false;
+    toggleNewsletterRecurring(false);
     document.getElementById('newsletterSubject').value = n.subject;
     setNewsletterFormat(n.format === 'rich' ? 'rich' : 'plain');
     if (n.format === 'rich') { getQuill().root.innerHTML = n.body; document.getElementById('newsletterBody').value = ''; }
@@ -2645,8 +2808,119 @@
     return newsletterFormat === 'rich' ? getQuill().root.innerHTML : document.getElementById('newsletterBody').value.trim();
   }
 
+  // ── Repeat this message (Per Bot 21) ──
+  const WEEKDAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const NTH_NAMES = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th', '-1': 'Last' };
+  let sendHourOptionsBuilt = false;
+  function populateSendHourOptions() {
+    if (sendHourOptionsBuilt) return;
+    const sel = document.getElementById('recurrenceSendHour');
+    sel.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2,'0')}:00</option>`).join('');
+    sel.value = '7';
+    sendHourOptionsBuilt = true;
+  }
+  function toggleNewsletterRecurring(checked) {
+    document.getElementById('newsletterRecurringFields').style.display = checked ? 'block' : 'none';
+    document.getElementById('newsletterOfferSection').style.display = checked ? 'none' : 'block';
+    document.getElementById('newsletterTestSendRow').style.display = checked ? 'none' : 'flex';
+    document.getElementById('newsletterSaveBtn').textContent = checked ? 'Save schedule' : 'Save as draft';
+    if (checked) { populateSendHourOptions(); renderRecurrenceSubFields(); }
+  }
+  // Renders the fields specific to whichever recurrence type is picked —
+  // day-of-week checkboxes for weekly, a plain date-of-month number (or
+  // "last day") for monthly-by-date, nth+weekday dropdowns for "1st
+  // Monday"-style monthly, and month+day for yearly. Kept as one function
+  // that fully replaces the sub-fields container, rather than
+  // show/hiding pre-built blocks, since only one type is ever relevant
+  // at a time and this keeps getRecurrenceConfig/setRecurrenceConfig
+  // simple — they only ever need to read whatever's actually in the DOM.
+  function renderRecurrenceSubFields(existingConfig) {
+    const type = document.getElementById('recurrenceType').value;
+    const cfg = existingConfig || {};
+    const el = document.getElementById('recurrenceSubFields');
+    if (type === 'weekly') {
+      const selected = new Set(cfg.daysOfWeek || []);
+      el.innerHTML = `<div class="day-picker">${WEEKDAY_NAMES.map((name, i) => `
+        <button type="button" class="day-chip ${selected.has(i) ? 'active' : ''}" data-dow="${i}" onclick="this.classList.toggle('active')">${name.slice(0,3)}</button>
+      `).join('')}</div>`;
+    } else if (type === 'monthly_date') {
+      const isLast = cfg.dayOfMonth === 'last';
+      el.innerHTML = `
+        <label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="monthlyDateIsLast" ${isLast ? 'checked' : ''} onchange="document.getElementById('monthlyDateNum').disabled=this.checked"/>
+          Last day of the month
+        </label>
+        <div style="margin-top:8px">
+          <label style="margin:0">Or on day</label>
+          <input type="number" id="monthlyDateNum" min="1" max="31" value="${isLast ? '' : (cfg.dayOfMonth || 1)}" ${isLast ? 'disabled' : ''} style="width:70px"/>
+          <span class="modal-note">of the month (if the month is shorter, this simply doesn't fire that month)</span>
+        </div>`;
+    } else if (type === 'monthly_nth_weekday') {
+      const nth = cfg.nth ?? 1;
+      const weekday = cfg.weekday ?? 1;
+      el.innerHTML = `
+        <select id="nthSelect" style="width:auto">
+          ${[1,2,3,4,-1].map(n => `<option value="${n}" ${Number(nth)===n?'selected':''}>${NTH_NAMES[n]}</option>`).join('')}
+        </select>
+        <select id="nthWeekdaySelect" style="width:auto">
+          ${WEEKDAY_NAMES.map((name, i) => `<option value="${i}" ${Number(weekday)===i?'selected':''}>${name}</option>`).join('')}
+        </select>
+        <span class="modal-note">of the month</span>`;
+    } else if (type === 'yearly') {
+      const month = cfg.month || 1;
+      const day = cfg.day || 1;
+      el.innerHTML = `
+        <select id="yearlyMonth" style="width:auto">
+          ${['January','February','March','April','May','June','July','August','September','October','November','December'].map((name,i) => `<option value="${i+1}" ${month===i+1?'selected':''}>${name}</option>`).join('')}
+        </select>
+        <input type="number" id="yearlyDay" min="1" max="31" value="${day}" style="width:60px"/>`;
+    } else {
+      el.innerHTML = ''; // daily — no sub-fields needed at all
+    }
+  }
+  function getRecurrenceConfig() {
+    const type = document.getElementById('recurrenceType').value;
+    if (type === 'weekly') {
+      const daysOfWeek = Array.from(document.querySelectorAll('#recurrenceSubFields .day-chip.active')).map(c => Number(c.dataset.dow));
+      return { type, config: { daysOfWeek } };
+    }
+    if (type === 'monthly_date') {
+      const isLast = document.getElementById('monthlyDateIsLast').checked;
+      return { type, config: { dayOfMonth: isLast ? 'last' : Number(document.getElementById('monthlyDateNum').value) || 1 } };
+    }
+    if (type === 'monthly_nth_weekday') {
+      return { type, config: { nth: Number(document.getElementById('nthSelect').value), weekday: Number(document.getElementById('nthWeekdaySelect').value) } };
+    }
+    if (type === 'yearly') {
+      return { type, config: { month: Number(document.getElementById('yearlyMonth').value), day: Number(document.getElementById('yearlyDay').value) || 1 } };
+    }
+    return { type: 'daily', config: {} };
+  }
+
+  // Opens the same shared modal, but pre-filled from a scheduled message
+  // and with the Repeat toggle already on — editing a schedule and
+  // editing a one-off newsletter are the same form, just aimed at a
+  // different save target (see saveNewsletter below).
+  function editScheduledMessage(id) {
+    const m = scheduledMessagesData.find(x => x.id === id);
+    if (!m) return;
+    openNewsletterModal();
+    document.getElementById('newsletterModalTitle').textContent = 'Edit scheduled message';
+    document.getElementById('scheduledMessageEditId').value = id;
+    document.getElementById('newsletterSubject').value = m.subject;
+    setNewsletterFormat(m.format === 'rich' ? 'rich' : 'plain');
+    if (m.format === 'rich') { getQuill().root.innerHTML = m.body; }
+    else { document.getElementById('newsletterBody').value = m.body; }
+    setSelectedAudience(m.audience);
+    refreshAudienceCount();
+    document.getElementById('newsletterRecurringToggle').checked = true;
+    toggleNewsletterRecurring(true);
+    document.getElementById('recurrenceType').value = m.recurrence_type;
+    renderRecurrenceSubFields(m.recurrence_config);
+    document.getElementById('recurrenceSendHour').value = String(m.send_hour ?? 7);
+  }
+
   async function saveNewsletter() {
-    const id       = document.getElementById('newsletterEditId').value;
     const subject  = document.getElementById('newsletterSubject').value.trim();
     const body     = currentNewsletterBody();
     const audience = getSelectedAudience();
@@ -2654,6 +2928,25 @@
     if (!subject) { err.textContent = 'Please write a subject.'; return; }
     if (!body)    { err.textContent = 'Please write the body.'; return; }
 
+    if (document.getElementById('newsletterRecurringToggle').checked) {
+      const { type, config } = getRecurrenceConfig();
+      if (type === 'weekly' && !config.daysOfWeek.length) { err.textContent = 'Pick at least one day of the week.'; return; }
+      const scheduledId = document.getElementById('scheduledMessageEditId').value;
+      const payload = {
+        subject, body, audience, format: newsletterFormat,
+        recurrence_type: type, recurrence_config: config,
+        send_hour: Number(document.getElementById('recurrenceSendHour').value),
+      };
+      const res = scheduledId
+        ? await fetch(`/api/admin/scheduled-messages/${scheduledId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) })
+        : await fetch('/api/admin/scheduled-messages', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const data = await res.json();
+      if (data.id || data.ok) { closeModal('newsletterModal'); loadScheduledMessages(); }
+      else err.textContent = data.error || 'Could not save.';
+      return;
+    }
+
+    const id = document.getElementById('newsletterEditId').value;
     const payload = { subject, body, audience, format: newsletterFormat, offerId: document.getElementById('newsletterOffer').value || null, sourceTag: document.getElementById('newsletterSourceTag').value.trim() || null };
     let res;
     if (id) {
@@ -3245,6 +3538,7 @@
     loadBirthdayConfig();
     loadNewsletterWelcomeConfig();
     loadNewsletters();
+    loadScheduledMessages();
   });
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Communications';</script>

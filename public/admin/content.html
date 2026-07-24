@@ -163,6 +163,13 @@
     .add-lesson-row { padding:9px 14px; border-top:1px solid rgba(255,255,255,0.05); }
     .add-lesson-row button { background:none; border:none; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; }
     .add-lesson-row button:hover { color:rgba(180,230,200,0.7); }
+    /* Per Bot 21 — same reusable working-button spinner as Comms/other
+       admin pages (see setBtnLoading below): a small rotating yin-yang
+       replaces the button's own content while something is in flight,
+       giving a clear "yes, this is actually doing something" signal
+       instead of just a disabled button and a text change. */
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
   </style>
   <!-- Per Bot 16 — lets "Open" actually render an EPUB inline for a quick
        check, instead of the browser trying (and failing) to open it as a
@@ -873,6 +880,28 @@ let upQueue=[];
 let leCount=0;
 let curCourseId=null, curPlaylistId=null, addFilesLessonId=null, editingLessonId=null;
 
+// ── Working-button feedback (Per Bot 21) — same reusable pattern as
+// Comms/client/facilitator: setBtnLoading(btn, true, 'Label…') swaps a
+// button's content for a rotating yin-yang + text and disables it;
+// setBtnLoading(btn, false) restores exactly what was there before.
+const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+  <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+  <circle cx="50" cy="27" r="7" fill="#141a17"/>
+  <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+</svg>`;
+function setBtnLoading(btn, loading, workingLabel) {
+  if (!btn) return;
+  if (loading) {
+    if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+  }
+}
+
 // ── Rich editor (Per Bot 8) — shared helper: mounts Quill on top of an
 // existing <textarea>, keeping the textarea itself as the real source of
 // truth (hidden, but still updated on every Quill change) so none of the
@@ -941,8 +970,7 @@ async function rewriteCourseDescForSelling() {
   const btn = document.getElementById('rewriteDescBtn');
   const title = document.getElementById('cTitle').value.trim();
   if (!title) { appAlert('Give the course a title first — the rewrite needs it.'); return; }
-  const orig = btn.textContent;
-  btn.disabled = true; btn.textContent = '…';
+  setBtnLoading(btn, true, 'Rewriting…');
   try {
     const html = document.getElementById('cDesc').value;
     const res = await fetch('/api/admin/course-description-polish', {
@@ -956,16 +984,14 @@ async function rewriteCourseDescForSelling() {
   } catch(e) {
     appAlert('Something went wrong — please try again.');
   } finally {
-    btn.disabled = false; btn.textContent = orig;
+    setBtnLoading(btn, false);
   }
 }
 
 async function runAiPolish(quill, btn) {
   if (!btn) return;
   if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '…';
+  setBtnLoading(btn, true, 'Polishing…');
   try {
     const res  = await fetch('/api/ai-polish', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -977,8 +1003,7 @@ async function runAiPolish(quill, btn) {
   } catch(e) {
     appAlert('Something went wrong — please try again.');
   } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
+    setBtnLoading(btn, false);
   }
 }
 
@@ -1782,7 +1807,7 @@ async function applyDuplicatesDelete() {
   if (!ids.length) { document.getElementById('dupErr').textContent = 'Nothing checked.'; return; }
   if (!(await appConfirm(`Delete ${ids.length} file${ids.length!==1?'s':''}? This can't be undone.`))) return;
   const btn = document.getElementById('dupDeleteBtn');
-  btn.disabled = true; btn.textContent = 'Deleting…';
+  setBtnLoading(btn, true, 'Deleting…');
   try {
     const res = await fetch('/api/content/library/bulk-delete', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1796,7 +1821,7 @@ async function applyDuplicatesDelete() {
   } catch (e) {
     document.getElementById('dupErr').textContent = 'Delete failed — network error.';
   } finally {
-    btn.disabled = false; btn.textContent = 'Delete checked copies';
+    setBtnLoading(btn, false);
   }
 }
 
@@ -1886,7 +1911,7 @@ async function applyMojibakeFix() {
   const ids = [...document.querySelectorAll('.mj-check:checked')].map(el => el.value);
   if (!ids.length) { document.getElementById('mjErr').textContent = 'Nothing selected.'; return; }
   const btn = document.getElementById('mjFixBtn');
-  btn.disabled = true; btn.textContent = 'Fixing…';
+  setBtnLoading(btn, true, 'Fixing…');
   try {
     const res = await fetch('/api/admin/library/mojibake-fix', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1903,7 +1928,7 @@ async function applyMojibakeFix() {
   } catch (e) {
     document.getElementById('mjErr').textContent = 'Fix failed — network error.';
   } finally {
-    btn.disabled = false; btn.textContent = 'Fix selected';
+    setBtnLoading(btn, false);
   }
 }
 
@@ -1937,14 +1962,16 @@ async function saveTextEditor() {
   const content = document.getElementById('teContent').value;
   const err = document.getElementById('teErr');
   const btn = document.getElementById('teSaveBtn');
-  btn.disabled = true; err.textContent = ''; btn.textContent = 'Saving…';
+  err.textContent = '';
+  setBtnLoading(btn, true, 'Saving…');
   try {
     const res = await fetch(`/api/content/library/${id}/text-content`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
     const data = await res.json();
-    if (!res.ok || data.error) { err.textContent = data.error || 'Could not save.'; btn.textContent = 'Save'; return; }
+    setBtnLoading(btn, false);
+    if (!res.ok || data.error) { err.textContent = data.error || 'Could not save.'; return; }
     // Per Bot 16 — used to close the modal on a successful save, which
     // meant reopening the next file by hand every time when working
     // through a long list of blogs one by one. Stays open now; the
@@ -1952,10 +1979,8 @@ async function saveTextEditor() {
     btn.textContent = 'Saved';
     setTimeout(() => { if (btn.textContent === 'Saved') btn.textContent = 'Save'; }, 2000);
   } catch(e) {
+    setBtnLoading(btn, false);
     err.textContent = 'Could not save — network error.';
-    btn.textContent = 'Save';
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -1984,7 +2009,7 @@ async function doUpload(){
   if(!upQueue.length){err.textContent='No files selected.';return;}
   err.textContent='';
   const btn=document.getElementById('upBtn');
-  btn.disabled=true;btn.textContent='Uploading…';
+  setBtnLoading(btn, true, 'Uploading…');
   for(const it of upQueue){
     it.progress = 0;
     try {
@@ -1992,12 +2017,12 @@ async function doUpload(){
       it.progress = 100;
     } catch (e) {
       err.textContent = `${it.file.name}: ${e.message}`;
-      btn.disabled=false;btn.textContent='Upload all';
+      setBtnLoading(btn, false);
       renderQ();
       return; // stop the batch on first failure so the admin sees which file failed
     }
   }
-  btn.disabled=false;btn.textContent='Upload all';
+  setBtnLoading(btn, false);
   closeModal('uploadModal');
   loadAll();
 }

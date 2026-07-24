@@ -115,6 +115,10 @@
     .temp-pass-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.45); margin-bottom:8px; }
     .temp-pass-value { font-size:20px; letter-spacing:0.08em; color:rgba(180,230,200,1); font-family:monospace; }
     .temp-pass-note { font-size:12px; color:rgba(255,255,255,0.3); margin-top:10px; line-height:1.6; }
+    /* Per Bot 21 — same reusable working-button spinner as Comms/other
+       admin pages (see setBtnLoading in the script below). */
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
   </style>
 </head>
 <body>
@@ -165,6 +169,31 @@
           </div>
           <input type="file" id="tlFileInput" accept="image/*" style="display:none"/>
           <div class="msg" id="tlMsg" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Welcome tour (Per Bot 21) — Per's own phone photos of the app,
+         one caption each, offered once by Tomte. Order matters, so this
+         is a list with move up/down rather than the library's free-form
+         grid — see /api/admin/onboarding-tour. -->
+    <div>
+      <div class="section-label">Welcome tour (Tomte)</div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Slides</div></div>
+        <div class="card-body" style="padding:16px 20px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
+            A short walkthrough Tomte offers once someone opens the app — each slide is one of your own screenshots with a caption explaining what it shows. Order matters; use the arrows to reorder. Nothing shows to anyone until at least one slide exists here.
+          </div>
+          <div id="tourSlidesList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
+            <div class="loading">Loading…</div>
+          </div>
+          <div id="tourDropZone" style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:10px; padding:20px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+            <div style="font-size:13px; color:rgba(255,255,255,0.45)">Drag a screenshot here, or click to browse</div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.25); margin-top:4px">Adds it to the end of the sequence — write its caption after uploading</div>
+          </div>
+          <input type="file" id="tourFileInput" accept="image/*" style="display:none"/>
+          <div class="msg" id="tourMsg" style="margin-top:8px"></div>
         </div>
       </div>
     </div>
@@ -460,6 +489,27 @@
   function escHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+  // Per Bot 21 — same reusable working-button pattern as Comms/client/
+  // facilitator: setBtnLoading(btn, true, 'Label…') swaps a button's
+  // content for a rotating yin-yang + text and disables it;
+  // setBtnLoading(btn, false) restores exactly what was there before.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
   function toggleAdminMenu() {
     const m = document.getElementById('adminMenu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
@@ -697,18 +747,18 @@
     const err = document.getElementById('ssBulkErr');
     if (!fileInput.files.length) { err.textContent = 'Choose a file first.'; return; }
     const btn = document.getElementById('ssBulkBtn');
-    btn.disabled = true; btn.textContent = 'Importing…'; err.textContent = '';
+    setBtnLoading(btn, true, 'Importing…'); err.textContent = '';
     const formData = new FormData();
     formData.append('file', fileInput.files[0]);
     formData.append('skinId', document.getElementById('ssBulkSkin').value);
     try {
       const res = await fetch('/api/admin/signal-scripts/bulk-import', { method: 'POST', body: formData });
       const data = await res.json();
-      if (!data.ok) { err.textContent = data.error || 'Import failed.'; btn.disabled = false; btn.textContent = 'Import'; return; }
+      if (!data.ok) { err.textContent = data.error || 'Import failed.'; setBtnLoading(btn, false); return; }
       closeModal('signalBulkImportModal');
       loadSignalScripts();
     } catch(e) {
-      err.textContent = 'Network error.'; btn.disabled = false; btn.textContent = 'Import';
+      err.textContent = 'Network error.'; setBtnLoading(btn, false);
     }
   }
 
@@ -896,6 +946,75 @@
     if (file) uploadTomteLibraryImage(file);
   });
   loadTomteLibrary();
+
+  // Per Bot 21 — welcome tour slides admin. Same upload pattern as the
+  // Tomte library above, but an ordered list (move up/down) instead of
+  // a free-form grid, since sequence is the whole point here.
+  let _tourSlides = [];
+  async function loadTourSlides() {
+    try {
+      const res = await fetch('/api/admin/onboarding-tour');
+      _tourSlides = await res.json();
+      if (!Array.isArray(_tourSlides)) _tourSlides = [];
+    } catch(e) { _tourSlides = []; }
+    renderTourSlidesList();
+  }
+  function renderTourSlidesList() {
+    const el = document.getElementById('tourSlidesList');
+    if (!_tourSlides.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No slides yet — add one below.</div>'; return; }
+    el.innerHTML = _tourSlides.map((s, i) => `
+      <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 10px;">
+        <img src="${s.url}" style="width:56px;height:56px;border-radius:8px;object-fit:cover;border:1px solid rgba(255,255,255,0.15);flex-shrink:0"/>
+        <input type="text" value="${(s.caption || '').replace(/"/g,'&quot;')}" placeholder="Caption for this slide" onchange="updateTourSlideCaption('${s.id}', this.value)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:7px 9px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+        <button class="btn sm" style="font-size:10.5px; padding:4px 8px" onclick="moveTourSlide(${i}, -1)" ${i===0?'disabled':''}>↑</button>
+        <button class="btn sm" style="font-size:10.5px; padding:4px 8px" onclick="moveTourSlide(${i}, 1)" ${i===_tourSlides.length-1?'disabled':''}>↓</button>
+        <button class="btn sm danger" style="font-size:10.5px; padding:4px 8px" onclick="deleteTourSlide('${s.id}')">Remove</button>
+      </div>
+    `).join('');
+  }
+  async function uploadTourSlide(file) {
+    const msg = document.getElementById('tourMsg');
+    msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.4)';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/admin/onboarding-tour', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.ok) { msg.textContent = 'Added.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTourSlides(); }
+      else { msg.textContent = data.error || 'Could not upload.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+    } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
+  }
+  async function updateTourSlideCaption(id, caption) {
+    await fetch(`/api/admin/onboarding-tour/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
+  }
+  async function deleteTourSlide(id) {
+    if (!(await appConfirm('Remove this slide from the tour?'))) return;
+    await fetch(`/api/admin/onboarding-tour/${id}`, { method: 'DELETE' });
+    loadTourSlides();
+  }
+  async function moveTourSlide(index, direction) {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= _tourSlides.length) return;
+    const reordered = [..._tourSlides];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(newIndex, 0, moved);
+    _tourSlides = reordered;
+    renderTourSlidesList();
+    await fetch('/api/admin/onboarding-tour/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: reordered.map(s => s.id) }) });
+  }
+  const tourDropZone = document.getElementById('tourDropZone');
+  const tourFileInput = document.getElementById('tourFileInput');
+  tourDropZone.addEventListener('click', () => tourFileInput.click());
+  tourFileInput.addEventListener('change', () => { if (tourFileInput.files[0]) uploadTourSlide(tourFileInput.files[0]); tourFileInput.value = ''; });
+  tourDropZone.addEventListener('dragover', e => { e.preventDefault(); tourDropZone.style.borderColor = 'rgba(180,230,200,0.5)'; tourDropZone.style.background = 'rgba(180,230,200,0.05)'; });
+  tourDropZone.addEventListener('dragleave', () => { tourDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tourDropZone.style.background = 'none'; });
+  tourDropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    tourDropZone.style.borderColor = 'rgba(255,255,255,0.18)'; tourDropZone.style.background = 'none';
+    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
+    if (file) uploadTourSlide(file);
+  });
+  loadTourSlides();
 
   const tdDropZone = document.getElementById('tdDropZone');
   const tdFileInput = document.getElementById('tdFileInput');
@@ -1237,16 +1356,13 @@
   // button while working (not the whole list) so several can run one
   // after another without confusion about which is mid-flight.
   async function regenerateKbTopicRow(topicId, btnEl) {
-    const origText = btnEl.textContent;
-    btnEl.disabled = true;
-    btnEl.textContent = 'Generating…';
+    setBtnLoading(btnEl, true, 'Generating…');
     try {
       const res = await fetch(`/api/admin/knowledge/topics/${topicId}/generate-content`, { method: 'POST' });
       const data = await res.json();
       if (data.error) {
         appAlert(`Could not generate content: ${data.error}`);
-        btnEl.disabled = false;
-        btnEl.textContent = origText;
+        setBtnLoading(btnEl, false);
         return;
       }
       // Per Bot 15y — a response can come back with SOME levels missing
@@ -1260,8 +1376,7 @@
       loadKbTopics(); // re-render the whole row with the updated status
     } catch(e) {
       appAlert('Network error — try again.');
-      btnEl.disabled = false;
-      btnEl.textContent = origText;
+      setBtnLoading(btnEl, false);
     }
   }
   async function deleteKbTopicRow(id) {

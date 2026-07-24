@@ -132,6 +132,7 @@
     .plan-name { flex:2; font-size:13px; color:rgba(255,255,255,0.72); }
     .plan-price { flex:0.8; font-size:13px; color:rgba(255,255,255,0.5); }
     .plan-trial { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
+    .plan-members { flex:0.7; font-size:12px; color:rgba(180,230,200,0.75); text-align:center; }
     .plan-status { flex:0.6; }
     .plan-actions { flex-shrink:0; }
 
@@ -204,6 +205,10 @@
        since these lists had no height limit and just grew the page
        indefinitely as content accumulated. */
     #legalList, #motdList, #newsletterList, #planList, #translationsList { max-height:700px; overflow-y:auto; }
+    /* Per Bot 21 — same reusable working-button spinner as Comms/other
+       admin pages (see setBtnLoading in the script below). */
+    @keyframes yy-spin { to { transform: rotate(360deg); } }
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
   </style>
 </head>
 <body>
@@ -556,6 +561,27 @@
   function closeModal(id){document.getElementById(id).classList.remove('open');}
   function openModal(id){document.getElementById(id).classList.add('open');}
   async function logout(){await fetch('/api/logout',{method:'POST'});location.href='/login';}
+  // Per Bot 21 — same reusable working-button pattern as Comms/client/
+  // facilitator: setBtnLoading(btn, true, 'Label…') swaps a button's
+  // content for a rotating yin-yang + text and disables it;
+  // setBtnLoading(btn, false) restores exactly what was there before.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
   function toggleAdminMenu() {
     const m = document.getElementById('adminMenu');
     m.style.display = m.style.display === 'none' ? 'block' : 'none';
@@ -604,6 +630,23 @@
     const res   = await fetch('/api/admin/membership/plans');
     const plans = await res.json();
     renderPlans(plans);
+    loadPlanMemberCounts();
+  }
+  // Per Bot 21 — fetched separately from the plan list itself, since
+  // this calls out to Stripe (one lookup per plan with a Price ID) and
+  // shouldn't hold up the table actually appearing. Each cell starts at
+  // "…" and fills in as this resolves, rather than the whole table
+  // waiting on Stripe before showing anything.
+  async function loadPlanMemberCounts() {
+    try {
+      const res = await fetch('/api/admin/membership/plans/member-counts');
+      const counts = await res.json();
+      Object.entries(counts).forEach(([planId, count]) => {
+        const el = document.getElementById(`planMembers-${planId}`);
+        if (!el) return;
+        el.textContent = count === null ? '?' : `${count} member${count === 1 ? '' : 's'}`;
+      });
+    } catch(e) { /* leave whatever was already showing — a failed fetch here shouldn't break the page */ }
   }
 
   function renderPlans(plans) {
@@ -625,10 +668,12 @@
             onchange="savePlanField('${p.id}', 'trial_days', parseInt(this.value)||0)"/>
           days
         </div>
-        <div class="plan-stripe-id">
+        <div class="plan-members" id="planMembers-${p.id}">${p.stripe_price_id ? '…' : '—'}</div>
+        <div class="plan-stripe-id" style="display:flex; align-items:center; gap:6px;">
           <input class="inline-input" type="text" placeholder="price_… (from Stripe)"
             value="${escHtml(p.stripe_price_id||'')}" style="width:220px;font-size:11px"
             onchange="savePlanField('${p.id}', 'stripe_price_id', this.value.trim() || null)"/>
+          ${p.stripe_price_id ? `<button class="btn sm" style="font-size:11px; padding:3px 8px" title="Re-fetch the current price directly from Stripe — use this if the £ amount shown doesn't match what Stripe actually charges" onclick="syncPlanPriceFromStripe('${p.id}', this)">↻ Sync price</button>` : ''}
         </div>
         <div class="plan-status">
           <span class="badge ${p.active ? 'badge-approved' : 'badge-draft'}">${p.active ? 'active' : 'inactive'}</span>
@@ -639,6 +684,27 @@
         </div>
       </div>
     `).join('');
+  }
+  // Per Bot 21 — real friction found: the price field is intentionally
+  // disabled once a Stripe Price ID is set (see the comment above), and
+  // re-syncing only ever happened as a side effect of savePlanField's
+  // onchange on the Price ID field itself — which only fires if that
+  // field's text actually changes. Re-pasting the exact same ID (the
+  // only thing you'd want to do if the ID is already correct and just
+  // the displayed price has drifted) doesn't count as a change at all,
+  // so nothing re-synced. This calls the exact same save path directly,
+  // bypassing the "did the text change" check entirely, so it works
+  // regardless of whether the ID itself needs touching.
+  async function syncPlanPriceFromStripe(id, btn) {
+    const input = btn.closest('.plan-stripe-id').querySelector('input');
+    const priceId = input.value.trim();
+    if (!priceId) { appAlert('No Stripe Price ID set for this plan yet.'); return; }
+    setBtnLoading(btn, true, '↻');
+    try {
+      await savePlanField(id, 'stripe_price_id', priceId);
+    } finally {
+      setBtnLoading(btn, false);
+    }
   }
 
   async function savePlanField(id, field, value) {
@@ -784,8 +850,7 @@
     const btn = document.getElementById('rewriteOfferBtn');
     const name = document.getElementById('offerName').value.trim();
     if (!name) { appAlert('Give the offer a name first — the rewrite needs it.'); return; }
-    const orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '…';
+    setBtnLoading(btn, true, 'Rewriting…');
     try {
       const res = await fetch('/api/admin/offer-copy-polish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -803,7 +868,7 @@
     } catch(e) {
       appAlert('Something went wrong — please try again.');
     } finally {
-      btn.disabled = false; btn.textContent = orig;
+      setBtnLoading(btn, false);
     }
   }
 
@@ -825,7 +890,7 @@
     if (launch_date && expiry_date && launch_date > expiry_date) { err.textContent = 'Expiry date is before the launch date.'; return; }
 
     const btn = document.getElementById('offerModalSaveBtn');
-    btn.disabled = true; btn.textContent = 'Saving…';
+    setBtnLoading(btn, true, 'Saving…');
     try {
       const body = { name, headline, description, trial_days, launch_date, expiry_date, is_default, showcase_file_id, skin_id };
       let res;
@@ -849,7 +914,7 @@
     } catch (e) {
       err.textContent = e.message;
     } finally {
-      btn.disabled = false; btn.textContent = 'Save offer';
+      setBtnLoading(btn, false);
     }
   }
 
@@ -937,7 +1002,7 @@
     const err = document.getElementById('lineModalErr');
     if (!text) { err.textContent = 'Line text is required.'; return; }
     const btn = document.getElementById('lineModalSaveBtn');
-    btn.disabled = true; btn.textContent = 'Saving…';
+    setBtnLoading(btn, true, 'Saving…');
     try {
       const res = editingLineId
         ? await fetch(`/api/admin/signal-lines/${editingLineId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, prior_tag }) })
@@ -949,7 +1014,7 @@
     } catch (e) {
       err.textContent = e.message;
     } finally {
-      btn.disabled = false; btn.textContent = 'Save';
+      setBtnLoading(btn, false);
     }
   }
 
@@ -966,7 +1031,7 @@
 
   async function runTrendScan() {
     const btn = document.getElementById('trendScanBtn');
-    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Searching…';
+    setBtnLoading(btn, true, 'Searching…');
     showFeedback('lineFeedback', 'Running a live search for current trends — this can take up to a minute or so.', 'ok');
     try {
       const res = await fetch('/api/admin/signal-lines/trend-scan', { method: 'POST' });
@@ -978,7 +1043,7 @@
     } catch (e) {
       showFeedback('lineFeedback', e.message, 'err');
     } finally {
-      btn.disabled = false; btn.textContent = orig;
+      setBtnLoading(btn, false);
     }
   }
 
@@ -1117,7 +1182,7 @@
               · <span style="color:${s.status==='pending'?'rgba(255,255,255,0.4)':s.status==='failed'?'rgba(255,140,120,0.9)':'rgba(180,230,200,0.85)'}">${s.status}</span>
             </div>
             ${isDraft ? `<div style="display:flex;gap:6px">
-              <button class="btn sm" onclick="regenerateCampaignStep('${s.id}')">↻ Regenerate</button>
+              <button class="btn sm" onclick="regenerateCampaignStep('${s.id}', this)">↻ Regenerate</button>
               ${s.channel==='email'
                 ? `<button class="btn sm" onclick="testCampaignStepEmail('${s.id}')">Send test</button>`
                 : `<button class="btn sm" onclick="publishCampaignStepNow('${s.id}')">Publish now (live)</button>`}
@@ -1156,7 +1221,7 @@
   async function addCampaignStep() {
     const btn = document.getElementById('campAddStepBtn');
     const err = document.getElementById('campDetailErr'); err.textContent = '';
-    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Generating…';
+    setBtnLoading(btn, true, 'Generating…');
     try {
       const body = {
         offsetDays: parseInt(document.getElementById('campStepDay').value, 10) || 0,
@@ -1171,16 +1236,23 @@
       await refreshCampaignDetail();
       loadCampaigns();
     } catch(e) { err.textContent = e.message; }
-    finally { btn.disabled = false; btn.textContent = orig; }
+    finally { setBtnLoading(btn, false); }
   }
-  async function regenerateCampaignStep(stepId) {
+  // Per Bot 21 — this one had no loading feedback of any kind before —
+  // a genuinely silent multi-second wait for an AI-generated rewrite,
+  // easy to mistake for a dead click. Now passes the clicked button
+  // through (same pattern as regenerateKbTopicRow on Talk & Tomte) so
+  // it can show the same spinner while it works.
+  async function regenerateCampaignStep(stepId, btnEl) {
     const err = document.getElementById('campDetailErr'); err.textContent = '';
+    if (btnEl) setBtnLoading(btnEl, true, 'Regenerating…');
     try {
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps/${stepId}/regenerate`, { method:'POST' });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not regenerate.');
       await refreshCampaignDetail();
     } catch(e) { err.textContent = e.message; }
+    finally { if (btnEl) setBtnLoading(btnEl, false); }
   }
   function setCampaignStepFormat(bodyId, format) {
     document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';

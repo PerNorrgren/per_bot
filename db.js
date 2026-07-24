@@ -692,6 +692,32 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Scheduled (recurring) messages (Per Bot 21) ── A reusable template
+  // that periodically spawns a real, one-off send — reusing the exact
+  // same newsletter send pipeline every occurrence (see scheduled_message_id
+  // on newsletters below), rather than a second, parallel sending path.
+  // recurrence_config is JSON, shape depends on recurrence_type:
+  //   daily               → {}
+  //   weekly              → { daysOfWeek: [0-6, ...] }        (0=Sun..6=Sat)
+  //   monthly_date        → { dayOfMonth: 1-31 | 'last' }
+  //   monthly_nth_weekday → { nth: 1-4 | -1, weekday: 0-6 }   (-1 = last)
+  //   yearly              → { month: 1-12, day: 1-31 }
+  // last_sent_date (YYYY-MM-DD) guards against sending twice in the same
+  // day if the cron tick ever runs more than once within the send hour.
+  db.run(`CREATE TABLE IF NOT EXISTS scheduled_messages (
+    id TEXT PRIMARY KEY,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    format TEXT DEFAULT 'plain',
+    audience TEXT DEFAULT 'all',
+    recurrence_type TEXT NOT NULL,
+    recurrence_config TEXT,
+    send_hour INTEGER DEFAULT 7,
+    active INTEGER DEFAULT 1,
+    last_sent_date TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Campaigns (Per Bot 18) ──
   // A campaign is a named sequence of steps, mixing calming (line-bank,
   // no CTA) and sales (offer-linked, tracked) content across email and
@@ -1285,6 +1311,10 @@ async function getDb() {
     // are unaffected.
     "ALTER TABLE newsletters ADD COLUMN offer_id TEXT",
     "ALTER TABLE newsletters ADD COLUMN source_tag TEXT",
+    // Per Bot 21 — traces a sent newsletter back to the recurring
+    // template that spawned it, purely for display ("this was Tuesday's
+    // automatic send") — sending logic itself doesn't depend on this.
+    "ALTER TABLE newsletters ADD COLUMN scheduled_message_id TEXT",
     // Optional in general, but becomes required the moment a user wants MOTD
     // email or SMS on — see the PATCH /api/account validation in server.js.
     // motd_hour is interpreted IN THIS TIMEZONE once it's set, not UTC.
@@ -4853,11 +4883,14 @@ function markMotdSentForUser(userId, todayStr) {
 }
 
 // ── Newsletters ── One-off broadcasts, distinct from the MOTD queue — see
-// table comment above for why.
-function addNewsletter(id, subject, body, audience, format, offerId, sourceTag) {
+// table comment above for why. scheduledMessageId (Per Bot 21) is set only
+// when this particular row was auto-created by a recurring schedule firing
+// — purely for display in the newsletters list ("from a schedule"), not
+// read by the send pipeline itself.
+function addNewsletter(id, subject, body, audience, format, offerId, sourceTag, scheduledMessageId) {
   getDbSync().run(
-    `INSERT INTO newsletters (id,subject,body,status,audience,format,offer_id,source_tag) VALUES (?,?,?,'draft',?,?,?,?)`,
-    [id, subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null]
+    `INSERT INTO newsletters (id,subject,body,status,audience,format,offer_id,source_tag,scheduled_message_id) VALUES (?,?,?,'draft',?,?,?,?,?)`,
+    [id, subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null, scheduledMessageId || null]
   );
   save();
 }
@@ -4879,6 +4912,82 @@ function updateNewsletterStatus(id, status) {
 function markNewsletterSent(id, recipientCount) {
   getDbSync().run("UPDATE newsletters SET status='sent', sent_at=datetime('now'), recipient_count=? WHERE id=?", [recipientCount, id]);
   save();
+}
+
+// ── Scheduled (recurring) messages (Per Bot 21) ──
+function getAllScheduledMessages() { return queryAll('SELECT * FROM scheduled_messages ORDER BY created_at DESC'); }
+function getScheduledMessage(id) { return queryOne('SELECT * FROM scheduled_messages WHERE id=?', [id]); }
+function createScheduledMessage(id, fields) {
+  getDbSync().run(
+    `INSERT INTO scheduled_messages (id, subject, body, format, audience, recurrence_type, recurrence_config, send_hour, active)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, fields.subject, fields.body, fields.format || 'plain', fields.audience || 'all',
+     fields.recurrence_type, JSON.stringify(fields.recurrence_config || {}), fields.send_hour ?? 7, fields.active === false ? 0 : 1]
+  );
+  save();
+}
+function updateScheduledMessage(id, fields) {
+  const allowed = ['subject','body','format','audience','recurrence_type','send_hour','active'];
+  const sets = [];
+  const vals = [];
+  allowed.forEach(k => { if (fields[k] !== undefined) { sets.push(`${k}=?`); vals.push(fields[k]); } });
+  if (fields.recurrence_config !== undefined) { sets.push('recurrence_config=?'); vals.push(JSON.stringify(fields.recurrence_config || {})); }
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE scheduled_messages SET ${sets.join(', ')} WHERE id=?`, vals);
+  save();
+}
+function deleteScheduledMessage(id) {
+  getDbSync().run('DELETE FROM scheduled_messages WHERE id=?', [id]);
+  save();
+}
+function markScheduledMessageSent(id, dateStr) {
+  getDbSync().run('UPDATE scheduled_messages SET last_sent_date=? WHERE id=?', [dateStr, id]);
+  save();
+}
+
+// Per Bot 21 — the actual recurrence logic. Pure function, deliberately
+// no DB/date-library dependency beyond plain Date math, so it's easy to
+// test directly against known dates rather than only ever observing it
+// via whether an email happened to go out. dateObj is read in UTC
+// throughout — the cron tick that calls this runs in UTC, and send_hour
+// is stored as a UTC hour, so every comparison here needs to agree with
+// that same frame or the "which day is it" question silently drifts by
+// several hours near midnight for anyone west of Greenwich.
+function scheduledMessageMatchesDate(recurrenceType, config, dateObj) {
+  const cfg = config || {};
+  const dow = dateObj.getUTCDay();       // 0=Sun .. 6=Sat
+  const dom = dateObj.getUTCDate();      // 1-31
+  const month = dateObj.getUTCMonth() + 1; // 1-12
+  switch (recurrenceType) {
+    case 'daily':
+      return true;
+    case 'weekly':
+      return Array.isArray(cfg.daysOfWeek) && cfg.daysOfWeek.includes(dow);
+    case 'monthly_date': {
+      if (cfg.dayOfMonth === 'last') {
+        const lastDay = new Date(Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth() + 1, 0)).getUTCDate();
+        return dom === lastDay;
+      }
+      return dom === Number(cfg.dayOfMonth);
+    }
+    case 'monthly_nth_weekday': {
+      if (dow !== Number(cfg.weekday)) return false;
+      if (Number(cfg.nth) === -1) {
+        // "Last <weekday> of the month" — true if adding 7 days rolls
+        // into next month, i.e. there's no other occurrence of this
+        // weekday later in the current month.
+        const nextOccurrence = new Date(Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dom + 7));
+        return nextOccurrence.getUTCMonth() !== dateObj.getUTCMonth();
+      }
+      const occurrence = Math.ceil(dom / 7); // which occurrence of this weekday within the month (1st, 2nd, 3rd, 4th)
+      return occurrence === Number(cfg.nth);
+    }
+    case 'yearly':
+      return month === Number(cfg.month) && dom === Number(cfg.day);
+    default:
+      return false;
+  }
 }
 
 // ── Email log (Per Bot 8) ──
@@ -6213,6 +6322,7 @@ module.exports = {
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
+  getAllScheduledMessages, getScheduledMessage, createScheduledMessage, updateScheduledMessage, deleteScheduledMessage, markScheduledMessageSent, scheduledMessageMatchesDate,
   logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,

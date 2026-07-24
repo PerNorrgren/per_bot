@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0 }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -41,6 +41,24 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] scheduled MOTD send failed:', e.message);
       record('scheduled_motd', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Recurring scheduled messages (Per Bot 21) — hourly, 5 past ──
+  // Deliberately its own hourly tick rather than piggybacking on the MOTD
+  // one above — different concern, and staggered 5 minutes so a slow run
+  // of one never delays the other. Every active scheduled_messages row
+  // gets checked every hour; whichever ones match today's date AND whose
+  // send_hour is this hour AND haven't already sent today actually fire.
+  cron.schedule('5 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendDueScheduledMessages();
+      console.log('[cron] scheduled messages:', JSON.stringify(result));
+      record('scheduled_messages', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] scheduled messages failed:', e.message);
+      record('scheduled_messages', 'failed', null, e.message, t0);
     }
   });
 
@@ -203,7 +221,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };

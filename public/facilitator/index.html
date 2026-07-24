@@ -679,9 +679,7 @@
   async function runAiPolish(quill, btn) {
     if (!btn) return;
     if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
-    const orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '…';
+    setBtnLoading(btn, true, 'Polishing…');
     try {
       const res  = await fetch('/api/ai-polish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -693,8 +691,7 @@
     } catch(e) {
       appAlert('Something went wrong — please try again.');
     } finally {
-      btn.disabled = false;
-      btn.textContent = orig;
+      setBtnLoading(btn, false);
     }
   }
 

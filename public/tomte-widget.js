@@ -64,9 +64,20 @@
     .tomte-tip-action:hover { color: rgba(255,210,140,1); }
     .tomte-empty { color: rgba(255,255,255,0.3); font-size: 12px; font-style: italic; text-align: center; padding: 16px 8px; }
     #tomte-input-row { display: flex; gap: 6px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.08); }
+    /* Per Bot 21 — real bug found: iOS Safari automatically zooms the
+       WHOLE PAGE in the moment you focus any input with a computed
+       font-size under 16px — its own built-in accessibility behaviour,
+       nothing to do with this widget's own layout code. That's exactly
+       what "it enlarges the screen" was — and once the page has zoomed,
+       positionPanel()'s math is measuring against a viewport that's now
+       different from the one it just calculated for, which is why the
+       panel could still look like it had drifted off-screen even after
+       the earlier keyboard-positioning fix. 16px is the actual fix;
+       padding bumped up slightly to match, so this doesn't read as a
+       sudden jump in the input's proportions. */
     #tomte-input {
       flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 8px; padding: 8px 10px; color: rgba(255,255,255,0.85); font-size: 12.5px; font-family: inherit;
+      border-radius: 8px; padding: 10px 12px; color: rgba(255,255,255,0.85); font-size: 16px; font-family: inherit;
     }
     .tomte-icon-btn {
       background: none; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
