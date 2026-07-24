@@ -161,6 +161,26 @@ async function getDb() {
     FOREIGN KEY (subcategory_id) REFERENCES categories(id)
   )`);
 
+  // ── Content shares (Per Bot 22) ── Many-to-many: any file shared with
+  // any number of specific people, independent of facilitator assignment
+  // and independent of tier — a practice is person-level, not
+  // subscription-level. Deliberately separate from library_files'
+  // existing assigned_client_id column rather than replacing it: that
+  // column is a single-client facilitator assignment already relied on
+  // elsewhere, and this is additive — both feed the same "My Practices"
+  // view on the client side, but neither needs to know about the other.
+  db.run(`CREATE TABLE IF NOT EXISTS content_shares (
+    id TEXT PRIMARY KEY,
+    library_file_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    shared_by_role TEXT,
+    shared_by_id TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(library_file_id, user_id),
+    FOREIGN KEY (library_file_id) REFERENCES library_files(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )`);
+
   // ── Courses ──
   db.run(`CREATE TABLE IF NOT EXISTS courses (
     id TEXT PRIMARY KEY,
@@ -3973,7 +3993,46 @@ function hasEverUsedTalk(userId) {
   return !!queryOne("SELECT 1 FROM sessions WHERE client_id=? AND type='self' LIMIT 1", [userId]);
 }
 
-// ── Tomte proactive tips (Per Bot 18) ──
+// ── Content shares (Per Bot 22) ── Admin (or later, facilitator) sharing
+// specific library files with specific people — see content_shares table
+// above. Deliberately upserts one row per (file, user) pair; sharing the
+// same file with someone twice is a no-op, not a duplicate or a
+// re-notification (INSERT OR IGNORE, so created_at — and therefore the
+// Tomte tip's dynamic id — only moves when something is genuinely new
+// for that person).
+function shareContentToUsers(fileId, userIds, sharedByRole, sharedById, makeId) {
+  const d = getDbSync();
+  userIds.forEach(userId => {
+    d.run(`INSERT OR IGNORE INTO content_shares (id, library_file_id, user_id, shared_by_role, shared_by_id) VALUES (?,?,?,?,?)`,
+      [makeId(), fileId, userId, sharedByRole || null, sharedById || null]);
+  });
+  save();
+}
+function getSharedFilesForUser(userId) {
+  return queryAll(
+    `SELECT f.* FROM content_shares cs JOIN library_files f ON f.id=cs.library_file_id
+     WHERE cs.user_id=? AND f.archived=0 ORDER BY cs.created_at DESC`,
+    [userId]
+  );
+}
+function removeContentShare(fileId, userId) {
+  getDbSync().run('DELETE FROM content_shares WHERE library_file_id=? AND user_id=?', [fileId, userId]);
+  save();
+}
+// Powers the Tomte "new practices" tip — see /api/my/tomte-tip. Folds in
+// the legacy single-assignment column too (assigned_client_id), since
+// from the client's point of view a facilitator assigning them
+// something directly is exactly the same kind of event as an admin
+// sharing something — both should surface the same "something new
+// arrived" nudge, not just one of the two paths.
+function getLatestPracticeArrivalAt(userId) {
+  const shared = queryOne(`SELECT MAX(created_at) as t FROM content_shares WHERE user_id=?`, [userId])?.t;
+  const assigned = queryOne(`SELECT MAX(created_at) as t FROM library_files WHERE assigned_client_id=?`, [userId])?.t;
+  const facAdded = queryOne(`SELECT MAX(created_at) as t FROM practices WHERE client_id=? AND source_type='facilitator'`, [userId])?.t;
+  return [shared, assigned, facAdded].filter(Boolean).sort().pop() || null;
+}
+
+
 function hasSeenTomteTip(userId, tipId) {
   return !!queryOne('SELECT 1 FROM tomte_tips_seen WHERE user_id=? AND tip_id=?', [userId, tipId]);
 }
@@ -4178,7 +4237,22 @@ function getPractice(id) {
 }
 function toggleFavourite(id) { getDbSync().run('UPDATE practices SET is_favourite=1-is_favourite WHERE id=?', [id]); save(); }
 function incrementUseCount(id) { getDbSync().run('UPDATE practices SET use_count=use_count+1 WHERE id=?', [id]); save(); }
+// Per Bot 22 — client removing a facilitator-assigned file from their own
+// My Practices. Scoped to userId matching the current assignment as a
+// safety check — a stale/duplicate request can't accidentally clear
+// someone else's assignment.
+function unassignFileFromClient(fileId, userId) {
+  getDbSync().run('UPDATE library_files SET assigned_client_id=NULL WHERE id=? AND assigned_client_id=?', [fileId, userId]);
+  save();
+}
 function deletePractice(id) { getDbSync().run('DELETE FROM practices WHERE id=?', [id]); save(); }
+// Per Bot 22 — client removing their own facilitator-added practice from
+// My Practices. Scoped to client_id matching, same safety reasoning as
+// unassignFileFromClient above.
+function deleteOwnPractice(id, clientId) {
+  getDbSync().run('DELETE FROM practices WHERE id=? AND client_id=?', [id, clientId]);
+  save();
+}
 
 // ── Programme assignments ──
 function assignProgramme(id, userId, userType, categoryId, subcategoryId) {
@@ -6276,7 +6350,8 @@ module.exports = {
   addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
-  addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice,
+  addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
+  shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient,
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History

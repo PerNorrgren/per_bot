@@ -1377,6 +1377,16 @@
     t.className = 'transcript-text';
   }
 
+  // Per Bot 22 — Tomte's "new practices arrived" tip links here. Function
+  // declarations below are hoisted, so calling them this early is safe;
+  // whatever loadContent()/loadPractices() fetch afterward just re-renders
+  // on top of this same tab/mode state once the data actually arrives.
+  if (urlParams.get('view') === 'my-practices') {
+    switchTab('library');
+    switchLibrarySub('practices');
+    setPracticesGroupMode('mine');
+  }
+
   // ── Slideshow ── (Per Bot 20: skin-aware — see brand-inject.js. A
   // logged-in client's own skin is resolved server-side via /api/config,
   // so this just waits for that instead of needing its own skin lookup.)
@@ -3643,6 +3653,68 @@
         <button class="heart-btn ${p.is_favourite?'fav':''}" onclick="event.stopPropagation();toggleFav('${p.id}')">♥</button>
       </div>`;
   }
+  // Per Bot 22 — one small row renderer for every kind of item that can
+  // land in My Practices, rather than reusing practiceItemHTML/
+  // contentItemHTML with their favourite-toggle heart button repurposed
+  // to mean something different (remove) depending on context — clearer
+  // to keep "favourite" and "remove from My Practices" as visibly
+  // different actions/icons even where the same item can appear in both.
+  function myPracticeRowHTML(title, subtitle, icon, kind, id, onClickOpen) {
+    return `<div class="practice-item" onclick="${onClickOpen}">
+      <span class="practice-icon">${icon}</span>
+      <div class="practice-info">
+        <div class="practice-title">${title}</div>
+        <div class="practice-meta">${subtitle}</div>
+      </div>
+      <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${kind}','${id}')">✕</button>
+    </div>`;
+  }
+  // One dispatcher — same "×" button everywhere, different call
+  // underneath depending on where the item actually came from. Never
+  // deletes anything for the facilitator/admin's own view: a share is
+  // scoped to this one person, and clearing assigned_client_id only
+  // ever affected this one person to begin with.
+  async function removeFromMyPractices(kind, id) {
+    try {
+      if (kind === 'favPractice') { await toggleFav(id); return; } // toggleFav already reloads practices itself
+      const endpoint = {
+        facilitatorPractice: `/api/client/my-practices/practice/${id}`,
+        favMeditation:       `/api/client/favourites/${id}`,
+        assignedFile:        `/api/client/my-practices/assigned/${id}`,
+        sharedFile:          `/api/client/my-practices/shared/${id}`,
+      }[kind];
+      if (!endpoint) return;
+      await fetch(endpoint, { method: 'DELETE' });
+      const [contentRes, profileRes] = await Promise.all([fetch('/api/client/content'), fetch('/api/my/profile')]);
+      _contentData = await contentRes.json();
+      _practicesData = (await profileRes.json()).practices || [];
+      renderPractices();
+    } catch(e) { /* best effort — worst case, a manual refresh clears it */ }
+  }
+  function renderMyPracticesList(list, facilitatorItems) {
+    const seenFileIds = new Set();
+    const rows = [];
+    list.filter(p => p.is_favourite).forEach(p => rows.push(
+      myPracticeRowHTML(p.title, p.source_type === 'facilitator' ? 'Favourite · Added by your facilitator' : 'Favourite · Saved from Talk',
+        p.type === 'audio' ? '🎵' : '📄', 'favPractice', p.id, `openPracticeById('${p.id}')`)));
+    facilitatorItems.forEach(x => {
+      if (x.kind === 'file') {
+        seenFileIds.add(x.item.id);
+        rows.push(myPracticeRowHTML(x.item.title, 'From your facilitator', isAudio(x.item) ? '🎵' : isVideo(x.item) ? '🎬' : '📄', 'assignedFile', x.item.id, `openContentFileById('${x.item.id}')`));
+      } else {
+        rows.push(myPracticeRowHTML(x.item.title, 'From your facilitator', x.item.type === 'audio' ? '🎵' : '📄', 'facilitatorPractice', x.item.id, `openPracticeById('${x.item.id}')`));
+      }
+    });
+    (_contentData || []).filter(f => f.content_type === 'meditation' && f.is_favourite && !seenFileIds.has(f.id)).forEach(f => {
+      seenFileIds.add(f.id);
+      rows.push(myPracticeRowHTML(f.title, 'Favourite meditation', '🎵', 'favMeditation', f.id, `openContentFileById('${f.id}')`));
+    });
+    (_contentData || []).filter(f => f.shared_to_me && !seenFileIds.has(f.id)).forEach(f => {
+      seenFileIds.add(f.id);
+      rows.push(myPracticeRowHTML(f.title, 'Shared with you', isAudio(f) ? '🎵' : isVideo(f) ? '🎬' : '📄', 'sharedFile', f.id, `openContentFileById('${f.id}')`));
+    });
+    return rows.length ? rows.join('') : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Nothing in My Practices yet — favourite a practice or meditation, and anything a facilitator or admin gives you shows up here too.</div>';
+  }
   function renderPractices() {
     const el = document.getElementById('practicesList');
     const list = _practicesData || [];
@@ -3689,22 +3761,27 @@
       (_practicesGroupMode === 'area' ? p.category_id === AREA_CATEGORY_ID : p.category_id !== AREA_CATEGORY_ID));
     const ungrouped = remaining.filter(p => !grouped.includes(p));
 
-    let html = '';
-    if (favs.length) {
-      html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
-    }
-
     // "Facilitator tracks" — files a facilitator uploaded and assigned
     // (assigned_client_id) merged with practices they added directly
-    // (source_type='facilitator'), sorted together by date. Per Bot 15d —
-    // simplified from the earlier click-to-expand pattern: always shows
-    // the 5 most recent in a fixed scroll box, full stop — no "see all"
-    // for this one, unlike the Talk sessions group below.
+    // (source_type='facilitator'), sorted together by date.
     const facilitatorItems = [
       ...assignedFiles.map(f => ({ item: f, kind: 'file' })),
       ...facilitatorAdded.map(p => ({ item: p, kind: 'practice' })),
     ].sort((a, b) => new Date(b.item.created_at || 0) - new Date(a.item.created_at || 0));
-    if (facilitatorItems.length) {
+
+    let html = '';
+    // Per Bot 22 — Favourites and Facilitator tracks fold into the My
+    // Practices tab below instead of always showing here, once that tab
+    // exists — avoids showing the same items twice on screen. In course/
+    // area mode they still show here exactly as before.
+    if (_practicesGroupMode !== 'mine' && favs.length) {
+      html += `<div class="content-section-hdr">Favourites</div>` + favs.map(practiceItemHTML).join('');
+    }
+
+    // Per Bot 15d — simplified from the earlier click-to-expand pattern:
+    // always shows the 5 most recent in a fixed scroll box, full stop —
+    // no "see all" for this one, unlike the Talk sessions group below.
+    if (_practicesGroupMode !== 'mine' && facilitatorItems.length) {
       const shown = facilitatorItems.slice(0, 5);
       html += `<div class="content-section-hdr">Facilitator tracks</div>
         <div style="max-height:340px; overflow-y:auto;">${shown.map(x => x.kind === 'file' ? contentItemHTML(x.item) : practiceItemHTML(x.item)).join('')}</div>`;
@@ -3713,8 +3790,23 @@
     html += `<div class="practices-group-row">
       <button class="practices-group-chip ${_practicesGroupMode==='course'?'active':''}" data-mode="course" onclick="setPracticesGroupMode('course')">By course</button>
       <button class="practices-group-chip ${_practicesGroupMode==='area'?'active':''}" data-mode="area" onclick="setPracticesGroupMode('area')">By area</button>
+      <button class="practices-group-chip ${_practicesGroupMode==='mine'?'active':''}" data-mode="mine" onclick="setPracticesGroupMode('mine')">My Practices</button>
     </div>`;
 
+    if (_practicesGroupMode === 'mine') {
+      html += renderMyPracticesList(list, facilitatorItems);
+      el.innerHTML = html;
+      // Sessions/Talk groups below are still their own thing even in My
+      // Practices mode — a session summary isn't really a "practice"
+      // someone favourited or was given, so it stays out of the merged
+      // list above, but is still reachable rather than hidden entirely.
+      renderSessionGroupsInto(el, supervisorSessions, talkSessions);
+      return;
+    }
+
+    if (_practicesGroupMode === 'mine') {
+      html += renderMyPracticesList(list, facilitatorItems);
+    } else {
     const groups = {};
     grouped.forEach(p => {
       const key = p.subcategory_id;
@@ -3737,7 +3829,12 @@
     if (ungrouped.length) {
       html += `<div class="content-section-hdr">Other saved practices</div>` + ungrouped.map(practiceItemHTML).join('');
     }
+    }
 
+    // Sessions/Talk groups are their own thing regardless of mode — a
+    // session summary isn't really a "practice" someone favourited or
+    // was given, so it stays out of the My Practices merged list above
+    // too, but is still reachable there rather than hidden entirely.
     // Per Bot 15c — supervisor sessions get the same 5-inline / click-heading
     // pattern as the course/area groups above.
     const sessionGroup = (key, label, items) => {

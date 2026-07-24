@@ -4123,6 +4123,25 @@ const TOMTE_TIPS = [
 ];
 app.get('/api/my/tomte-tip', auth.requireAuthApi(['client']), (req, res) => {
   try {
+    // Per Bot 22 — takes priority over the static list below, and needs
+    // different seen-tracking: not "seen once, never again" like those,
+    // but "seen for this batch, fires again once something new arrives".
+    // Solved by folding the latest arrival timestamp into the tip's own
+    // id — a genuinely new batch produces a genuinely new id, which
+    // hasSeenTomteTip has never seen before. Zero changes needed to the
+    // seen-tracking table or the widget's existing dismiss handling.
+    const latestArrival = db.getLatestPracticeArrivalAt(req.user.id);
+    if (latestArrival) {
+      const tipId = `new-practices-${latestArrival}`;
+      if (!db.hasSeenTomteTip(req.user.id, tipId)) {
+        return res.json({
+          tipId,
+          text: 'New practices arrived in My Practices.',
+          actionLabel: 'View',
+          actionHref: '/client/?view=my-practices',
+        });
+      }
+    }
     const tip = TOMTE_TIPS.find(t => !db.hasSeenTomteTip(req.user.id, t.id) && t.condition(req.user.id));
     if (!tip) return res.json(null);
     res.json({ tipId: tip.id, text: tip.text, actionLabel: tip.actionLabel || null, actionHref: tip.actionHref || null, action: tip.action || null });
@@ -6068,8 +6087,42 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
       ? db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
       : db.suppressAccessiblePreviews(db.getAllLibraryFilesWithAccess(userFlags, req.user.id), db.userMaxLevel(userFlags));
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
-    res.json(files.map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) })));
+    let result = files.map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
+
+    // Per Bot 22 — a file shared directly with this specific person (see
+    // content_shares) is visible to them regardless of their own tier —
+    // sharing a practice is person-level, not subscription-level, so it
+    // bypasses the tier gating above rather than being filtered by it.
+    // Merged in here so every existing consumer of this one endpoint
+    // (Practices, Meditations, Read & watch) sees it without each
+    // needing its own separate fetch, and marked shared_to_me on any
+    // match — including files that were already present above — so the
+    // client UI knows to offer a "remove from My Practices" action for
+    // it specifically (different underlying call than un-favouriting).
+    if (req.user.role === 'client') {
+      const sharedIds = new Set(db.getSharedFilesForUser(req.user.id).map(f => f.id));
+      result = result.map(f => sharedIds.has(f.id) ? { ...f, shared_to_me: true, accessible: true, locked: false } : f);
+      const presentIds = new Set(result.map(f => f.id));
+      const missing = db.getSharedFilesForUser(req.user.id).filter(f => !presentIds.has(f.id));
+      result = result.concat(missing.map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id), accessible: true, shared_to_me: true })));
+    }
+    res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per Bot 22 — share one or more library files with one or more specific
+// people, independent of tier and independent of facilitator assignment.
+// Person-level, not subscription-level — see the content_shares table.
+// Reuses /api/admin/users as the picker's own data source rather than a
+// bespoke search endpoint, since that already returns every tier
+// (Newsletter only through Member 3) in one call.
+app.post('/api/admin/library-files/share', auth.requireAuthApi(['admin']), (req, res) => {
+  const fileIds = Array.isArray(req.body.fileIds) ? req.body.fileIds : [];
+  const userIds = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  if (!fileIds.length) return res.status(400).json({ error: 'Select at least one file.' });
+  if (!userIds.length) return res.status(400).json({ error: 'Select at least one person.' });
+  fileIds.forEach(fileId => db.shareContentToUsers(fileId, userIds, 'admin', req.user.id, uuidv4));
+  res.json({ ok: true, shared: fileIds.length * userIds.length });
 });
 
 // Favourites
@@ -6079,6 +6132,29 @@ app.post('/api/client/favourites/:fileId', auth.requireAuthApi(['client']), (req
 });
 app.delete('/api/client/favourites/:fileId', auth.requireAuthApi(['client']), (req, res) => {
   db.removeFavourite(req.user.id, req.params.fileId);
+  res.json({ ok: true });
+});
+
+// Per Bot 22 — My Practices removal. Three different underlying sources
+// feed that one view (an admin/facilitator share, a facilitator's direct
+// single-client assignment, and a facilitator-added practice row), each
+// needing its own removal action rather than one generic "remove"
+// endpoint — the client only ever sees one "×" button, but what it does
+// underneath depends on where the item actually came from. Removing
+// never deletes anything for the facilitator/admin's own view — a
+// shared file's content_shares row is scoped to this one person, and
+// clearing assigned_client_id only ever affected this one person to
+// begin with.
+app.delete('/api/client/my-practices/shared/:fileId', auth.requireAuthApi(['client']), (req, res) => {
+  db.removeContentShare(req.params.fileId, req.user.id);
+  res.json({ ok: true });
+});
+app.delete('/api/client/my-practices/assigned/:fileId', auth.requireAuthApi(['client']), (req, res) => {
+  db.unassignFileFromClient(req.params.fileId, req.user.id);
+  res.json({ ok: true });
+});
+app.delete('/api/client/my-practices/practice/:id', auth.requireAuthApi(['client']), (req, res) => {
+  db.deleteOwnPractice(req.params.id, req.user.id);
   res.json({ ok: true });
 });
 

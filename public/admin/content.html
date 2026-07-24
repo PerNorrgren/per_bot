@@ -265,6 +265,7 @@
           </select>
           <button class="btn sm" onclick="applyBulkVisibility()">Apply</button>
           <button class="btn sm" onclick="bulkArchive(true)">Archive</button>
+          <button class="btn sm" onclick="openSharePicker()">Share to…</button>
           <button class="btn sm danger" onclick="bulkDelete()">Delete</button>
           <button class="btn sm" onclick="clearSelection()" style="margin-left:auto">Clear</button>
         </div>
@@ -582,6 +583,35 @@
     <div class="modal-err" id="domainRefsErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('domainRefsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 22 — Share picker: search any number of people (any tier,
+     regardless of facilitator), tick individuals or many at once, ticks
+     stay sticky across searches (kept in _sharePicked, independent of
+     what the search box currently filters to), with a "Selected only"
+     toggle to review the full list before confirming. Built generically
+     enough to lift into Comms later for targeting notifications/emails/
+     newsletters at specific people instead of a tier — see _sharePicker*
+     functions below, which don't know anything about "files" except in
+     confirmSharePicker() itself. -->
+<div class="modal-overlay" id="sharePickerModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Share to</h3>
+    <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:4px" id="sharePickerSubtitle"></div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input type="text" id="sharePickerSearch" placeholder="Search by name or email…" oninput="renderSharePickerList()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:7px 9px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.5);white-space:nowrap;cursor:pointer">
+        <input type="checkbox" id="sharePickerSelectedOnly" onchange="renderSharePickerList()"/> Selected only
+      </label>
+    </div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.35)"><span id="sharePickerCount">0</span> selected</div>
+    <div id="sharePickerList" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:10px"></div>
+    <div class="modal-err" id="sharePickerErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('sharePickerModal')">Cancel</button>
+      <button class="modal-ok" onclick="confirmSharePicker()">Share</button>
     </div>
   </div>
 </div>
@@ -1377,6 +1407,86 @@ async function applyBulkVisibility() {
   document.getElementById('bulkVisSel').value = '';
   clearSelection();
   loadAll();
+}
+
+// Per Bot 22 — Share picker. _sharePicked is the sticky-across-searches
+// selection set; _sharePickerUsers is the full directory fetched once
+// per modal open. Deliberately kept generic (nothing here references
+// "files" except confirmSharePicker itself) so this can be lifted into
+// Comms largely as-is for targeting a send at specific people instead
+// of a tier.
+let _sharePicked = new Set();
+let _sharePickerUsers = [];
+function tierLabel(u) {
+  if (u.member_tier === -1 || u.newsletterOnly) return 'Newsletter only';
+  if (u.member_tier === 0) return 'Explorer';
+  if (u.member_tier > 0) return `Member ${u.member_tier}`;
+  return '—';
+}
+async function openSharePicker() {
+  const ids = [..._libSel];
+  if (!ids.length) return;
+  _sharePicked = new Set();
+  document.getElementById('sharePickerSearch').value = '';
+  document.getElementById('sharePickerSelectedOnly').checked = false;
+  document.getElementById('sharePickerErr').textContent = '';
+  document.getElementById('sharePickerCount').textContent = '0';
+  document.getElementById('sharePickerSubtitle').textContent =
+    `Sharing ${ids.length} file${ids.length > 1 ? 's' : ''} — appears in My Practices for anyone selected below, regardless of their tier or facilitator.`;
+  document.getElementById('sharePickerList').innerHTML = '<div class="empty">Loading…</div>';
+  openModal('sharePickerModal');
+  try {
+    _sharePickerUsers = await (await fetch('/api/admin/users')).json();
+  } catch(e) {
+    _sharePickerUsers = [];
+  }
+  renderSharePickerList();
+}
+function renderSharePickerList() {
+  const term = document.getElementById('sharePickerSearch').value.trim().toLowerCase();
+  const selectedOnly = document.getElementById('sharePickerSelectedOnly').checked;
+  let list = _sharePickerUsers;
+  if (term) list = list.filter(u => (u.name || '').toLowerCase().includes(term) || (u.email || '').toLowerCase().includes(term));
+  if (selectedOnly) list = list.filter(u => _sharePicked.has(u.id));
+  const el = document.getElementById('sharePickerList');
+  if (!list.length) { el.innerHTML = `<div class="empty">${selectedOnly ? 'Nothing selected yet.' : 'No matches.'}</div>`; return; }
+  el.innerHTML = list.map(u => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer">
+      <input type="checkbox" ${_sharePicked.has(u.id) ? 'checked' : ''} onchange="toggleSharePick('${u.id}',this.checked)"/>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:rgba(255,255,255,0.8)">${escHtml(u.name || '(no name)')}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35)">${escHtml(u.email || '')}</div>
+      </div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.4);white-space:nowrap">${tierLabel(u)}</div>
+    </label>`).join('');
+}
+function toggleSharePick(id, checked) {
+  if (checked) _sharePicked.add(id); else _sharePicked.delete(id);
+  document.getElementById('sharePickerCount').textContent = _sharePicked.size;
+  // Only a full re-render if "Selected only" is active — unticking
+  // someone there should drop them out of view immediately, same as
+  // ticking elsewhere doesn't need a re-render at all (the checkbox
+  // itself already reflects the change).
+  if (document.getElementById('sharePickerSelectedOnly').checked) renderSharePickerList();
+}
+async function confirmSharePicker() {
+  const fileIds = [..._libSel];
+  const userIds = [..._sharePicked];
+  const err = document.getElementById('sharePickerErr');
+  if (!userIds.length) { err.textContent = 'Select at least one person.'; return; }
+  err.textContent = '';
+  try {
+    const res = await fetch('/api/admin/library-files/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileIds, userIds })
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; return; }
+    closeModal('sharePickerModal');
+    clearSelection();
+  } catch(e) {
+    err.textContent = 'Something went wrong. Please try again.';
+  }
 }
 
 async function bulkArchive(archived) {
