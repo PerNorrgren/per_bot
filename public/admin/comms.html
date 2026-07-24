@@ -18,7 +18,13 @@
   <script src="/js/message-editor.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+    /* Per Bot 22 — was min-height:100%, unlike every other admin page
+       (index/reports/talk all use height:100%). With no capped height,
+       body never forms its own bounded scroll box, so .topbar's
+       position:sticky had nothing reliable to stick against and the
+       header could scroll off with the page. Matches the working pages
+       now rather than inventing a new pattern. */
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
 
     /* ── Topbar ── */
     .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
@@ -80,7 +86,13 @@
     /* ── MOTD scrollable list + bulk selection ── */
     #motdList { max-height:520px; overflow-y:auto; }
     .msg-cb { flex-shrink:0; margin-top:2px; width:15px; height:15px; accent-color:rgba(180,230,200,0.6); cursor:pointer; }
-    .motd-section-header { padding:10px 20px 4px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,0.05); }
+    /* Per Bot 22 — these carry the "Select all"/"Approve selected"
+       controls for the Drafts group, which previously scrolled out of
+       reach the moment a long draft list was scrolled internally. Same
+       sticky-within-scroll-container pattern as .table-hdr elsewhere in
+       admin (index.html/talk.html), just applied per-section here since
+       there are multiple stacked headers rather than one. */
+    .motd-section-header { padding:10px 20px 4px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; border-top:1px solid rgba(255,255,255,0.05); position:sticky; top:0; background:#141a17; z-index:2; }
     .motd-section-header:first-child { border-top:none; }
     .motd-section-title { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.2); }
     .select-all-wrap { display:flex; align-items:center; gap:8px; font-size:11px; color:rgba(255,255,255,0.4); cursor:pointer; user-select:none; }

@@ -841,7 +841,7 @@ Per`;
   );
 }
 
-function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEndsAt) {
+function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEndsAt, manualExpiresAt) {
   const b = brand();
   // Per Bot 33r — a member added directly to a skin (individually or via
   // bulk import) needs the welcome email pointing at that skin's own
@@ -850,28 +850,30 @@ function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEn
   // right link separately. Validated against a real skin rather than
   // trusting the id outright.
   const loginUrl = (skinId && db.getSkin(skinId)) ? `${APP_URL}/login/${skinId}` : APP_URL;
-  // Per Bot 20 — this previously said nothing at all about a trial end
-  // date even when one was set, so someone given full paid access as a
-  // timed promo had no way of knowing from this email that it would
-  // ever lapse. Only shown when trialEndsAt is genuinely set — a
-  // permanent Member add (or an Explorer add) gets the plain version.
-  const trialLine = trialEndsAt
+  // Per Bot 22 — a manual paid-until date (legacy subscriber, set at
+  // creation instead of a trial) previously showed nothing here at all,
+  // same gap as the trial case had before Per Bot 20 fixed it. Both are
+  // "access ends on a real date" — only the wording differs, since a
+  // manual expiry isn't a trial and shouldn't be called one.
+  const accessUntil = trialEndsAt || manualExpiresAt || null;
+  const isTrial = !!trialEndsAt;
+  const trialLine = accessUntil
     ? `<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
-       <div style="font-size:15px;color:#1a1a1a">${new Date(trialEndsAt).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
+       <div style="font-size:15px;color:#1a1a1a">${new Date(accessUntil).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
     : '';
   return sendLocalizedEmail('welcome_client', language, {
     subject: `Welcome to {{brand}}`,
     html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Welcome, {{name}}</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready${trialEndsAt ? ' — with full access to everything, as a trial' : ''}.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">Your account is ready${accessUntil ? (isTrial ? ' — with full access to everything, as a trial' : ' — with full access to everything') : ''}.</p>
       <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Email</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px">{{email}}</div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
-        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${trialEndsAt ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${accessUntil ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
         ${trialLine}
       </div>
       <p style="font-size:14px;line-height:1.7;color:#666">You will be asked to choose a new password when you sign in.</p>
@@ -926,7 +928,7 @@ function emailPasswordResetLink(name, email, token, language) {
     </div>`
   }, { brand: b.name, name, email, resetUrl }, email);
 }
-function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEverPassword, trialEndsAt) {
+function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEverPassword, trialEndsAt, manualExpiresAt) {
   const b = brand();
   // Per Bot 20 — two fixes at once, both flagged earlier this session:
   // (1) "Your facilitator has reset your password" was always shown even
@@ -936,12 +938,21 @@ function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEve
   // grantFirstPasswordTrialIfEligible), the email previously said nothing
   // about it at all — same gap as emailWelcomeClient had, fixed there
   // earlier this session, now fixed here too.
+  // Per Bot 22 — extended the same way emailWelcomeClient was: a manual
+  // paid-until date set at creation (legacy subscriber, no trial
+  // involved) previously showed nothing here either, since this only
+  // ever looked at a trial freshly granted at this exact reset moment.
+  // This is specifically the email that fires when Per collapses
+  // create+expiry into one step and then resets the password straight
+  // after — it needs to reflect the real date, not just a fresh trial.
+  const accessUntil = trialEndsAt || manualExpiresAt || null;
+  const isTrial = !!trialEndsAt;
   const introLine = isFirstEverPassword
-    ? `Your account is ready${trialEndsAt ? ' — with full access to everything, as a trial' : ''}. Sign in with the temporary password below — you'll be asked to choose your own straight after.`
+    ? `Your account is ready${accessUntil ? (isTrial ? ' — with full access to everything, as a trial' : ' — with full access to everything') : ''}. Sign in with the temporary password below — you'll be asked to choose your own straight after.`
     : `Your facilitator has reset your password. Sign in with the temporary password below — you'll be asked to choose your own straight after.`;
-  const trialLine = trialEndsAt
+  const trialLine = accessUntil
     ? `<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
-       <div style="font-size:15px;color:#1a1a1a">${new Date(trialEndsAt).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
+       <div style="font-size:15px;color:#1a1a1a">${new Date(accessUntil).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })}</div>`
     : '';
   return sendLocalizedEmail('admin_password_reset', language, {
     subject: `Your {{brand}} password has been reset`,
@@ -953,7 +964,7 @@ function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEve
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
         <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
-        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${trialEndsAt ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
+        <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${accessUntil ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
         ${trialLine}
       </div>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
@@ -1705,8 +1716,13 @@ app.patch('/api/admin/users/:id/reset-password', auth.requireAuthApi(['admin']),
     const grantedTrial = grantFirstPasswordTrialIfEligible(user);
     db.adminResetUserPassword(req.params.id, hash);
     const sendEmail = req.body.sendEmail !== false;
-    const trialEndsAt = grantedTrial ? db.getUser(req.params.id).trial_ends_at : null;
-    if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language, isFirstEverPassword, trialEndsAt);
+    const freshUser = db.getUser(req.params.id);
+    const trialEndsAt = grantedTrial ? freshUser.trial_ends_at : null;
+    // Per Bot 22 — a manual expiry set earlier (at creation, or via the
+    // Upgrade flow) wasn't being surfaced here at all before, only a
+    // trial freshly granted at this exact moment. See emailAdminPasswordReset.
+    const manualExpiresAt = !grantedTrial ? freshUser.member_expires_at : null;
+    if (sendEmail) emailAdminPasswordReset(user.name, user.email, tempPassword, user.language, isFirstEverPassword, trialEndsAt, manualExpiresAt);
     res.json({ ok: true, tempPassword, emailSent: sendEmail, grantedTrial });
   } catch(e) {
     console.error('admin reset-password error:', e);
@@ -2065,7 +2081,7 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
 // untouched in case anything else still calls them directly.
 app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { name, email, tier: tierRaw, trialWeeks, offerId, skinId, sendWelcomeEmail } = req.body;
+    const { name, email, tier: tierRaw, trialWeeks, offerId, skinId, sendWelcomeEmail, manualExpiryDate } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name required.' });
     if (!email || !email.trim()) return res.status(400).json({ error: 'Email required.' });
     const emailLower = email.trim().toLowerCase();
@@ -2077,6 +2093,19 @@ app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, 
     const isNewsletterOnly = tierRaw === 'newsletter_only';
     const tier = isNewsletterOnly ? null : parseInt(tierRaw, 10);
     if (!isNewsletterOnly && ![0, 1, 2, 3].includes(tier)) return res.status(400).json({ error: 'Invalid level.' });
+
+    // Per Bot 22 — manual expiry date, for a legacy paid subscriber with
+    // no live Stripe subscription (e.g. a WordPress/MemberPress carry-
+    // over). Mutually exclusive with the trial fields below — a person
+    // is either on a trial or has a real paid-until date, not both.
+    // Only meaningful for a real membership tier, same restriction as
+    // trialWeeks already has (Explorer/newsletter-only never expire this way).
+    if (manualExpiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(manualExpiryDate)) {
+      return res.status(400).json({ error: 'manualExpiryDate must be YYYY-MM-DD.' });
+    }
+    if (manualExpiryDate && (isNewsletterOnly || tier === 0)) {
+      return res.status(400).json({ error: 'A manual expiry date only applies to a paid membership level.' });
+    }
 
     if (isNewsletterOnly) {
       const id = uuidv4();
@@ -2099,7 +2128,12 @@ app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, 
     if (offerTrialDays !== null) db.setSignupOfferId(id, offerId);
 
     let trialEndsAt = null;
-    if (tier > 0) {
+    if (manualExpiryDate && tier > 0) {
+      // Straight into member_expires_at — same field the Upgrade-flow
+      // expiry route (/api/admin/users/:id/expiry) already writes to —
+      // rather than computing a trialEndsAt. No trial involved here.
+      db.setMemberTier(id, tier, manualExpiryDate, null, null, null);
+    } else if (tier > 0) {
       // Same rule as bulk import: a valid offer's own trial length wins
       // over the manual weeks field, since a batch/person tied to a named
       // campaign should reflect that campaign's real trial length.
@@ -2109,7 +2143,7 @@ app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, 
     }
 
     if (sendWelcomeEmail !== false) {
-      emailWelcomeClient(name.trim(), emailLower, tempPassword, null, validSkinId, trialEndsAt);
+      emailWelcomeClient(name.trim(), emailLower, tempPassword, null, validSkinId, trialEndsAt, manualExpiryDate || null);
     }
 
     res.json({ id, name: name.trim(), email: emailLower, tempPassword });

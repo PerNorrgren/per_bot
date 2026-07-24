@@ -643,6 +643,17 @@
 
         <div class="modal-note" style="margin-top:10px" id="addUserNewsletterOnlyNote">A passive contact — receives the newsletter only, no password, no way to log in yet. Shows up in Newsletter Contacts, and moves to Explorer automatically the moment you invite them in from there.</div>
 
+        <!-- Per Bot 22 — lets a legacy paid subscriber (no live Stripe
+             subscription) be created with their real paid-until date in
+             one step, instead of create → Upgrade → Reset password. -->
+        <div style="margin-top:14px" id="addUserAccessModeField">
+          <label>Access</label>
+          <select id="addUserAccessMode" onchange="toggleAddUserAccessMode()">
+            <option value="trial">Free trial</option>
+            <option value="manual">Manual paid-until date (legacy subscriber)</option>
+          </select>
+        </div>
+
         <div style="margin-top:14px" id="addUserTrialField">
           <label>Free weeks before it expires</label>
           <input type="number" id="addUserTrialWeeks" value="2" min="0" step="1"/>
@@ -653,6 +664,12 @@
           <label>Offer (optional)</label>
           <select id="addUserOffer" onchange="toggleAddUserOfferOverride()"><option value="">No offer — use the weeks above</option></select>
           <div class="modal-note" style="margin-top:6px" id="addUserOfferNote">Tags this person to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it's selected.</div>
+        </div>
+
+        <div style="margin-top:14px;display:none" id="addUserManualExpiryField">
+          <label>Paid until</label>
+          <input type="date" id="addUserManualExpiry"/>
+          <div class="modal-note" style="margin-top:6px">Sets their access directly to this date — the same field a Stripe subscription reaching its natural end already writes to. No trial, no offer attribution.</div>
         </div>
 
         <div style="margin-top:14px" id="addUserSkinField">
@@ -1236,7 +1253,9 @@
     document.getElementById('addUserName').value = '';
     document.getElementById('addUserEmail').value = '';
     document.getElementById('addUserTier').value = 'newsletter_only';
+    document.getElementById('addUserAccessMode').value = 'trial';
     document.getElementById('addUserTrialWeeks').value = '2';
+    document.getElementById('addUserManualExpiry').value = '';
     document.getElementById('addUserSendWelcome').checked = true;
     document.getElementById('addUserErr').textContent = '';
     document.getElementById('addUserForm').style.display = '';
@@ -1284,14 +1303,46 @@
     const isNewsletterOnly = tier === 'newsletter_only';
     const isExplorer = tier === '0';
     document.getElementById('addUserNewsletterOnlyNote').style.display = isNewsletterOnly ? '' : 'none';
-    document.getElementById('addUserTrialField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
-    document.getElementById('addUserOfferField').style.display = isNewsletterOnly ? 'none' : '';
+    document.getElementById('addUserAccessModeField').style.display = (isNewsletterOnly || isExplorer) ? 'none' : '';
+    if (isNewsletterOnly || isExplorer) {
+      // Per Bot 22 — Explorer/newsletter-only never had a manual-expiry
+      // option to begin with; force back to 'trial' so a stale 'manual'
+      // selection from a previous tier choice can't silently carry
+      // through and get rejected server-side (or worse, ignored).
+      document.getElementById('addUserAccessMode').value = 'trial';
+    }
+    toggleAddUserAccessMode();
     document.getElementById('addUserOfferNote').textContent = isExplorer
       ? 'Tags this person to a specific campaign for reporting. Explorer has no trial, so the offer\'s trial length isn\'t applied here — attribution only.'
       : 'Tags this person to a specific campaign for reporting, and its trial length overrides the manual weeks field above while it\'s selected.';
     document.getElementById('addUserSkinField').style.display = isNewsletterOnly ? 'none' : '';
     document.getElementById('addUserWelcomeRow').style.display = isNewsletterOnly ? 'none' : '';
     document.getElementById('addUserWelcomeWarning').style.display = 'none';
+  }
+
+  // Per Bot 22 — Free trial vs manual paid-until date, mutually
+  // exclusive (see the "Add user" form — let it set a manual paid-until
+  // date directly" item from the Per Bot 21 handover).
+  function toggleAddUserAccessMode() {
+    const tier = document.getElementById('addUserTier').value;
+    if (tier === 'newsletter_only') {
+      document.getElementById('addUserTrialField').style.display = 'none';
+      document.getElementById('addUserOfferField').style.display = 'none';
+      document.getElementById('addUserManualExpiryField').style.display = 'none';
+      return;
+    }
+    if (tier === '0') {
+      // Explorer: no trial, no manual expiry — offer stays visible for
+      // attribution only, same as before this toggle existed.
+      document.getElementById('addUserTrialField').style.display = 'none';
+      document.getElementById('addUserOfferField').style.display = '';
+      document.getElementById('addUserManualExpiryField').style.display = 'none';
+      return;
+    }
+    const isManual = document.getElementById('addUserAccessMode').value === 'manual';
+    document.getElementById('addUserTrialField').style.display = isManual ? 'none' : '';
+    document.getElementById('addUserOfferField').style.display = isManual ? 'none' : '';
+    document.getElementById('addUserManualExpiryField').style.display = isManual ? '' : 'none';
   }
 
   function toggleAddUserOfferOverride() {
@@ -1316,8 +1367,16 @@
 
     const payload = { name, email, tier };
     if (!isNewsletterOnly) {
-      payload.trialWeeks = tier === '0' ? '0' : document.getElementById('addUserTrialWeeks').value;
-      payload.offerId = document.getElementById('addUserOffer').value;
+      const isExplorer = tier === '0';
+      const isManual = !isExplorer && document.getElementById('addUserAccessMode').value === 'manual';
+      if (isManual) {
+        const manualExpiryDate = document.getElementById('addUserManualExpiry').value;
+        if (!manualExpiryDate) { err.textContent = 'Paid-until date required.'; return; }
+        payload.manualExpiryDate = manualExpiryDate;
+      } else {
+        payload.trialWeeks = isExplorer ? '0' : document.getElementById('addUserTrialWeeks').value;
+        payload.offerId = document.getElementById('addUserOffer').value;
+      }
       payload.skinId = document.getElementById('addUserSkin').value;
       payload.sendWelcomeEmail = document.getElementById('addUserSendWelcome').checked;
     }
