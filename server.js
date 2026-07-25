@@ -5480,26 +5480,35 @@ async function generateSumieImage() {
   if (!b64) throw new Error('No image came back — please try again.');
   return Buffer.from(b64, 'base64');
 }
-app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (req, res) => {
+// Per Bot 22 — background job pattern, not a single long request. A GPT
+// Image call can take up to ~2 minutes (OpenAI's own guidance), and
+// Railway/Cloudflare's edge proxy times out well before that — the
+// original synchronous version returned an HTML error page mid-request,
+// which the frontend then tried to JSON.parse and crashed on. Also
+// doubles as the mechanism for a proper preview-before-insert UX: the
+// person isn't stuck watching a spinner, they can keep editing while a
+// small panel polls in the background and shows the result — with
+// Insert / Try again — once it's ready.
+const commsAiJobs = new Map(); // jobId -> {status, type, html, imageUrl, error, createdAt}
+function pruneCommsAiJobs() {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [id, job] of commsAiJobs) if (job.createdAt < cutoff) commsAiJobs.delete(id);
+}
+async function runCommsAiGenerateJob(jobId, type) {
+  const job = commsAiJobs.get(jobId);
   try {
-    const { type } = req.body;
-
     if (type === 'sumie') {
-      if (!media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
-      let buffer;
-      try {
-        buffer = await generateSumieImage();
-      } catch(e) {
-        console.error('sumie generation error:', e.message);
-        return res.status(500).json({ error: e.message || 'Could not generate an image right now. Please try again.' });
-      }
+      if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
+      const buffer = await generateSumieImage();
       const key = `newsletter-images/${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
-      return res.json({ imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
+      job.imageUrl = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
+      job.status = 'done';
+      return;
     }
 
     const gen = COMMS_AI_GENERATORS[type];
-    if (!gen) return res.status(400).json({ error: 'Unknown generator type.' });
+    if (!gen) throw new Error('Unknown generator type.');
     const raw = await callClaudeWithRetry(gen.prompt, gen.userMessage, 2000, gen.disableThinking);
     let text;
     if (gen.parseJsonArray) {
@@ -5513,10 +5522,6 @@ app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (
     text = text || '';
     let html;
     if (gen.hasTitle) {
-      // Title is the first line, a blank line, then the body — split on
-      // the first blank line rather than the first \n, since the title
-      // itself is guaranteed single-line but a stray leading blank line
-      // in the model's own formatting shouldn't break the split.
       const parts = text.split(/\n\s*\n/);
       const title = (parts.shift() || '').trim();
       const body = parts.join('\n\n').trim();
@@ -5524,11 +5529,28 @@ app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (
     } else {
       html = text.replace(/\n/g, '<br/>');
     }
-    res.json({ html });
+    job.html = html;
+    job.status = 'done';
   } catch(e) {
-    console.error('comms-ai-generate error:', e.message);
-    res.status(500).json({ error: 'Could not generate that right now. Please try again.' });
+    console.error(`comms-ai-generate job ${jobId} (${type}) failed:`, e.message);
+    job.status = 'error';
+    job.error = e.message || 'Could not generate that right now. Please try again.';
   }
+}
+app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
+  const { type } = req.body;
+  if (type === 'sumie' && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
+  if (type !== 'sumie' && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
+  pruneCommsAiJobs();
+  const jobId = uuidv4();
+  commsAiJobs.set(jobId, { status: 'pending', type, createdAt: Date.now() });
+  runCommsAiGenerateJob(jobId, type); // deliberately not awaited — returns to the client immediately
+  res.json({ jobId });
+});
+app.get('/api/admin/comms-ai-generate/:jobId', auth.requireAuthApi(['admin']), (req, res) => {
+  const job = commsAiJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found — it may have expired.' });
+  res.json({ status: job.status, html: job.html, imageUrl: job.imageUrl, error: job.error });
 });
 
 app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {

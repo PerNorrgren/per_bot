@@ -366,6 +366,24 @@
   </div>
 
   <!-- Message builder history modal -->
+  <!-- Per Bot 22 — floating, non-blocking preview panel for the AI
+       generate-and-insert feature. Deliberately not a modal-overlay: the
+       whole point is the person can keep editing the newsletter while
+       this polls in the background, rather than being stuck staring at
+       a spinner (and, for the image especially, a GPT Image call can
+       take up to ~2 minutes — no one should have to just wait that out). -->
+  <div id="commsAiPreviewPanel" style="display:none;position:fixed;bottom:24px;right:24px;z-index:200;width:320px;max-height:70vh;overflow-y:auto;background:#131a17;border:1px solid rgba(255,255,255,0.15);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,0.5);padding:16px;flex-direction:column;gap:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div id="commsAiPreviewTitle" style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)"></div>
+      <button onclick="closeCommsAiPreview()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:16px;cursor:pointer;line-height:1;padding:0">×</button>
+    </div>
+    <div id="commsAiPreviewBody" style="font-size:13px;line-height:1.6;background:#f5f5f0;border-radius:10px;padding:14px;min-height:50px;color:#2a2a2a"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn sm" onclick="retryCommsAiGenerate()" id="commsAiTryAgainBtn" style="display:none">Try again</button>
+      <button class="btn sm primary" onclick="insertCommsAiResult()" id="commsAiInsertBtn" style="display:none">Insert</button>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="mbHistoryModalOverlay">
     <div class="modal" style="max-width:640px">
       <h3>Past posts</h3>
@@ -2575,60 +2593,133 @@
     if (leaf && leaf.domNode) leaf.domNode.style.background = color;
   }
 
-  // Per Bot 22 — generate & insert at cursor, next to Insert Field.
-  // Mirrors the image-upload flow above exactly: a "Generating…"
-  // placeholder in the normal (non-cell) case since that can take a few
-  // seconds, direct DOM insertion via insertNodeAtCellRange when inside a
-  // column cell (Quill's own API has no visibility into cell content).
-  const COMMS_AI_LABELS = { motd: 'Message of the Day', limerick: 'limerick', haiku: 'haiku', poem: 'poem', sumie: 'image' };
-  async function runCommsAiGenerate(type) {
-    const select = document.getElementById('commsAiGenerateSelect');
-    const target = getInsertionTarget();
-    const quill = getQuill();
-    const placeholder = `Generating ${COMMS_AI_LABELS[type] || 'content'}…`;
-    select.disabled = true;
-    if (!target.inCell) quill.insertText(target.quillRange.index, placeholder);
+  // Per Bot 22 — generate & insert, redesigned as background-job polling
+  // (see server.js) rather than one long blocking request: a GPT Image
+  // call can take up to ~2 minutes, which is past what Railway/
+  // Cloudflare's edge proxy will hold a request open for — the original
+  // synchronous version returned an HTML timeout page mid-request, which
+  // crashed trying to JSON.parse it. This also gives a genuine preview-
+  // before-insert flow: the insertion target is captured the moment
+  // generation starts (not re-read later), so the person can keep
+  // editing elsewhere while it polls, and only commits the result to
+  // the document when they actually click Insert.
+  const COMMS_AI_LABELS = { motd: 'Message of the Day', limerick: 'Limerick', haiku: 'Haiku', poem: 'Poem', sumie: 'Sumi-e image' };
+  let _commsAiPreview = null; // { type, target, jobId, pollTimer, result }
 
+  function runCommsAiGenerate(type) {
+    if (_commsAiPreview && _commsAiPreview.pollTimer) clearTimeout(_commsAiPreview.pollTimer);
+    const target = getInsertionTarget();
+    _commsAiPreview = { type, target, jobId: null, pollTimer: null, result: null };
+    showCommsAiPreviewLoading();
+    startCommsAiJob(type);
+  }
+
+  async function startCommsAiJob(type) {
+    document.getElementById('commsAiTryAgainBtn').style.display = 'none';
+    document.getElementById('commsAiInsertBtn').style.display = 'none';
+    document.getElementById('commsAiPreviewBody').innerHTML = `<span style="color:#888;font-style:italic">Generating${type === 'sumie' ? ' — this can take up to two minutes' : ''}…</span>`;
     try {
       const res = await fetch('/api/admin/comms-ai-generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type })
       });
       const data = await res.json();
+      if (!res.ok || !data.jobId) throw new Error(data.error || 'Could not start that right now.');
+      _commsAiPreview.jobId = data.jobId;
+      pollCommsAiJob();
+    } catch(e) {
+      showCommsAiPreviewError(e.message || 'Something went wrong — please try again.');
+    }
+  }
 
-      if (type === 'sumie') {
-        if (!data.imageUrl) throw new Error(data.error || 'Could not generate an image right now.');
-        if (target.inCell) {
-          const img = document.createElement('img');
-          img.src = data.imageUrl;
-          img.style.maxWidth = '100%';
-          insertNodeAtCellRange(target, img);
-          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
-        } else {
-          quill.deleteText(target.quillRange.index, placeholder.length);
-          quill.insertEmbed(target.quillRange.index, 'image', data.imageUrl);
-          if (target.quillRange.index + 1 >= quill.getLength() - 1) quill.insertText(target.quillRange.index + 1, ' ');
-          quill.setSelection(target.quillRange.index + 1);
-        }
+  async function pollCommsAiJob() {
+    if (!_commsAiPreview || !_commsAiPreview.jobId) return;
+    try {
+      const res = await fetch(`/api/admin/comms-ai-generate/${_commsAiPreview.jobId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'That job could not be found — please try again.');
+      if (data.status === 'pending') {
+        _commsAiPreview.pollTimer = setTimeout(pollCommsAiJob, 2000);
         return;
       }
+      if (data.status === 'error') {
+        showCommsAiPreviewError(data.error || 'Could not generate that right now.');
+        return;
+      }
+      // done
+      _commsAiPreview.result = _commsAiPreview.type === 'sumie' ? { imageUrl: data.imageUrl } : { html: data.html };
+      showCommsAiPreviewResult();
+    } catch(e) {
+      showCommsAiPreviewError(e.message || 'Something went wrong — please try again.');
+    }
+  }
 
-      if (!data.html) throw new Error(data.error || 'Could not generate that right now.');
+  function showCommsAiPreviewLoading() {
+    document.getElementById('commsAiPreviewPanel').style.display = 'flex';
+    document.getElementById('commsAiPreviewTitle').textContent = COMMS_AI_LABELS[_commsAiPreview.type] || 'Generating';
+  }
+
+  function showCommsAiPreviewResult() {
+    const body = document.getElementById('commsAiPreviewBody');
+    if (_commsAiPreview.type === 'sumie') {
+      body.innerHTML = `<img src="${_commsAiPreview.result.imageUrl}" style="max-width:100%;display:block;border-radius:4px"/>`;
+    } else {
+      body.innerHTML = _commsAiPreview.result.html;
+    }
+    document.getElementById('commsAiTryAgainBtn').style.display = '';
+    document.getElementById('commsAiInsertBtn').style.display = '';
+  }
+
+  function showCommsAiPreviewError(message) {
+    document.getElementById('commsAiPreviewPanel').style.display = 'flex';
+    document.getElementById('commsAiPreviewBody').innerHTML = `<span style="color:#a33">${escHtml(message)}</span>`;
+    document.getElementById('commsAiTryAgainBtn').style.display = '';
+    document.getElementById('commsAiInsertBtn').style.display = 'none';
+  }
+
+  function retryCommsAiGenerate() {
+    if (!_commsAiPreview) return;
+    showCommsAiPreviewLoading();
+    startCommsAiJob(_commsAiPreview.type);
+  }
+
+  function closeCommsAiPreview() {
+    if (_commsAiPreview && _commsAiPreview.pollTimer) clearTimeout(_commsAiPreview.pollTimer);
+    _commsAiPreview = null;
+    document.getElementById('commsAiPreviewPanel').style.display = 'none';
+  }
+
+  // Commits the previewed result into the document, at the insertion
+  // point captured back when generation started — mirrors the
+  // image-upload flow's cell-vs-Quill handling exactly.
+  function insertCommsAiResult() {
+    if (!_commsAiPreview || !_commsAiPreview.result) return;
+    const { type, target, result } = _commsAiPreview;
+    const quill = getQuill();
+
+    if (type === 'sumie') {
       if (target.inCell) {
-        const wrap = document.createElement('span');
-        wrap.innerHTML = data.html;
-        insertNodeAtCellRange(target, wrap);
+        const img = document.createElement('img');
+        img.src = result.imageUrl;
+        img.style.maxWidth = '100%';
+        insertNodeAtCellRange(target, img);
+        if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
       } else {
-        quill.deleteText(target.quillRange.index, placeholder.length);
-        quill.clipboard.dangerouslyPasteHTML(target.quillRange.index, data.html + '<br/>');
+        quill.insertEmbed(target.quillRange.index, 'image', result.imageUrl);
+        if (target.quillRange.index + 1 >= quill.getLength() - 1) quill.insertText(target.quillRange.index + 1, ' ');
         quill.setSelection(target.quillRange.index + 1);
       }
-    } catch(e) {
-      if (!target.inCell) quill.deleteText(target.quillRange.index, placeholder.length);
-      appAlert(e.message || 'Something went wrong — please try again.');
-    } finally {
-      select.disabled = newsletterFormat !== 'rich';
+    } else {
+      if (target.inCell) {
+        const wrap = document.createElement('span');
+        wrap.innerHTML = result.html;
+        insertNodeAtCellRange(target, wrap);
+      } else {
+        quill.clipboard.dangerouslyPasteHTML(target.quillRange.index, result.html + '<br/>');
+        quill.setSelection(target.quillRange.index + 1);
+      }
     }
+    closeCommsAiPreview();
   }
 
   function setNewsletterFormat(format) {
