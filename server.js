@@ -5450,9 +5450,18 @@ async function callClaudeWithRetry(systemPrompt, userMessage, maxTokens, disable
 // different source. gpt-image-2 is OpenAI's current flagship (April
 // 2026) — quality:'high' since cost here is genuinely trivial per image
 // and quality was the whole point of switching providers.
-async function generateSumieImage() {
+async function generateSumieImage(context) {
   if (!OPENAI_API_KEY) throw new Error('OpenAI is not configured on this deployment (missing OPENAI_API_KEY).');
-  const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, 'Write one sumi-e image prompt now.', 500, true)).trim();
+  // Per Bot 22 — context is the newsletter's current body text (plain
+  // text, stripped of HTML client-side), truncated defensively in case
+  // someone triggers this on a very long draft — a few thousand
+  // characters is more than enough for the model to spot a MOTD/poem/
+  // limerick/haiku's theme, and keeps this fast text call cheap.
+  const trimmedContext = (context || '').slice(0, 6000).trim();
+  const userMessage = trimmedContext
+    ? `<newsletter_context>\n${trimmedContext}\n</newsletter_context>\n\nWrite one sumi-e image prompt now.`
+    : 'No newsletter content yet — <newsletter_context></newsletter_context> is empty. Write one sumi-e image prompt now.';
+  const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
@@ -5494,12 +5503,12 @@ function pruneCommsAiJobs() {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [id, job] of commsAiJobs) if (job.createdAt < cutoff) commsAiJobs.delete(id);
 }
-async function runCommsAiGenerateJob(jobId, type) {
+async function runCommsAiGenerateJob(jobId, type, context) {
   const job = commsAiJobs.get(jobId);
   try {
     if (type === 'sumie') {
       if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
-      const buffer = await generateSumieImage();
+      const buffer = await generateSumieImage(context);
       const key = `newsletter-images/${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
       job.imageUrl = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
@@ -5538,13 +5547,13 @@ async function runCommsAiGenerateJob(jobId, type) {
   }
 }
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
-  const { type } = req.body;
+  const { type, context } = req.body;
   if (type === 'sumie' && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
   if (type !== 'sumie' && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
   pruneCommsAiJobs();
   const jobId = uuidv4();
   commsAiJobs.set(jobId, { status: 'pending', type, createdAt: Date.now() });
-  runCommsAiGenerateJob(jobId, type); // deliberately not awaited — returns to the client immediately
+  runCommsAiGenerateJob(jobId, type, context); // deliberately not awaited — returns to the client immediately
   res.json({ jobId });
 });
 app.get('/api/admin/comms-ai-generate/:jobId', auth.requireAuthApi(['admin']), (req, res) => {

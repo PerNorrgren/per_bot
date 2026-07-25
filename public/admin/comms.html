@@ -2606,6 +2606,19 @@
   const COMMS_AI_LABELS = { motd: 'Message of the Day', limerick: 'Limerick', haiku: 'Haiku', poem: 'Poem', sumie: 'Sumi-e image' };
   let _commsAiPreview = null; // { type, target, jobId, pollTimer, result }
 
+  // Per Bot 22 — a locked/backgrounded phone can throttle setTimeout
+  // itself, not just abort the odd fetch, so a pending poll can end up
+  // waiting far longer than 2s to actually fire once the tab comes back.
+  // Re-polling immediately on return, instead of waiting for that
+  // possibly-delayed timer, closes the gap between "I unlocked my phone"
+  // and "the result actually shows up".
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && _commsAiPreview && _commsAiPreview.jobId && !_commsAiPreview.result) {
+      if (_commsAiPreview.pollTimer) clearTimeout(_commsAiPreview.pollTimer);
+      pollCommsAiJob();
+    }
+  });
+
   function runCommsAiGenerate(type) {
     if (_commsAiPreview && _commsAiPreview.pollTimer) clearTimeout(_commsAiPreview.pollTimer);
     const target = getInsertionTarget();
@@ -2619,9 +2632,16 @@
     document.getElementById('commsAiInsertBtn').style.display = 'none';
     document.getElementById('commsAiPreviewBody').innerHTML = `<span style="color:#888;font-style:italic">Generating${type === 'sumie' ? ' — this can take up to two minutes' : ''}…</span>`;
     try {
+      // Per Bot 22 — for sumie specifically, send the newsletter's
+      // current plain text along so the image can key off a MOTD/poem/
+      // limerick/haiku already in the body rather than always picking
+      // something unrelated. Only sumie needs this — the four text
+      // generators don't reference surrounding content.
+      const body = { type };
+      if (type === 'sumie') body.context = getQuill().getText();
       const res = await fetch('/api/admin/comms-ai-generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (!res.ok || !data.jobId) throw new Error(data.error || 'Could not start that right now.');
@@ -2634,24 +2654,38 @@
 
   async function pollCommsAiJob() {
     if (!_commsAiPreview || !_commsAiPreview.jobId) return;
+    let res, data;
     try {
-      const res = await fetch(`/api/admin/comms-ai-generate/${_commsAiPreview.jobId}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'That job could not be found — please try again.');
-      if (data.status === 'pending') {
-        _commsAiPreview.pollTimer = setTimeout(pollCommsAiJob, 2000);
-        return;
-      }
-      if (data.status === 'error') {
-        showCommsAiPreviewError(data.error || 'Could not generate that right now.');
-        return;
-      }
-      // done
-      _commsAiPreview.result = _commsAiPreview.type === 'sumie' ? { imageUrl: data.imageUrl } : { html: data.html };
-      showCommsAiPreviewResult();
+      res = await fetch(`/api/admin/comms-ai-generate/${_commsAiPreview.jobId}`);
+      data = await res.json();
     } catch(e) {
-      showCommsAiPreviewError(e.message || 'Something went wrong — please try again.');
+      // Per Bot 22 — a failed poll request itself (network hiccup, or
+      // iOS suspending a backgrounded tab mid-fetch — "The user aborted
+      // a request" is Safari's generic abort message, not something an
+      // actual click triggered) does NOT mean the job failed. The job
+      // keeps running server-side the whole time regardless of what
+      // happens to this particular poll — just retry rather than
+      // declaring defeat. The job's own 10-minute server-side expiry is
+      // the real backstop: if it's genuinely gone, the next successful
+      // poll gets a clean 404 below, which IS shown as an error.
+      _commsAiPreview.pollTimer = setTimeout(pollCommsAiJob, 2000);
+      return;
     }
+    if (!res.ok) {
+      showCommsAiPreviewError(data.error || 'That job could not be found — please try again.');
+      return;
+    }
+    if (data.status === 'pending') {
+      _commsAiPreview.pollTimer = setTimeout(pollCommsAiJob, 2000);
+      return;
+    }
+    if (data.status === 'error') {
+      showCommsAiPreviewError(data.error || 'Could not generate that right now.');
+      return;
+    }
+    // done
+    _commsAiPreview.result = _commsAiPreview.type === 'sumie' ? { imageUrl: data.imageUrl } : { html: data.html };
+    showCommsAiPreviewResult();
   }
 
   function showCommsAiPreviewLoading() {
