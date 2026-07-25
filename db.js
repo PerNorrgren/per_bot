@@ -5714,15 +5714,50 @@ function reportUploads() {
 // way to see why a send had failed short of querying the database
 // directly. Reusing the Reports hub's existing generic {tiles, table,
 // note} rendering rather than building a bespoke page for this.
+// Per Bot 22 — jobs view. A "job" is one send action — a newsletter/
+// campaign broadcast to many people, a scheduled MOTD batch, or a single
+// one-off transactional email (welcome, password reset) — grouped so the
+// report reads as "12 things I sent" instead of "200 individual rows to
+// scroll through". Newsletter/campaign sends already share a real
+// newsletter_id, used as the grouping key directly; everything else
+// (no shared batch id in the schema) falls back to kind+subject+minute,
+// which naturally collapses a broadcast that went out in one burst and
+// just as naturally leaves a one-off personalized email as its own
+// singleton "job" — no special-casing needed for either case.
+function getEmailJobs(limit) {
+  return queryAll(`
+    SELECT
+      kind, subject, newsletter_id,
+      MIN(created_at) as first_at,
+      MAX(created_at) as last_at,
+      COUNT(*) as total,
+      SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) as sent,
+      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
+      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+      MIN(email) as sole_email,
+      MIN(id) as sample_id
+    FROM email_log
+    GROUP BY COALESCE(newsletter_id, kind || '|' || subject || '|' || strftime('%Y-%m-%d %H:%M', created_at))
+    ORDER BY first_at DESC
+    LIMIT ?
+  `, [limit || 100]);
+}
+// Per-recipient rows for one job, for the "Log" drill-down. newsletterId
+// is the precise match when present; otherwise kind+subject+the exact
+// first/last timestamps already returned for that job by getEmailJobs
+// above narrow it back down to just that batch's own rows.
+function getEmailJobRows(kind, subject, fromAt, toAt, newsletterId) {
+  if (newsletterId) {
+    return queryAll(`SELECT id,email,status,error,created_at,(body_html IS NOT NULL) as has_body FROM email_log WHERE newsletter_id=? ORDER BY created_at DESC`, [newsletterId]);
+  }
+  return queryAll(`SELECT id,email,status,error,created_at,(body_html IS NOT NULL) as has_body FROM email_log WHERE kind=? AND subject=? AND created_at BETWEEN ? AND ? ORDER BY created_at DESC`, [kind, subject, fromAt, toAt]);
+}
 function reportEmailLog() {
+  const jobs = getEmailJobs(100);
   const rows = getRecentEmailLog(200, null);
   const sent = rows.filter(r => r.status === 'sent').length;
   const failed = rows.filter(r => r.status === 'failed').length;
   const pending = rows.filter(r => r.status === 'pending').length;
-  // The single most common real-world cause of "nothing is sending" is
-  // Scaleway credentials missing at send time (see sendEmail in
-  // server.js) — surfaced as its own tile since it changes what to check
-  // next entirely (a Railway env var vs. a Scaleway account/domain issue).
   const missingCreds = rows.filter(r => r.status === 'failed' && (r.error || '').includes('not configured')).length;
   return {
     tiles: [
@@ -5731,13 +5766,10 @@ function reportEmailLog() {
       { label: 'Pending', value: pending },
       { label: 'Failed — missing credentials', value: missingCreds },
     ],
-    table: {
-      columns: ['Sent at', 'To', 'Subject', 'Kind', 'Status', 'Error'],
-      rows: rows.map(r => [r.created_at, r.email, r.subject || '—', r.kind, r.status, r.error || '—']),
-    },
+    jobs,
     note: missingCreds > 0
       ? 'Some recent sends failed because SCW_SECRET_KEY or SCW_PROJECT_ID wasn\'t set at send time — check those two environment variables on Railway.'
-      : (failed > 0 ? 'See the Error column for the exact reason each failed send was rejected.' : 'Showing the 200 most recent send attempts.'),
+      : (failed > 0 ? 'Open a job\'s Log to see which recipients failed and why.' : 'Showing the 100 most recent send jobs.'),
   };
 }
 
@@ -6386,7 +6418,7 @@ module.exports = {
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
-  shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient,
+  shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient, getEmailJobRows,
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History

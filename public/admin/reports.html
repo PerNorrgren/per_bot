@@ -56,6 +56,17 @@
     .report-note { padding:14px 20px; font-size:12px; color:rgba(255,255,255,0.35); font-style:italic; border-top:1px solid rgba(255,255,255,0.05); }
     .empty { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
     .loading { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.2); font-style:italic; }
+
+    /* Per Bot 22 — this page had no modals at all before the Email Log's
+       job-content/job-log drill-downs; same convention as every other
+       admin page (openModal/closeModal toggling .open). */
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.72); backdrop-filter:blur(8px); align-items:flex-start; justify-content:center; padding:32px 20px; overflow-y:auto; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#131a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:640px; margin:auto; display:flex; flex-direction:column; gap:14px; }
+    .modal h3 { font-size:16px; font-weight:normal; color:rgba(255,255,255,0.85); }
+    .modal-btns { display:flex; justify-content:flex-end; gap:10px; margin-top:4px; }
+    .modal-cancel { padding:9px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:none; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer; }
+    .btn.sm { padding:5px 12px; font-size:10px; }
 </style>
 </head>
 <body>
@@ -111,6 +122,32 @@
 
   </div>
 
+  <!-- Per Bot 22 — Email Log job drill-downs. Content modal shows the
+       actual stored HTML for a representative email in the job (safe to
+       render directly — our own templates, admin-only page, same
+       convention as the newsletter preview in Communications). Log modal
+       shows every recipient row for that job, each failed one with an
+       Error toggle rather than a third nested modal. -->
+  <div class="modal-overlay" id="emailJobContentModal" onclick="if(event.target===this)closeModal('emailJobContentModal')">
+    <div class="modal">
+      <h3 id="emailJobContentTitle"></h3>
+      <div id="emailJobContentBody" style="background:#f5f5f0;border-radius:10px;max-height:60vh;overflow-y:auto;color:#2a2a2a"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('emailJobContentModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="emailJobLogModal" onclick="if(event.target===this)closeModal('emailJobLogModal')">
+    <div class="modal" style="max-width:720px">
+      <h3 id="emailJobLogTitle"></h3>
+      <div id="emailJobLogRows" style="max-height:60vh;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:10px"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('emailJobLogModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -152,6 +189,90 @@
   // REPORTS registry.
   let _reports = [];
   let _currentReportId = null;
+
+  // Per Bot 22 — Email Log's jobs view. One row per send action (see
+  // db.getEmailJobs) rather than one row per recipient — click a row for
+  // the message content, click Log for the per-recipient breakdown.
+  let _currentJobs = [];
+  function renderEmailLogReport(jobs) {
+    _currentJobs = jobs;
+    const el = document.getElementById('reportTable');
+    if (!jobs.length) { el.innerHTML = '<div class="empty">No email activity yet.</div>'; return; }
+    el.innerHTML =
+      `<div class="report-table-hdr">
+        <div>Sent at</div><div>Audience</div><div>Subject</div><div>Kind</div><div>Status</div><div style="flex:0 0 70px"></div>
+      </div>` +
+      jobs.map((j, i) => {
+        const audience = j.total > 1 ? `${j.total} recipients` : (j.sole_email || '—');
+        const statusBits = [
+          j.sent ? `<span style="color:rgba(180,230,200,0.85)">${j.sent} sent</span>` : '',
+          j.failed ? `<span style="color:rgba(230,140,120,0.9)">${j.failed} failed</span>` : '',
+          j.pending ? `<span style="color:rgba(230,200,120,0.9)">${j.pending} pending</span>` : '',
+        ].filter(Boolean).join(' · ') || '—';
+        return `<div class="report-table-row" style="cursor:pointer" onclick="openEmailJobContent(${i})">
+          <div title="${escHtml(j.first_at)}">${escHtml(j.first_at)}</div>
+          <div title="${escHtml(audience)}">${escHtml(audience)}</div>
+          <div title="${escHtml(j.subject || '—')}">${escHtml(j.subject || '—')}</div>
+          <div>${escHtml(j.kind)}</div>
+          <div style="overflow:visible;text-overflow:clip;white-space:normal">${statusBits}</div>
+          <div style="flex:0 0 70px;text-align:right" onclick="event.stopPropagation()">
+            <button class="btn sm" onclick="openEmailJobLog(${i})">Log</button>
+          </div>
+        </div>`;
+      }).join('');
+  }
+
+  async function openEmailJobContent(i) {
+    const j = _currentJobs[i];
+    document.getElementById('emailJobContentTitle').textContent = j.subject || '(no subject)';
+    const body = document.getElementById('emailJobContentBody');
+    body.innerHTML = '<div class="loading">Loading…</div>';
+    openModal('emailJobContentModal');
+    try {
+      const res = await fetch(`/api/admin/email-log/${j.sample_id}/body`);
+      const data = await res.json();
+      body.innerHTML = data.html || '<div class="empty" style="color:#999">No stored content for this email — sent before body storage was added, or unavailable.</div>';
+    } catch(e) {
+      body.innerHTML = '<div class="empty" style="color:#999">Could not load the message content.</div>';
+    }
+  }
+
+  async function openEmailJobLog(i) {
+    const j = _currentJobs[i];
+    document.getElementById('emailJobLogTitle').textContent = `${j.subject || '(no subject)'} — ${j.total} recipient${j.total > 1 ? 's' : ''}`;
+    const el = document.getElementById('emailJobLogRows');
+    el.innerHTML = '<div class="loading">Loading…</div>';
+    openModal('emailJobLogModal');
+    try {
+      const params = new URLSearchParams();
+      if (j.newsletter_id) params.set('newsletterId', j.newsletter_id);
+      else { params.set('kind', j.kind); params.set('subject', j.subject || ''); params.set('from', j.first_at); params.set('to', j.last_at); }
+      const res = await fetch(`/api/admin/email-log/job-rows?${params}`);
+      const rows = await res.json();
+      if (!rows.length) { el.innerHTML = '<div class="empty">No rows found for this job.</div>'; return; }
+      const statusColor = s => s === 'sent' ? 'rgba(180,230,200,0.85)' : s === 'failed' ? 'rgba(230,140,120,0.9)' : 'rgba(230,200,120,0.9)';
+      el.innerHTML = rows.map(r => `
+        <div class="job-log-row" style="padding:11px 20px;border-bottom:1px solid rgba(255,255,255,0.04)">
+          <div style="display:flex;align-items:center;gap:14px;font-size:13px">
+            <div style="flex:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:rgba(255,255,255,0.6)" title="${escHtml(r.email)}">${escHtml(r.email)}</div>
+            <div style="flex:1;color:rgba(255,255,255,0.6)">${escHtml(r.created_at)}</div>
+            <div style="flex:0 0 60px;color:${statusColor(r.status)}">${escHtml(r.status)}</div>
+            <div style="flex:0 0 60px;text-align:right">${r.status === 'failed' ? `<button class="btn sm" onclick="toggleRowError(this)">Error</button>` : ''}</div>
+          </div>
+          <div class="row-error" style="display:none;font-size:12px;color:rgba(230,140,120,0.85);padding-top:6px" data-error="${escHtml(r.error || '—')}"></div>
+        </div>
+      `).join('');
+    } catch(e) {
+      el.innerHTML = '<div class="empty">Could not load rows for this job.</div>';
+    }
+  }
+
+  function toggleRowError(btn) {
+    const wrap = btn.closest('.job-log-row');
+    const errEl = wrap.querySelector('.row-error');
+    if (errEl.style.display === 'none') { errEl.textContent = errEl.dataset.error; errEl.style.display = 'block'; btn.textContent = 'Hide'; }
+    else { errEl.style.display = 'none'; btn.textContent = 'Error'; }
+  }
 
   async function loadReportList() {
     try {
@@ -209,7 +330,9 @@
       `).join('') || '<div class="empty">No summary figures for this report.</div>';
 
       const tableEl = document.getElementById('reportTable');
-      if (data.table && data.table.rows && data.table.rows.length) {
+      if (data.jobs) {
+        renderEmailLogReport(data.jobs);
+      } else if (data.table && data.table.rows && data.table.rows.length) {
         tableEl.innerHTML =
           `<div class="report-table-hdr">${data.table.columns.map(c => `<div>${escHtml(c)}</div>`).join('')}</div>` +
           data.table.rows.map(row => `<div class="report-table-row">${row.map(cell => `<div title="${escHtml(cell)}">${escHtml(cell)}</div>`).join('')}</div>`).join('');

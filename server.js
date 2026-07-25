@@ -6323,6 +6323,19 @@ app.get('/api/admin/newsletter-migration-status', auth.requireAuthApi(['admin'])
   }
 });
 
+// Per Bot 22 — per-recipient rows for one job from the Email Log report's
+// jobs view (see db.getEmailJobs). newsletterId is the precise match when
+// present; otherwise kind+subject+the exact first/last timestamps the
+// jobs list already returned for that job narrow it back to just that
+// batch's own rows.
+app.get('/api/admin/email-log/job-rows', auth.requireAuthApi(['admin']), (req, res) => {
+  const { kind, subject, from, to, newsletterId } = req.query;
+  if (!newsletterId && (!kind || !subject || !from || !to)) {
+    return res.status(400).json({ error: 'Missing job parameters.' });
+  }
+  res.json(db.getEmailJobRows(kind, subject, from, to, newsletterId || null));
+});
+
 app.get('/api/admin/email-log/check-status', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
