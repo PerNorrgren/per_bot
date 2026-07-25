@@ -5396,6 +5396,52 @@ function getAdminLanguage() {
     return (withLang && withLang.language) || 'en';
   } catch(e) { return 'en'; }
 }
+// Per Bot 22 — the newsletter editor's "generate & insert at cursor"
+// button, next to Insert Field. Four text generators share one shape
+// (plain text, literal \n line breaks, converted to <br/> the same way
+// MOTD content already is); the fifth (sumie) asks Claude for raw SVG
+// markup instead and uploads it to R2 the same way an uploaded image
+// would be, so the editor gets back a normal hosted image URL rather
+// than an inline data URI (many email clients handle those poorly).
+const COMMS_AI_GENERATORS = {
+  motd:     { prompt: prompts.MOTD_GENERATION_PROMPT, userMessage: 'Write 1 new Message of the Day draft. Respond with only the JSON array (one element), nothing else.', parseJsonArray: true },
+  limerick: { prompt: prompts.LIMERICK_GENERATION_PROMPT, userMessage: 'Write one limerick now.' },
+  haiku:    { prompt: prompts.HAIKU_GENERATION_PROMPT, userMessage: 'Write one haiku now.' },
+  poem:     { prompt: prompts.NATURE_POEM_GENERATION_PROMPT, userMessage: 'Write one four-stanza poem now.' },
+};
+app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { type } = req.body;
+
+    if (type === 'sumie') {
+      if (!media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
+      const svg = (await callClaudeRaw(prompts.SUMIE_SVG_GENERATION_PROMPT, [{ role: 'user', content: 'Compose one piece of sumi-e style line art now.' }], 1500))
+        .replace(/^```(?:svg|xml)?\s*/i, '').replace(/```\s*$/, '').trim();
+      if (!svg.startsWith('<svg')) return res.status(500).json({ error: 'Could not generate a valid image — please try again.' });
+      const key = `newsletter-images/${uuidv4()}.svg`;
+      await media.uploadPublicObject(key, Buffer.from(svg, 'utf8'), 'image/svg+xml');
+      return res.json({ imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
+    }
+
+    const gen = COMMS_AI_GENERATORS[type];
+    if (!gen) return res.status(400).json({ error: 'Unknown generator type.' });
+    const raw = await callClaudeRaw(gen.prompt, [{ role: 'user', content: gen.userMessage }], 2000);
+    let text;
+    if (gen.parseJsonArray) {
+      let arr;
+      try { arr = JSON.parse(raw); }
+      catch { arr = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
+      text = arr[0];
+    } else {
+      text = raw.trim();
+    }
+    res.json({ html: (text || '').replace(/\n/g, '<br/>') });
+  } catch(e) {
+    console.error('comms-ai-generate error:', e.message);
+    res.status(500).json({ error: 'Could not generate that right now. Please try again.' });
+  }
+});
+
 app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
   try {
     const { html } = req.body;

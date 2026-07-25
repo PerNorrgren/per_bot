@@ -789,14 +789,28 @@
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
       <div id="newsletterRichEditor" style="display:none"></div>
       <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
-      <div style="margin-top:6px">
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select onchange="if(this.value){insertNewsletterToken('body',this.value);this.value='';}" style="font-size:11px">
           <option value="">Insert field into body…</option>
           <option value="{{name}}">Recipient's name</option>
           <option value="{{invite_link}}">Their login/invite link</option>
           <option value="{{expiry_date}}">Their membership expiry date</option>
         </select>
+        <!-- Per Bot 22 — generate-and-insert-at-cursor, next to Insert
+             Field as requested. Rich mode only: the image option needs
+             Quill's image embed, and dangerouslyPasteHTML (used for the
+             other four) has no plain-textarea equivalent worth building
+             just for this. -->
+        <select id="commsAiGenerateSelect" onchange="if(this.value){runCommsAiGenerate(this.value);this.value='';}" style="font-size:11px" disabled title="Switch to Rich message to use this">
+          <option value="">Generate &amp; insert…</option>
+          <option value="motd">Message of the Day style</option>
+          <option value="limerick">Mindful limerick (hidden signal)</option>
+          <option value="haiku">Surprising haiku</option>
+          <option value="poem">Nature poem, Mary Oliver style</option>
+          <option value="sumie">Sumi-e style line art</option>
+        </select>
       </div>
+      <div class="modal-note" id="commsAiGenerateNote" style="margin-top:6px;display:none">Switch to Rich message above to use the generate-and-insert options.</div>
       <div class="modal-note" style="margin-top:6px">{{name}} and {{invite_link}} — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a trial the moment they click it (14 days by default, or whatever the offer below sets); for an existing member it just points to the login page. {{expiry_date}} reads their real membership end date if one's set — blank otherwise.</div>
       <div class="modal-note" style="margin-top:6px">In Rich mode: click an image then use the 🔗 button to make it clickable · ▭ inserts a button (type text and a link) · 1/2/3 col inserts side-by-side columns for text next to an image.</div>
     </div>
@@ -2561,6 +2575,62 @@
     if (leaf && leaf.domNode) leaf.domNode.style.background = color;
   }
 
+  // Per Bot 22 — generate & insert at cursor, next to Insert Field.
+  // Mirrors the image-upload flow above exactly: a "Generating…"
+  // placeholder in the normal (non-cell) case since that can take a few
+  // seconds, direct DOM insertion via insertNodeAtCellRange when inside a
+  // column cell (Quill's own API has no visibility into cell content).
+  const COMMS_AI_LABELS = { motd: 'Message of the Day', limerick: 'limerick', haiku: 'haiku', poem: 'poem', sumie: 'image' };
+  async function runCommsAiGenerate(type) {
+    const select = document.getElementById('commsAiGenerateSelect');
+    const target = getInsertionTarget();
+    const quill = getQuill();
+    const placeholder = `Generating ${COMMS_AI_LABELS[type] || 'content'}…`;
+    select.disabled = true;
+    if (!target.inCell) quill.insertText(target.quillRange.index, placeholder);
+
+    try {
+      const res = await fetch('/api/admin/comms-ai-generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type })
+      });
+      const data = await res.json();
+
+      if (type === 'sumie') {
+        if (!data.imageUrl) throw new Error(data.error || 'Could not generate an image right now.');
+        if (target.inCell) {
+          const img = document.createElement('img');
+          img.src = data.imageUrl;
+          img.style.maxWidth = '100%';
+          insertNodeAtCellRange(target, img);
+          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
+        } else {
+          quill.deleteText(target.quillRange.index, placeholder.length);
+          quill.insertEmbed(target.quillRange.index, 'image', data.imageUrl);
+          if (target.quillRange.index + 1 >= quill.getLength() - 1) quill.insertText(target.quillRange.index + 1, ' ');
+          quill.setSelection(target.quillRange.index + 1);
+        }
+        return;
+      }
+
+      if (!data.html) throw new Error(data.error || 'Could not generate that right now.');
+      if (target.inCell) {
+        const wrap = document.createElement('span');
+        wrap.innerHTML = data.html;
+        insertNodeAtCellRange(target, wrap);
+      } else {
+        quill.deleteText(target.quillRange.index, placeholder.length);
+        quill.clipboard.dangerouslyPasteHTML(target.quillRange.index, data.html + '<br/>');
+        quill.setSelection(target.quillRange.index + 1);
+      }
+    } catch(e) {
+      if (!target.inCell) quill.deleteText(target.quillRange.index, placeholder.length);
+      appAlert(e.message || 'Something went wrong — please try again.');
+    } finally {
+      select.disabled = newsletterFormat !== 'rich';
+    }
+  }
+
   function setNewsletterFormat(format) {
     newsletterFormat = format;
     document.getElementById('formatPlainBtn').classList.toggle('active', format === 'plain');
@@ -2568,6 +2638,8 @@
     document.getElementById('newsletterBody').style.display = format === 'plain' ? '' : 'none';
     document.getElementById('newsletterRichEditor').style.display = format === 'rich' ? '' : 'none';
     if (format === 'rich') getQuill(); // build it the first time it's actually shown
+    document.getElementById('commsAiGenerateSelect').disabled = format !== 'rich';
+    document.getElementById('commsAiGenerateNote').style.display = format === 'rich' ? 'none' : '';
   }
 
   // Real email newsletters don't reliably play embedded <video> across

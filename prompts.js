@@ -714,6 +714,94 @@ EXAMPLES (approved as exactly the right form and tone — match this level, not 
 
 OUTPUT FORMAT: respond with ONLY a JSON array of strings, one per message, in the exact order requested. Each string contains its five lines joined by \n. No preamble, no markdown fences, no commentary — just the raw JSON array.`;
 
+// Per Bot 22 — four siblings to MOTD_GENERATION_PROMPT above, for the
+// newsletter editor's "generate & insert at cursor" button. Same signal
+// palette (MOTD_SIGNAL_LIST), same standing rules (culturally universal,
+// religiously/spiritually neutral, no clinical terms exposed to the
+// reader) — only the form changes per generator. Each returns plain text
+// with literal \n line breaks, converted to <br/> the same way MOTD
+// content already is when it goes into an email body.
+const LIMERICK_GENERATION_PROMPT = `You write a single limerick for Deeper Mindfulness, a nervous-system-focused mindfulness platform, in Per Norrgren's voice — to be dropped into a newsletter for a moment of genuine lightness.
+
+FORM: classic limerick — five lines, AABBA rhyme, lines 1/2/5 longer (roughly 8-9 syllables, anapestic bounce), lines 3/4 shorter (roughly 5-6 syllables). The rhymes should land clean and a little playful, not strained.
+
+TONE: warm, gently funny, a bit silly — but never mocking the reader, never mocking the practice itself, never cynical about mindfulness as a subject. Humour comes from a wry, self-aware observation about being a nervous system having a very normal, very human moment (dropping something, overthinking a text message, the dog interrupting a moment of calm) — not from a punchline that undercuts the reader's actual experience.
+
+HIDDEN SIGNALLING — non-negotiable: weave in exactly one signal from the list below, worked into the imagery of the limerick itself, never named, never explained, never flagged. The reader should be able to enjoy this purely as a funny little poem without ever noticing a signal is in it — that's the test of whether it's hidden well enough.
+${MOTD_SIGNAL_LIST}
+
+STANDING RULES (same as everything else on this platform):
+- Culturally universal — no single nation's holidays, seasons framed for one hemisphere only, or idiom tied to one culture.
+- Religiously and spiritually neutral — no "soul", "blessing", "universe", faith-specific language of any kind.
+- No clinical or brain-science terms exposed to the reader, even inside the joke.
+- Second person or a light "someone/you" address is fine — whatever the joke actually needs.
+
+OUTPUT: respond with ONLY the five lines, separated by literal \n characters. No title, no signature, no preamble, no markdown fences, no commentary.`;
+
+const HAIKU_GENERATION_PROMPT = `You write a single haiku for Deeper Mindfulness, in Per Norrgren's voice — to be dropped into a newsletter as a small, surprising moment.
+
+FORM — the real form, not just syllable-counting:
+- 5-7-5 syllables across three lines. The count matters, but it's the scaffolding, not the point.
+- A genuine kireji (cutting turn) at the start of the third line — a sharp pivot that recontextualizes what the first two lines set up, the way a real haiku's final line lands sideways rather than continuing straight on. The reader should feel the turn, not just read three sequential lines.
+- Concrete, sensory, specific imagery — a real thing, seen closely — never an abstraction or a stated feeling.
+
+SURPRISING AND RELEVANT: the image should be unexpected enough to earn its place (not the first cliché that comes to mind — no "cherry blossoms", no "still pond" unless genuinely reinvented), while still connecting, once the turn lands, to something true about settling, noticing, or being human in a body.
+
+HIDDEN SIGNALLING — non-negotiable: let exactly one signal from the list below live inside the image and the turn, never named, never explained.
+${MOTD_SIGNAL_LIST}
+
+STANDING RULES (same as everything else on this platform):
+- Culturally universal, religiously/spiritually neutral, no clinical or brain-science terms exposed to the reader.
+- No title, no explanation of the syllable count or the turn — just the haiku itself, exactly as it should appear.
+
+OUTPUT: respond with ONLY the three lines, separated by literal \n characters. No preamble, no markdown fences, no commentary.`;
+
+const NATURE_POEM_GENERATION_PROMPT = `You write a single four-stanza poem for Deeper Mindfulness, in Per Norrgren's voice, in the register of Mary Oliver — to be dropped into a newsletter as a longer, quieter moment of attention.
+
+FORM: four stanzas, each roughly 4-6 lines of loose free verse — no forced meter, no forced rhyme scheme (an occasional natural rhyme is fine, never strained). Break lines where a breath or a thought naturally turns, not just at sentence ends. Wide, specific, real natural imagery — herons, cold rivers, the underside of a leaf, a fox crossing a field at dusk, the particular way winter light sits low — concrete and closely observed, never generic ("nature", "the earth") and never decorative for its own sake.
+
+SHAPE OF THE WHOLE: begin in close, physical noticing of something in the natural world. Let the poem widen — the way Oliver's poems do — into something that touches the reader's own life without ever announcing the comparison outright ("and isn't that like...") — the connection should be felt, not stated. End quietly. Not a triumphant bow, not a neat moral, not a resolved lesson — a landing, the way a held breath finally, ordinarily, releases.
+
+HIDDEN SIGNALLING — non-negotiable: weave in both of the following across the four stanzas, worked entirely into the natural imagery, never named, never explained, never flagged:
+1. MATTERING — the sense of being witnessed, of belonging, of counting, without having done anything to earn it. Can live in how a creature or the light or the poem itself simply attends to something, without needing it to perform.
+2. CALMING — draw at least one signal from the list below into the physical texture of the poem (a breath, a slow rhythm, a settled weight, a stillness that isn't forced).
+${MOTD_SIGNAL_LIST}
+
+STANDING RULES (same as everything else on this platform):
+- Culturally universal — no seasonal framing that only works in one hemisphere (or hold the seasonal imagery loose enough to work in both, or anchor in something else physical instead).
+- Religiously and spiritually neutral — no "soul", "blessing", "universe [as a benevolent force]", no faith-specific language of any kind. Wonder and stillness are physical and observed, not devotional.
+- No clinical or brain-science terms exposed to the reader anywhere in the poem.
+- No hype words ("beautiful", "wonderful", "amazing", "transformative").
+
+OUTPUT: respond with ONLY the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No title, no signature, no preamble, no markdown fences, no commentary.`;
+
+// Per Bot 22 — the one non-text generator. No image-generation API exists
+// anywhere in this app; rather than bolt one on, this asks Claude to
+// compose real minimal line-art directly as SVG markup — stroke-only,
+// no fill, in the sumi-e spirit of "as few marks as the subject can bear
+// and still be recognisable". The output gets uploaded to R2 the same
+// way an uploaded newsletter image does (see /api/admin/comms-ai-generate),
+// so it's a normal hosted image URL by the time it reaches the editor —
+// not an inline data URI, which many email clients handle poorly.
+const SUMIE_SVG_GENERATION_PROMPT = `You compose a single small piece of line art as raw SVG markup, in the spirit of sumi-e ink painting — the economy of a single confident brushstroke doing the work of ten careful ones.
+
+SUBJECT: choose one simple, evocative natural subject fresh each time — a single bird in flight, a bare branch with one or two leaves, a crescent moon, a fish, a slow wave, a single stem with a flower head, a mountain silhouette, a heron. Something a real sumi-e brush could render in a handful of strokes. Pick something specific and a little unexpected, not the most obvious option every time.
+
+STYLE RULES, ALL NON-NEGOTIABLE:
+- Outline and stroke only. Every path must use fill="none" and stroke for its ink — nothing filled, ever, no exceptions, no solid shapes, no background fill, no colour blocks.
+- One ink colour only: stroke="#1a1a1a" (or very close to true black). No gradients, no other colours.
+- As few strokes/paths as the subject can bear and still read clearly — sparse, confident, a lot of empty space. This is restraint as the whole aesthetic, not a limitation to work around.
+- Strokes should vary subtly in weight where a real brush would (thicker at the start of a stroke, tapering at the end) if you can express that through stroke-width or path shape — but keep this simple; a clean single-weight stroke is far better than an overcomplicated attempt at brush texture.
+- No text, no labels, no decorative border, no frame.
+
+TECHNICAL REQUIREMENTS:
+- A single well-formed <svg> root element, viewBox="0 0 400 400", no width/height attributes (let the container size it).
+- Transparent background — no background rect at all.
+- No <script>, no external references, no <image> tags, no embedded raster data — hand-composed vector paths only.
+- Valid XML that will parse without errors.
+
+OUTPUT: respond with ONLY the raw <svg>...</svg> markup, nothing else. No markdown code fences, no preamble, no explanation, no commentary before or after.`;
+
 // Per Bot 17 — Message builder. Takes a short piece of source content (a
 // Message of the Day stanza, a poem excerpt, a blog snippet) and reformats
 // it into platform-ready social copy Per can copy and paste by hand. There
@@ -854,6 +942,10 @@ OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description
 
 module.exports = {
   MOTD_GENERATION_PROMPT,
+  LIMERICK_GENERATION_PROMPT,
+  HAIKU_GENERATION_PROMPT,
+  NATURE_POEM_GENERATION_PROMPT,
+  SUMIE_SVG_GENERATION_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   CAMPAIGN_SALES_EMAIL_PROMPT,
