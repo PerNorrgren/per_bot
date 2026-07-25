@@ -113,6 +113,13 @@ const SCW_PROJECT_ID     = process.env.SCW_PROJECT_ID;
 const SCW_TEM_REGION     = process.env.SCW_TEM_REGION || 'fr-par';
 const EMAIL_FROM         = process.env.EMAIL_FROM || 'per@deepermindfulness.org';
 const APP_URL            = process.env.APP_URL || 'https://mirror-production-018d.up.railway.app';
+// Per Bot 22 — OpenAI's GPT Image API, for the sumi-e generator in the
+// newsletter editor's "Generate & insert" button (see
+// /api/admin/comms-ai-generate). Nothing else in this app calls OpenAI —
+// this is the one place. Needs API Organization Verification completed
+// in the OpenAI developer console before the GPT Image models will
+// actually respond, separate from just having a valid key.
+const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
 
 // ── Express + HTTP server ──
 const app    = express();
@@ -5378,8 +5385,8 @@ async function callClaudeWithKnowledge(systemPrompt, messages, maxTokens = 1500,
 // itself is meant to contain literal Markdown syntax (e.g. translating a
 // legal document that uses # headers, **bold**, - lists). Running that
 // through stripMarkdown would silently mangle the formatting.
-async function callClaudeRaw(systemPrompt, messages, maxTokens = 1500) {
-  return anthropicFetch(systemPrompt, messages, maxTokens);
+async function callClaudeRaw(systemPrompt, messages, maxTokens = 1500, disableThinking = false) {
+  return anthropicFetch(systemPrompt, messages, maxTokens, 25000, disableThinking);
 }
 
 // ── AI Help / polish (Per Bot 8) — "make this more engaging" button shared
@@ -5403,25 +5410,75 @@ function getAdminLanguage() {
 // markup instead and uploads it to R2 the same way an uploaded image
 // would be, so the editor gets back a normal hosted image URL rather
 // than an inline data URI (many email clients handle those poorly).
+// Per Bot 22 — thinking disabled for these four: each prompt already
+// spells out the compositional reasoning in detail (the kireji rule, the
+// AABBA structure, the signal-hiding requirement), so extended thinking
+// mostly just adds latency here rather than materially improving the
+// result — and it draws from the same token budget as the reply itself,
+// the same tradeoff already documented on anthropicFetch above. sumie
+// keeps thinking on: composing a real multi-path SVG likely benefits
+// from planning the composition before writing markup, and it's already
+// a heavier call (plus an R2 upload after) where a few extra seconds
+// matters less.
 const COMMS_AI_GENERATORS = {
-  motd:     { prompt: prompts.MOTD_GENERATION_PROMPT, userMessage: 'Write 1 new Message of the Day draft. Respond with only the JSON array (one element), nothing else.', parseJsonArray: true },
-  limerick: { prompt: prompts.LIMERICK_GENERATION_PROMPT, userMessage: 'Write one limerick now.' },
-  haiku:    { prompt: prompts.HAIKU_GENERATION_PROMPT, userMessage: 'Write one haiku now.' },
-  poem:     { prompt: prompts.NATURE_POEM_GENERATION_PROMPT, userMessage: 'Write one four-stanza poem now.', hasTitle: true },
+  motd:     { prompt: prompts.MOTD_GENERATION_PROMPT, userMessage: 'Write 1 new Message of the Day draft. Respond with only the JSON array (one element), nothing else.', parseJsonArray: true, disableThinking: true },
+  limerick: { prompt: prompts.LIMERICK_GENERATION_PROMPT, userMessage: 'Write one limerick now.', disableThinking: true },
+  haiku:    { prompt: prompts.HAIKU_GENERATION_PROMPT, userMessage: 'Write one haiku now.', disableThinking: true },
+  poem:     { prompt: prompts.NATURE_POEM_GENERATION_PROMPT, userMessage: 'Write one four-stanza poem now.', hasTitle: true, disableThinking: true },
 };
 // Same short-retry reasoning as generateMotdChunk above — a transient
 // network/proxy hiccup on a single call is common enough (and harmless
 // enough to just redo) that it isn't worth surfacing as a failure to the
 // person clicking the button.
-async function callClaudeWithRetry(systemPrompt, userMessage, maxTokens, attempt = 1) {
+async function callClaudeWithRetry(systemPrompt, userMessage, maxTokens, disableThinking = false, attempt = 1) {
   try {
-    return await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], maxTokens);
+    return await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], maxTokens, disableThinking);
   } catch (e) {
     if (attempt >= 3) throw e;
     console.error(`comms-ai-generate call failed (attempt ${attempt}/3): ${e.name || 'Error'}: ${e.message} — retrying`);
     await new Promise(r => setTimeout(r, 1000 * attempt));
-    return callClaudeWithRetry(systemPrompt, userMessage, maxTokens, attempt + 1);
+    return callClaudeWithRetry(systemPrompt, userMessage, maxTokens, disableThinking, attempt + 1);
   }
+}
+// Per Bot 22 — sumie now via OpenAI's GPT Image API instead of hand-
+// composed SVG (the SVG approach genuinely couldn't produce something
+// worth calling art). Claude still writes the actual prompt each time —
+// fresh subject, vivid specific description, the disableThinking-fast
+// path — OpenAI does the real rendering. The response comes back as
+// base64 JSON, not a hosted URL, so this decodes and uploads to R2
+// itself, same storage pattern as every other newsletter image, just a
+// different source. gpt-image-2 is OpenAI's current flagship (April
+// 2026) — quality:'high' since cost here is genuinely trivial per image
+// and quality was the whole point of switching providers.
+async function generateSumieImage() {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI is not configured on this deployment (missing OPENAI_API_KEY).');
+  const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, 'Write one sumi-e image prompt now.', 500, true)).trim();
+
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-image-2',
+      prompt: imagePrompt,
+      size: '1024x1024',
+      quality: 'high',
+      background: 'opaque',
+      output_format: 'png',
+      n: 1,
+    }),
+    // OpenAI's own guidance: complex GPT Image prompts can take up to
+    // roughly two minutes — a much longer allowance than the fast text
+    // generators above need, deliberately.
+    signal: AbortSignal.timeout(120000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
+    throw new Error(`Image generation failed: ${msg}`);
+  }
+  const b64 = data && data.data && data.data[0] && data.data[0].b64_json;
+  if (!b64) throw new Error('No image came back — please try again.');
+  return Buffer.from(b64, 'base64');
 }
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
@@ -5429,17 +5486,21 @@ app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (
 
     if (type === 'sumie') {
       if (!media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
-      const svg = (await callClaudeWithRetry(prompts.SUMIE_SVG_GENERATION_PROMPT, 'Compose one piece of sumi-e style line art now.', 4000))
-        .replace(/^```(?:svg|xml)?\s*/i, '').replace(/```\s*$/, '').trim();
-      if (!svg.startsWith('<svg')) return res.status(500).json({ error: 'Could not generate a valid image — please try again.' });
-      const key = `newsletter-images/${uuidv4()}.svg`;
-      await media.uploadPublicObject(key, Buffer.from(svg, 'utf8'), 'image/svg+xml');
+      let buffer;
+      try {
+        buffer = await generateSumieImage();
+      } catch(e) {
+        console.error('sumie generation error:', e.message);
+        return res.status(500).json({ error: e.message || 'Could not generate an image right now. Please try again.' });
+      }
+      const key = `newsletter-images/${uuidv4()}.png`;
+      await media.uploadPublicObject(key, buffer, 'image/png');
       return res.json({ imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
     }
 
     const gen = COMMS_AI_GENERATORS[type];
     if (!gen) return res.status(400).json({ error: 'Unknown generator type.' });
-    const raw = await callClaudeWithRetry(gen.prompt, gen.userMessage, 2000);
+    const raw = await callClaudeWithRetry(gen.prompt, gen.userMessage, 2000, gen.disableThinking);
     let text;
     if (gen.parseJsonArray) {
       let arr;

@@ -778,33 +778,20 @@ TITLE: give the poem a short, plain title — a few words, drawn from the poem's
 
 OUTPUT: respond with the title on the first line by itself, then a single blank line, then the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No signature, no preamble, no markdown fences, no commentary — just the title, a blank line, then the poem exactly as it should appear.`;
 
-// Per Bot 22 — the one non-text generator. No image-generation API exists
-// anywhere in this app; rather than bolt one on, this asks Claude to
-// compose real minimal line-art directly as SVG markup — stroke-only,
-// no fill, in the sumi-e spirit of "as few marks as the subject can bear
-// and still be recognisable". The output gets uploaded to R2 the same
-// way an uploaded newsletter image does (see /api/admin/comms-ai-generate),
-// so it's a normal hosted image URL by the time it reaches the editor —
-// not an inline data URI, which many email clients handle poorly.
-const SUMIE_SVG_GENERATION_PROMPT = `You compose a single small piece of line art as raw SVG markup, in the spirit of sumi-e ink painting — the economy of a single confident brushstroke doing the work of ten careful ones, on a clean white page.
+// Per Bot 22 — the one non-text generator, now backed by OpenAI's GPT
+// Image API (see /api/admin/comms-ai-generate) rather than hand-composed
+// SVG — the earlier SVG approach genuinely couldn't produce something
+// worth calling art, only a rough sketch. Claude's job here is narrower
+// than before: pick one fresh, specific, unexpected subject each time
+// and write a single vivid natural-language prompt describing it — the
+// actual rendering is GPT Image's job now, not Claude's.
+const SUMIE_IMAGE_PROMPT_WRITING_PROMPT = `You write a single image-generation prompt (for an AI image model, not for a person) describing one small sumi-e ink painting — the spirit of a single confident brushstroke doing the work of ten careful ones.
 
-SUBJECT: choose one simple, evocative natural subject fresh each time — a single bird in flight, a branch with leaves and blossom, a crescent moon with a branch crossing it, a fish, a slow wave, a stem with a full flower head, a mountain silhouette with mist, a heron. Something a real sumi-e brush could render with restraint. Pick something specific and a little unexpected, not the most obvious option every time.
+SUBJECT: choose one simple, evocative natural subject fresh each time — a heron mid-step, a branch heavy with blossom, a single carp, a crescent moon crossed by a bare branch, a dragonfly over water, a mountain silhouette in mist, a stem bent under one flower's weight. Something specific and a little unexpected — not the most obvious choice every time, and not a generic "nature scene".
 
-COMPOSITION QUALITY — read this carefully, this is where most attempts fall short: a real sumi-e piece is spare but never skeletal or unfinished-looking. A single bare stem with two or three thin curved lines for leaves reads as a rough sketch, not art. Compose a genuinely complete small scene: a branch should have real structure (a main stroke, secondary branches breaking off it at natural angles, several leaves or blossoms of varying size and angle, not all identical), a bird should have a real body shape and wing structure, not just an outline squiggle. Aim for roughly 12-25 paths — enough to feel considered and complete, still restrained, never cluttered. Use multi-point cubic bezier curves (C commands with real control-point offsets) for every organic line — a branch, a wing, a petal edge is never a straight line or a single simple arc, it has the small irregular sweep a real brush makes. Vary stroke-width across the piece (thicker strokes for the main branch/body, thinner for fine details) — express taper by using tapered path shapes (a narrow closed filled-with-ink-colour sliver for a brush stroke that thickens and thins along its length) rather than a single uniform stroke-width line, exactly as a real brush would leave more ink where it pressed down.
+WRITE THE PROMPT to describe, in vivid concrete language: the one chosen subject, rendered as traditional sumi-e ink brush painting — black ink on white paper, visible brush texture with strokes that thicken and taper the way a real brush loads and releases ink, confident and economical rather than tightly detailed, generous empty (white) negative space as part of the composition rather than a background to fill, no colour anywhere except black ink and the white page, no text or seal stamps, square composition. Be specific about the subject's pose or moment (mid-flight, just opening, caught leaning in the wind) — specificity is what makes the prompt render well, a vague prompt renders generic.
 
-STYLE RULES, ALL NON-NEGOTIABLE:
-- One ink colour only for every mark: #1a1a1a (near-black). No gradients, no other colours anywhere in the artwork itself.
-- Every artwork path is either stroke-only (fill="none") for thin lines, or a thin tapered closed shape filled with the ink colour for a brush stroke with real weight — never a solid block, never a filled shape wider than a deliberate brush stroke would be.
-- A lot of empty white space is part of the composition, not wasted space — don't fill the whole canvas edge to edge.
-- No text, no labels, no decorative border, no frame.
-
-TECHNICAL REQUIREMENTS:
-- A single well-formed <svg> root element, viewBox="0 0 400 400", no width/height attributes (let the container size it).
-- The FIRST element inside the svg must be <rect x="0" y="0" width="400" height="400" fill="#ffffff"/> — a real white background, not transparent. Every other element is the artwork itself, on top of that white rect.
-- No <script>, no external references, no <image> tags, no embedded raster data — hand-composed vector paths only.
-- Valid XML that will parse without errors.
-
-OUTPUT: respond with ONLY the raw <svg>...</svg> markup, nothing else. No markdown code fences, no preamble, no explanation, no commentary before or after.`;
+OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
 
 // Per Bot 17 — Message builder. Takes a short piece of source content (a
 // Message of the Day stanza, a poem excerpt, a blog snippet) and reformats
@@ -949,7 +936,7 @@ module.exports = {
   LIMERICK_GENERATION_PROMPT,
   HAIKU_GENERATION_PROMPT,
   NATURE_POEM_GENERATION_PROMPT,
-  SUMIE_SVG_GENERATION_PROMPT,
+  SUMIE_IMAGE_PROMPT_WRITING_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   CAMPAIGN_SALES_EMAIL_PROMPT,
