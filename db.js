@@ -181,6 +181,28 @@ async function getDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── AI generate jobs (Per Bot 22) ── Backs the newsletter editor's
+  // "Generate & insert" background jobs (see /api/admin/comms-ai-generate).
+  // Was an in-memory Map — fine for the request/response latency problem
+  // it fixed, but a job vanished if the server process restarted for any
+  // reason mid-generation, which happened twice in testing. A real table
+  // survives that: any job still 'pending' when the server boots means
+  // the previous attempt never finished and gets automatically re-run
+  // (see recoverPendingAiGenerateJobs in server.js). Also doubles as the
+  // Reports > Generated Images history, so sumie rows are never pruned —
+  // that's the whole point of keeping them.
+  db.run(`CREATE TABLE IF NOT EXISTS ai_generate_jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    context TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    html TEXT,
+    image_url TEXT,
+    error TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Courses ──
   db.run(`CREATE TABLE IF NOT EXISTS courses (
     id TEXT PRIMARY KEY,
@@ -5752,6 +5774,48 @@ function getEmailJobRows(kind, subject, fromAt, toAt, newsletterId) {
   }
   return queryAll(`SELECT id,email,status,error,created_at,(body_html IS NOT NULL) as has_body FROM email_log WHERE kind=? AND subject=? AND created_at BETWEEN ? AND ? ORDER BY created_at DESC`, [kind, subject, fromAt, toAt]);
 }
+
+// ── AI generate jobs (Per Bot 22) ── DB-backed replacement for the
+// in-memory Map — see the ai_generate_jobs table comment above.
+function createAiGenerateJob(id, type, context) {
+  getDbSync().run(`INSERT INTO ai_generate_jobs (id, type, context) VALUES (?,?,?)`, [id, type, context || null]);
+  save();
+}
+function getAiGenerateJob(id) {
+  return queryOne(`SELECT * FROM ai_generate_jobs WHERE id=?`, [id]);
+}
+function markAiGenerateJobDone(id, { html, imageUrl }) {
+  getDbSync().run(`UPDATE ai_generate_jobs SET status='done', html=?, image_url=?, updated_at=datetime('now') WHERE id=?`, [html || null, imageUrl || null, id]);
+  save();
+}
+function markAiGenerateJobError(id, error) {
+  getDbSync().run(`UPDATE ai_generate_jobs SET status='error', error=?, updated_at=datetime('now') WHERE id=?`, [error, id]);
+  save();
+}
+// Startup recovery — anything still 'pending' when the server boots
+// means the previous process died mid-generation (a restart, a deploy,
+// a crash) rather than ever actually failing or finishing. See
+// recoverPendingAiGenerateJobs in server.js, called once at boot.
+function getPendingAiGenerateJobs() {
+  return queryAll(`SELECT id, type, context FROM ai_generate_jobs WHERE status='pending'`);
+}
+// Light pruning — text-generator jobs (motd/limerick/haiku/poem) are
+// disposable once viewed, so old ones are cleared out after a week.
+// sumie rows are NEVER pruned here — those rows are the actual history
+// the Generated Images report reads from, kept indefinitely on purpose.
+function pruneOldAiGenerateJobs() {
+  getDbSync().run(`DELETE FROM ai_generate_jobs WHERE type != 'sumie' AND created_at < datetime('now', '-7 days')`);
+  save();
+}
+function reportGeneratedImages() {
+  const rows = queryAll(`SELECT id, image_url, context, created_at FROM ai_generate_jobs WHERE type='sumie' AND status='done' AND image_url IS NOT NULL ORDER BY created_at DESC LIMIT 200`);
+  return {
+    tiles: [{ label: 'Images generated', value: rows.length }],
+    images: rows,
+    note: rows.length ? 'Click an image to view it full size.' : 'No images generated yet.',
+  };
+}
+
 function reportEmailLog() {
   const jobs = getEmailJobs(100);
   const rows = getRecentEmailLog(200, null);
@@ -6419,6 +6483,7 @@ module.exports = {
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
   shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient, getEmailJobRows,
+  createAiGenerateJob, getAiGenerateJob, markAiGenerateJobDone, markAiGenerateJobError, getPendingAiGenerateJobs, pruneOldAiGenerateJobs, reportGeneratedImages,
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History

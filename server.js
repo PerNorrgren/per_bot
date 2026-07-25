@@ -5463,23 +5463,39 @@ async function generateSumieImage(context) {
     : 'No newsletter content yet — <newsletter_context></newsletter_context> is empty. Write one sumi-e image prompt now.';
   const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
 
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gpt-image-2',
-      prompt: imagePrompt,
-      size: '1024x1024',
-      quality: 'high',
-      background: 'opaque',
-      output_format: 'png',
-      n: 1,
-    }),
-    // OpenAI's own guidance: complex GPT Image prompts can take up to
-    // roughly two minutes — a much longer allowance than the fast text
-    // generators above need, deliberately.
-    signal: AbortSignal.timeout(120000),
-  });
+  let res;
+  try {
+    res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-image-2',
+        prompt: imagePrompt,
+        size: '1024x1024',
+        quality: 'high',
+        background: 'opaque',
+        output_format: 'png',
+        n: 1,
+      }),
+      // OpenAI's own guidance: complex GPT Image prompts can take up to
+      // roughly two minutes. Per Bot 22 — was 120000 (2 min), matching
+      // that worst-case exactly, but too tight in practice: real
+      // generation at quality:'high' sometimes ran past it, and the
+      // timeout firing right as it finished threw node-fetch's own
+      // "The user aborted a request" — technically accurate but reads
+      // like a crash rather than what it actually was (a self-inflicted
+      // timeout). Caught specifically below now instead of leaking that
+      // raw message. This is already a background job (see
+      // /api/admin/comms-ai-generate), so there's no UI cost to a more
+      // generous margin either.
+      signal: AbortSignal.timeout(280000),
+    });
+  } catch(e) {
+    if (e.name === 'AbortError' || /aborted/i.test(e.message || '')) {
+      throw new Error('Image generation took longer than expected (over 4.5 minutes) and was cancelled — please try again.');
+    }
+    throw e;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
@@ -5498,21 +5514,21 @@ async function generateSumieImage(context) {
 // person isn't stuck watching a spinner, they can keep editing while a
 // small panel polls in the background and shows the result — with
 // Insert / Try again — once it's ready.
-const commsAiJobs = new Map(); // jobId -> {status, type, html, imageUrl, error, createdAt}
-function pruneCommsAiJobs() {
-  const cutoff = Date.now() - 10 * 60 * 1000;
-  for (const [id, job] of commsAiJobs) if (job.createdAt < cutoff) commsAiJobs.delete(id);
-}
+//
+// DB-backed (ai_generate_jobs table), not an in-memory Map — a Map
+// vanished if the server process restarted mid-generation, which
+// happened twice in testing (each time producing a confusing crash: a
+// 404 "Job not found" from the frontend poll, or the in-flight OpenAI
+// request itself getting severed). See recoverPendingAiGenerateJobs
+// below, called once at boot, for the other half of this fix.
 async function runCommsAiGenerateJob(jobId, type, context) {
-  const job = commsAiJobs.get(jobId);
   try {
     if (type === 'sumie') {
       if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
       const buffer = await generateSumieImage(context);
       const key = `newsletter-images/${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
-      job.imageUrl = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
-      job.status = 'done';
+      db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
       return;
     }
 
@@ -5538,28 +5554,39 @@ async function runCommsAiGenerateJob(jobId, type, context) {
     } else {
       html = text.replace(/\n/g, '<br/>');
     }
-    job.html = html;
-    job.status = 'done';
+    db.markAiGenerateJobDone(jobId, { html });
   } catch(e) {
     console.error(`comms-ai-generate job ${jobId} (${type}) failed:`, e.message);
-    job.status = 'error';
-    job.error = e.message || 'Could not generate that right now. Please try again.';
+    db.markAiGenerateJobError(jobId, e.message || 'Could not generate that right now. Please try again.');
   }
+}
+// Per Bot 22 — called once at boot (see the bottom of this file where
+// the server actually starts listening). Anything still 'pending' means
+// the previous process died mid-generation — not a real failure, just
+// an interrupted one — so it gets automatically re-run rather than left
+// permanently stuck (which is exactly what produced the "Job not found"
+// / severed-request errors seen in testing).
+function recoverPendingAiGenerateJobs() {
+  const pending = db.getPendingAiGenerateJobs();
+  if (pending.length) {
+    console.log(`[ai-generate] recovering ${pending.length} job(s) left pending by a previous process`);
+    pending.forEach(job => runCommsAiGenerateJob(job.id, job.type, job.context));
+  }
+  db.pruneOldAiGenerateJobs();
 }
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
   const { type, context } = req.body;
   if (type === 'sumie' && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
   if (type !== 'sumie' && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
-  pruneCommsAiJobs();
   const jobId = uuidv4();
-  commsAiJobs.set(jobId, { status: 'pending', type, createdAt: Date.now() });
+  db.createAiGenerateJob(jobId, type, context);
   runCommsAiGenerateJob(jobId, type, context); // deliberately not awaited — returns to the client immediately
   res.json({ jobId });
 });
 app.get('/api/admin/comms-ai-generate/:jobId', auth.requireAuthApi(['admin']), (req, res) => {
-  const job = commsAiJobs.get(req.params.jobId);
+  const job = db.getAiGenerateJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found — it may have expired.' });
-  res.json({ status: job.status, html: job.html, imageUrl: job.imageUrl, error: job.error });
+  res.json({ status: job.status, html: job.html, imageUrl: job.image_url, error: job.error });
 });
 
 app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
@@ -6592,6 +6619,7 @@ const REPORTS = {
   uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
   cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
   email_log:           { title: 'Email Log',             category: 'System',  run: () => db.reportEmailLog() },
+  generated_images:    { title: 'Generated Images',       category: 'System',  run: () => db.reportGeneratedImages() },
 };
 
 app.get('/api/admin/reports', auth.requireAuthApi(['admin']), (req, res) => {
@@ -11161,6 +11189,10 @@ app.use((err, req, res, next) => {
     db.createFacilitator(uuidv4(), adminName, adminEmail, hash, 'admin');
     console.log(`Admin created: ${adminEmail}`);
   }
+  // Per Bot 22 — any AI-generate job still 'pending' means the previous
+  // process died mid-generation (restart, deploy, crash), not a real
+  // failure — pick it back up rather than leave it stuck forever.
+  recoverPendingAiGenerateJobs();
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
