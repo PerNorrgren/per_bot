@@ -212,7 +212,7 @@
       if (data.table && data.table.rows && data.table.rows.length) {
         tableEl.innerHTML =
           `<div class="report-table-hdr">${data.table.columns.map(c => `<div>${escHtml(c)}</div>`).join('')}</div>` +
-          data.table.rows.map(row => `<div class="report-table-row">${row.map(cell => `<div>${escHtml(cell)}</div>`).join('')}</div>`).join('');
+          data.table.rows.map(row => `<div class="report-table-row">${row.map(cell => `<div title="${escHtml(cell)}">${escHtml(cell)}</div>`).join('')}</div>`).join('');
       } else if (data.table) {
         tableEl.innerHTML = '<div class="empty">No data yet for this report.</div>';
       } else {

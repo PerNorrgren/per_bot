@@ -6412,6 +6412,7 @@ const REPORTS = {
   talk_usage:          { title: 'Talk to Per Usage',     category: 'Usage',   run: () => db.reportTalkUsage() },
   uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
   cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
+  email_log:           { title: 'Email Log',             category: 'System',  run: () => db.reportEmailLog() },
 };
 
 app.get('/api/admin/reports', auth.requireAuthApi(['admin']), (req, res) => {

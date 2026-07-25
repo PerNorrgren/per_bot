@@ -5707,6 +5707,41 @@ function reportUploads() {
   };
 }
 
+// Per Bot 22 — Email Log as a proper report. The email_log table and its
+// two API endpoints (list + per-row body) were already fully built and
+// working, logging every real send attempt with its actual error text —
+// but no admin page anywhere actually displayed them, so there was no
+// way to see why a send had failed short of querying the database
+// directly. Reusing the Reports hub's existing generic {tiles, table,
+// note} rendering rather than building a bespoke page for this.
+function reportEmailLog() {
+  const rows = getRecentEmailLog(200, null);
+  const sent = rows.filter(r => r.status === 'sent').length;
+  const failed = rows.filter(r => r.status === 'failed').length;
+  const pending = rows.filter(r => r.status === 'pending').length;
+  // The single most common real-world cause of "nothing is sending" is
+  // Scaleway credentials missing at send time (see sendEmail in
+  // server.js) — surfaced as its own tile since it changes what to check
+  // next entirely (a Railway env var vs. a Scaleway account/domain issue).
+  const missingCreds = rows.filter(r => r.status === 'failed' && (r.error || '').includes('not configured')).length;
+  return {
+    tiles: [
+      { label: 'Sent (last 200)', value: sent },
+      { label: 'Failed', value: failed },
+      { label: 'Pending', value: pending },
+      { label: 'Failed — missing credentials', value: missingCreds },
+    ],
+    table: {
+      columns: ['Sent at', 'To', 'Subject', 'Kind', 'Status', 'Error'],
+      rows: rows.map(r => [r.created_at, r.email, r.subject || '—', r.kind, r.status, r.error || '—']),
+    },
+    note: missingCreds > 0
+      ? 'Some recent sends failed because SCW_SECRET_KEY or SCW_PROJECT_ID wasn\'t set at send time — check those two environment variables on Railway.'
+      : (failed > 0 ? 'See the Error column for the exact reason each failed send was rejected.' : 'Showing the 200 most recent send attempts.'),
+  };
+}
+
+
 function reportCronActivity() {
   const summary = getCronJobSummary();
   const failuresLast7d = summary.reduce((sum, j) => sum + (j.last7Days.failed || 0), 0);
@@ -6267,7 +6302,7 @@ module.exports = {
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
   logLogin, pruneLoginLog,
   startTalkSession, endTalkSession,
-  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage,
+  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage, reportEmailLog,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
