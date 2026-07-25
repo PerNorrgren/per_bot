@@ -5407,15 +5407,29 @@ const COMMS_AI_GENERATORS = {
   motd:     { prompt: prompts.MOTD_GENERATION_PROMPT, userMessage: 'Write 1 new Message of the Day draft. Respond with only the JSON array (one element), nothing else.', parseJsonArray: true },
   limerick: { prompt: prompts.LIMERICK_GENERATION_PROMPT, userMessage: 'Write one limerick now.' },
   haiku:    { prompt: prompts.HAIKU_GENERATION_PROMPT, userMessage: 'Write one haiku now.' },
-  poem:     { prompt: prompts.NATURE_POEM_GENERATION_PROMPT, userMessage: 'Write one four-stanza poem now.' },
+  poem:     { prompt: prompts.NATURE_POEM_GENERATION_PROMPT, userMessage: 'Write one four-stanza poem now.', hasTitle: true },
 };
+// Same short-retry reasoning as generateMotdChunk above — a transient
+// network/proxy hiccup on a single call is common enough (and harmless
+// enough to just redo) that it isn't worth surfacing as a failure to the
+// person clicking the button.
+async function callClaudeWithRetry(systemPrompt, userMessage, maxTokens, attempt = 1) {
+  try {
+    return await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], maxTokens);
+  } catch (e) {
+    if (attempt >= 3) throw e;
+    console.error(`comms-ai-generate call failed (attempt ${attempt}/3): ${e.name || 'Error'}: ${e.message} — retrying`);
+    await new Promise(r => setTimeout(r, 1000 * attempt));
+    return callClaudeWithRetry(systemPrompt, userMessage, maxTokens, attempt + 1);
+  }
+}
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { type } = req.body;
 
     if (type === 'sumie') {
       if (!media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
-      const svg = (await callClaudeRaw(prompts.SUMIE_SVG_GENERATION_PROMPT, [{ role: 'user', content: 'Compose one piece of sumi-e style line art now.' }], 1500))
+      const svg = (await callClaudeWithRetry(prompts.SUMIE_SVG_GENERATION_PROMPT, 'Compose one piece of sumi-e style line art now.', 4000))
         .replace(/^```(?:svg|xml)?\s*/i, '').replace(/```\s*$/, '').trim();
       if (!svg.startsWith('<svg')) return res.status(500).json({ error: 'Could not generate a valid image — please try again.' });
       const key = `newsletter-images/${uuidv4()}.svg`;
@@ -5425,7 +5439,7 @@ app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (
 
     const gen = COMMS_AI_GENERATORS[type];
     if (!gen) return res.status(400).json({ error: 'Unknown generator type.' });
-    const raw = await callClaudeRaw(gen.prompt, [{ role: 'user', content: gen.userMessage }], 2000);
+    const raw = await callClaudeWithRetry(gen.prompt, gen.userMessage, 2000);
     let text;
     if (gen.parseJsonArray) {
       let arr;
@@ -5435,7 +5449,21 @@ app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), async (
     } else {
       text = raw.trim();
     }
-    res.json({ html: (text || '').replace(/\n/g, '<br/>') });
+    text = text || '';
+    let html;
+    if (gen.hasTitle) {
+      // Title is the first line, a blank line, then the body — split on
+      // the first blank line rather than the first \n, since the title
+      // itself is guaranteed single-line but a stray leading blank line
+      // in the model's own formatting shouldn't break the split.
+      const parts = text.split(/\n\s*\n/);
+      const title = (parts.shift() || '').trim();
+      const body = parts.join('\n\n').trim();
+      html = `<p style="font-weight:bold">${title}</p>` + body.replace(/\n/g, '<br/>');
+    } else {
+      html = text.replace(/\n/g, '<br/>');
+    }
+    res.json({ html });
   } catch(e) {
     console.error('comms-ai-generate error:', e.message);
     res.status(500).json({ error: 'Could not generate that right now. Please try again.' });

@@ -742,7 +742,8 @@ const HAIKU_GENERATION_PROMPT = `You write a single haiku for Deeper Mindfulness
 
 FORM — the real form, not just syllable-counting:
 - 5-7-5 syllables across three lines. The count matters, but it's the scaffolding, not the point.
-- A genuine kireji (cutting turn) at the start of the third line — a sharp pivot that recontextualizes what the first two lines set up, the way a real haiku's final line lands sideways rather than continuing straight on. The reader should feel the turn, not just read three sequential lines.
+- Break each line at a genuine pause — where a breath, a clause, or the syntax itself would actually stop. If a line ends mid-clause with a comma trailing into the next line, that's a failure of the form, not a stylistic choice — the line break and the natural pause must land in the same place.
+- A genuine kireji (cutting turn) at the start of the third line. This is the part most attempts get wrong, so read this twice: the third line must NOT be a literal restatement or a tidy equivalence of the image in lines 1-2 (steam thins on glass, and "my breath does the same" is exactly the failure mode — it just says the same thing again in different words, which resolves nothing because there was nothing to resolve). A real cut moves to a genuinely different register, distance, or subject — something that, on first read, seems to have nothing to do with lines 1-2, and only on the turn does the reader feel the two things were always connected. The result should feel simultaneously landed AND still open — resolved and unresolved at once, the way a door opening answers nothing and everything. If you can swap your third line for a close synonym of your first image and the haiku still basically works, the cut isn't real — rewrite it.
 - Concrete, sensory, specific imagery — a real thing, seen closely — never an abstraction or a stated feeling.
 
 SURPRISING AND RELEVANT: the image should be unexpected enough to earn its place (not the first cliché that comes to mind — no "cherry blossoms", no "still pond" unless genuinely reinvented), while still connecting, once the turn lands, to something true about settling, noticing, or being human in a body.
@@ -773,7 +774,9 @@ STANDING RULES (same as everything else on this platform):
 - No clinical or brain-science terms exposed to the reader anywhere in the poem.
 - No hype words ("beautiful", "wonderful", "amazing", "transformative").
 
-OUTPUT: respond with ONLY the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No title, no signature, no preamble, no markdown fences, no commentary.`;
+TITLE: give the poem a short, plain title — a few words, drawn from the poem's own central image, not a grand or explanatory phrase (think "The Heron's Wait", not "On Finding Peace"). No colon-subtitle construction.
+
+OUTPUT: respond with the title on the first line by itself, then a single blank line, then the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No signature, no preamble, no markdown fences, no commentary — just the title, a blank line, then the poem exactly as it should appear.`;
 
 // Per Bot 22 — the one non-text generator. No image-generation API exists
 // anywhere in this app; rather than bolt one on, this asks Claude to
@@ -783,20 +786,21 @@ OUTPUT: respond with ONLY the poem — four stanzas, lines within each stanza se
 // way an uploaded newsletter image does (see /api/admin/comms-ai-generate),
 // so it's a normal hosted image URL by the time it reaches the editor —
 // not an inline data URI, which many email clients handle poorly.
-const SUMIE_SVG_GENERATION_PROMPT = `You compose a single small piece of line art as raw SVG markup, in the spirit of sumi-e ink painting — the economy of a single confident brushstroke doing the work of ten careful ones.
+const SUMIE_SVG_GENERATION_PROMPT = `You compose a single small piece of line art as raw SVG markup, in the spirit of sumi-e ink painting — the economy of a single confident brushstroke doing the work of ten careful ones, on a clean white page.
 
-SUBJECT: choose one simple, evocative natural subject fresh each time — a single bird in flight, a bare branch with one or two leaves, a crescent moon, a fish, a slow wave, a single stem with a flower head, a mountain silhouette, a heron. Something a real sumi-e brush could render in a handful of strokes. Pick something specific and a little unexpected, not the most obvious option every time.
+SUBJECT: choose one simple, evocative natural subject fresh each time — a single bird in flight, a branch with leaves and blossom, a crescent moon with a branch crossing it, a fish, a slow wave, a stem with a full flower head, a mountain silhouette with mist, a heron. Something a real sumi-e brush could render with restraint. Pick something specific and a little unexpected, not the most obvious option every time.
+
+COMPOSITION QUALITY — read this carefully, this is where most attempts fall short: a real sumi-e piece is spare but never skeletal or unfinished-looking. A single bare stem with two or three thin curved lines for leaves reads as a rough sketch, not art. Compose a genuinely complete small scene: a branch should have real structure (a main stroke, secondary branches breaking off it at natural angles, several leaves or blossoms of varying size and angle, not all identical), a bird should have a real body shape and wing structure, not just an outline squiggle. Aim for roughly 12-25 paths — enough to feel considered and complete, still restrained, never cluttered. Use multi-point cubic bezier curves (C commands with real control-point offsets) for every organic line — a branch, a wing, a petal edge is never a straight line or a single simple arc, it has the small irregular sweep a real brush makes. Vary stroke-width across the piece (thicker strokes for the main branch/body, thinner for fine details) — express taper by using tapered path shapes (a narrow closed filled-with-ink-colour sliver for a brush stroke that thickens and thins along its length) rather than a single uniform stroke-width line, exactly as a real brush would leave more ink where it pressed down.
 
 STYLE RULES, ALL NON-NEGOTIABLE:
-- Outline and stroke only. Every path must use fill="none" and stroke for its ink — nothing filled, ever, no exceptions, no solid shapes, no background fill, no colour blocks.
-- One ink colour only: stroke="#1a1a1a" (or very close to true black). No gradients, no other colours.
-- As few strokes/paths as the subject can bear and still read clearly — sparse, confident, a lot of empty space. This is restraint as the whole aesthetic, not a limitation to work around.
-- Strokes should vary subtly in weight where a real brush would (thicker at the start of a stroke, tapering at the end) if you can express that through stroke-width or path shape — but keep this simple; a clean single-weight stroke is far better than an overcomplicated attempt at brush texture.
+- One ink colour only for every mark: #1a1a1a (near-black). No gradients, no other colours anywhere in the artwork itself.
+- Every artwork path is either stroke-only (fill="none") for thin lines, or a thin tapered closed shape filled with the ink colour for a brush stroke with real weight — never a solid block, never a filled shape wider than a deliberate brush stroke would be.
+- A lot of empty white space is part of the composition, not wasted space — don't fill the whole canvas edge to edge.
 - No text, no labels, no decorative border, no frame.
 
 TECHNICAL REQUIREMENTS:
 - A single well-formed <svg> root element, viewBox="0 0 400 400", no width/height attributes (let the container size it).
-- Transparent background — no background rect at all.
+- The FIRST element inside the svg must be <rect x="0" y="0" width="400" height="400" fill="#ffffff"/> — a real white background, not transparent. Every other element is the artwork itself, on top of that white rect.
 - No <script>, no external references, no <image> tags, no embedded raster data — hand-composed vector paths only.
 - Valid XML that will parse without errors.
 
