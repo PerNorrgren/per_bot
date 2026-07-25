@@ -157,6 +157,7 @@
         <img id="imageViewImg" src="" style="width:100%;display:block;border-radius:4px"/>
       </div>
       <div class="modal-btns">
+        <button class="btn sm" id="copyImageBtn" onclick="copyImageToClipboard()">Copy image</button>
         <button class="modal-cancel" onclick="closeModal('imageViewModal')">Close</button>
       </div>
     </div>
@@ -237,13 +238,29 @@
   }
 
   // Per Bot 22 — Generated Images: the sumi-e image generator's history.
-  // A simple thumbnail grid, click one to view it full size.
+  // A thumbnail grid with a size control, click one to view it full size.
   let _currentImages = [];
+  // Persisted across visits — a real webpage, not a sandboxed artifact,
+  // so localStorage is fine here (unlike in Claude-generated artifacts,
+  // where it isn't supported).
+  const IMAGE_GRID_SIZES = { small: 80, medium: 120, large: 180 };
+  function getImageGridSize() {
+    return IMAGE_GRID_SIZES[localStorage.getItem('genImagesGridSize')] ? localStorage.getItem('genImagesGridSize') : 'medium';
+  }
+  function setImageGridSize(size) {
+    localStorage.setItem('genImagesGridSize', size);
+    renderGeneratedImagesReport(_currentImages);
+  }
   function renderGeneratedImagesReport(images) {
     _currentImages = images;
     const el = document.getElementById('reportTable');
-    if (!images.length) { el.innerHTML = '<div class="empty">No images generated yet.</div>'; return; }
-    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;padding:16px">` +
+    const size = getImageGridSize();
+    const sizeRow = `<div style="display:flex;gap:8px;padding:16px 16px 0;align-items:center">
+      <span style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.3)">Size</span>
+      ${Object.keys(IMAGE_GRID_SIZES).map(s => `<button class="btn sm${s === size ? ' primary' : ''}" onclick="setImageGridSize('${s}')">${s[0].toUpperCase() + s.slice(1)}</button>`).join('')}
+    </div>`;
+    if (!images.length) { el.innerHTML = sizeRow + '<div class="empty">No images generated yet.</div>'; return; }
+    el.innerHTML = sizeRow + `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(${IMAGE_GRID_SIZES[size]}px,1fr));gap:12px;padding:16px">` +
       images.map((img, i) => `
         <div style="cursor:pointer" onclick="openImageView(${i})">
           <img src="${escHtml(img.image_url)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,0.08)"/>
@@ -255,7 +272,30 @@
     const img = _currentImages[i];
     document.getElementById('imageViewTitle').textContent = img.created_at;
     document.getElementById('imageViewImg').src = img.image_url;
+    document.getElementById('copyImageBtn').textContent = 'Copy image';
     openModal('imageViewModal');
+  }
+  async function copyImageToClipboard() {
+    const btn = document.getElementById('copyImageBtn');
+    const url = document.getElementById('imageViewImg').src;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      btn.textContent = 'Copied!';
+    } catch(e) {
+      // Per Bot 22 — Clipboard image-write support (and same-origin/CORS
+      // access to the blob) varies by browser; falling back to copying
+      // the URL as plain text is still genuinely useful rather than just
+      // failing silently.
+      try {
+        await navigator.clipboard.writeText(url);
+        btn.textContent = 'Copied link (image copy unsupported here)';
+      } catch(e2) {
+        btn.textContent = 'Could not copy — try right-click > Copy Image';
+      }
+    }
+    setTimeout(() => { btn.textContent = 'Copy image'; }, 2500);
   }
 
   async function openEmailJobContent(i) {

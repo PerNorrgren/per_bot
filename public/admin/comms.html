@@ -192,6 +192,16 @@
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-3 { width:auto; padding:0 8px; font-size:11px; }
+    /* Per Bot 22 — these are text-content buttons, not the SVG-icon
+       buttons above (B/I/U/alignment/lists/link/image), which already
+       get their colour from .ql-stroke/.ql-fill. Text buttons never had
+       an equivalent override, so they sat at Quill's default near-black
+       — invisible on this dark toolbar. Same colour as the SVG icons. */
+    .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+    .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+    .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.5); }
     .test-send-row input { flex:1; }
     .modal-check { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.5); cursor:pointer; }
     .modal-check input { width:auto; accent-color:rgba(180,230,200,0.8); }
@@ -2632,13 +2642,18 @@
     document.getElementById('commsAiInsertBtn').style.display = 'none';
     document.getElementById('commsAiPreviewBody').innerHTML = `<span style="color:#888;font-style:italic">Generating${type === 'sumie' ? ' — this can take up to two minutes' : ''}…</span>`;
     try {
-      // Per Bot 22 — for sumie specifically, send the newsletter's
-      // current plain text along so the image can key off a MOTD/poem/
-      // limerick/haiku already in the body rather than always picking
-      // something unrelated. Only sumie needs this — the four text
-      // generators don't reference surrounding content.
+      // Per Bot 22 — was sending the whole newsletter body's plain text
+      // as context, which buried a limerick/haiku/poem among unrelated
+      // surrounding content (subject line, greeting, sign-off) with no
+      // way to tell which lines were which — the model had to guess, and
+      // the result often didn't clearly track any one piece. Now sends
+      // exactly one specific, known piece — whichever was most recently
+      // generated and inserted, checked in this priority order — falling
+      // back to the general body text only if none of the three exist.
       const body = { type };
-      if (type === 'sumie') body.context = getQuill().getText();
+      if (type === 'sumie') {
+        body.context = _lastInsertedByType.haiku || _lastInsertedByType.limerick || _lastInsertedByType.poem || getQuill().getText();
+      }
       const res = await fetch('/api/admin/comms-ai-generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -2726,6 +2741,14 @@
   // Commits the previewed result into the document, at the insertion
   // point captured back when generation started — mirrors the
   // image-upload flow's cell-vs-Quill handling exactly.
+  // Per Bot 22 — tracks the plain text of the most recently inserted
+  // haiku/limerick/poem, so the sumie generator can key off a specific,
+  // known piece deterministically (haiku, then limerick, then poem, then
+  // falling back to the newsletter's general text) rather than the model
+  // having to guess which lines in an undifferentiated whole-body text
+  // dump were the poem versus the intro paragraph versus anything else.
+  const _lastInsertedByType = { haiku: null, limerick: null, poem: null };
+
   function insertCommsAiResult() {
     if (!_commsAiPreview || !_commsAiPreview.result) return;
     const { type, target, result } = _commsAiPreview;
@@ -2744,6 +2767,9 @@
         quill.setSelection(target.quillRange.index + 1);
       }
     } else {
+      if (_lastInsertedByType.hasOwnProperty(type)) {
+        _lastInsertedByType[type] = result.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       if (target.inCell) {
         const wrap = document.createElement('span');
         wrap.innerHTML = result.html;
