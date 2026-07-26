@@ -5545,6 +5545,15 @@ async function runCommsAiGenerateJob(jobId, type, context) {
       text = raw.trim();
     }
     text = text || '';
+    // Per Bot 22 — defence in depth alongside the prompt's own "exactly
+    // three lines, no blank line" rule: haiku and limerick have a fixed
+    // line count and should never have a blank line in them, unlike the
+    // poem (which legitimately does, between stanzas). Collapsing any
+    // stray blank line here means an occasional prompt slip still comes
+    // out looking right, rather than relying on the model alone.
+    if (type === 'haiku' || type === 'limerick') {
+      text = text.split('\n').map(l => l.trim()).filter(Boolean).join('\n');
+    }
     let html;
     if (gen.hasTitle) {
       const parts = text.split(/\n\s*\n/);

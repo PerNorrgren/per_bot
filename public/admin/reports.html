@@ -279,15 +279,21 @@
     const btn = document.getElementById('copyImageBtn');
     const url = document.getElementById('imageViewImg').src;
     try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      // Per Bot 22 — same real bug fixed in the editor's Copy Image
+      // button: awaiting fetch() before clipboard.write() loses the
+      // user-gesture context in Safari (and some Chrome policies),
+      // silently failing and leaving the clipboard's previous image
+      // untouched. Passing the fetch as a still-pending promise directly
+      // into ClipboardItem keeps the write tied to this click.
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': fetch(url).then(r => r.blob()) })
+      ]);
       btn.textContent = 'Copied!';
     } catch(e) {
-      // Per Bot 22 — Clipboard image-write support (and same-origin/CORS
-      // access to the blob) varies by browser; falling back to copying
-      // the URL as plain text is still genuinely useful rather than just
-      // failing silently.
+      // Clipboard image-write support (and same-origin/CORS access to
+      // the blob) varies by browser; falling back to copying the URL as
+      // plain text is still genuinely useful rather than just failing
+      // silently.
       try {
         await navigator.clipboard.writeText(url);
         btn.textContent = 'Copied link (image copy unsupported here)';

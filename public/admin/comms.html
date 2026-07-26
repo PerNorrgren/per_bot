@@ -2614,9 +2614,20 @@
     }
     if (!img) { appAlert('Click directly on an image to select it first, then click this button.'); return; }
     try {
-      const res = await fetch(img.src);
-      const blob = await res.blob();
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      // Per Bot 22 — real bug found: was `await fetch(...)` THEN
+      // `await navigator.clipboard.write(...)`, which loses the user-
+      // gesture context in Safari (and some Chrome policies) by the time
+      // the write actually happens — the write then silently fails,
+      // leaving whatever was on the clipboard before untouched. That's
+      // exactly the symptom reported ("says copied, but the previous
+      // image pastes instead"). Fix: pass the fetch as a still-pending
+      // promise straight into ClipboardItem — the constructor call
+      // itself is synchronous within this click handler's call stack,
+      // which is what the browser actually checks, even though the
+      // promise it's holding resolves later.
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': fetch(img.src).then(r => r.blob()) })
+      ]);
       appAlert('Image copied — paste it anywhere with your normal paste shortcut, including elsewhere in this message.');
     } catch(e) {
       try {
