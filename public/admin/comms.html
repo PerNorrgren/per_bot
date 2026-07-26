@@ -187,6 +187,7 @@
     .ql-columns-block td[data-column-cell] { border:1px dashed rgba(180,230,200,0.25); }
     .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
+    .ql-toolbar.ql-snow .ql-formats button.ql-image-copy,
     .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
     .ql-toolbar.ql-snow .ql-formats button.ql-nl-video { width:auto; padding:0 6px; font-size:14px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
@@ -2216,7 +2217,7 @@
             ['bold', 'italic', 'underline'],
             [{ align: [] }],
             [{ list: 'ordered' }, { list: 'bullet' }],
-            ['link', 'image', 'image-link', 'video-link'],
+            ['link', 'image', 'image-link', 'image-copy', 'video-link'],
             ['nl-video'],
             ['nl-button'],
             ['columns-1', 'columns-2', 'columns-3'],
@@ -2228,6 +2229,7 @@
             'video-link': insertVideoLink,
             'nl-video': insertNewsletterVideo,
             'image-link': linkSelectedImage,
+            'image-copy': copySelectedImage,
             'nl-button': insertNewsletterButton,
             'columns-1': () => insertColumnsBlock(1),
             'columns-2': () => insertColumnsBlock(2),
@@ -2322,6 +2324,7 @@
     label('.ql-video-link', '▶', 'Insert a video link');
     label('.ql-nl-video',   '🎬', 'Upload a video and insert an inline player');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
+    label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
     label('.ql-nl-button',  '▭',  'Insert a button');
     label('.ql-columns-1',  '1 col', 'Insert a single wide column');
     label('.ql-columns-2',  '2 col', 'Insert two side-by-side columns');
@@ -2395,6 +2398,52 @@
       const newUrl = await appPrompt('Link this text to (leave blank to remove the link):', currentHref);
       if (newUrl === null) return;
       quill.formatText(index, length, 'link', newUrl.trim() || false);
+    }, true);
+
+    // Per Bot 22 — pasted-image fix, added alongside the Copy Image
+    // toolbar button below (the two are meant to work together: copy an
+    // image out via that button, paste it back in anywhere — including a
+    // different spot, as a way to move one, since Quill has no drag-
+    // reposition). Without this, Quill's own default paste handling for
+    // image clipboard data embeds it as a giant inline base64 data-URI
+    // rather than a real hosted image — bloats the stored HTML
+    // considerably, and many email clients handle large inline base64
+    // images badly or strip them outright. Intercepted here in the
+    // capture phase (same reasoning as the cell-paste fix below) so this
+    // runs before Quill's own handler, uploads through the exact same
+    // endpoint a manual image upload already uses, and inserts the
+    // resulting hosted URL instead — working inside or outside a column
+    // cell, matching upload's own cell-vs-editor branching exactly.
+    quillInstance.root.addEventListener('paste', async (e) => {
+      const items = (e.clipboardData || window.clipboardData)?.items;
+      const imageItem = items && Array.from(items).find(it => it.type && it.type.startsWith('image/'));
+      if (!imageItem) return; // no image on the clipboard — let the handlers below (or Quill's own default) run
+      e.stopPropagation();
+      e.preventDefault();
+      const target = getInsertionTarget();
+      const file = imageItem.getAsFile();
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.url) { appAlert(data.error || 'Could not paste that image.'); return; }
+        if (target.inCell) {
+          const img = document.createElement('img');
+          img.src = data.url;
+          img.style.maxWidth = '100%';
+          insertNodeAtCellRange(target, img);
+          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
+        } else {
+          const quill = getQuill();
+          quill.insertEmbed(target.quillRange.index, 'image', data.url);
+          if (target.quillRange.index + 1 >= quill.getLength() - 1) quill.insertText(target.quillRange.index + 1, ' ');
+          quill.setSelection(target.quillRange.index + 1);
+        }
+      } catch(e2) {
+        appAlert('Network error — could not paste that image.');
+      }
     }, true);
 
     // Paste-into-column fix — Quill treats the whole columns block as one
@@ -2544,6 +2593,39 @@
     const url = await appPrompt('Link this image to:');
     if (!url || !url.trim()) return;
     quill.formatText(range.index, 1, 'link', url.trim());
+  }
+
+  // Per Bot 22 — reliable clipboard copy for an image already in the
+  // editor, meant to pair with the pasted-image fix above: copy an image
+  // out with this button, paste it back in anywhere (including a
+  // different spot in the same message) as a way to move one, since
+  // Quill has no drag-reposition. Does its own fresh fetch() of the
+  // image rather than relying on the browser's native right-click "Copy
+  // Image" — that reads whatever the browser currently has decoded/
+  // cached for that element, which can go stale; this always copies
+  // what's actually at the URL right now.
+  async function copySelectedImage() {
+    let img = (lastClickedImage && document.contains(lastClickedImage)) ? lastClickedImage : null;
+    if (!img) {
+      const quill = getQuill();
+      const range = quill.getSelection();
+      const leaf = range ? quill.getLeaf(range.index)[0] : null;
+      if (leaf && leaf.domNode && leaf.domNode.tagName === 'IMG') img = leaf.domNode;
+    }
+    if (!img) { appAlert('Click directly on an image to select it first, then click this button.'); return; }
+    try {
+      const res = await fetch(img.src);
+      const blob = await res.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      appAlert('Image copied — paste it anywhere with your normal paste shortcut, including elsewhere in this message.');
+    } catch(e) {
+      try {
+        await navigator.clipboard.writeText(img.src);
+        appAlert('Could not copy the image itself (your browser may not support it) — copied the image link instead.');
+      } catch(e2) {
+        appAlert('Could not copy this image. Try right-click > Copy Image instead.');
+      }
+    }
   }
 
   async function insertNewsletterButton() {
