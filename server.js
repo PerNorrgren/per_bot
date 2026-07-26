@@ -5605,7 +5605,7 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     if (!plain) return res.status(400).json({ error: 'Write something first.' });
     const b = brand();
     const language = getAdminLanguage();
-    const systemPrompt = `You help refine short pieces of written communication for ${b.name}, a mindfulness and wellbeing platform. Improve clarity, warmth, and flow while keeping the original meaning, voice, and intent intact. Preserve every link, button, image, video embed, and template placeholder (like {{name}}) exactly as they appear in the source, character for character, including any HTML comments — never remove, reword, restructure, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
+    const systemPrompt = prompts.AI_POLISH_SIGNAL_PROMPT(b.name, language);
     const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 2000);
     res.json({ html: reply.trim() });
   } catch(e) {

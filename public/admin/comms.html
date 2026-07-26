@@ -56,7 +56,9 @@
 
     /* ── Layout ── */
     .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:36px; }
-    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none; }
+    .section-label:hover { color:rgba(255,255,255,0.5); }
+    .section-collapse-indicator { font-size:12px; }
 
     /* ── Cards ── */
     .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
@@ -188,6 +190,7 @@
     .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
     .ql-toolbar.ql-snow .ql-formats button.ql-image-copy,
+    .ql-toolbar.ql-snow .ql-formats button.ql-image-resize,
     .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
     .ql-toolbar.ql-snow .ql-formats button.ql-nl-video { width:auto; padding:0 6px; font-size:14px; }
     .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
@@ -2217,7 +2220,7 @@
             ['bold', 'italic', 'underline'],
             [{ align: [] }],
             [{ list: 'ordered' }, { list: 'bullet' }],
-            ['link', 'image', 'image-link', 'image-copy', 'video-link'],
+            ['link', 'image', 'image-link', 'image-copy', 'image-resize', 'video-link'],
             ['nl-video'],
             ['nl-button'],
             ['columns-1', 'columns-2', 'columns-3'],
@@ -2230,6 +2233,7 @@
             'nl-video': insertNewsletterVideo,
             'image-link': linkSelectedImage,
             'image-copy': copySelectedImage,
+            'image-resize': shrinkSelectedImage,
             'nl-button': insertNewsletterButton,
             'columns-1': () => insertColumnsBlock(1),
             'columns-2': () => insertColumnsBlock(2),
@@ -2325,6 +2329,7 @@
     label('.ql-nl-video',   '🎬', 'Upload a video and insert an inline player');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
     label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
+    label('.ql-image-resize', '🗜️', 'Click an image first, resize it with its own handles to the size you want it shown at, then click here — shrinks the actual file to match, keeping the email lighter');
     label('.ql-nl-button',  '▭',  'Insert a button');
     label('.ql-columns-1',  '1 col', 'Insert a single wide column');
     label('.ql-columns-2',  '2 col', 'Insert two side-by-side columns');
@@ -2636,6 +2641,59 @@
       } catch(e2) {
         appAlert('Could not copy this image. Try right-click > Copy Image instead.');
       }
+    }
+  }
+
+  // Per Bot 22 — resize, not compress: the resize handles already let
+  // someone drag an image down to a smaller display size, but that's
+  // purely CSS — the underlying file is still whatever full size it was
+  // uploaded at, and every recipient's inbox still downloads that full
+  // file regardless of how small it displays. This re-encodes the
+  // actual file at the size it's currently being shown at, keeping PNG
+  // (lossless) rather than switching to a lossy format — fewer pixels
+  // alone is real savings without introducing compression artefacts,
+  // which matters for the sumi-e line art especially (JPEG would fuzz
+  // its sharp edges for comparatively little extra saving).
+  async function shrinkSelectedImage() {
+    let img = (lastClickedImage && document.contains(lastClickedImage)) ? lastClickedImage : null;
+    if (!img) {
+      const quill = getQuill();
+      const range = quill.getSelection();
+      const leaf = range ? quill.getLeaf(range.index)[0] : null;
+      if (leaf && leaf.domNode && leaf.domNode.tagName === 'IMG') img = leaf.domNode;
+    }
+    if (!img) { appAlert('Click directly on an image to select it first, then click this button.'); return; }
+
+    const targetWidth = Math.round(img.getBoundingClientRect().width);
+    if (!targetWidth || targetWidth < 20) { appAlert("Could not read this image's current display size."); return; }
+
+    try {
+      const res = await fetch(img.src);
+      const blob = await res.blob();
+      const bitmap = await createImageBitmap(blob);
+      if (bitmap.width <= targetWidth) {
+        appAlert(`This image is already ${bitmap.width}px wide, no bigger than its current display size — nothing to shrink.`);
+        return;
+      }
+      const scale = targetWidth / bitmap.width;
+      const targetHeight = Math.round(bitmap.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      const newBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      const formData = new FormData();
+      formData.append('file', newBlob, 'resized.png');
+      const uploadRes = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+      const data = await uploadRes.json();
+      if (!data.url) { appAlert(data.error || 'Could not resize this image.'); return; }
+      const savingsPct = Math.round((1 - newBlob.size / blob.size) * 100);
+      img.removeAttribute('width');
+      img.style.width = '';
+      img.src = data.url;
+      appAlert(`Resized to ${targetWidth}×${targetHeight}px${savingsPct > 0 ? ` — about ${savingsPct}% smaller` : ''}, keeping the email lighter.`);
+    } catch(e) {
+      appAlert('Could not resize this image. Please try again.');
     }
   }
 
@@ -3856,8 +3914,39 @@
     }
   }
 
+  // Per Bot 22 — collapsible sections. Every section on this page already
+  // has the same shape (a wrapper <div> containing one <div
+  // class="section-label"> followed by one or more <div class="card">
+  // siblings) — this works generically off that existing structure
+  // rather than needing any of the 12 sections individually restructured.
+  // Collapsed state is per-section (keyed by its own label text) and
+  // remembered across visits via localStorage, since this is a real
+  // page, not a sandboxed artifact.
+  function initCollapsibleSections() {
+    document.querySelectorAll('.section-label').forEach((label) => {
+      const wrapper = label.parentElement;
+      const siblings = Array.from(wrapper.children).filter(el => el !== label);
+      if (!siblings.length) return;
+      const key = 'commsSectionCollapsed:' + label.textContent.trim();
+      const indicator = document.createElement('span');
+      indicator.className = 'section-collapse-indicator';
+      label.appendChild(indicator);
+      const apply = (collapsed) => {
+        siblings.forEach(el => { el.style.display = collapsed ? 'none' : ''; });
+        indicator.textContent = collapsed ? '▸' : '▾';
+      };
+      apply(localStorage.getItem(key) === '1');
+      label.addEventListener('click', () => {
+        const collapsedNow = siblings[0].style.display !== 'none';
+        localStorage.setItem(key, collapsedNow ? '1' : '0');
+        apply(collapsedNow);
+      });
+    });
+  }
+
   // ── Boot ──
   checkAuth().then(() => {
+    initCollapsibleSections();
     loadMotd();
     loadTestDestination();
     loadTomteBroadcastStatus();

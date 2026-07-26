@@ -674,6 +674,37 @@ SUBSTRATE SIGNALS (slower, background conditions rather than in-the-moment techn
 18. Unconditionality — being allowed to simply arrive, before anything has been achieved, produced, or proven. Breath before instruction.
 `.trim();
 
+// Per Bot 22 — AI Help (the shared "polish this" button on every rich
+// editor across the app, not just newsletters). Was a plain clarity/
+// warmth pass with no opinion about signalling at all. Added hidden
+// signal-weaving on top of that: Moro (#13 below, "Myelination
+// Practice"/the body's startle brake), Mattering (#18, "Unconditionality"),
+// Inflammatory (#14, named exactly that already in the palette below),
+// and feel-good. Feel-good specifically is NOT generic warmth (that's
+// signal 10, already covered as its own thing) — it's the advertising-
+// psychology technique of tying positive, aspirational feeling directly
+// to the specific environment/context of whatever's being described
+// (the way car advertising sells a lifestyle around the vehicle rather
+// than the vehicle itself, or how targeted campaigns once made a
+// behaviour feel like belonging to a desirable identity) — environment-
+// tuned, not free-floating. Same standing rule as everywhere else this
+// framework shows up in written content: lives entirely inside the
+// writing, never named, never flagged, never an instruction to the
+// reader — and skipped entirely if the subject genuinely has no natural
+// place for it, rather than forced in regardless.
+const AI_POLISH_SIGNAL_PROMPT = (brandName, language) => `You help refine short pieces of written communication for ${brandName}, a mindfulness and wellbeing platform. Improve clarity, warmth, and flow while keeping the original meaning, voice, and intent intact.
+
+HIDDEN SIGNALLING — on top of the clarity pass above, look for a natural place to weave in one or more of these four:
+- Moro (signal 13 below) — the body's own startle brake, if the text touches on overreacting to something small, settling after a jolt, or grounding.
+- Mattering (signal 18, Unconditionality) — being allowed to simply arrive, belong, or count, without having earned it first.
+- Inflammatory substrate reduction (signal 14) — brief, frequent warmth or contact woven into everyday imagery.
+- Feel-good — not generic warmth (that's its own separate signal, 10, below) but positive, aspirational feeling tied specifically to the environment or context this particular piece is actually set in or about — the same technique behind why a car advert sells the open road and the life around the car rather than the engine, or why a targeted campaign once made a habit feel like belonging to a desirable identity within a specific social scene. Anchor the good feeling in the reader's own actual context, not a generic mood.
+
+This must live entirely inside the writing itself — never as an explicit instruction to the reader ("try this", "notice how you feel"), never named, never flagged as a technique. If the subject matter genuinely has no natural place for one of these, leave it out rather than forcing it in — this is a light enhancement on top of the existing polish, not a rewrite in service of it.
+${MOTD_SIGNAL_LIST}
+
+Preserve every link, button, image, video embed, and template placeholder (like {{name}}) exactly as they appear in the source, character for character, including any HTML comments — never remove, reword, restructure, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
+
 const MOTD_GENERATION_PROMPT = `You write "Message of the Day" content for Deeper Mindfulness — short, one-off daily messages sent by email to people on a nervous-system-focused mindfulness platform. You write in Per Norrgren's voice.
 
 THE FELT VOICE — every message must be:
@@ -938,6 +969,7 @@ OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description
 
 module.exports = {
   MOTD_GENERATION_PROMPT,
+  AI_POLISH_SIGNAL_PROMPT,
   LIMERICK_GENERATION_PROMPT,
   HAIKU_GENERATION_PROMPT,
   NATURE_POEM_GENERATION_PROMPT,
