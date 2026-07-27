@@ -14,9 +14,9 @@
       box-shadow: 0 4px 18px rgba(0,0,0,0.35); transition: transform 0.2s;
     }
     #tomte-fab:hover { transform: scale(1.06); }
-    #tomte-fab { touch-action: none; }
+    #tomte-fab { touch-action: none; -webkit-user-select: none; user-select: none; }
     #tomte-fab.tomte-dragging { transition: none; }
-    #tomte-fab img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; }
+    #tomte-fab img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15%; -webkit-user-drag: none; user-drag: none; }
     #tomte-fab .tomte-badge {
       position: absolute; top: -3px; right: -3px; width: 14px; height: 14px; border-radius: 50%;
       background: rgba(230,175,90,0.9); border: 2px solid #0d1210; display: none;
@@ -138,7 +138,7 @@
   function buildDom() {
     const fab = document.createElement('div');
     fab.id = 'tomte-fab';
-    fab.innerHTML = `<img src="/assets/tomte.png" alt="Tomte — app helper"/><div class="tomte-badge" id="tomte-badge"></div>`;
+    fab.innerHTML = `<img src="/assets/tomte.png" alt="Tomte — app helper" draggable="false"/><div class="tomte-badge" id="tomte-badge"></div>`;
     fab.title = 'Ask Tomte how this works';
 
     const panel = document.createElement('div');
@@ -716,7 +716,17 @@
     let dragStartX = 0, dragStartY = 0, fabStartX = 0, fabStartY = 0;
     const DRAG_THRESHOLD = 6; // px — below this, treat it as a tap, not a drag
 
+    fab.addEventListener('dragstart', (e) => e.preventDefault());
     fab.addEventListener('pointerdown', (e) => {
+      // Without this, a mouse-based press-and-move on the <img> inside the fab
+      // can kick off the browser's own native HTML5 image drag (ghost-image
+      // drag) instead of — or in addition to — the pointermove handler below.
+      // That native drag swallows the mouse events we need, so on desktop the
+      // fab looked "stuck": pointerdown fired, capture was set, but no
+      // pointermove ever arrived. Touch input has no such native drag path,
+      // which is why this only ever showed up testing with a mouse (admin),
+      // not touch (client).
+      e.preventDefault();
       fabDragging = true;
       fabDragMoved = false;
       dragStartX = e.clientX; dragStartY = e.clientY;

@@ -492,6 +492,11 @@
     .content-filters { display:flex; gap:6px; padding:10px 18px 4px; flex-wrap:wrap; }
     .content-filter-chip { font-size:11px; padding:5px 12px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; transition:all 0.15s; }
     .content-filter-chip.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
+    .library-search-row { position:relative; padding:10px 18px 2px; }
+    .library-search-input { width:100%; box-sizing:border-box; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:9px 34px 9px 12px; color:rgba(255,255,255,0.85); font-size:13.5px; font-family:'Georgia',serif; }
+    .library-search-input::placeholder { color:rgba(255,255,255,0.3); }
+    .library-search-clear { display:none; position:absolute; right:26px; top:18px; background:none; border:none; color:rgba(255,255,255,0.3); font-size:15px; cursor:pointer; padding:2px 6px; }
+    .library-search-clear.visible { display:block; }
     .content-item { display:flex; align-items:center; gap:10px; padding:9px 18px; cursor:pointer; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.04); }
     .content-item:hover { background:rgba(255,255,255,0.04); }
     .content-item.locked { opacity:0.35; cursor:default; }
@@ -916,6 +921,11 @@
         <button class="lib-subnav-btn" id="libSubMeditations" onclick="meditationsTabClicked()">Meditations</button>
         <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
         <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
+      </div>
+
+      <div class="library-search-row">
+        <input type="text" id="librarySearchInput" class="library-search-input" placeholder="Search practices…" oninput="onLibrarySearchInput(this.value)"/>
+        <button class="library-search-clear" id="librarySearchClear" onclick="clearLibrarySearch()" aria-label="Clear search">×</button>
       </div>
 
       <!-- Practices region -->
@@ -1487,6 +1497,46 @@
     if (tab === 'you')     switchYouSub(_currentYouSub);
   }
 
+  // ── Library search (Per Bot 23) — one shared search box above the three
+  // Library sub-panels (Practices/Meditations/Read & watch), which previously
+  // had no text search at all, only category chips/theme cards. Each tab
+  // keeps its own query so switching tabs doesn't lose or leak the other
+  // tab's search text. A non-empty query switches that tab's render function
+  // into a flat "search results" view, bypassing its normal grouping/theme
+  // drill-down entirely; clearing the box returns to the normal view.
+  let _librarySearchQueries = { practices: '', meditations: '', readwatch: '' };
+  const LIBRARY_SEARCH_PLACEHOLDERS = {
+    practices: 'Search practices…',
+    meditations: 'Search meditations…',
+    readwatch: 'Search articles & videos…',
+  };
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+  function onLibrarySearchInput(val) {
+    _librarySearchQueries[_currentLibSub] = val;
+    document.getElementById('librarySearchClear').classList.toggle('visible', !!val);
+    if (_currentLibSub === 'practices') renderPractices();
+    else if (_currentLibSub === 'meditations') renderMeditations();
+    else if (_currentLibSub === 'readwatch') renderContentScroll();
+  }
+  function clearLibrarySearch() {
+    _librarySearchQueries[_currentLibSub] = '';
+    const input = document.getElementById('librarySearchInput');
+    input.value = '';
+    document.getElementById('librarySearchClear').classList.remove('visible');
+    if (_currentLibSub === 'practices') renderPractices();
+    else if (_currentLibSub === 'meditations') renderMeditations();
+    else if (_currentLibSub === 'readwatch') renderContentScroll();
+  }
+  function syncLibrarySearchBox() {
+    const input = document.getElementById('librarySearchInput');
+    const q = _librarySearchQueries[_currentLibSub] || '';
+    input.value = q;
+    input.placeholder = LIBRARY_SEARCH_PLACEHOLDERS[_currentLibSub] || 'Search…';
+    document.getElementById('librarySearchClear').classList.toggle('visible', !!q);
+  }
+
   // ── Library sub-nav ──
   let _currentLibSub = 'practices';
   // Per Bot 16 — re-tapping "Meditations" while already drilled into a
@@ -1510,6 +1560,7 @@
     document.getElementById('libPracticesPanel').classList.toggle('visible', sub === 'practices');
     document.getElementById('libMeditationsPanel').classList.toggle('visible', sub === 'meditations');
     document.getElementById('libReadWatchPanel').classList.toggle('visible', sub === 'readwatch');
+    syncLibrarySearchBox();
     if (sub === 'meditations') loadLibraryMeditations();
   }
 
@@ -2973,45 +3024,65 @@
   function renderContentScroll() {
     const el   = document.getElementById('contentScroll');
     const visible = _contentData.filter(f => READ_WATCH_KINDS.includes(f.content_type) || !f.content_type);
-    // Per Bot 16 — favourites used to always show every favourited item
-    // regardless of which type tab (Blog/Video/Poems/...) was selected,
-    // while the list below it correctly filtered by type — so switching
-    // to "Blog" still showed a video favourite sitting up top. Now
-    // filtered the same way as the rest of the list; "All" still shows
-    // every favourite, same as before.
     const typeFilter = f => _contentFilter === 'all' || f.content_type === _contentFilter;
-    const favs = visible.filter(f => f.is_favourite).filter(typeFilter)
-      .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-
-    // Per Bot 16 — was sorted by created_at (upload date) descending,
-    // not by title at all — that's why the order looked unrelated to
-    // either the title or the "Originally published" date shown under
-    // each one (a different date, from the original WordPress post,
-    // not when it was uploaded here). Title, plain alphabetical, as
-    // asked — Blogs/poems keep straightforward string order rather than
-    // the numeric-aware sort Meditations uses.
-    const rest = visible
-      .filter(f => !f.is_favourite)
-      .filter(typeFilter)
-      .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    const q = (_librarySearchQueries.readwatch || '').trim().toLowerCase();
 
     let html = '';
-    html += `<div class="content-section">
-      <div class="content-section-hdr">Favourites</div>
-      <div id="content-favs">${
-        favs.length
-          ? favs.map(f => contentItemHTML(f)).join('')
-          : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Tap ♥ on any item to add it here.</div>'
-      }</div>
-    </div>`;
 
-    html += `<div class="content-section">
-      <div id="content-all">${
-        rest.length
-          ? rest.map(f => contentItemHTML(f)).join('')
-          : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No content here yet.</div>'
-      }</div>
-    </div>`;
+    if (q) {
+      // Search bypasses the favourites/rest split entirely — one flat,
+      // alphabetical list of whatever matches, still respecting whichever
+      // type chip (Blog/Video/Poems/...) is currently selected.
+      const matches = visible.filter(typeFilter).filter(f =>
+        (f.title || '').toLowerCase().includes(q) || (f.description || '').toLowerCase().includes(q)
+      ).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      html += `<div class="content-section">
+        <div class="content-section-hdr">${matches.length} result${matches.length !== 1 ? 's' : ''} for "${escapeHtml(q)}"</div>
+        <div id="content-search-results">${
+          matches.length
+            ? matches.map(f => contentItemHTML(f)).join('')
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No matches — try a different word.</div>'
+        }</div>
+      </div>`;
+    } else {
+      // Per Bot 16 — favourites used to always show every favourited item
+      // regardless of which type tab (Blog/Video/Poems/...) was selected,
+      // while the list below it correctly filtered by type — so switching
+      // to "Blog" still showed a video favourite sitting up top. Now
+      // filtered the same way as the rest of the list; "All" still shows
+      // every favourite, same as before.
+      const favs = visible.filter(f => f.is_favourite).filter(typeFilter)
+        .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+
+      // Per Bot 16 — was sorted by created_at (upload date) descending,
+      // not by title at all — that's why the order looked unrelated to
+      // either the title or the "Originally published" date shown under
+      // each one (a different date, from the original WordPress post,
+      // not when it was uploaded here). Title, plain alphabetical, as
+      // asked — Blogs/poems keep straightforward string order rather than
+      // the numeric-aware sort Meditations uses.
+      const rest = visible
+        .filter(f => !f.is_favourite)
+        .filter(typeFilter)
+        .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+
+      html += `<div class="content-section">
+        <div class="content-section-hdr">Favourites</div>
+        <div id="content-favs">${
+          favs.length
+            ? favs.map(f => contentItemHTML(f)).join('')
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Tap ♥ on any item to add it here.</div>'
+        }</div>
+      </div>`;
+
+      html += `<div class="content-section">
+        <div id="content-all">${
+          rest.length
+            ? rest.map(f => contentItemHTML(f)).join('')
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No content here yet.</div>'
+        }</div>
+      </div>`;
+    }
 
     html += `<div class="content-section">
       <div class="content-section-hdr">My playlists</div>
@@ -3056,6 +3127,16 @@
   function renderMeditations() {
     const el = document.getElementById('meditationsScroll');
     const files = meditationFiles();
+    const q = (_librarySearchQueries.meditations || '').trim().toLowerCase();
+
+    if (q) {
+      const matches = naturalTitleSort(files.filter(f =>
+        (f.title || '').toLowerCase().includes(q) || (f.description || '').toLowerCase().includes(q)
+      ));
+      el.innerHTML = `<div class="content-section-hdr">${matches.length} result${matches.length !== 1 ? 's' : ''} for "${escapeHtml(q)}"</div>` +
+        (matches.length ? matches.map(f => contentItemHTML(f)).join('') : '<div class="no-poems">No matches — try a different word.</div>');
+      return;
+    }
 
     const byTag = {};
     const untagged = [];
@@ -3730,6 +3811,23 @@
     const assignedFiles = (_contentData || []).filter(f => f.assigned_client_id);
 
     if (!list.length && !assignedFiles.length) { el.innerHTML='<div class="no-practices">No practices yet.</div>'; return; }
+
+    const searchQ = (_librarySearchQueries.practices || '').trim().toLowerCase();
+    if (searchQ) {
+      // Search flattens everything reachable in this tab — favourites,
+      // course/area-tagged practices, facilitator-added items, assigned
+      // files, and session summaries alike — into one alphabetical list,
+      // bypassing the By course/By area/My Practices grouping entirely.
+      const matchedPractices = list.filter(p => (p.title || '').toLowerCase().includes(searchQ));
+      const matchedFiles = assignedFiles.filter(f => (f.title || '').toLowerCase().includes(searchQ));
+      const rows = [
+        ...matchedPractices.map(p => ({ title: p.title || '', html: practiceItemHTML(p) })),
+        ...matchedFiles.map(f => ({ title: f.title || '', html: contentItemHTML(f) })),
+      ].sort((a, b) => a.title.localeCompare(b.title));
+      el.innerHTML = `<div class="content-section-hdr">${rows.length} result${rows.length !== 1 ? 's' : ''} for "${escapeHtml(searchQ)}"</div>` +
+        (rows.length ? rows.map(r => r.html).join('') : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No matches — try a different word.</div>');
+      return;
+    }
 
     const favs = list.filter(p => p.is_favourite);
 
