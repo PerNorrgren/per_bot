@@ -50,7 +50,8 @@
         this line and keep the vh value above. */
     }
 
-    /* ── Accessibility: reversed-colour contrast mode (Per Bot 24) ──
+    /* ── Accessibility: reversed-colour contrast mode (Per Bot 24, fixed
+       Per Bot 25) ──
        Colours throughout this file are hardcoded individually rather
        than driven by a small shared palette, so a true second light
        theme would mean touching thousands of individual rgba() values.
@@ -59,12 +60,21 @@
        turns the existing dark theme into a clean light one, same
        layout, same design, just flipped. hue-rotate corrects the muted
        accent colours (green/gold) back toward their original hue after
-       inversion. Applied to .panel only, not the background slideshow
-       behind it, so the background photography stays untouched; img/
-       video tags INSIDE the panel get a second, cancelling invert so
+       inversion. img/video tags get a second, cancelling invert so
        photos, thumbnails, and Tomte's own image still display normally
-       rather than as a colour negative. */
-    body.a11y-contrast .panel { filter: invert(1) hue-rotate(180deg); }
+       rather than as a colour negative.
+       Per Bot 24's first version left the background slideshow
+       untouched and .glass translucent over it (backdrop-filter:blur) —
+       inverting .glass alone meant the STILL-ORIGINAL-COLOUR photo kept
+       showing through the blur underneath, muddying what should be a
+       clean white into a washed grey-green. Fixed by hiding the
+       slideshow/veil outright while this mode is on, and giving .panel
+       and .glass a solid, opaque background of their own before
+       inversion — nothing left un-inverted to bleed through. */
+    body.a11y-contrast .slideshow,
+    body.a11y-contrast .veil { display: none; }
+    body.a11y-contrast .panel { background: #0a0f0d; filter: invert(1) hue-rotate(180deg); }
+    body.a11y-contrast .glass { background: #14201c; backdrop-filter: none; -webkit-backdrop-filter: none; }
     body.a11y-contrast .panel img,
     body.a11y-contrast .panel video { filter: invert(1) hue-rotate(180deg); }
 

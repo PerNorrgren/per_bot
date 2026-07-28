@@ -18,6 +18,26 @@
     .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.5); }
 
     .panel { position:relative; z-index:2; width:100%; max-width:480px; display:flex; flex-direction:column; gap:12px; padding-top:12px; }
+
+    /* ── Accessibility: reversed-colour contrast + text size (Per Bot 25) ──
+       Same invert-filter trick as the main client app (one filter flips
+       the whole dark theme to a clean light one, same iOS/Android "Smart
+       Invert" technique), but fixed here for the transparency issue Per
+       found live: .card and .panel are semi-transparent with a blurred
+       background slideshow showing through (backdrop-filter:blur), so
+       inverting them alone left the ORIGINAL, non-inverted photo bleeding
+       through underneath, muddying what should be a clean white — hence
+       hiding the slideshow/veil outright and giving .panel and .card a
+       solid, opaque background of their own before inversion, so there's
+       nothing left un-inverted to bleed through. */
+    body.a11y-contrast .slideshow,
+    body.a11y-contrast .veil { display: none; }
+    body.a11y-contrast .panel { background: #0a0f0d; filter: invert(1) hue-rotate(180deg); }
+    body.a11y-contrast .card { background: #14201c; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    body.a11y-contrast .panel img,
+    body.a11y-contrast .panel video { filter: invert(1) hue-rotate(180deg); }
+    body.a11y-text-large .panel { zoom: 1.15; }
+    body.a11y-text-larger .panel { zoom: 1.3; }
     /* Per Bot 16 — had no rule at all in this file (existed already in the
        admin pages), so it fell back to browser-default black text. */
     .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
@@ -176,6 +196,19 @@
   </style>
 </head>
 <body>
+<script>
+  // Per Bot 25 — applied before anything else renders, using whatever
+  // was cached locally last time, so there's no flash before this page's
+  // own loadAccount() fetch confirms the real saved value.
+  (function() {
+    try {
+      if (localStorage.getItem('a11y_contrast') === '1') document.body.classList.add('a11y-contrast');
+      var scale = localStorage.getItem('a11y_text_scale');
+      if (scale === 'large') document.body.classList.add('a11y-text-large');
+      else if (scale === 'larger') document.body.classList.add('a11y-text-larger');
+    } catch(e) {}
+  })();
+</script>
 
 <div class="slideshow" id="slideshow"></div>
 <div class="veil"></div>
@@ -211,6 +244,39 @@
           <a class="upgrade-btn" id="upgradeBtn" href="/membership">See membership options</a>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Display (Per Bot 25) — accessibility: moved here from a small
+       header icon in the app itself after a member flagged the app being
+       too dark/low-contrast to read comfortably. Kept open by default
+       (unlike most cards below) since prominence was the whole point of
+       moving it here. -->
+  <div class="card">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Display</div><span class="card-chevron open">▾</span></div>
+    <div class="card-body">
+      <div class="pref-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+        <div class="pref-label">
+          <div class="pref-name">App interface colour</div>
+          <div class="pref-desc">If the dark theme is hard to read, switch to a reversed, high-contrast light view</div>
+        </div>
+        <div class="day-picker" id="a11yContrastPicker">
+          <button type="button" class="day-chip" data-val="0" onclick="setA11yContrast(0)">Normal</button>
+          <button type="button" class="day-chip" data-val="1" onclick="setA11yContrast(1)">High contrast (reversed)</button>
+        </div>
+      </div>
+      <div class="pref-row" style="flex-direction:column;align-items:flex-start;gap:8px;border-bottom:none">
+        <div class="pref-label">
+          <div class="pref-name">Text size</div>
+          <div class="pref-desc">Makes everything in the app larger, not just this page</div>
+        </div>
+        <div class="day-picker" id="a11yTextPicker">
+          <button type="button" class="day-chip" data-val="normal" onclick="setA11yTextScale('normal')">Normal</button>
+          <button type="button" class="day-chip" data-val="large" onclick="setA11yTextScale('large')">Large</button>
+          <button type="button" class="day-chip" data-val="larger" onclick="setA11yTextScale('larger')">Larger</button>
+        </div>
+      </div>
+      <div class="msg" id="displayMsg"></div>
     </div>
   </div>
 
@@ -613,6 +679,9 @@
     // Voice
     myVoiceId = a.voice_id || null;
     renderVoiceList();
+
+    // Display (Per Bot 25) — accessibility
+    applyA11yUI(!!Number(a.a11y_contrast), a.a11y_text_scale || 'normal');
 
     // Preferences
     document.getElementById('prefMotdEmail').checked      = !!a.pref_email_motd;
@@ -1065,6 +1134,41 @@
         showMsg('prefsMsg', 'Could not save preferences.', 'err');
       }
     }, 600);
+  }
+
+  // ── Display: reversed-colour contrast + text size (Per Bot 25) ──
+  // Mirrors the same fields/mechanism as the main client app (see
+  // client-index.html) — same account fields, same localStorage cache
+  // keys, so a preference set on either page follows the member to the
+  // other and to any device.
+  function applyA11yUI(contrast, textScale) {
+    document.body.classList.toggle('a11y-contrast', contrast);
+    document.body.classList.toggle('a11y-text-large', textScale === 'large');
+    document.body.classList.toggle('a11y-text-larger', textScale === 'larger');
+    document.querySelectorAll('#a11yContrastPicker .day-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.val === (contrast ? '1' : '0'));
+    });
+    document.querySelectorAll('#a11yTextPicker .day-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.val === (textScale || 'normal'));
+    });
+  }
+  async function setA11yContrast(val) {
+    applyA11yUI(!!val, localStorage.getItem('a11y_text_scale') || 'normal');
+    try { localStorage.setItem('a11y_contrast', val ? '1' : '0'); } catch(e) {}
+    try {
+      const res = await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_contrast: val }) });
+      const data = await res.json();
+      showMsg('displayMsg', data.ok ? 'Saved.' : (data.error || 'Could not save.'), data.ok ? 'ok' : 'err');
+    } catch(e) { showMsg('displayMsg', 'Could not save.', 'err'); }
+  }
+  async function setA11yTextScale(scale) {
+    applyA11yUI(document.body.classList.contains('a11y-contrast'), scale);
+    try { localStorage.setItem('a11y_text_scale', scale); } catch(e) {}
+    try {
+      const res = await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_text_scale: scale }) });
+      const data = await res.json();
+      showMsg('displayMsg', data.ok ? 'Saved.' : (data.error || 'Could not save.'), data.ok ? 'ok' : 'err');
+    } catch(e) { showMsg('displayMsg', 'Could not save.', 'err'); }
   }
 
   // ── Change password ──
