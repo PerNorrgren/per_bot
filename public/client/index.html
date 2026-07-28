@@ -50,7 +50,41 @@
         this line and keep the vh value above. */
     }
 
-    .header { padding:18px 24px 14px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    /* ── Accessibility: reversed-colour contrast mode (Per Bot 24) ──
+       Colours throughout this file are hardcoded individually rather
+       than driven by a small shared palette, so a true second light
+       theme would mean touching thousands of individual rgba() values.
+       Inverting the whole app card is the same trick iOS/Android's own
+       "Smart Invert" accessibility modes use — one filter instantly
+       turns the existing dark theme into a clean light one, same
+       layout, same design, just flipped. hue-rotate corrects the muted
+       accent colours (green/gold) back toward their original hue after
+       inversion. Applied to .panel only, not the background slideshow
+       behind it, so the background photography stays untouched; img/
+       video tags INSIDE the panel get a second, cancelling invert so
+       photos, thumbnails, and Tomte's own image still display normally
+       rather than as a colour negative. */
+    body.a11y-contrast .panel { filter: invert(1) hue-rotate(180deg); }
+    body.a11y-contrast .panel img,
+    body.a11y-contrast .panel video { filter: invert(1) hue-rotate(180deg); }
+
+    /* ── Accessibility: larger text (Per Bot 24) ──
+       Font sizes throughout are hardcoded in px rather than rem, so
+       scaling the root font-size alone wouldn't touch most of them.
+       zoom scales the rendered size of everything inside .glass
+       uniformly — text, buttons, padding — without needing every size
+       rewritten to a relative unit. Supported in Chrome/Safari/Edge, and
+       in Firefox since v126. */
+    body.a11y-text-large .glass { zoom: 1.15; }
+    body.a11y-text-larger .glass { zoom: 1.3; }
+
+    .a11y-toggle-btn { background:none; border:none; cursor:pointer; color:rgba(255,255,255,0.4); font-size:15px; padding:0; line-height:1; display:flex; align-items:center; }
+    .a11y-menu { display:none; position:absolute; top:44px; right:24px; z-index:50; background:rgba(20,26,24,0.97); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px; min-width:190px; box-shadow:0 8px 24px rgba(0,0,0,0.4); }
+    .a11y-menu.open { display:block; }
+    .a11y-menu-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); padding:6px 8px 2px; }
+    .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
+    .a11y-menu-opt:hover { background:rgba(255,255,255,0.07); }
+    .a11y-menu-opt.active { background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.95); }
     .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
 
     .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; }
@@ -711,6 +745,22 @@
   <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 </head>
 <body>
+<script>
+  // Per Bot 24 — applied here, before anything else in body renders,
+  // using whatever was cached locally last time so a returning member
+  // doesn't see a flash of the dark theme before /api/account's
+  // authoritative value comes back (see loadA11yPrefsFromServer near the
+  // bottom of the main script, which reconciles this against the account
+  // and corrects it if they've changed the setting on another device).
+  (function() {
+    try {
+      if (localStorage.getItem('a11y_contrast') === '1') document.body.classList.add('a11y-contrast');
+      var scale = localStorage.getItem('a11y_text_scale');
+      if (scale === 'large') document.body.classList.add('a11y-text-large');
+      else if (scale === 'larger') document.body.classList.add('a11y-text-larger');
+    } catch(e) {}
+  })();
+</script>
 
 <!-- Single persistent audio element, reused for every spoken reply — see
      unlockAudioPlayback() and speak() in the script below. iOS Safari's
@@ -742,6 +792,18 @@
       <div style="display:flex;align-items:center;gap:10px">
         <button onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.4);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
         <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
+      </div>
+      <div style="position:relative">
+        <button class="a11y-toggle-btn" onclick="toggleA11yMenu()" title="Display settings" aria-label="Display settings">◐</button>
+        <div class="a11y-menu" id="a11yMenu">
+          <div class="a11y-menu-label">Contrast</div>
+          <button class="a11y-menu-opt" id="a11yContrastNormal" onclick="setA11yContrast(0)">Normal</button>
+          <button class="a11y-menu-opt" id="a11yContrastHigh" onclick="setA11yContrast(1)">High contrast (reversed)</button>
+          <div class="a11y-menu-label">Text size</div>
+          <button class="a11y-menu-opt" id="a11yTextNormal" onclick="setA11yTextScale('normal')">Normal</button>
+          <button class="a11y-menu-opt" id="a11yTextLarge" onclick="setA11yTextScale('large')">Large</button>
+          <button class="a11y-menu-opt" id="a11yTextLarger" onclick="setA11yTextScale('larger')">Larger</button>
+        </div>
       </div>
     </div>
 
@@ -5805,9 +5867,61 @@
     }
   }
 
+  // ── Accessibility: reversed-colour contrast + text size (Per Bot 24) ──
+  // Pre-paint script at the top of body already applied whatever was
+  // cached locally last time, so there's no flash on load; this reconciles
+  // that against the account's real saved value (loadA11yPrefsFromServer,
+  // called in the boot sequence below), which matters the first time
+  // someone logs in on a new device or if they changed it elsewhere.
+  function applyA11yState(contrast, textScale) {
+    document.body.classList.toggle('a11y-contrast', !!contrast);
+    document.body.classList.toggle('a11y-text-large', textScale === 'large');
+    document.body.classList.toggle('a11y-text-larger', textScale === 'larger');
+    document.getElementById('a11yContrastNormal').classList.toggle('active', !contrast);
+    document.getElementById('a11yContrastHigh').classList.toggle('active', !!contrast);
+    document.getElementById('a11yTextNormal').classList.toggle('active', textScale !== 'large' && textScale !== 'larger');
+    document.getElementById('a11yTextLarge').classList.toggle('active', textScale === 'large');
+    document.getElementById('a11yTextLarger').classList.toggle('active', textScale === 'larger');
+  }
+  function toggleA11yMenu() { document.getElementById('a11yMenu').classList.toggle('open'); }
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('a11yMenu');
+    if (menu && menu.classList.contains('open') && !menu.contains(e.target) && !e.target.closest('.a11y-toggle-btn')) {
+      menu.classList.remove('open');
+    }
+  });
+  async function setA11yContrast(val) {
+    applyA11yState(val, localStorage.getItem('a11y_text_scale') || 'normal');
+    try { localStorage.setItem('a11y_contrast', val ? '1' : '0'); } catch(e) {}
+    try {
+      await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_contrast: val }) });
+    } catch(e) { /* applied locally regardless — worst case it doesn't follow them to another device yet */ }
+  }
+  async function setA11yTextScale(scale) {
+    applyA11yState(document.body.classList.contains('a11y-contrast'), scale);
+    try { localStorage.setItem('a11y_text_scale', scale); } catch(e) {}
+    try {
+      await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_text_scale: scale }) });
+    } catch(e) {}
+  }
+  async function loadA11yPrefsFromServer() {
+    try {
+      const res = await fetch('/api/account');
+      const data = await res.json();
+      const contrast = !!Number(data.a11y_contrast);
+      const scale = data.a11y_text_scale || 'normal';
+      applyA11yState(contrast, scale);
+      localStorage.setItem('a11y_contrast', contrast ? '1' : '0');
+      localStorage.setItem('a11y_text_scale', scale);
+    } catch(e) {
+      applyA11yState(document.body.classList.contains('a11y-contrast'), localStorage.getItem('a11y_text_scale') || 'normal');
+    }
+  }
+
   // Kick off the resume card check as soon as the page loads, independent of
   // whichever tab happens to be active first.
   loadResumeCard();
+  loadA11yPrefsFromServer();
   checkOnboarding();
   // Per Bot 12: quietly watches for an incoming video/audio call from this
   // client's facilitator, independent of whichever tab is active — same

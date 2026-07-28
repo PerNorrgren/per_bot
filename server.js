@@ -8823,9 +8823,19 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
   try {
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
+    if (prefs.a11y_contrast !== undefined) {
+      const v = Number(prefs.a11y_contrast);
+      if (v !== 0 && v !== 1) return res.status(400).json({ error: 'a11y_contrast must be 0 or 1.' });
+      prefs.a11y_contrast = v;
+    }
+    if (prefs.a11y_text_scale !== undefined) {
+      if (!['normal','large','larger'].includes(prefs.a11y_text_scale)) {
+        return res.status(400).json({ error: "a11y_text_scale must be 'normal', 'large', or 'larger'." });
+      }
+    }
     // Light validation — bad values here would silently break someone's schedule
     // (e.g. never matching any cron run), so reject rather than store garbage.
     if (prefs.motd_days !== undefined) {

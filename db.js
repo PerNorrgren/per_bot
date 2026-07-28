@@ -1868,6 +1868,13 @@ async function getDb() {
     // existed. Deliberately kept out of getRecentEmailLog's SELECT list
     // (see below) so the list view stays light; fetched on demand per row.
     "ALTER TABLE email_log ADD COLUMN body_html TEXT",
+    // Per Bot 24 — accessibility: reversed-colour contrast mode and a
+    // text-size preference, both saved to the account (not just the
+    // browser) so they follow a member to whatever device they log in on.
+    // a11y_contrast: 0 = normal, 1 = high contrast (colours inverted).
+    // a11y_text_scale: 'normal' | 'large' | 'larger'.
+    "ALTER TABLE users ADD COLUMN a11y_contrast INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN a11y_text_scale TEXT DEFAULT 'normal'",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3893,7 +3900,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
