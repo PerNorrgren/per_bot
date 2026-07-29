@@ -250,7 +250,7 @@
         <div class="card-header"><div class="card-title">Signal scripts</div></div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            Short, pre-written mini-practices (under a minute) Talk can weave into a live conversation when genuinely relevant — either spoken text, or an existing library audio file. Talk only ever sees the topic and situation for each one, never the full text — so this list can grow freely without making every conversation more expensive. Leave skin blank for "every skin, including standard" — set one to scope it to just that skin (e.g. Mare).
+            Pre-written mini-practices — most under a minute, plus a longer five-minute set for when Talk offers someone the choice — Talk can weave into a live conversation when genuinely relevant, either spoken text, or an existing library audio file. Talk only ever sees the topic and situation for each one, never the full text — so this list can grow freely without making every conversation more expensive. Leave skin blank for "every skin, including standard" — set one to scope it to just that skin (e.g. Mare).
           </div>
 
           <div id="signalScriptsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -260,6 +260,7 @@
           <div style="display:flex; gap:8px; margin-bottom:8px;">
             <button class="btn primary" onclick="openSignalScriptModal()">+ Add signal script</button>
             <button class="btn" onclick="openSignalBulkImportModal()">Bulk upload (text scripts)</button>
+            <button class="btn" onclick="exportSignalScripts()">Export all (.csv)</button>
           </div>
         </div>
       </div>
@@ -602,6 +603,10 @@
     if (!(await appConfirm(`Remove this skin's ${action} image for this language? It'll fall back to the standard default.`))) return;
     await fetch(`/api/admin/tomte-skin-defaults/${encodeURIComponent(skinId)}/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
     loadTomteDefaults();
+  }
+
+  function exportSignalScripts() {
+    window.location.href = '/api/admin/signal-scripts/export';
   }
 
   // ══ Talk signal scripts (Per Bot 33s) ══

@@ -3455,6 +3455,34 @@ app.delete('/api/admin/tomte-skin-defaults/:skinId/:language/:action', auth.requ
 app.get('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
   res.json({ rows: db.getAllSignalScripts(), skins: db.getAllSkins().map(s => ({ id: s.id, name: s.name })) });
 });
+// Export everything as one CSV — for backup, or editing offline before a
+// re-import. Audio-kind rows show the referenced library file's title in
+// the Script column (there's no text to export for those), with Type
+// making clear which is which. Same column names bulk-import expects
+// (topic, situation, script) so a text-kind export round-trips straight
+// back in if re-uploaded, minus the Skin/Type columns bulk-import doesn't
+// read from a file (skin is chosen once for the whole import instead).
+app.get('/api/admin/signal-scripts/export', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const rows = db.getAllSignalScripts();
+    const esc = (v) => {
+      const s = String(v == null ? '' : v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const header = ['topic', 'situation', 'skin', 'type', 'script'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      const type = r.kind === 'audio' ? 'audio' : 'text';
+      const script = r.kind === 'audio' ? (r.file_title || '') : (r.script_text || '');
+      lines.push([r.topic, r.situation, r.skin_name || '', type, script].map(esc).join(','));
+    });
+    const csv = lines.join('\n');
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="signal-scripts-${stamp}.csv"`);
+    res.send(csv);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { topic, situation, skinId, kind, scriptText, fileId } = req.body;
