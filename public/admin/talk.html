@@ -266,13 +266,21 @@
       </div>
     </div>
 
-    <!-- Talk context documents (Per Bot 33s) -->
+    <!-- Talk context documents (Per Bot 33s, reinstated Per Bot 27) — this
+         corpus doesn't feed the system prompt directly any more (the
+         Knowledge Base below does that), but it IS still live: Talk can
+         reach for it mid-conversation via the search_source_material tool
+         when something genuinely isn't covered by any Knowledge Base
+         topic yet. Good home for material that's relevant background but
+         not (yet) worth turning into its own topic — new neuroscience
+         findings, a paper worth having on hand, anything still being
+         digested. -->
     <div>
       <div class="card">
         <div class="card-header"><div class="card-title">Context documents</div></div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            <strong style="color:rgba(255,210,140,0.85)">No longer injected into live conversations.</strong> Talk never reads this directly any more — the Knowledge Base below is what it actually draws on now. Kept here as the historical record of what was originally uploaded, and reserved for a future "search my own source material" fallback tool. To generate real Knowledge Base content, upload the source document again below, under Knowledge Base — the two lists are separate for now.
+            Not injected into every system prompt the way the Knowledge Base is — instead, Talk searches this library on demand (the <code>search_source_material</code> tool) when a conversation needs depth no Knowledge Base topic covers yet. A good place to drop in new material as it comes in — a paper, a finding, background you haven't worked into a topic yet — without waiting to formally process it first.
           </div>
 
           <div id="contextDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -401,6 +409,12 @@
           <option value="audio">Audio — plays an existing library file</option>
         </select>
       </div>
+      <div><label>Length</label>
+        <select id="ssLength">
+          <option value="1">1 minute</option>
+          <option value="5">5 minutes</option>
+        </select>
+      </div>
       <div id="ssTextField"><label>Script text</label><textarea id="ssScriptText" rows="4" placeholder="The exact words to be spoken — under a minute read aloud."></textarea></div>
       <div id="ssAudioField" style="display:none">
         <label>File</label>
@@ -420,7 +434,7 @@
   <div class="modal-overlay" id="signalBulkImportModal">
     <div class="modal">
       <h3>Bulk upload signal scripts</h3>
-      <div class="modal-note" style="margin-bottom:14px">CSV or Excel with topic, situation, and script columns — one row per script. Text scripts only; audio ones still need adding individually so you can pick the actual file.</div>
+      <div class="modal-note" style="margin-bottom:14px">CSV or Excel with topic, situation, and script columns — one row per script. An optional length_minutes column sets each row's length (anything other than exactly 5 becomes 1); leave it out and everything in the file defaults to 1 minute. Text scripts only; audio ones still need adding individually so you can pick the actual file.</div>
       <div><label>File</label><input type="file" id="ssBulkFile" accept=".csv,.xlsx,.xls"/></div>
       <div><label>Skin</label>
         <select id="ssBulkSkin"><option value="">No skin — every skin, including standard</option></select>
@@ -629,22 +643,70 @@
     }
   }
 
+  let _signalScriptsRows = [];
+  let _signalScriptsSort = { col: 'topic', dir: 'asc' };
+
   function renderSignalScriptsTable(rows) {
+    _signalScriptsRows = rows;
+    renderSignalScriptsSorted();
+  }
+
+  function sortSignalScripts(col) {
+    if (_signalScriptsSort.col === col) {
+      _signalScriptsSort.dir = _signalScriptsSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      _signalScriptsSort = { col, dir: 'asc' };
+    }
+    renderSignalScriptsSorted();
+  }
+
+  function renderSignalScriptsSorted() {
     const el = document.getElementById('signalScriptsTable');
-    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
-    el.innerHTML = rows.map(r => {
-      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
-      const kindTag = r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text';
-      return `
-      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
-        <div style="flex:1">
-          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${r.topic}${skinTag}</div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${r.situation} · ${kindTag}</div>
-        </div>
-        <button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button>
-        <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>
-      </div>`;
-    }).join('');
+    if (!_signalScriptsRows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
+    const { col, dir } = _signalScriptsSort;
+    const getVal = (r) => {
+      if (col === 'length') return r.length_minutes || 1;
+      if (col === 'type') return r.kind === 'audio' ? 'audio' : 'text';
+      if (col === 'situation') return (r.situation || '').toLowerCase();
+      return (r.topic || '').toLowerCase();
+    };
+    const sorted = [..._signalScriptsRows].sort((a, b) => {
+      const av = getVal(a), bv = getVal(b);
+      if (av < bv) return dir === 'asc' ? -1 : 1;
+      if (av > bv) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    const arrow = (c) => col === c ? (dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
+    const th = (c, label) => `<th style="text-align:left; padding:8px 10px; cursor:pointer; color:rgba(255,255,255,0.5); user-select:none; white-space:nowrap" onclick="sortSignalScripts('${c}')">${label}${arrow(c)}</th>`;
+    el.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+            ${th('topic', 'Topic')}
+            ${th('situation', 'Situation')}
+            ${th('type', 'Type')}
+            ${th('length', 'Length')}
+            <th style="padding:8px 10px"></th>
+          </tr>
+        </thead>
+        <tbody>
+        ${sorted.map(r => {
+          const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
+          const kindTag = r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text';
+          const lengthTag = (r.length_minutes || 1) === 5 ? '5 min' : '1 min';
+          return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+            <td style="padding:8px 10px; color:rgba(255,255,255,0.75)">${r.topic}${skinTag}</td>
+            <td style="padding:8px 10px; color:rgba(255,255,255,0.5)">${r.situation}</td>
+            <td style="padding:8px 10px; color:rgba(255,255,255,0.5); white-space:nowrap">${kindTag}</td>
+            <td style="padding:8px 10px; color:rgba(255,255,255,0.5); white-space:nowrap">${lengthTag}</td>
+            <td style="padding:8px 10px; white-space:nowrap">
+              <button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button>
+              <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>
+            </td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`;
   }
 
   async function deleteSignalScriptRow(id) {
@@ -704,6 +766,7 @@
         document.getElementById('ssSituation').value = row.situation;
         document.getElementById('ssSkin').value = row.skin_id || '';
         document.getElementById('ssKind').value = row.kind;
+        document.getElementById('ssLength').value = String(row.length_minutes || 1);
         document.getElementById('ssScriptText').value = row.script_text || '';
         _ssSelectedFileId = row.file_id || null;
         if (row.file_id) document.getElementById('ssFilePicked').textContent = `Selected: ${row.file_title || row.file_id}`;
@@ -715,6 +778,7 @@
       document.getElementById('ssSituation').value = '';
       document.getElementById('ssSkin').value = '';
       document.getElementById('ssKind').value = 'text';
+      document.getElementById('ssLength').value = '1';
       document.getElementById('ssScriptText').value = '';
       toggleSignalKindFields();
     }
@@ -727,9 +791,10 @@
     const situation = document.getElementById('ssSituation').value.trim();
     const skinId = document.getElementById('ssSkin').value;
     const kind = document.getElementById('ssKind').value;
+    const lengthMinutes = Number(document.getElementById('ssLength').value) === 5 ? 5 : 1;
     const scriptText = document.getElementById('ssScriptText').value.trim();
     const err = document.getElementById('ssErr');
-    const body = { topic, situation, skinId, kind, scriptText, fileId: _ssSelectedFileId };
+    const body = { topic, situation, skinId, kind, scriptText, fileId: _ssSelectedFileId, lengthMinutes };
     const res = id
       ? await fetch(`/api/admin/signal-scripts/${id}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
       : await fetch('/api/admin/signal-scripts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -767,7 +832,7 @@
     }
   }
 
-  // ══ Talk context documents (Per Bot 33s) ══
+  // ══ Talk context documents (Per Bot 33s, reinstated Per Bot 27) ══
   async function loadContextDocuments() {
     try {
       const data = await (await fetch('/api/admin/context-documents')).json();
@@ -793,7 +858,7 @@
       <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
         <div style="flex:1">
           <div style="font-size:13px; color:rgba(255,255,255,0.75)">${d.title}${skinTag}</div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${d.char_count.toLocaleString()} characters (~${approxTokens.toLocaleString()} tokens, sent on every turn for this skin)</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${d.char_count.toLocaleString()} characters (~${approxTokens.toLocaleString()} tokens — only pulled in when Talk's search_source_material tool actually reaches for this, not on every turn)</div>
         </div>
         <button class="btn sm danger" onclick="deleteContextDocumentRow('${d.id}')">Delete</button>
       </div>`;
@@ -801,7 +866,7 @@
   }
 
   async function deleteContextDocumentRow(id) {
-    if (!(await appConfirm('Delete this context document? Talk will lose this knowledge immediately.'))) return;
+    if (!(await appConfirm('Delete this context document? Talk will lose this material immediately.'))) return;
     await fetch(`/api/admin/context-documents/${id}`, { method: 'DELETE' });
     loadContextDocuments();
   }
@@ -1036,7 +1101,7 @@
 
   loadTomteDefaults();
 
-  // ── Talk context documents drop zone (Per Bot 33s) ──
+  // ── Talk context documents drop zone (Per Bot 33s, reinstated Per Bot 27) ──
   const cdDropZone = document.getElementById('cdDropZone');
   const cdFileInput = document.getElementById('cdFileInput');
   cdDropZone.addEventListener('click', () => cdFileInput.click());
@@ -1301,7 +1366,7 @@
           </label>
         `).join('')}
         <div style="margin-top:8px">
-          <button class="btn sm primary" onclick="resolveKbDuplicateGroup(${gi}, ${JSON.stringify(g.topics.map(t=>t.id))})">Keep selected, delete the rest</button>
+          <button class="btn sm primary" onclick='resolveKbDuplicateGroup(${gi}, ${JSON.stringify(g.topics.map(t=>t.id))})'>Keep selected, delete the rest</button>
           <button class="btn sm" onclick="document.getElementById('kbDupGroup_${gi}').remove()">Ignore this group</button>
         </div>
       </div>

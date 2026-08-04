@@ -3469,12 +3469,12 @@ app.get('/api/admin/signal-scripts/export', auth.requireAuthApi(['admin']), (req
       const s = String(v == null ? '' : v);
       return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const header = ['topic', 'situation', 'skin', 'type', 'script'];
+    const header = ['topic', 'situation', 'skin', 'type', 'length_minutes', 'script'];
     const lines = [header.join(',')];
     rows.forEach(r => {
       const type = r.kind === 'audio' ? 'audio' : 'text';
       const script = r.kind === 'audio' ? (r.file_title || '') : (r.script_text || '');
-      lines.push([r.topic, r.situation, r.skin_name || '', type, script].map(esc).join(','));
+      lines.push([r.topic, r.situation, r.skin_name || '', type, r.length_minutes || 1, script].map(esc).join(','));
     });
     const csv = lines.join('\n');
     const stamp = new Date().toISOString().slice(0, 10);
@@ -3485,19 +3485,21 @@ app.get('/api/admin/signal-scripts/export', auth.requireAuthApi(['admin']), (req
 });
 app.post('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { topic, situation, skinId, kind, scriptText, fileId } = req.body;
+    const { topic, situation, skinId, kind, scriptText, fileId, lengthMinutes } = req.body;
     if (!topic || !situation) return res.status(400).json({ error: 'Topic and situation are both required.' });
     if (kind === 'audio' && !fileId) return res.status(400).json({ error: 'Choose a file from the library for an audio signal.' });
     if (kind !== 'audio' && !scriptText) return res.status(400).json({ error: 'Write the script text.' });
-    db.createSignalScript(uuidv4(), topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId, 0);
+    const minutes = Number(lengthMinutes) === 5 ? 5 : 1;
+    db.createSignalScript(uuidv4(), topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId, 0, minutes);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/signal-scripts/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { topic, situation, skinId, kind, scriptText, fileId } = req.body;
+    const { topic, situation, skinId, kind, scriptText, fileId, lengthMinutes } = req.body;
     if (!topic || !situation) return res.status(400).json({ error: 'Topic and situation are both required.' });
-    db.updateSignalScript(req.params.id, topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId);
+    const minutes = Number(lengthMinutes) === 5 ? 5 : 1;
+    db.updateSignalScript(req.params.id, topic.trim(), situation.trim(), skinId || null, kind || 'text', scriptText, fileId, minutes);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3507,8 +3509,9 @@ app.delete('/api/admin/signal-scripts/:id', auth.requireAuthApi(['admin']), (req
 });
 // Bulk upload — text scripts only (audio ones still need a real file
 // picked per-row, which doesn't fit a spreadsheet). Columns: topic,
-// situation, script — skin applies to every row in the file, same as
-// bulk member import.
+// situation, script, and an optional length_minutes (or length/minutes/
+// duration) — anything other than exactly 5 defaults to 1. Skin applies
+// to every row in the file, same as bulk member import.
 app.post('/api/admin/signal-scripts/bulk-import', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -3542,8 +3545,10 @@ app.post('/api/admin/signal-scripts/bulk-import', auth.requireAuthApi(['admin'])
       const topic = findCol(row, ['topic']);
       const situation = findCol(row, ['situation']);
       const script = findCol(row, ['script', 'scripttext', 'text']);
+      const lengthRaw = findCol(row, ['lengthminutes', 'length', 'minutes', 'duration']);
+      const lengthMinutes = Number(lengthRaw) === 5 ? 5 : 1;
       if (!topic || !situation || !script) { invalid++; continue; }
-      db.createSignalScript(uuidv4(), topic, situation, skinId, 'text', script, null, 0);
+      db.createSignalScript(uuidv4(), topic, situation, skinId, 'text', script, null, 0, lengthMinutes);
       created++;
     }
     fs.unlink(req.file.path, () => {});

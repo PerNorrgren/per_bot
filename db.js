@@ -1875,6 +1875,18 @@ async function getDb() {
     // a11y_text_scale: 'normal' | 'large' | 'larger'.
     "ALTER TABLE users ADD COLUMN a11y_contrast INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN a11y_text_scale TEXT DEFAULT 'normal'",
+    // Per Bot 27 — length of a signal script in minutes, for the admin
+    // list's sortable Length column and so Talk's 1-min/5-min choice
+    // (Writing Methodology v11 Rule 18) can filter by it directly rather
+    // than guessing from the topic text. Defaults to 1 (true for nearly
+    // everything already in the table). The UPDATE below runs on every
+    // boot like the rest of this list, but its WHERE guard (length_minutes
+    // still at the default) makes it a no-op after the first successful
+    // run — catches the five-minute set bulk-imported just before this
+    // column existed, identified the same way the admin panel already
+    // visually flags them, by "(five minutes)" in the topic.
+    "ALTER TABLE talk_signal_scripts ADD COLUMN length_minutes INTEGER DEFAULT 1",
+    "UPDATE talk_signal_scripts SET length_minutes=5 WHERE topic LIKE '%(five minutes)%' AND length_minutes=1",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -5477,17 +5489,17 @@ function setSignalScriptCachedAudio(id, cachedAudioKey, voiceId) {
   );
   save();
 }
-function createSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, sortOrder) {
+function createSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, sortOrder, lengthMinutes) {
   getDbSync().run(
-    `INSERT INTO talk_signal_scripts (id,topic,situation,skin_id,kind,script_text,file_id,sort_order) VALUES (?,?,?,?,?,?,?,?)`,
-    [id, topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, sortOrder || 0]
+    `INSERT INTO talk_signal_scripts (id,topic,situation,skin_id,kind,script_text,file_id,sort_order,length_minutes) VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, sortOrder || 0, lengthMinutes || 1]
   );
   save();
 }
-function updateSignalScript(id, topic, situation, skinId, kind, scriptText, fileId) {
+function updateSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, lengthMinutes) {
   getDbSync().run(
-    `UPDATE talk_signal_scripts SET topic=?, situation=?, skin_id=?, kind=?, script_text=?, file_id=?, updated_at=datetime('now') WHERE id=?`,
-    [topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, id]
+    `UPDATE talk_signal_scripts SET topic=?, situation=?, skin_id=?, kind=?, script_text=?, file_id=?, length_minutes=?, updated_at=datetime('now') WHERE id=?`,
+    [topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, lengthMinutes || 1, id]
   );
   save();
 }
