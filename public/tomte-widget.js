@@ -586,7 +586,16 @@
       panel.classList.add('tomte-open');
       positionPanel();
       connect();
-      inputEl.focus();
+      // Per Bot 29 — used to call inputEl.focus() here, which triggered
+      // the on-screen keyboard purely from tapping the fab icon, before
+      // anyone had actually chosen to type — and since it fired before
+      // the keyboard-aware branch in positionPanel() below has a real
+      // viewport to react to, the panel could end up positioned for a
+      // keyboard that didn't exist yet a moment ago, then never
+      // recovering cleanly. The keyboard should only open from someone
+      // actually tapping into the input themselves — see the real
+      // 'focus' listener on inputEl further down, which repositions the
+      // panel above the keyboard once it's genuinely open.
       nudgeScrollContainers();
       // Per Bot 21 — catches a name/photo change made in My Account
       // without needing a hard refresh first.
@@ -856,6 +865,14 @@
       if (wsReady) ws.send(JSON.stringify({ type: 'stop_listening' }));
     }
     micBtn.addEventListener('click', () => { isListening ? stopListening() : startListening(); });
+    // Per Bot 29 — a real tap into the input (as opposed to the
+    // programmatic focus() this used to fire on open) is exactly when
+    // the keyboard should appear, and exactly when the panel needs to
+    // lift above it. The visualViewport resize listener above will
+    // eventually catch this too, but calling it directly here as well
+    // means the reposition happens the moment focus lands, not once the
+    // viewport's own resize event gets around to firing.
+    inputEl.addEventListener('focus', () => { if (panel.classList.contains('tomte-open')) positionPanel(); });
     micSendBtn.addEventListener('click', stopListening);
   }
 

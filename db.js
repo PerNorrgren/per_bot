@@ -5497,8 +5497,16 @@ function createSignalScript(id, topic, situation, skinId, kind, scriptText, file
   save();
 }
 function updateSignalScript(id, topic, situation, skinId, kind, scriptText, fileId, lengthMinutes) {
+  // Per Bot 30 — cached_audio_key used to survive an edit untouched, so
+  // fixing a script's wording (or its pacing, or anything else) kept
+  // serving the stale pre-edit recording indefinitely — the next play
+  // would hit the cache hit branch in resolveSignalMarkers and never
+  // notice anything had changed. Clearing both columns here means an
+  // edited script re-synthesizes fresh on its next play, same as a
+  // brand-new script's first play. Harmless for audio-kind scripts too:
+  // they never populate these columns in the first place.
   getDbSync().run(
-    `UPDATE talk_signal_scripts SET topic=?, situation=?, skin_id=?, kind=?, script_text=?, file_id=?, length_minutes=?, updated_at=datetime('now') WHERE id=?`,
+    `UPDATE talk_signal_scripts SET topic=?, situation=?, skin_id=?, kind=?, script_text=?, file_id=?, length_minutes=?, cached_audio_key=NULL, cached_audio_voice_id=NULL, updated_at=datetime('now') WHERE id=?`,
     [topic, situation, skinId || null, kind || 'text', scriptText || null, fileId || null, lengthMinutes || 1, id]
   );
   save();

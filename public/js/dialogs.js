@@ -251,3 +251,92 @@
     });
   };
 })();
+
+// ── Admin/facilitator accessibility: reversed-colour contrast + text size
+// (Per Bot 29) ── Same idea as the client app and /account (see
+// client-index.html, account.html), shared here once since every admin
+// page already loads this file synchronously in <head>, before body
+// renders — so the CSS and the pre-paint class-on-<html> both land before
+// first paint with no extra wiring per page. localStorage-only, not saved
+// to account: admin/facilitator logins live in a separate table from
+// client users, and this is a handful of people on their own machines,
+// not thousands of members across devices — the account-wide plumbing
+// the client version needed doesn't earn its cost here.
+(function () {
+  var STYLE = document.createElement('style');
+  STYLE.textContent =
+    'html.a11y-contrast { filter: invert(1) hue-rotate(180deg); }' +
+    'html.a11y-contrast img, html.a11y-contrast video { filter: invert(1) hue-rotate(180deg); }' +
+    'html.a11y-text-large body { zoom: 1.15; }' +
+    'html.a11y-text-larger body { zoom: 1.3; }' +
+    '.a11y-toggle-btn { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; color:rgba(255,255,255,0.55); font-size:12px; letter-spacing:0.03em; font-family:Georgia,serif; padding:6px 14px; line-height:1; }' +
+    '.a11y-toggle-btn:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.75); }' +
+    '.a11y-menu { display:none; position:absolute; top:calc(100% + 8px); right:0; z-index:500; background:rgba(20,26,24,0.98); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px; min-width:190px; box-shadow:0 8px 24px rgba(0,0,0,0.5); }' +
+    '.a11y-menu.open { display:block; }' +
+    '.a11y-menu-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); padding:6px 8px 2px; }' +
+    '.a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }' +
+    '.a11y-menu-opt:hover { background:rgba(255,255,255,0.07); }' +
+    '.a11y-menu-opt.active { background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.95); }';
+  document.head.appendChild(STYLE);
+
+  try {
+    if (localStorage.getItem('admin_a11y_contrast') === '1') document.documentElement.classList.add('a11y-contrast');
+    var scale = localStorage.getItem('admin_a11y_text_scale');
+    if (scale === 'large') document.documentElement.classList.add('a11y-text-large');
+    else if (scale === 'larger') document.documentElement.classList.add('a11y-text-larger');
+  } catch (e) {}
+
+  function applyState(contrast, textScale) {
+    document.documentElement.classList.toggle('a11y-contrast', !!contrast);
+    document.documentElement.classList.toggle('a11y-text-large', textScale === 'large');
+    document.documentElement.classList.toggle('a11y-text-larger', textScale === 'larger');
+    var menu = document.getElementById('a11yMenu');
+    if (!menu) return;
+    var cN = menu.querySelector('[data-a11y="contrast-0"]'), cH = menu.querySelector('[data-a11y="contrast-1"]');
+    var tN = menu.querySelector('[data-a11y="text-normal"]'), tL = menu.querySelector('[data-a11y="text-large"]'), tR = menu.querySelector('[data-a11y="text-larger"]');
+    if (cN) cN.classList.toggle('active', !contrast);
+    if (cH) cH.classList.toggle('active', !!contrast);
+    if (tN) tN.classList.toggle('active', textScale !== 'large' && textScale !== 'larger');
+    if (tL) tL.classList.toggle('active', textScale === 'large');
+    if (tR) tR.classList.toggle('active', textScale === 'larger');
+  }
+
+  window.setAdminA11yContrast = function (val) {
+    applyState(val, localStorage.getItem('admin_a11y_text_scale') || 'normal');
+    try { localStorage.setItem('admin_a11y_contrast', val ? '1' : '0'); } catch (e) {}
+  };
+  window.setAdminA11yTextScale = function (scale) {
+    applyState(document.documentElement.classList.contains('a11y-contrast'), scale);
+    try { localStorage.setItem('admin_a11y_text_scale', scale); } catch (e) {}
+  };
+  window.toggleAdminA11yMenu = function () {
+    var menu = document.getElementById('a11yMenu');
+    if (menu) menu.classList.toggle('open');
+  };
+
+  function injectMenu() {
+    var slot = document.getElementById('a11yMenuSlot');
+    if (!slot) return;
+    slot.innerHTML =
+      '<button class="a11y-toggle-btn" onclick="toggleAdminA11yMenu()" title="Display settings">Display</button>' +
+      '<div class="a11y-menu" id="a11yMenu">' +
+        '<div class="a11y-menu-label">Contrast</div>' +
+        '<button class="a11y-menu-opt" data-a11y="contrast-0" onclick="setAdminA11yContrast(0)">Normal</button>' +
+        '<button class="a11y-menu-opt" data-a11y="contrast-1" onclick="setAdminA11yContrast(1)">High contrast (reversed)</button>' +
+        '<div class="a11y-menu-label">Text size</div>' +
+        '<button class="a11y-menu-opt" data-a11y="text-normal" onclick="setAdminA11yTextScale(\'normal\')">Normal</button>' +
+        '<button class="a11y-menu-opt" data-a11y="text-large" onclick="setAdminA11yTextScale(\'large\')">Large</button>' +
+        '<button class="a11y-menu-opt" data-a11y="text-larger" onclick="setAdminA11yTextScale(\'larger\')">Larger</button>' +
+      '</div>';
+    applyState(document.documentElement.classList.contains('a11y-contrast'),
+      document.documentElement.classList.contains('a11y-text-larger') ? 'larger' : (document.documentElement.classList.contains('a11y-text-large') ? 'large' : 'normal'));
+    document.addEventListener('click', function (e) {
+      var menu = document.getElementById('a11yMenu');
+      if (menu && menu.classList.contains('open') && !menu.contains(e.target) && !e.target.closest('.a11y-toggle-btn')) {
+        menu.classList.remove('open');
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectMenu);
+  else injectMenu();
+})();

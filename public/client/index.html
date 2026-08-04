@@ -2562,13 +2562,22 @@
           promptBtn.textContent = `Start ${data.breathingPattern.name} →`;
           promptBtn.style.display = '';
         }
-        // Save button only makes sense for a real exchange, not the
-        // opening greeting — and only once they can actually see/hear
-        // something worth saving, i.e. after speak() has finished.
+        // Save button only makes sense after a real guided practice — not
+        // the opening greeting, and not ordinary conversation either.
+        // [[PAUSE]] in the raw reply means Talk actually paced someone
+        // through something step by step (see GUIDED PACING in the
+        // system prompt); a signalAudioUrl means a pre-written practice
+        // played. Plain back-and-forth, or a reflective passage marked
+        // with [[BREATH]] rather than [[PAUSE]], has nothing worth
+        // saving as a practice. Share isn't scoped the same way — any
+        // real exchange (not the opening greeting) is fine to share.
+        const wasGuidedPractice = reply.includes('[[PAUSE]]') || !!data.signalAudioUrl;
         if (userMsg !== '[START]') {
           lastBotReply = transcriptEl.textContent;
-          document.getElementById('saveTalkBtn').style.display = '';
-          document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
+          if (wasGuidedPractice) {
+            document.getElementById('saveTalkBtn').style.display = '';
+            document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
+          }
           document.getElementById('shareTalkBtn').style.display = '';
         }
         // The opening greeting ('[[START]]') is the first thing anyone

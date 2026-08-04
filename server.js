@@ -5749,11 +5749,23 @@ function languageInstruction(code) {
 // THIS turn too — so the very first play is never billed twice (once
 // here, once again via the client's own /api/speak call).
 async function synthesizeAndCacheSignalAudio(script) {
+  // Unlike the client's own speak() function (which splits a live reply on
+  // [[PAUSE]]/[[BREATH]] and inserts real, separately-timed silence
+  // between clips), this synthesizes the WHOLE script in one ElevenLabs
+  // request — there's no segment-splitting or gap-insertion here at all.
+  // A literal marker left in the text isn't just inert in that case, it's
+  // actively wrong: ElevenLabs would read the bracketed text aloud or
+  // mangle it, and no real pause would appear where one was intended.
+  // Scripts written for this pathway need their pacing built into the
+  // words themselves (a counted breath, a beat of silence implied by
+  // punctuation) rather than relying on a marker this pathway can't act
+  // on — this strip is a defensive backstop for that, not the fix itself.
+  const cleanText = (script.script_text || '').split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').replace(/\s{2,}/g, ' ').trim();
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
     body: JSON.stringify({
-      text: script.script_text,
+      text: cleanText,
       model_id: 'eleven_multilingual_v2',
       voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
     }),
