@@ -4700,7 +4700,7 @@ tomteWss.on('connection', (ws, req) => {
           // either (per Deepgram's own docs: "if you're streaming
           // containerized audio... you should not set the encoding and
           // sample rate"). Let it auto-detect the container instead.
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=3200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('open', () => {
@@ -7003,7 +7003,7 @@ const listenWss = new WebSocket.Server({ noServer: true, perMessageDeflate: fals
 
 listenWss.on('connection', (clientWs) => {
   const dgWs = new WebSocket(
-    'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
+    'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&endpointing=400&utterance_end_ms=3200&interim_results=true',
     { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
   );
   dgWs.on('open',    () => console.log('Deepgram connected'));
@@ -7223,7 +7223,14 @@ facilitatorWss.on('connection', (ws, ctx) => {
           // were making Deepgram treat it as raw, headerless Opus instead,
           // which it silently couldn't reconcile — accepted every chunk,
           // never returned a transcript. Let it auto-detect the container.
-          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=1200&interim_results=true',
+          // Per Bot 32 — utterance_end_ms raised from 1200 to 3200: people
+          // were getting cut off mid-thought during a natural pause,
+          // before they'd actually finished what they wanted to say.
+          // Raised uniformly across all three Deepgram connections in
+          // this file (Tomte's own bridge and the /listen proxy too) for
+          // consistent behavior, since the same premature-cutoff problem
+          // would apply equally to any of them.
+          'wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&endpointing=400&utterance_end_ms=3200&interim_results=true',
           { headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` } }
         );
         dgWs.on('open', () => {
