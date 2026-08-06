@@ -1860,6 +1860,14 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_subject TEXT",
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_body TEXT",
     "ALTER TABLE app_config ADD COLUMN newsletter_welcome_format TEXT DEFAULT 'plain'",
+    // Per Bot 42 — same pattern as newsletter_welcome above, for the
+    // "Extend trials" / "Give trial" bulk actions in People. Falls back
+    // to a sensible built-in message (see emailTrialUpdated) until Per
+    // writes his own — same as every other template in this family, an
+    // unset body isn't an error state, it's just "using the default."
+    "ALTER TABLE app_config ADD COLUMN trial_extended_subject TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_extended_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN trial_extended_format TEXT DEFAULT 'plain'",
     // Stored email body (Per Bot 21) — the rendered HTML actually sent,
     // captured at send time in sendEmail() so the admin Email Log can show
     // "what did this actually look like" rather than just subject/status.
@@ -3936,6 +3944,16 @@ function regrantTrialForLapsedUsers(userIds, days, tier = 1) {
   save();
   const ids = before.map(r => r.id);
   return queryAll(`SELECT id, name, email, language, trial_ends_at FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+}
+
+// Per Bot 42 — reuses the existing login_log table (already recorded on
+// every real login) rather than adding a new column. Good enough for
+// this purpose despite the 180-day prune on that table (see
+// pruneOldLogs) — trial windows, even extended ones, run far shorter
+// than that, so a real prior login within the relevant window will
+// still be there.
+function hasEverLoggedIn(userId) {
+  return !!queryOne(`SELECT 1 as x FROM login_log WHERE user_id=? AND event_type='login' LIMIT 1`, [userId]);
 }
 
 function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
@@ -6211,7 +6229,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -6581,7 +6599,7 @@ module.exports = {
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
-  countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers,
+  countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers, hasEverLoggedIn,
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions

@@ -860,36 +860,40 @@ Per`;
   );
 }
 
-// Per Bot 41 — sent from the "Extend trials" and "Give trial" bulk
-// actions in People. Two variants of what to say (messageType), and two
-// variants of the underlying fact (isRestart) — extending an
-// active trial reads as "extended," but someone whose trial had already
-// lapsed is getting a genuinely new one, not more days added to
-// something that ran out, so the wording says "started a new trial"
-// there instead. Per's own wording for the "features" variant, lightly
-// adapted to the two isRestart cases.
-function emailTrialUpdated(name, email, days, newExpiryDate, messageType, isRestart, language) {
+// Per Bot 42 — rebuilt on the same shared infrastructure as every other
+// admin-editable message (buildMessageTokens/fillTemplate/renderMessageBody
+// — see the big comment on buildMessageTokens above), rather than a
+// standalone fixed template. Falls back to a sensible built-in default
+// until Per writes his own custom one in Settings, same "unset means
+// default, not broken" convention every template in this family follows.
+// {{invite_link}} already resolves smartly via buildMessageTokens: a
+// proper /join/:token self-service link for anyone with no password set
+// yet (an admin-added account, still on its temp password), or a plain
+// /login link for anyone who already has one. It doesn't yet distinguish
+// "has a password but has never actually logged in" (a self-registered
+// trial user who set a password at signup and simply never came back) —
+// that's a real, separate gap worth fixing in buildMessageTokens itself
+// since every template using {{invite_link}} would benefit, not just
+// this one; noted rather than silently solved here.
+function emailTrialUpdated(user, days, messageType, isRestart) {
   const b = brand();
-  const dateStr = new Date(newExpiryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const cfg = db.getAppConfig() || {};
+  const tokens = buildMessageTokens(user, { extra: { days: String(days) } });
   const actionPhrase = isRestart ? `started a new ${days}-day trial for you` : `extended your trial by ${days} days`;
-  const bodyText = messageType === 'features'
-    ? `We've been rolling out a lot of new things lately, so we've ${actionPhrase} — until ${dateStr} — to give you a proper chance to see and try what's new.`
-    : `Just a quick note — we've ${actionPhrase}. Your access now runs until ${dateStr}.`;
-  return sendLocalizedEmail(`trial_updated_${messageType}${isRestart ? '_restart' : ''}`, language, {
-    subject: isRestart ? `A fresh trial, on us` : `Your trial's been extended`,
-    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello, {{name}}</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">{{bodyText}}</p>
-      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
-        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
-        <div style="font-size:15px;color:#1a1a1a">{{dateStr}}</div>
-      </div>
-      <p style="font-size:14px;line-height:1.7;color:#666">Sign in as usual at {{appUrl}} whenever you're ready.</p>
+  const defaultBody = messageType === 'simple'
+    ? `Hi {{name}},\n\nJust a quick note — we've ${actionPhrase}. Your access now runs until {{expiry_date}}.\n\nSign in at {{invite_link}} whenever you're ready.`
+    : `Hi {{name}},\n\nWe've been rolling out a lot of new things lately, so we've ${actionPhrase} — until {{expiry_date}} — to give you a proper chance to see and try what's new.\n\nSign in at {{invite_link}} whenever you're ready.`;
+  const subjectDefault = isRestart ? `A fresh trial, on us` : `Your trial's been extended`;
+  const subject = fillTemplate(cfg.trial_extended_subject || subjectDefault, tokens);
+  const body = fillTemplate(cfg.trial_extended_body || defaultBody, tokens);
+  return sendEmail(user.email, subject,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      ${renderMessageBody(body, cfg.trial_extended_format)}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
-      <div style="font-size:12px;color:#aaa">{{brand}}</div>
+      <div style="font-size:12px;color:#aaa">${b.name}</div>
     </div>`
-  }, { brand: b.name, name, bodyText, dateStr, appUrl: APP_URL }, email);
+  );
 }
 
 function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEndsAt, manualExpiresAt) {
@@ -2139,10 +2143,14 @@ app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), async (
     if (emailType !== 'none') {
       // Fire-and-forget per person — a slow or failed send to one
       // person shouldn't hold up the response or fail the whole batch;
-      // the data change has already happened either way.
+      // the data change has already happened either way. Re-fetches the
+      // full user record since buildMessageTokens (inside
+      // emailTrialUpdated) needs more than the handful of fields the
+      // db.js update function itself returns.
       affectedRows.forEach(u => {
-        if (u.email) emailTrialUpdated(u.name, u.email, days, u.trial_ends_at, emailType, false, u.language)
-          .catch(e => console.error('[trial-extend email]', u.email, e.message));
+        const fullUser = db.getUser(u.id);
+        if (fullUser?.email) emailTrialUpdated(fullUser, days, emailType, false)
+          .catch(e => console.error('[trial-extend email]', fullUser.email, e.message));
       });
     }
     res.json({ ok: true, affected: affectedRows.length });
@@ -2168,8 +2176,9 @@ app.post('/api/admin/trials/regrant', auth.requireAuthApi(['admin']), async (req
     const affectedRows = db.regrantTrialForLapsedUsers(userIds, days);
     if (emailType !== 'none') {
       affectedRows.forEach(u => {
-        if (u.email) emailTrialUpdated(u.name, u.email, days, u.trial_ends_at, emailType, true, u.language)
-          .catch(e => console.error('[trial-regrant email]', u.email, e.message));
+        const fullUser = db.getUser(u.id);
+        if (fullUser?.email) emailTrialUpdated(fullUser, days, emailType, true)
+          .catch(e => console.error('[trial-regrant email]', fullUser.email, e.message));
       });
     }
     res.json({ ok: true, affected: affectedRows.length });
@@ -9900,7 +9909,7 @@ app.post('/api/admin/settings/savers-sequence/test-send', auth.requireAuthApi(['
 
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format', trialExtendedSubject: 'trial_extended_subject', trialExtendedBody: 'trial_extended_body', trialExtendedFormat: 'trial_extended_format' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -10869,6 +10878,20 @@ app.post('/api/admin/newsletter-welcome/test', auth.requireAuthApi(['admin']), a
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('newsletter-welcome test-send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/trial-extended/test', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const toEmail = resolveTestEmail(req.body?.to, req.user.email);
+    if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
+    const realUser = db.getUserByEmail(toEmail.toLowerCase());
+    const previewUser = realUser || { id: null, name: req.user.name || 'there', email: toEmail };
+    await emailTrialUpdated(previewUser, 14, 'features', false);
+    res.json({ ok: true, to: toEmail });
+  } catch (e) {
+    console.error('trial-extended test-send error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

@@ -723,6 +723,54 @@
     </div>
   </div>
 
+  <!-- ── Trial extended / restarted (Per Bot 42) ── -->
+  <div>
+    <div class="section-label">Trial extended message</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Trial extended / restarted settings</div>
+        <button class="btn sm primary" onclick="saveTrialExtendedConfig()">Save</button>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">When this sends</div>
+          <div class="config-desc">When "New features" is chosen as the message on the Extend trials or Give trial actions in People. Wording elsewhere in the email (extended vs. a fresh trial) adjusts automatically depending on which of the two actions was used — write this so it reads naturally either way, e.g. "your access now runs until {{expiry_date}}" rather than "your extension."</div>
+        </div>
+      </div>
+      <div class="config-row">
+        <div>
+          <div class="config-label">Subject line</div>
+          <div class="config-desc">Email subject sent with the extended/fresh trial</div>
+        </div>
+        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
+          <input class="inline-input" type="text" id="trialExtendedSubject" placeholder="More time to explore what's new" style="width:280px"/>
+          <span id="trialExtendedSubjectTokenWrap"></span>
+        </div>
+      </div>
+      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div>
+          <div class="config-label">Message (email)</div>
+          <div class="config-desc">Write the whole email here — greeting, sign-off, everything. Only the small brand label at the top is fixed. {{name}}, {{days}}, and {{expiry_date}} are all available as tokens. Leave blank to use the built-in default message instead.</div>
+        </div>
+        <div id="trialExtendedBody_toggleWrap"></div>
+        <textarea class="inline-input" id="trialExtendedBody_plain" rows="6" style="width:100%;resize:vertical" placeholder="We've been rolling out a lot of new things lately, so we've made sure you have {{days}} more days — until {{expiry_date}} — to properly see and try what's new."></textarea>
+        <div id="trialExtendedBody_rich" style="display:none"></div>
+        <div id="trialExtendedBodyTokenWrap"></div>
+      </div>
+      <div class="config-row" style="border-bottom:none">
+        <div>
+          <div class="config-label">Send test</div>
+          <div class="config-desc">Sends using the settings above (even if not saved yet), with placeholder values for the token fields</div>
+        </div>
+        <div class="config-val">
+          <input class="inline-input" type="email" id="trialExtendedTestTo" placeholder="Defaults to your email" style="width:200px"/>
+          <button class="btn sm" id="trialExtendedTestBtn" onclick="sendTestTrialExtended()">Send test</button>
+        </div>
+      </div>
+      <div style="padding:0 20px 14px"><div class="feedback" id="trialExtendedFeedback"></div></div>
+    </div>
+  </div>
+
   <!-- ── Newsletters ── -->
   <div>
     <div class="section-label">Newsletters</div>
@@ -3812,6 +3860,93 @@
     }
   }
 
+  // ── Trial extended / restarted (Per Bot 42) — same shape as
+  // Newsletter → Explorer welcome just above; kept as its own separate
+  // template/config block rather than trying to unify with that one,
+  // since "when this sends" and the available tokens genuinely differ.
+  let _trialExtendedFormat = 'plain';
+  async function loadTrialExtendedConfig() {
+    document.getElementById('trialExtendedSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('trialExtendedSubject', MessageEditor.standardTokens());
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      document.getElementById('trialExtendedSubject').value = cfg.trial_extended_subject || '';
+      document.getElementById('trialExtendedBody_plain').value = cfg.trial_extended_body || '';
+      _trialExtendedFormat = cfg.trial_extended_format || 'plain';
+    } catch(e) { /* fields keep their HTML defaults */ }
+
+    document.getElementById('trialExtendedBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
+      _trialExtendedFormat === 'rich' ? 'trialExtendedBody_rich' : 'trialExtendedBody_plain',
+      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: _trialExtendedFormat === 'rich' }
+    );
+    document.getElementById('trialExtendedBody_toggleWrap').innerHTML =
+      MessageEditor.formatToggleHtml('trialExtendedBody', _trialExtendedFormat, 'setTrialExtendedFormat');
+    if (_trialExtendedFormat === 'rich') {
+      document.getElementById('trialExtendedBody_plain').style.display = 'none';
+      document.getElementById('trialExtendedBody_rich').style.display = '';
+      const bodyVal = document.getElementById('trialExtendedBody_plain').value;
+      MessageEditor.mountRich('trialExtendedBody_rich', bodyVal || '');
+    }
+  }
+
+  function setTrialExtendedFormat(bodyId, format) {
+    _trialExtendedFormat = format;
+    document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';
+    document.getElementById(bodyId+'_richBtn').className = format==='rich' ? 'active' : '';
+    const plainEl = document.getElementById(bodyId+'_plain');
+    const richEl = document.getElementById(bodyId+'_rich');
+    if (format === 'rich') {
+      plainEl.style.display = 'none'; richEl.style.display = '';
+      if (!MessageEditor.isMounted(bodyId+'_rich')) {
+        MessageEditor.mountRich(bodyId+'_rich', renderPlainAsRichPreview(plainEl.value));
+      }
+    } else {
+      richEl.style.display = 'none'; plainEl.style.display = '';
+    }
+    document.getElementById('trialExtendedBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
+      format === 'rich' ? bodyId+'_rich' : bodyId+'_plain',
+      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: format === 'rich' }
+    );
+  }
+
+  async function saveTrialExtendedConfig() {
+    const subject = document.getElementById('trialExtendedSubject').value.trim();
+    const body = _trialExtendedFormat === 'rich'
+      ? MessageEditor.getHtml('trialExtendedBody_rich')
+      : document.getElementById('trialExtendedBody_plain').value.trim();
+    try {
+      const res  = await fetch('/api/admin/settings', {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ trialExtendedSubject: subject || null, trialExtendedBody: body || null, trialExtendedFormat: _trialExtendedFormat })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('trialExtendedFeedback', 'Saved.', 'ok');
+      else         showFeedback('trialExtendedFeedback', data.error || 'Could not save.', 'err');
+    } catch(e) {
+      showFeedback('trialExtendedFeedback', 'Network error — could not save.', 'err');
+    }
+  }
+
+  async function sendTestTrialExtended() {
+    const to  = document.getElementById('trialExtendedTestTo').value.trim();
+    const btn = document.getElementById('trialExtendedTestBtn');
+
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res  = await fetch('/api/admin/trial-extended/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ to: to || undefined })
+      });
+      const data = await res.json();
+      if (data.ok) showFeedback('trialExtendedFeedback', `Test sent to ${data.to}`, 'ok');
+      else         showFeedback('trialExtendedFeedback', data.error || 'Could not send test.', 'err');
+    } catch(e) {
+      showFeedback('trialExtendedFeedback', 'Network error — could not send test.', 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Send test';
+    }
+  }
+
   // ════════════════════════════════════
   // Test destination (Per Bot 7) — one saved email + phone used as the
   // default for every test-send button on this page. Prefills every
@@ -3955,6 +4090,7 @@
     loadRenewalConfig();
     loadBirthdayConfig();
     loadNewsletterWelcomeConfig();
+    loadTrialExtendedConfig();
     loadNewsletters();
     loadScheduledMessages();
   });
