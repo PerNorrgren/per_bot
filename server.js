@@ -7,6 +7,11 @@ const http       = require('http');
 const WebSocket  = require('ws');
 const path       = require('path');
 const fs         = require('fs');
+const fsp        = require('fs/promises');
+const os         = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const multer     = require('multer');
 const { parse: csvParse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
@@ -56,6 +61,13 @@ const MARE_VOICE_ID      = process.env.MARE_VOICE_ID;
 const TOMTE_VOICE_ENABLED = true;
 const DEEPGRAM_API_KEY   = process.env.DEEPGRAM_API_KEY;
 const VOICE_SPEED        = parseFloat(process.env.VOICE_SPEED || '0.82');
+// Per Bot 34 — signal scripts (pre-cached guided practices) read noticeably
+// faster than the slow, contemplative pace they're written for, once
+// actually heard. Ordinary conversation speed (0.82) is fine for Talk's
+// live back-and-forth, but a guided practice — counted breaths, moving
+// attention from one part of the body to another — needs real room to
+// breathe that conversational pace doesn't give it. Deliberately slower.
+const SIGNAL_SCRIPT_VOICE_SPEED = parseFloat(process.env.SIGNAL_SCRIPT_VOICE_SPEED || '0.72');
 const PORT               = process.env.PORT || 3000;
 // ── 1:1 calling (Per Bot 12) — TURN relay ──
 // A public STUN server (Google's) is enough for most direct browser-to-
@@ -5748,35 +5760,79 @@ function languageInstruction(code) {
 // right here, uploads the result to R2, and returns it as audioUrl for
 // THIS turn too — so the very first play is never billed twice (once
 // here, once again via the client's own /api/speak call).
-async function synthesizeAndCacheSignalAudio(script) {
-  // Unlike the client's own speak() function (which splits a live reply on
-  // [[PAUSE]]/[[BREATH]] and inserts real, separately-timed silence
-  // between clips), this synthesizes the WHOLE script in one ElevenLabs
-  // request — there's no segment-splitting or gap-insertion here at all.
-  // A literal marker left in the text isn't just inert in that case, it's
-  // actively wrong: ElevenLabs would read the bracketed text aloud or
-  // mangle it, and no real pause would appear where one was intended.
-  // Scripts written for this pathway need their pacing built into the
-  // words themselves (a counted breath, a beat of silence implied by
-  // punctuation) rather than relying on a marker this pathway can't act
-  // on — this strip is a defensive backstop for that, not the fix itself.
-  const cleanText = (script.script_text || '').split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ').replace(/\s{2,}/g, ' ').trim();
+async function synthesizeSignalSegment(text) {
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_192`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'xi-api-key': ELEVENLABS_API_KEY, 'Connection': 'close' },
     body: JSON.stringify({
-      text: cleanText,
+      text,
       model_id: 'eleven_multilingual_v2',
-      voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: VOICE_SPEED }
+      voice_settings: { stability: 0.65, similarity_boost: 0.80, speed: SIGNAL_SCRIPT_VOICE_SPEED }
     }),
     signal: AbortSignal.timeout(30000),
   });
-  if (!response.ok) throw new Error(`ElevenLabs signal-cache synthesis failed: ${response.status}`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const key = `signal-audio/${script.id}-${uuidv4()}.mp3`;
-  await media.uploadPublicObject(key, buffer, 'audio/mpeg');
-  db.setSignalScriptCachedAudio(script.id, key, VOICE_ID);
-  return media.getPlaybackUrl(key);
+  if (!response.ok) throw new Error(`ElevenLabs signal-cache segment synthesis failed: ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function synthesizeAndCacheSignalAudio(script) {
+  // Per Bot 34 — real segment splicing, not just marker-stripping. The
+  // scripts are already written in paragraphs — each one a portion that
+  // belongs together (a body part, a counted breath, a shift in
+  // direction) — so we synthesize each paragraph as its own ElevenLabs
+  // request and splice in a genuine 3-second silence between them with
+  // ffmpeg, rather than relying on punctuation or hoping the model
+  // honors a pause it was never asked to produce. Naive Buffer.concat of
+  // separate MP3s does NOT work — verified directly, it produces real
+  // decode errors ("Header missing", invalid packets) — so this goes
+  // through ffmpeg's concat demuxer, which re-muxes properly. Requires
+  // ffmpeg on the server (see nixpacks.toml, added this session); if
+  // that's missing this throws, which is safer than silently shipping
+  // corrupted audio.
+  const rawText = (script.script_text || '').split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ');
+  const segments = rawText.split(/\n\s*\n/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+
+  if (segments.length <= 1) {
+    // Nothing to splice — a single short script is just one request,
+    // same as before.
+    const buffer = await synthesizeSignalSegment(segments[0] || rawText.trim());
+    const key = `signal-audio/${script.id}-${uuidv4()}.mp3`;
+    await media.uploadPublicObject(key, buffer, 'audio/mpeg');
+    db.setSignalScriptCachedAudio(script.id, key, VOICE_ID);
+    return media.getPlaybackUrl(key);
+  }
+
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'signal-audio-'));
+  try {
+    const partFiles = [];
+    for (let i = 0; i < segments.length; i++) {
+      const buf = await synthesizeSignalSegment(segments[i]);
+      const segPath = path.join(tmpDir, `seg${i}.mp3`);
+      await fsp.writeFile(segPath, buf);
+      partFiles.push(segPath);
+      if (i < segments.length - 1) {
+        // Generated fresh each time via ffmpeg's own silence source
+        // rather than a bundled asset, so the encoding always matches
+        // exactly — no risk of a stray format mismatch between a static
+        // file and whatever ElevenLabs actually returned this time.
+        const silPath = path.join(tmpDir, `sil${i}.mp3`);
+        await execFileAsync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '3', '-b:a', '192k', silPath]);
+        partFiles.push(silPath);
+      }
+    }
+    const listPath = path.join(tmpDir, 'list.txt');
+    const listContent = partFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join('\n');
+    await fsp.writeFile(listPath, listContent);
+    const outPath = path.join(tmpDir, 'combined.mp3');
+    await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
+    const buffer = await fsp.readFile(outPath);
+    const key = `signal-audio/${script.id}-${uuidv4()}.mp3`;
+    await media.uploadPublicObject(key, buffer, 'audio/mpeg');
+    db.setSignalScriptCachedAudio(script.id, key, VOICE_ID);
+    return media.getPlaybackUrl(key);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 async function resolveSignalMarkers(text, requestVoiceId) {
   let audioUrl = null;

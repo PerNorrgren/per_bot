@@ -1,0 +1,12 @@
+# Per Bot 34 — Railway's default Node.js build (Nixpacks) doesn't include
+# ffmpeg, which the new signal-script audio splicing needs (see
+# synthesizeAndCacheSignalAudio in server.js — it shells out to ffmpeg to
+# properly splice separately-synthesized ElevenLabs segments together with
+# real silence between them; naive byte concatenation of MP3 files doesn't
+# work, verified directly — it produces corrupted, undecodable audio).
+#
+# aptPkgs adds this one extra system package on top of whatever Nixpacks
+# already auto-detects for a Node.js app (Node itself, npm, etc.) — it
+# doesn't replace or interfere with that detection, just adds to it.
+[phases.setup]
+aptPkgs = ["ffmpeg"]
