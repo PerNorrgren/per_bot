@@ -3857,6 +3857,44 @@ function markReferralEventsSeen(referrerId) {
 
 // ── Membership ──
 // member_tier: 0=Explorer, 1=Member1, 2=Member2, 3=Member3
+// ── Bulk trial extension (Per Bot 38) — "give everyone still on trial a
+// bit more time" is a real, recurring admin need (a big platform update,
+// a launch delay, goodwill), and previously had no supported way to do
+// it short of editing users one at a time. trial_ends_at NOT NULL and still
+// in the future is enough on its own to mean "currently on an active,
+// unconverted trial" — setMemberTier explicitly clears trial_ends_at to
+// NULL when a trial converts to a real paid subscription, so a
+// converted member is never touched by this regardless of how their old
+// trial_ends_at value might otherwise look.
+function countActiveTrials(userIds) {
+  if (userIds && userIds.length) {
+    const placeholders = userIds.map(() => '?').join(',');
+    return queryOne(`SELECT COUNT(*) as n FROM users WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now') AND id IN (${placeholders})`, userIds).n;
+  }
+  return queryOne(`SELECT COUNT(*) as n FROM users WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`).n;
+}
+function extendAllActiveTrials(days, userIds) {
+  if (userIds && userIds.length) {
+    const before = countActiveTrials(userIds);
+    const placeholders = userIds.map(() => '?').join(',');
+    getDbSync().run(
+      `UPDATE users SET trial_ends_at = datetime(trial_ends_at, '+' || ? || ' days')
+       WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now') AND id IN (${placeholders})`,
+      [days, ...userIds]
+    );
+    save();
+    return before;
+  }
+  const before = countActiveTrials();
+  getDbSync().run(
+    `UPDATE users SET trial_ends_at = datetime(trial_ends_at, '+' || ? || ' days')
+     WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`,
+    [days]
+  );
+  save();
+  return before;
+}
+
 function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
   getDbSync().run(
     `UPDATE users SET
@@ -6500,6 +6538,7 @@ module.exports = {
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
+  countActiveTrials, extendAllActiveTrials,
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions

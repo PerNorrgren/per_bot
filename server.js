@@ -2087,6 +2087,26 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getAllUsersAdmin(req.query.archived === '1'));
 });
 
+// ── Bulk trial extension (Per Bot 38) — "everyone currently on trial
+// gets N more days," in one action, rather than editing people one at a
+// time. GET returns a live count for the confirmation prompt; POST does
+// the actual extension and returns how many were affected.
+app.get('/api/admin/trials/active-count', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const userIds = req.query.userIds ? String(req.query.userIds).split(',').filter(Boolean) : null;
+    res.json({ count: db.countActiveTrials(userIds) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const days = Number(req.body.days);
+    if (!days || days <= 0 || days > 365) return res.status(400).json({ error: 'Enter a number of days between 1 and 365.' });
+    const userIds = Array.isArray(req.body.userIds) && req.body.userIds.length ? req.body.userIds : null;
+    const affected = db.extendAllActiveTrials(days, userIds);
+    res.json({ ok: true, affected });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Admin: Add Member ──
 // Mirrors self-registration: same fields, same email-confirmation-with-password-change flow.
 // GDPR: consent is recorded as given by the admin on the member's behalf at creation time,

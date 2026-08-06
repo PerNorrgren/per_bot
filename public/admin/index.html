@@ -270,6 +270,7 @@
           <div class="card-title">Members<span class="card-count" id="memberCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="btn sm primary" onclick="openAddUserModal()">+ Add User</button>
+            <button class="btn sm" onclick="openExtendTrialsModal()">Extend trials</button>
             <button class="btn sm disabled" id="memberEditBtn" onclick="editSelectedMember()">Edit</button>
             <button class="btn sm disabled" id="memberDetailsBtn" onclick="editSelectedMemberDetails()">Edit details</button>
             <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
@@ -355,6 +356,34 @@
       </div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('activeUsersModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="extendTrialsModal" onclick="if(event.target===this)closeModal('extendTrialsModal')">
+    <div class="modal">
+      <h3>Extend trials</h3>
+      <div style="margin:16px 0;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.5)" id="extendTrialsCount">Loading how many people this affects…</div>
+        <div>
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Extend by</label>
+          <select id="extendTrialsPreset" onchange="toggleExtendTrialsCustom()" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+            <option value="7">1 week</option>
+            <option value="14" selected>2 weeks</option>
+            <option value="30">1 month</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div id="extendTrialsCustomField" style="display:none">
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Number of days</label>
+          <input type="number" id="extendTrialsDays" value="14" min="1" max="365" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
+        </div>
+        <div class="modal-note">Pushes the trial end date forward for everyone this applies to — already-paying members and lapsed trials are untouched either way.</div>
+      </div>
+      <div class="modal-err" id="extendTrialsErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('extendTrialsModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveExtendTrials()">Extend</button>
       </div>
     </div>
   </div>
@@ -2243,6 +2272,64 @@
     document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
   }
+  function toggleExtendTrialsCustom() {
+    const isCustom = document.getElementById('extendTrialsPreset').value === 'custom';
+    document.getElementById('extendTrialsCustomField').style.display = isCustom ? '' : 'none';
+  }
+  function extendTrialsDaysValue() {
+    const preset = document.getElementById('extendTrialsPreset').value;
+    return preset === 'custom' ? Number(document.getElementById('extendTrialsDays').value) : Number(preset);
+  }
+  async function openExtendTrialsModal() {
+    document.getElementById('extendTrialsPreset').value = '14';
+    toggleExtendTrialsCustom();
+    document.getElementById('extendTrialsErr').textContent = '';
+    document.getElementById('extendTrialsCount').textContent = 'Loading how many people this affects…';
+    openModal('extendTrialsModal');
+    // Reuses the same selection checkboxes already on the Members table
+    // (memberSel — the same mechanism Edit/Delete/etc. already read from)
+    // rather than a separate picker: tick specific people first, then
+    // open this, and it applies only to them. Nothing ticked falls back
+    // to everyone currently on an active trial.
+    const selectedIds = [...memberSel.sel];
+    try {
+      const qs = selectedIds.length ? `?userIds=${selectedIds.join(',')}` : '';
+      const data = await (await fetch(`/api/admin/trials/active-count${qs}`)).json();
+      if (selectedIds.length) {
+        document.getElementById('extendTrialsCount').textContent =
+          data.count === 0
+            ? `${selectedIds.length} ${selectedIds.length === 1 ? 'person' : 'people'} selected, but none of them are currently on an active trial — nothing to extend.`
+            : `${data.count} of your ${selectedIds.length} selected ${selectedIds.length === 1 ? 'person is' : 'people are'} currently on an active trial.`;
+      } else {
+        document.getElementById('extendTrialsCount').textContent =
+          data.count === 0
+            ? 'No one is currently on an active trial — nothing to extend.'
+            : `Nothing selected on the Members list, so this will apply to everyone on an active trial — ${data.count} ${data.count === 1 ? 'person' : 'people'}.`;
+      }
+    } catch(e) {
+      document.getElementById('extendTrialsCount').textContent = 'Could not load the count — you can still proceed.';
+    }
+  }
+  async function saveExtendTrials() {
+    const days = extendTrialsDaysValue();
+    if (!days || days <= 0) { document.getElementById('extendTrialsErr').textContent = 'Enter a number of days greater than 0.'; return; }
+    const selectedIds = [...memberSel.sel];
+    const who = selectedIds.length ? `your ${selectedIds.length} selected ${selectedIds.length === 1 ? 'person' : 'people'} (whichever of them are on active trials)` : 'everyone currently on an active trial';
+    if (!(await appConfirm(`Extend ${who} by ${days} day${days === 1 ? '' : 's'}? This can't be undone in one click — you'd need to shorten each person's trial back individually.`))) return;
+    try {
+      const body = { days };
+      if (selectedIds.length) body.userIds = selectedIds;
+      const res = await fetch('/api/admin/trials/extend-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('extendTrialsErr').textContent = data.error || 'Could not extend trials.'; return; }
+      closeModal('extendTrialsModal');
+      await appAlert(`Extended ${data.affected} ${data.affected === 1 ? 'trial' : 'trials'} by ${days} day${days === 1 ? '' : 's'}.`);
+      memberSel.clear(); loadMembers();
+    } catch(e) {
+      document.getElementById('extendTrialsErr').textContent = 'Error: ' + e.message;
+    }
+  }
+
   async function saveUpgrade() {
     const ids=document.getElementById('upgradeUserId').value.split(',').filter(Boolean);
     const level=document.getElementById('upgradeMemberLevel').value, facId=document.getElementById('upgradeAssignFac').value;
