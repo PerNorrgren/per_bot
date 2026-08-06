@@ -5776,26 +5776,42 @@ async function synthesizeSignalSegment(text) {
 }
 
 async function synthesizeAndCacheSignalAudio(script) {
-  // Per Bot 34 — real segment splicing, not just marker-stripping. The
-  // scripts are already written in paragraphs — each one a portion that
-  // belongs together (a body part, a counted breath, a shift in
-  // direction) — so we synthesize each paragraph as its own ElevenLabs
-  // request and splice in a genuine 3-second silence between them with
-  // ffmpeg, rather than relying on punctuation or hoping the model
-  // honors a pause it was never asked to produce. Naive Buffer.concat of
-  // separate MP3s does NOT work — verified directly, it produces real
-  // decode errors ("Header missing", invalid packets) — so this goes
-  // through ffmpeg's concat demuxer, which re-muxes properly. Requires
-  // ffmpeg on the server (see nixpacks.toml, added this session); if
-  // that's missing this throws, which is safer than silently shipping
-  // corrupted audio.
-  const rawText = (script.script_text || '').split('[[PAUSE]]').join(' ').split('[[BREATH]]').join(' ');
-  const segments = rawText.split(/\n\s*\n/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  // Per Bot 35 — variable-duration pause markers, not a single fixed gap
+  // for every transition. Real feedback from listening: a beat between
+  // sentences needs to be short, a shift to a new body part needs
+  // longer, and a line that says "for about ten seconds" needs to
+  // actually last ten seconds, not the same 3s as everything else — one
+  // fixed duration for every kind of gap couldn't satisfy all of that
+  // at once. Scripts now use [[PAUSE:N]] (N in seconds) to mark exactly
+  // where a gap belongs and how long it should be; [[PAUSE]] with no
+  // number defaults to 2s, for an ordinary beat between sentences.
+  // Splicing itself still goes through ffmpeg's concat demuxer — naive
+  // Buffer.concat of separate MP3s produces corrupted, undecodable
+  // audio, verified directly — so each segment is a real ElevenLabs
+  // request, silence is generated fresh per gap at the exact requested
+  // duration, and everything is properly re-muxed into one file.
+  const raw = script.script_text || '';
+  const parts = raw.split(/\[\[PAUSE(?::(\d+(?:\.\d+)?))?\]\]/g);
+  // String.split with a capturing group interleaves the captured group
+  // (the duration, or undefined if [[PAUSE]] had none) between each
+  // text chunk: [text, duration, text, duration, text, ...]. Turn that
+  // into { text, pauseAfter } pairs — pauseAfter is null for the last
+  // chunk, since nothing follows it.
+  const items = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const text = (parts[i] || '').replace(/\s+/g, ' ').trim();
+    const pauseAfter = i + 1 < parts.length ? Number(parts[i + 1] || 2) : null;
+    if (text) items.push({ text, pauseAfter });
+  }
+  // [[BREATH]] never had a matching mechanism here either way — strip it
+  // as before, it's a live-conversation-only marker.
+  items.forEach(item => { item.text = item.text.split('[[BREATH]]').join(' ').trim(); });
+  const segments = items.filter(item => item.text);
 
   if (segments.length <= 1) {
-    // Nothing to splice — a single short script is just one request,
-    // same as before.
-    const buffer = await synthesizeSignalSegment(segments[0] || rawText.trim());
+    // Nothing to splice — a single short script (or one with no pause
+    // markers at all) is just one request, same as before.
+    const buffer = await synthesizeSignalSegment(segments[0]?.text || raw.replace(/\s+/g, ' ').trim());
     const key = `signal-audio/${script.id}-${uuidv4()}.mp3`;
     await media.uploadPublicObject(key, buffer, 'audio/mpeg');
     db.setSignalScriptCachedAudio(script.id, key, VOICE_ID);
@@ -5806,17 +5822,19 @@ async function synthesizeAndCacheSignalAudio(script) {
   try {
     const partFiles = [];
     for (let i = 0; i < segments.length; i++) {
-      const buf = await synthesizeSignalSegment(segments[i]);
+      const buf = await synthesizeSignalSegment(segments[i].text);
       const segPath = path.join(tmpDir, `seg${i}.mp3`);
       await fsp.writeFile(segPath, buf);
       partFiles.push(segPath);
-      if (i < segments.length - 1) {
+      const gap = segments[i].pauseAfter;
+      if (gap != null && i < segments.length - 1) {
         // Generated fresh each time via ffmpeg's own silence source
         // rather than a bundled asset, so the encoding always matches
-        // exactly — no risk of a stray format mismatch between a static
-        // file and whatever ElevenLabs actually returned this time.
+        // exactly, and at the exact duration this specific gap called
+        // for — no risk of a stray format mismatch, and no more forcing
+        // every gap to the same length.
         const silPath = path.join(tmpDir, `sil${i}.mp3`);
-        await execFileAsync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '3', '-b:a', '192k', silPath]);
+        await execFileAsync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', String(gap), '-b:a', '192k', silPath]);
         partFiles.push(silPath);
       }
     }
