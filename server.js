@@ -2106,6 +2106,26 @@ app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), (req, r
     res.json({ ok: true, affected });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per Bot 40 — re-grants a fresh trial to selected people whose trial
+// already lapsed (member_tier=0, trial_ends_at cleared, but member_since
+// shows they had one before). Always requires an explicit selection —
+// no bulk-everyone mode, since most Explorers never had a trial at all.
+app.get('/api/admin/trials/lapsed-count', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const userIds = req.query.userIds ? String(req.query.userIds).split(',').filter(Boolean) : [];
+    res.json({ count: db.countLapsedTrialUsers(userIds) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/trials/regrant', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const days = Number(req.body.days);
+    if (!days || days <= 0 || days > 365) return res.status(400).json({ error: 'Enter a number of days between 1 and 365.' });
+    const userIds = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+    if (!userIds.length) return res.status(400).json({ error: 'Select at least one person first.' });
+    const affected = db.regrantTrialForLapsedUsers(userIds, days);
+    res.json({ ok: true, affected });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── Admin: Add Member ──
 // Mirrors self-registration: same fields, same email-confirmation-with-password-change flow.

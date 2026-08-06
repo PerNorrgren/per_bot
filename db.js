@@ -3895,6 +3895,41 @@ function extendAllActiveTrials(days, userIds) {
   return before;
 }
 
+// ── Re-grant a lapsed trial (Per Bot 40) — distinct from
+// extendAllActiveTrials above: that only touches people with a
+// currently-active, not-yet-expired trial_ends_at. Someone whose trial
+// already lapsed has trial_ends_at cleared to NULL by the sweep (see
+// sweepExpiredMemberships) along with member_tier dropping to 0 — there's
+// no existing trial_ends_at left to extend, so this grants a genuinely
+// fresh one instead. member_since is never cleared by the sweep, so
+// "member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL"
+// reliably means "was on a trial or membership before, not currently."
+// Deliberately requires an explicit list of IDs — no "nothing selected
+// means everyone" fallback like the active-trial version has, since the
+// Explorers list is mostly people who never had a trial at all (direct
+// free signups), and defaulting to all of them would grant trials to
+// people who never asked for or had one.
+function countLapsedTrialUsers(userIds) {
+  if (!userIds || !userIds.length) return 0;
+  const placeholders = userIds.map(() => '?').join(',');
+  return queryOne(
+    `SELECT COUNT(*) as n FROM users WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+    userIds
+  ).n;
+}
+function regrantTrialForLapsedUsers(userIds, days, tier = 1) {
+  if (!userIds || !userIds.length) return 0;
+  const before = countLapsedTrialUsers(userIds);
+  const placeholders = userIds.map(() => '?').join(',');
+  getDbSync().run(
+    `UPDATE users SET member_tier=?, trial_ends_at=datetime('now', '+' || ? || ' days')
+     WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+    [tier, days, ...userIds]
+  );
+  save();
+  return before;
+}
+
 function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
   getDbSync().run(
     `UPDATE users SET
@@ -6538,7 +6573,7 @@ module.exports = {
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
-  countActiveTrials, extendAllActiveTrials,
+  countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers,
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions

@@ -291,6 +291,7 @@
           <div class="card-title">Explorers<span class="card-count" id="userCount"></span></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="btn sm disabled" id="userUpgradeBtn" onclick="upgradeSelected()">Upgrade</button>
+            <button class="btn sm disabled" id="userGiveTrialBtn" onclick="openRegrantTrialModal()">Give trial</button>
             <button class="btn sm disabled" id="userResetPwBtn" onclick="resetSelectedUserPassword()">Reset password</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
             <button class="btn sm disabled" id="userGetSubsBtn" onclick="getSelectedUserSubscriptions()">Get Subscriptions</button>
@@ -356,6 +357,34 @@
       </div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('activeUsersModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="regrantTrialModal" onclick="if(event.target===this)closeModal('regrantTrialModal')">
+    <div class="modal">
+      <h3>Give trial</h3>
+      <div style="margin:16px 0;display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:13px;color:rgba(255,255,255,0.5)" id="regrantTrialCount">Loading who this applies to…</div>
+        <div>
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Trial length</label>
+          <select id="regrantTrialPreset" onchange="toggleRegrantTrialCustom()" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+            <option value="7">1 week</option>
+            <option value="14" selected>2 weeks</option>
+            <option value="30">1 month</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div id="regrantTrialCustomField" style="display:none">
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Number of days</label>
+          <input type="number" id="regrantTrialDays" value="14" min="1" max="365" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
+        </div>
+        <div class="modal-note">For people whose trial already lapsed (they're back on Explorer, with no active trial to extend) — this starts a fresh trial from today, at Member level 1. Anyone selected who never had a trial in the first place is skipped automatically.</div>
+      </div>
+      <div class="modal-err" id="regrantTrialErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('regrantTrialModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveRegrantTrial()">Give trial</button>
       </div>
     </div>
   </div>
@@ -2188,7 +2217,7 @@
   // ── REGISTERED EXPLORERS ──
   // ══════════════════════════════════════════
   let _userData = [];
-  const userSel = makeSelection(['userUpgradeBtn','userResetPwBtn','userDelBtn','userGetSubsBtn'], null);
+  const userSel = makeSelection(['userUpgradeBtn','userGiveTrialBtn','userResetPwBtn','userDelBtn','userGetSubsBtn'], null);
 
   async function loadUsers() {
     userSel.clear();
@@ -2272,6 +2301,48 @@
     document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
   }
+  function toggleRegrantTrialCustom() {
+    const isCustom = document.getElementById('regrantTrialPreset').value === 'custom';
+    document.getElementById('regrantTrialCustomField').style.display = isCustom ? '' : 'none';
+  }
+  function regrantTrialDaysValue() {
+    const preset = document.getElementById('regrantTrialPreset').value;
+    return preset === 'custom' ? Number(document.getElementById('regrantTrialDays').value) : Number(preset);
+  }
+  async function openRegrantTrialModal() {
+    const ids = [...userSel.sel]; if (!ids.length) return;
+    document.getElementById('regrantTrialPreset').value = '14';
+    toggleRegrantTrialCustom();
+    document.getElementById('regrantTrialErr').textContent = '';
+    document.getElementById('regrantTrialCount').textContent = 'Loading who this applies to…';
+    openModal('regrantTrialModal');
+    try {
+      const data = await (await fetch(`/api/admin/trials/lapsed-count?userIds=${ids.join(',')}`)).json();
+      document.getElementById('regrantTrialCount').textContent =
+        data.count === 0
+          ? `None of your ${ids.length} selected ${ids.length === 1 ? 'person' : 'people'} had a trial before — nothing to give here. (Use Upgrade instead for a first-time trial.)`
+          : `${data.count} of your ${ids.length} selected ${ids.length === 1 ? 'person' : 'people'} previously had a trial that's since lapsed.`;
+    } catch(e) {
+      document.getElementById('regrantTrialCount').textContent = 'Could not load the count — you can still proceed.';
+    }
+  }
+  async function saveRegrantTrial() {
+    const ids = [...userSel.sel]; if (!ids.length) return;
+    const days = regrantTrialDaysValue();
+    if (!days || days <= 0) { document.getElementById('regrantTrialErr').textContent = 'Enter a number of days greater than 0.'; return; }
+    if (!(await appConfirm(`Give a fresh ${days}-day trial to whichever of your ${ids.length} selected people previously had one? Anyone who never had a trial is skipped.`))) return;
+    try {
+      const res = await fetch('/api/admin/trials/regrant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days, userIds: ids }) });
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('regrantTrialErr').textContent = data.error || 'Could not give trials.'; return; }
+      closeModal('regrantTrialModal');
+      await appAlert(`Gave a fresh ${days}-day trial to ${data.affected} ${data.affected === 1 ? 'person' : 'people'}.`);
+      userSel.clear(); loadUsers(); loadMembers();
+    } catch(e) {
+      document.getElementById('regrantTrialErr').textContent = 'Error: ' + e.message;
+    }
+  }
+
   function toggleExtendTrialsCustom() {
     const isCustom = document.getElementById('extendTrialsPreset').value === 'custom';
     document.getElementById('extendTrialsCustomField').style.display = isCustom ? '' : 'none';
