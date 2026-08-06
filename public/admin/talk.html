@@ -135,6 +135,7 @@
       </div>
     </div>
     <div class="topbar-right">
+      <span id="a11yMenuSlot" style="position:relative"></span>
       <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
       <a href="/admin/content" class="btn">Content</a>
       <a href="/admin/talk" class="btn primary">Talk &amp; Tomte</a>
@@ -208,6 +209,14 @@
             Each row is one language + expression. "default" is both the plain neutral pose and the fallback for any expression that doesn't have its own image yet. A person's own personal Tomte photo always wins over these for their own account. Optionally scope a row to one skin (e.g. a University cohort) — that skin's own login/register pages and logged-in users show it instead of the standard image for that language + expression.
           </div>
 
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+            <input type="text" placeholder="Search language, action, skin…" oninput="window.__smartLists['tomteDefaultsTable'].onSearch(this.value)" style="flex:1; min-width:160px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:7px 10px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+            <div id="tomteDefaultsTableBulkBar" style="display:none; align-items:center; gap:8px;">
+              <span id="tomteDefaultsTableBulkCount" style="font-size:11px; color:rgba(255,255,255,0.4);"></span>
+              <button class="btn sm danger" onclick="bulkDeleteTomteDefaults()">Delete selected</button>
+            </div>
+          </div>
+
           <div id="tomteDefaultsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
             <div class="loading">Loading…</div>
           </div>
@@ -251,6 +260,16 @@
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
             Pre-written mini-practices — most under a minute, plus a longer five-minute set for when Talk offers someone the choice — Talk can weave into a live conversation when genuinely relevant, either spoken text, or an existing library audio file. Talk only ever sees the topic and situation for each one, never the full text — so this list can grow freely without making every conversation more expensive. Leave skin blank for "every skin, including standard" — set one to scope it to just that skin (e.g. Mare).
+            <br/><br/>
+            <strong style="color:rgba(255,210,140,0.85)">Pacing note for text scripts:</strong> unlike live conversation, these get synthesized as one continuous audio clip — <code>[[PAUSE]]</code> does nothing here and will just be stripped. Build the pacing into the words themselves instead — a counted breath ("in for four, out for six"), a slow count to five — so there's something to actually do while the narration keeps gently going, rather than relying on silence that this pathway can't produce.
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+            <input type="text" placeholder="Search topic, situation, type…" oninput="window.__smartLists['signalScriptsTable'].onSearch(this.value)" style="flex:1; min-width:160px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:7px 10px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+            <div id="signalScriptsTableBulkBar" style="display:none; align-items:center; gap:8px;">
+              <span id="signalScriptsTableBulkCount" style="font-size:11px; color:rgba(255,255,255,0.4);"></span>
+              <button class="btn sm danger" onclick="bulkDeleteSignalScripts()">Delete selected</button>
+            </div>
           </div>
 
           <div id="signalScriptsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -281,6 +300,14 @@
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
             Not injected into every system prompt the way the Knowledge Base is — instead, Talk searches this library on demand (the <code>search_source_material</code> tool) when a conversation needs depth no Knowledge Base topic covers yet. A good place to drop in new material as it comes in — a paper, a finding, background you haven't worked into a topic yet — without waiting to formally process it first.
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+            <input type="text" placeholder="Search title…" oninput="window.__smartLists['contextDocsTable'].onSearch(this.value)" style="flex:1; min-width:160px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:7px 10px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
+            <div id="contextDocsTableBulkBar" style="display:none; align-items:center; gap:8px;">
+              <span id="contextDocsTableBulkCount" style="font-size:11px; color:rgba(255,255,255,0.4);"></span>
+              <button class="btn sm danger" onclick="bulkDeleteContextDocuments()">Delete selected</button>
+            </div>
           </div>
 
           <div id="contextDocsTable" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;">
@@ -554,6 +581,24 @@
   let _tomteDefaultsActions = [];
   let _tomteDefaultsLanguages = {};
 
+  const tomteDefaultsList = makeSmartList({
+    containerId: 'tomteDefaultsTable',
+    emptyText: 'No images uploaded yet — add one below.',
+    getId: r => `${r.skin_id || ''}::${r.language}::${r.action}`,
+    columns: [
+      { key: 'image', label: '', sortable: false, searchable: false, render: r => `<img src="${r.imageUrl || '/assets/tomte.png'}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>` },
+      { key: 'language', label: 'Language', primary: true, render: r => _tomteDefaultsLanguages[r.language] || r.language, sortValue: r => (_tomteDefaultsLanguages[r.language] || r.language || '').toLowerCase() },
+      { key: 'action', label: 'Action', render: r => r.action.charAt(0).toUpperCase() + r.action.slice(1), sortValue: r => r.action || '' },
+      { key: 'skin', label: 'Skin', render: r => r.skin_id ? (r.skin_name || r.skin_id) : '<span style="color:rgba(255,255,255,0.3)">standard</span>', sortValue: r => r.skin_id ? (r.skin_name || r.skin_id) : '' },
+    ],
+    rowActions: r => {
+      const delOnclick = r.skin_id
+        ? `deleteTomteSkinDefault('${r.skin_id}','${r.language}','${r.action}')`
+        : `deleteTomteDefault('${r.language}','${r.action}')`;
+      return `<button class="btn sm danger" onclick="${delOnclick}">Delete</button>`;
+    },
+  });
+
   async function loadTomteDefaults() {
     try {
       const [res, skinRes] = await Promise.all([
@@ -583,28 +628,10 @@
       // show, distinguished by the skin name tag.
       const globalRows = (data.rows || []).map(r => ({ ...r, skin_id: null, skin_name: null }));
       const skinRows = skinData.rows || [];
-      renderTomteDefaultsTable([...globalRows, ...skinRows]);
+      tomteDefaultsList.setRows([...globalRows, ...skinRows]);
     } catch(e) {
       document.getElementById('tomteDefaultsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
     }
-  }
-
-  function renderTomteDefaultsTable(rows) {
-    const el = document.getElementById('tomteDefaultsTable');
-    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No images uploaded yet — add one below.</div>'; return; }
-    el.innerHTML = rows.map(r => {
-      const langName = _tomteDefaultsLanguages[r.language] || r.language;
-      const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
-      const delOnclick = r.skin_id
-        ? `deleteTomteSkinDefault('${r.skin_id}','${r.language}','${r.action}')`
-        : `deleteTomteDefault('${r.language}','${r.action}')`;
-      return `
-      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
-        <img src="${r.imageUrl || '/assets/tomte.png'}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;object-position:50% 15%;border:1px solid rgba(255,255,255,0.15)"/>
-        <div style="flex:1; font-size:13px; color:rgba(255,255,255,0.75)">${langName} <span style="color:rgba(255,255,255,0.35)">·</span> ${r.action.charAt(0).toUpperCase() + r.action.slice(1)}${skinTag}</div>
-        <button class="btn sm danger" onclick="${delOnclick}">Delete</button>
-      </div>`;
-    }).join('');
   }
 
   async function deleteTomteDefault(language, action) {
@@ -619,14 +646,127 @@
     loadTomteDefaults();
   }
 
+  async function bulkDeleteTomteDefaults() {
+    const ids = tomteDefaultsList.getSelected();
+    if (!ids.length) return;
+    if (!(await appConfirm(`Remove ${ids.length} image${ids.length === 1 ? '' : 's'}?`))) return;
+    await Promise.all(ids.map(id => {
+      const [skinId, language, action] = id.split('::');
+      return skinId
+        ? fetch(`/api/admin/tomte-skin-defaults/${encodeURIComponent(skinId)}/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' })
+        : fetch(`/api/admin/tomte-defaults/${encodeURIComponent(language)}/${encodeURIComponent(action)}`, { method: 'DELETE' });
+    }));
+    loadTomteDefaults();
+  }
+
   function exportSignalScripts() {
     window.location.href = '/api/admin/signal-scripts/export';
+  }
+
+  // ── Smart list (Per Bot 29) — sortable columns, a search box, and
+  // per-row checkboxes with a bulk-action bar, shared by every list panel
+  // on this page rather than hand-writing the same sort/search/selection
+  // logic for each one. One instance per panel, keyed by containerId;
+  // registered on window so inline onclick/onchange handlers (the
+  // convention every other list in this file already uses) can reach
+  // back into the right instance.
+  window.__smartLists = window.__smartLists || {};
+  function makeSmartList(opts) {
+    // opts: { containerId, columns: [{key,label,sortable,render(r),sortValue(r),searchable}],
+    //         rowActions(r), getId(r), bulkActions: [{label,handler(ids)}], emptyText }
+    let allRows = [];
+    let sort = { col: opts.columns[0].key, dir: 'asc' };
+    let query = '';
+    let selected = new Set();
+
+    function getFiltered() {
+      let rows = allRows;
+      if (query) {
+        rows = rows.filter(r => opts.columns.some(c =>
+          c.searchable !== false && String((c.sortValue ? c.sortValue(r) : r[c.key]) ?? '').toLowerCase().includes(query)
+        ));
+      }
+      const col = opts.columns.find(c => c.key === sort.col);
+      const getVal = (col && col.sortValue) ? col.sortValue : (r => r[sort.col]);
+      return [...rows].sort((a, b) => {
+        const av = getVal(a), bv = getVal(b);
+        if (av < bv) return sort.dir === 'asc' ? -1 : 1;
+        if (av > bv) return sort.dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    function updateBulkBar() {
+      const bar = document.getElementById(opts.containerId + 'BulkBar');
+      if (!bar) return;
+      bar.style.display = selected.size ? 'flex' : 'none';
+      const countEl = document.getElementById(opts.containerId + 'BulkCount');
+      if (countEl) countEl.textContent = selected.size + (selected.size === 1 ? ' selected' : ' selected');
+    }
+
+    function render() {
+      const el = document.getElementById(opts.containerId);
+      if (!allRows.length) { el.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:8px 2px">${opts.emptyText || 'None yet.'}</div>`; updateBulkBar(); return; }
+      const filtered = getFiltered();
+      const arrow = (c) => sort.col === c ? (sort.dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
+      const allChecked = filtered.length > 0 && filtered.every(r => selected.has(opts.getId(r)));
+      const thead = `<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+        <th style="width:26px;padding:8px 6px"><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="window.__smartLists['${opts.containerId}'].toggleAll(this.checked)"/></th>
+        ${opts.columns.map(c => `<th style="text-align:left;padding:8px 10px;${c.sortable === false ? '' : 'cursor:pointer;'}color:rgba(255,255,255,0.5);user-select:none;white-space:nowrap"${c.sortable === false ? '' : ` onclick="window.__smartLists['${opts.containerId}'].onSort('${c.key}')"`}>${c.label}${c.sortable === false ? '' : arrow(c.key)}</th>`).join('')}
+        <th style="padding:8px 10px"></th>
+      </tr>`;
+      const tbody = filtered.map(r => {
+        const id = opts.getId(r);
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+          <td style="padding:8px 6px"><input type="checkbox" ${selected.has(id) ? 'checked' : ''} onchange="window.__smartLists['${opts.containerId}'].toggleRow('${id}')"/></td>
+          ${opts.columns.map(c => `<td style="padding:8px 10px;color:rgba(255,255,255,${c.primary ? '0.75' : '0.5'});${c.nowrap ? 'white-space:nowrap' : ''}">${c.render ? c.render(r) : (r[c.key] ?? '')}</td>`).join('')}
+          <td style="padding:8px 10px;white-space:nowrap">${opts.rowActions ? opts.rowActions(r) : ''}</td>
+        </tr>`;
+      }).join('');
+      el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+      if (!filtered.length) el.innerHTML += `<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:10px 2px">No matches.</div>`;
+      updateBulkBar();
+    }
+
+    const api = {
+      setRows(rows) { allRows = rows; selected.clear(); render(); },
+      onSearch(q) { query = (q || '').toLowerCase(); render(); },
+      onSort(col) {
+        if (sort.col === col) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+        else sort = { col, dir: 'asc' };
+        render();
+      },
+      toggleRow(id) { if (selected.has(id)) selected.delete(id); else selected.add(id); updateBulkBar(); },
+      toggleAll(checked) {
+        const visible = getFiltered();
+        visible.forEach(r => checked ? selected.add(opts.getId(r)) : selected.delete(opts.getId(r)));
+        render();
+      },
+      getSelected() { return [...selected]; },
+      clearSelected() { selected.clear(); updateBulkBar(); },
+      render, getFiltered,
+    };
+    window.__smartLists[opts.containerId] = api;
+    return api;
   }
 
   // ══ Talk signal scripts (Per Bot 33s) ══
   let _signalSkins = [];
   let _signalLibraryFiles = null; // lazy-loaded, only when the audio picker is actually opened
   let _ssSelectedFileId = null;
+
+  const signalScriptsList = makeSmartList({
+    containerId: 'signalScriptsTable',
+    emptyText: 'None yet — add one below.',
+    getId: r => r.id,
+    columns: [
+      { key: 'topic', label: 'Topic', primary: true, render: r => r.topic + (r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : ''), sortValue: r => (r.topic || '').toLowerCase() },
+      { key: 'situation', label: 'Situation', sortValue: r => (r.situation || '').toLowerCase() },
+      { key: 'type', label: 'Type', nowrap: true, render: r => r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text', sortValue: r => r.kind === 'audio' ? 'audio' : 'text' },
+      { key: 'length', label: 'Min', nowrap: true, searchable: false, render: r => String(r.length_minutes || 1), sortValue: r => r.length_minutes || 1 },
+    ],
+    rowActions: r => `<button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button> <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>`,
+  });
 
   async function loadSignalScripts() {
     try {
@@ -637,76 +777,18 @@
         el.innerHTML = '<option value="">No skin — every skin, including standard</option>'
           + _signalSkins.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
       });
-      renderSignalScriptsTable(data.rows || []);
+      signalScriptsList.setRows(data.rows || []);
     } catch(e) {
       document.getElementById('signalScriptsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
     }
   }
 
-  let _signalScriptsRows = [];
-  let _signalScriptsSort = { col: 'topic', dir: 'asc' };
-
-  function renderSignalScriptsTable(rows) {
-    _signalScriptsRows = rows;
-    renderSignalScriptsSorted();
-  }
-
-  function sortSignalScripts(col) {
-    if (_signalScriptsSort.col === col) {
-      _signalScriptsSort.dir = _signalScriptsSort.dir === 'asc' ? 'desc' : 'asc';
-    } else {
-      _signalScriptsSort = { col, dir: 'asc' };
-    }
-    renderSignalScriptsSorted();
-  }
-
-  function renderSignalScriptsSorted() {
-    const el = document.getElementById('signalScriptsTable');
-    if (!_signalScriptsRows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — add one below.</div>'; return; }
-    const { col, dir } = _signalScriptsSort;
-    const getVal = (r) => {
-      if (col === 'length') return r.length_minutes || 1;
-      if (col === 'type') return r.kind === 'audio' ? 'audio' : 'text';
-      if (col === 'situation') return (r.situation || '').toLowerCase();
-      return (r.topic || '').toLowerCase();
-    };
-    const sorted = [..._signalScriptsRows].sort((a, b) => {
-      const av = getVal(a), bv = getVal(b);
-      if (av < bv) return dir === 'asc' ? -1 : 1;
-      if (av > bv) return dir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    const arrow = (c) => col === c ? (dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
-    const th = (c, label) => `<th style="text-align:left; padding:8px 10px; cursor:pointer; color:rgba(255,255,255,0.5); user-select:none; white-space:nowrap" onclick="sortSignalScripts('${c}')">${label}${arrow(c)}</th>`;
-    el.innerHTML = `
-      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
-        <thead>
-          <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
-            ${th('topic', 'Topic')}
-            ${th('situation', 'Situation')}
-            ${th('type', 'Type')}
-            ${th('length', 'Length')}
-            <th style="padding:8px 10px"></th>
-          </tr>
-        </thead>
-        <tbody>
-        ${sorted.map(r => {
-          const skinTag = r.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${r.skin_name || r.skin_id}</span>` : '';
-          const kindTag = r.kind === 'audio' ? `🔊 ${r.file_title || 'file missing'}` : '📝 text';
-          const lengthTag = (r.length_minutes || 1) === 5 ? '5 min' : '1 min';
-          return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-            <td style="padding:8px 10px; color:rgba(255,255,255,0.75)">${r.topic}${skinTag}</td>
-            <td style="padding:8px 10px; color:rgba(255,255,255,0.5)">${r.situation}</td>
-            <td style="padding:8px 10px; color:rgba(255,255,255,0.5); white-space:nowrap">${kindTag}</td>
-            <td style="padding:8px 10px; color:rgba(255,255,255,0.5); white-space:nowrap">${lengthTag}</td>
-            <td style="padding:8px 10px; white-space:nowrap">
-              <button class="btn sm" onclick="openSignalScriptModal('${r.id}')">Edit</button>
-              <button class="btn sm danger" onclick="deleteSignalScriptRow('${r.id}')">Delete</button>
-            </td>
-          </tr>`;
-        }).join('')}
-        </tbody>
-      </table>`;
+  async function bulkDeleteSignalScripts() {
+    const ids = signalScriptsList.getSelected();
+    if (!ids.length) return;
+    if (!(await appConfirm(`Delete ${ids.length} signal script${ids.length === 1 ? '' : 's'}? Talk will no longer be able to offer ${ids.length === 1 ? 'it' : 'them'}.`))) return;
+    await Promise.all(ids.map(id => fetch(`/api/admin/signal-scripts/${id}`, { method: 'DELETE' })));
+    loadSignalScripts();
   }
 
   async function deleteSignalScriptRow(id) {
@@ -833,36 +915,35 @@
   }
 
   // ══ Talk context documents (Per Bot 33s, reinstated Per Bot 27) ══
+  const contextDocsList = makeSmartList({
+    containerId: 'contextDocsTable',
+    emptyText: 'None yet — upload one below.',
+    getId: d => d.id,
+    columns: [
+      { key: 'title', label: 'Title', primary: true, render: d => d.title + (d.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${d.skin_name || d.skin_id}</span>` : ' <span style="color:rgba(255,255,255,0.3)">· every skin</span>'), sortValue: d => (d.title || '').toLowerCase() },
+      { key: 'chars', label: 'Characters', nowrap: true, searchable: false, render: d => `${d.char_count.toLocaleString()} <span style="color:rgba(255,255,255,0.3)">(~${Math.round(d.char_count / 4).toLocaleString()} tok)</span>`, sortValue: d => d.char_count || 0 },
+    ],
+    rowActions: d => `<button class="btn sm danger" onclick="deleteContextDocumentRow('${d.id}')">Delete</button>`,
+  });
+
   async function loadContextDocuments() {
     try {
       const data = await (await fetch('/api/admin/context-documents')).json();
       const skinSel = document.getElementById('cdSkin');
       skinSel.innerHTML = '<option value="">No skin — every skin, including standard</option>'
         + (data.skins || []).map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-      renderContextDocsTable(data.rows || []);
+      contextDocsList.setRows(data.rows || []);
     } catch(e) {
       document.getElementById('contextDocsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
     }
   }
 
-  function renderContextDocsTable(rows) {
-    const el = document.getElementById('contextDocsTable');
-    if (!rows.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">None yet — upload one below.</div>'; return; }
-    el.innerHTML = rows.map(d => {
-      const skinTag = d.skin_id ? ` <span style="color:rgba(200,160,255,0.7)">· ${d.skin_name || d.skin_id}</span>` : ' <span style="color:rgba(255,255,255,0.3)">· every skin</span>';
-      // Rough guide, not a hard cutoff — ~4 characters per token is the
-      // usual ballpark, so this is close enough to give a sense of scale
-      // without pretending to be an exact count.
-      const approxTokens = Math.round(d.char_count / 4);
-      return `
-      <div style="display:flex; align-items:center; gap:12px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:8px;">
-        <div style="flex:1">
-          <div style="font-size:13px; color:rgba(255,255,255,0.75)">${d.title}${skinTag}</div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.4); margin-top:2px">${d.char_count.toLocaleString()} characters (~${approxTokens.toLocaleString()} tokens — only pulled in when Talk's search_source_material tool actually reaches for this, not on every turn)</div>
-        </div>
-        <button class="btn sm danger" onclick="deleteContextDocumentRow('${d.id}')">Delete</button>
-      </div>`;
-    }).join('');
+  async function bulkDeleteContextDocuments() {
+    const ids = contextDocsList.getSelected();
+    if (!ids.length) return;
+    if (!(await appConfirm(`Delete ${ids.length} context document${ids.length === 1 ? '' : 's'}? Talk will lose ${ids.length === 1 ? 'it' : 'them'} immediately.`))) return;
+    await Promise.all(ids.map(id => fetch(`/api/admin/context-documents/${id}`, { method: 'DELETE' })));
+    loadContextDocuments();
   }
 
   async function deleteContextDocumentRow(id) {
