@@ -524,6 +524,17 @@
 
 <script>
 
+  // Per Bot 39 — must run before anything on this page calls
+  // makeSmartList(). This used to sit right next to the makeSmartList
+  // function definition itself, but tomteDefaultsList's call to
+  // makeSmartList() happens earlier in the file (source order), and
+  // function declarations hoist while plain assignment statements don't
+  // — so window.__smartLists was still undefined the first time it was
+  // written to, throwing an uncaught TypeError that silently halted
+  // every script execution after it. That's why the whole page got
+  // stuck on "Loading…" everywhere, not just Tomte Defaults.
+  window.__smartLists = window.__smartLists || {};
+
   // ── Utilities (shared across all admin pages) ──
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
   function openModal(id)  { document.getElementById(id).classList.add('open'); }
@@ -670,7 +681,6 @@
   // registered on window so inline onclick/onchange handlers (the
   // convention every other list in this file already uses) can reach
   // back into the right instance.
-  window.__smartLists = window.__smartLists || {};
   function makeSmartList(opts) {
     // opts: { containerId, columns: [{key,label,sortable,render(r),sortValue(r),searchable}],
     //         rowActions(r), getId(r), bulkActions: [{label,handler(ids)}], emptyText }
