@@ -860,6 +860,38 @@ Per`;
   );
 }
 
+// Per Bot 41 — sent from the "Extend trials" and "Give trial" bulk
+// actions in People. Two variants of what to say (messageType), and two
+// variants of the underlying fact (isRestart) — extending an
+// active trial reads as "extended," but someone whose trial had already
+// lapsed is getting a genuinely new one, not more days added to
+// something that ran out, so the wording says "started a new trial"
+// there instead. Per's own wording for the "features" variant, lightly
+// adapted to the two isRestart cases.
+function emailTrialUpdated(name, email, days, newExpiryDate, messageType, isRestart, language) {
+  const b = brand();
+  const dateStr = new Date(newExpiryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const actionPhrase = isRestart ? `started a new ${days}-day trial for you` : `extended your trial by ${days} days`;
+  const bodyText = messageType === 'features'
+    ? `We've been rolling out a lot of new things lately, so we've ${actionPhrase} — until ${dateStr} — to give you a proper chance to see and try what's new.`
+    : `Just a quick note — we've ${actionPhrase}. Your access now runs until ${dateStr}.`;
+  return sendLocalizedEmail(`trial_updated_${messageType}${isRestart ? '_restart' : ''}`, language, {
+    subject: isRestart ? `A fresh trial, on us` : `Your trial's been extended`,
+    html: `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">{{brand}}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello, {{name}}</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">{{bodyText}}</p>
+      <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
+        <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Full access until</div>
+        <div style="font-size:15px;color:#1a1a1a">{{dateStr}}</div>
+      </div>
+      <p style="font-size:14px;line-height:1.7;color:#666">Sign in as usual at {{appUrl}} whenever you're ready.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <div style="font-size:12px;color:#aaa">{{brand}}</div>
+    </div>`
+  }, { brand: b.name, name, bodyText, dateStr, appUrl: APP_URL }, email);
+}
+
 function emailWelcomeClient(name, email, tempPassword, language, skinId, trialEndsAt, manualExpiresAt) {
   const b = brand();
   // Per Bot 33r — a member added directly to a skin (individually or via
@@ -2097,13 +2129,23 @@ app.get('/api/admin/trials/active-count', auth.requireAuthApi(['admin']), (req, 
     res.json({ count: db.countActiveTrials(userIds) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), (req, res) => {
+app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const days = Number(req.body.days);
     if (!days || days <= 0 || days > 365) return res.status(400).json({ error: 'Enter a number of days between 1 and 365.' });
     const userIds = Array.isArray(req.body.userIds) && req.body.userIds.length ? req.body.userIds : null;
-    const affected = db.extendAllActiveTrials(days, userIds);
-    res.json({ ok: true, affected });
+    const emailType = ['features', 'simple', 'none'].includes(req.body.emailType) ? req.body.emailType : 'none';
+    const affectedRows = db.extendAllActiveTrials(days, userIds);
+    if (emailType !== 'none') {
+      // Fire-and-forget per person — a slow or failed send to one
+      // person shouldn't hold up the response or fail the whole batch;
+      // the data change has already happened either way.
+      affectedRows.forEach(u => {
+        if (u.email) emailTrialUpdated(u.name, u.email, days, u.trial_ends_at, emailType, false, u.language)
+          .catch(e => console.error('[trial-extend email]', u.email, e.message));
+      });
+    }
+    res.json({ ok: true, affected: affectedRows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // Per Bot 40 — re-grants a fresh trial to selected people whose trial
@@ -2116,14 +2158,21 @@ app.get('/api/admin/trials/lapsed-count', auth.requireAuthApi(['admin']), (req, 
     res.json({ count: db.countLapsedTrialUsers(userIds) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.post('/api/admin/trials/regrant', auth.requireAuthApi(['admin']), (req, res) => {
+app.post('/api/admin/trials/regrant', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const days = Number(req.body.days);
     if (!days || days <= 0 || days > 365) return res.status(400).json({ error: 'Enter a number of days between 1 and 365.' });
     const userIds = Array.isArray(req.body.userIds) ? req.body.userIds : [];
     if (!userIds.length) return res.status(400).json({ error: 'Select at least one person first.' });
-    const affected = db.regrantTrialForLapsedUsers(userIds, days);
-    res.json({ ok: true, affected });
+    const emailType = ['features', 'simple', 'none'].includes(req.body.emailType) ? req.body.emailType : 'none';
+    const affectedRows = db.regrantTrialForLapsedUsers(userIds, days);
+    if (emailType !== 'none') {
+      affectedRows.forEach(u => {
+        if (u.email) emailTrialUpdated(u.name, u.email, days, u.trial_ends_at, emailType, true, u.language)
+          .catch(e => console.error('[trial-regrant email]', u.email, e.message));
+      });
+    }
+    res.json({ ok: true, affected: affectedRows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

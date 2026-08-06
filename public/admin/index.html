@@ -380,6 +380,14 @@
           <input type="number" id="regrantTrialDays" value="14" min="1" max="365" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
         </div>
         <div class="modal-note">For people whose trial already lapsed (they're back on Explorer, with no active trial to extend) — this starts a fresh trial from today, at Member level 1. Anyone selected who never had a trial in the first place is skipped automatically.</div>
+        <div>
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Let them know</label>
+          <select id="regrantTrialEmailType" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+            <option value="features" selected>New features — "we've started a new trial so you can see what's new"</option>
+            <option value="simple">Just the facts — a plain note that they have a fresh trial</option>
+            <option value="none">Don't send anything</option>
+          </select>
+        </div>
       </div>
       <div class="modal-err" id="regrantTrialErr"></div>
       <div class="modal-btns">
@@ -408,6 +416,14 @@
           <input type="number" id="extendTrialsDays" value="14" min="1" max="365" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
         </div>
         <div class="modal-note">Pushes the trial end date forward for everyone this applies to — already-paying members and lapsed trials are untouched either way.</div>
+        <div>
+          <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Let them know</label>
+          <select id="extendTrialsEmailType" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
+            <option value="features" selected>New features — "we've extended your trial so you can see what's new"</option>
+            <option value="simple">Just the facts — a plain note that their trial's been extended</option>
+            <option value="none">Don't send anything</option>
+          </select>
+        </div>
       </div>
       <div class="modal-err" id="extendTrialsErr"></div>
       <div class="modal-btns">
@@ -2330,13 +2346,16 @@
     const ids = [...userSel.sel]; if (!ids.length) return;
     const days = regrantTrialDaysValue();
     if (!days || days <= 0) { document.getElementById('regrantTrialErr').textContent = 'Enter a number of days greater than 0.'; return; }
-    if (!(await appConfirm(`Give a fresh ${days}-day trial to whichever of your ${ids.length} selected people previously had one? Anyone who never had a trial is skipped.`))) return;
+    const emailType = document.getElementById('regrantTrialEmailType').value;
+    const emailNote = emailType === 'none' ? ' No email will be sent.' : '';
+    if (!(await appConfirm(`Give a fresh ${days}-day trial to whichever of your ${ids.length} selected people previously had one?${emailNote} Anyone who never had a trial is skipped.`))) return;
     try {
-      const res = await fetch('/api/admin/trials/regrant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days, userIds: ids }) });
+      const res = await fetch('/api/admin/trials/regrant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days, userIds: ids, emailType }) });
       const data = await res.json();
       if (!res.ok) { document.getElementById('regrantTrialErr').textContent = data.error || 'Could not give trials.'; return; }
       closeModal('regrantTrialModal');
-      await appAlert(`Gave a fresh ${days}-day trial to ${data.affected} ${data.affected === 1 ? 'person' : 'people'}.`);
+      const emailedNote = emailType === 'none' ? '' : ' They\'ve been emailed to let them know.';
+      await appAlert(`Gave a fresh ${days}-day trial to ${data.affected} ${data.affected === 1 ? 'person' : 'people'}.${emailedNote}`);
       userSel.clear(); loadUsers(); loadMembers();
     } catch(e) {
       document.getElementById('regrantTrialErr').textContent = 'Error: ' + e.message;
@@ -2384,17 +2403,20 @@
   async function saveExtendTrials() {
     const days = extendTrialsDaysValue();
     if (!days || days <= 0) { document.getElementById('extendTrialsErr').textContent = 'Enter a number of days greater than 0.'; return; }
+    const emailType = document.getElementById('extendTrialsEmailType').value;
     const selectedIds = [...memberSel.sel];
     const who = selectedIds.length ? `your ${selectedIds.length} selected ${selectedIds.length === 1 ? 'person' : 'people'} (whichever of them are on active trials)` : 'everyone currently on an active trial';
-    if (!(await appConfirm(`Extend ${who} by ${days} day${days === 1 ? '' : 's'}? This can't be undone in one click — you'd need to shorten each person's trial back individually.`))) return;
+    const emailNote = emailType === 'none' ? ' No email will be sent.' : '';
+    if (!(await appConfirm(`Extend ${who} by ${days} day${days === 1 ? '' : 's'}?${emailNote} This can't be undone in one click — you'd need to shorten each person's trial back individually.`))) return;
     try {
-      const body = { days };
+      const body = { days, emailType };
       if (selectedIds.length) body.userIds = selectedIds;
       const res = await fetch('/api/admin/trials/extend-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) { document.getElementById('extendTrialsErr').textContent = data.error || 'Could not extend trials.'; return; }
       closeModal('extendTrialsModal');
-      await appAlert(`Extended ${data.affected} ${data.affected === 1 ? 'trial' : 'trials'} by ${days} day${days === 1 ? '' : 's'}.`);
+      const emailedNote = emailType === 'none' ? '' : ' They\'ve been emailed to let them know.';
+      await appAlert(`Extended ${data.affected} ${data.affected === 1 ? 'trial' : 'trials'} by ${days} day${days === 1 ? '' : 's'}.${emailedNote}`);
       memberSel.clear(); loadMembers();
     } catch(e) {
       document.getElementById('extendTrialsErr').textContent = 'Error: ' + e.message;

@@ -3873,26 +3873,26 @@ function countActiveTrials(userIds) {
   }
   return queryOne(`SELECT COUNT(*) as n FROM users WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`).n;
 }
+// Per Bot 41 — returns the affected rows (id, name, email, language, new
+// trial_ends_at), not just a count, so the caller can send each of them
+// a real email with their own name and their own new date rather than a
+// generic blast. The WHERE clause is identical to before; this just also
+// captures who matched, both before AND after the update, since SQLite's
+// UPDATE doesn't return rows itself.
 function extendAllActiveTrials(days, userIds) {
-  if (userIds && userIds.length) {
-    const before = countActiveTrials(userIds);
-    const placeholders = userIds.map(() => '?').join(',');
-    getDbSync().run(
-      `UPDATE users SET trial_ends_at = datetime(trial_ends_at, '+' || ? || ' days')
-       WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now') AND id IN (${placeholders})`,
-      [days, ...userIds]
-    );
-    save();
-    return before;
-  }
-  const before = countActiveTrials();
+  const where = (userIds && userIds.length)
+    ? `trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now') AND id IN (${userIds.map(() => '?').join(',')})`
+    : `trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`;
+  const params = (userIds && userIds.length) ? userIds : [];
+  const before = queryAll(`SELECT id FROM users WHERE ${where}`, params);
+  if (!before.length) return [];
   getDbSync().run(
-    `UPDATE users SET trial_ends_at = datetime(trial_ends_at, '+' || ? || ' days')
-     WHERE trial_ends_at IS NOT NULL AND trial_ends_at > datetime('now')`,
-    [days]
+    `UPDATE users SET trial_ends_at = datetime(trial_ends_at, '+' || ? || ' days') WHERE ${where}`,
+    [days, ...params]
   );
   save();
-  return before;
+  const ids = before.map(r => r.id);
+  return queryAll(`SELECT id, name, email, language, trial_ends_at FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
 }
 
 // ── Re-grant a lapsed trial (Per Bot 40) — distinct from
@@ -3917,17 +3917,25 @@ function countLapsedTrialUsers(userIds) {
     userIds
   ).n;
 }
+// Per Bot 41 — same shift as extendAllActiveTrials above: returns the
+// affected rows themselves (with their fresh trial_ends_at), not just a
+// count, so each person can get their own real email.
 function regrantTrialForLapsedUsers(userIds, days, tier = 1) {
-  if (!userIds || !userIds.length) return 0;
-  const before = countLapsedTrialUsers(userIds);
+  if (!userIds || !userIds.length) return [];
   const placeholders = userIds.map(() => '?').join(',');
+  const before = queryAll(
+    `SELECT id FROM users WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+    userIds
+  );
+  if (!before.length) return [];
   getDbSync().run(
     `UPDATE users SET member_tier=?, trial_ends_at=datetime('now', '+' || ? || ' days')
      WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
     [tier, days, ...userIds]
   );
   save();
-  return before;
+  const ids = before.map(r => r.id);
+  return queryAll(`SELECT id, name, email, language, trial_ends_at FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
 }
 
 function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
