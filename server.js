@@ -5852,6 +5852,17 @@ async function synthesizeAndCacheSignalAudio(script) {
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
+// Per Bot 37 — the client's speak() function (client-index.html) only
+// ever learned the bare [[PAUSE]] marker, not the newer [[PAUSE:N]]
+// explicit-duration syntax used for pre-cached signal-script audio.
+// Anywhere text with the newer marker format has to flow to the client
+// for live speech (a synthesis failure, or a custom voice bypassing the
+// cache entirely) needs this normalization first, or the client just
+// reads the literal bracketed text aloud instead of pacing on it.
+function normalizePauseMarkersForClient(text) {
+  return (text || '').replace(/\[\[PAUSE(?::\d+(?:\.\d+)?)?\]\]/g, '[[PAUSE]]');
+}
+
 async function resolveSignalMarkers(text, requestVoiceId) {
   let audioUrl = null;
   const matches = [...text.matchAll(/\[\[SIGNAL:([a-zA-Z0-9_-]+)\]\]/g)];
@@ -5878,11 +5889,20 @@ async function resolveSignalMarkers(text, requestVoiceId) {
         audioUrl = await synthesizeAndCacheSignalAudio(script);
       } catch (e) {
         console.error('[signal] cache synthesis failed, falling back to live TTS:', e.message);
-        replacement = script.script_text || ''; // client's own /api/speak still renders it
+        // Per Bot 37 — the client's own speak() only ever learned the
+        // bare [[PAUSE]] marker, not [[PAUSE:N]]'s explicit duration —
+        // a [[PAUSE:5]] here would fail to match anything client-side
+        // and get read aloud literally ("pause colon five"), which is
+        // exactly what got reported. Normalizing down to the marker the
+        // client already handles means this fallback still gets real,
+        // if fixed-length, timed gaps instead of literal spoken
+        // brackets — full variable-duration precision only applies to
+        // the primary (successful, default-voice) synthesis path.
+        replacement = normalizePauseMarkersForClient(script.script_text || '');
       }
     } else {
       // Custom voice — always live, uncached, exactly as before.
-      replacement = script.script_text || '';
+      replacement = normalizePauseMarkersForClient(script.script_text || '');
     }
     resolved = resolved.replace(full, replacement);
   }
