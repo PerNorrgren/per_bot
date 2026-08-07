@@ -1,12 +1,18 @@
-# Per Bot 34 — Railway's default Node.js build (Nixpacks) doesn't include
-# ffmpeg, which the new signal-script audio splicing needs (see
-# synthesizeAndCacheSignalAudio in server.js — it shells out to ffmpeg to
-# properly splice separately-synthesized ElevenLabs segments together with
-# real silence between them; naive byte concatenation of MP3 files doesn't
-# work, verified directly — it produces corrupted, undecodable audio).
+# Per Bot 54 — the previous version of this file used aptPkgs =
+# ["ffmpeg"], which is documented as a real Nixpacks option, but doesn't
+# reliably provide ffprobe (found directly: another Railway user with
+# the exact same aptPkgs = ["ffmpeg"] config hit the exact same
+# "executable file not found" error). Nixpacks' own official
+# documentation (nixpacks.com/docs/guides/configuring-builds) shows the
+# correct, recommended way to add ffmpeg is nixPkgs, not aptPkgs — Nix's
+# ffmpeg package reliably includes ffprobe alongside it, since they're
+# built from the same source as one complete package rather than
+# separately-resolved apt dependencies.
 #
-# aptPkgs adds this one extra system package on top of whatever Nixpacks
-# already auto-detects for a Node.js app (Node itself, npm, etc.) — it
-# doesn't replace or interfere with that detection, just adds to it.
+# The "..." is required and documented as important: it means "extend
+# whatever Nixpacks already auto-detected for this app" (Node.js, npm,
+# etc.) rather than replacing that detection entirely. Leaving it out —
+# as the previous version of this file did — risks losing the
+# auto-detected Node setup, not just failing to add ffmpeg correctly.
 [phases.setup]
-aptPkgs = ["ffmpeg"]
+nixPkgs = ["...", "ffmpeg"]
