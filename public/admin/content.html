@@ -1753,7 +1753,12 @@ function renderAbResult(data){
   });
 
   const table = document.getElementById('abChapterTable');
-  table.innerHTML = data.chapters.map(c => `
+  table.innerHTML = `
+    <div style="margin-bottom:10px">
+      <button class="btn sm" onclick="cleanUpAbChapterTitles()">Clean up all titles</button>
+      <span style="font-size:12px;color:rgba(255,255,255,0.35);margin-left:8px">Strips the number prefix and underscores, fixes the "#U2014"/"#U2019" filename artifacts — one click across every chapter, then saves each row automatically</span>
+    </div>
+  ` + data.chapters.map(c => `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px" data-chapter-id="${c.id}">
       <button onclick="playAbChapterPreview(${c.start_seconds})" style="background:none;border:none;color:rgba(180,230,200,0.9);cursor:pointer;font-size:14px" title="Preview from here">▶</button>
       <input type="text" value="${escapeHtml(c.title)}" class="ab-chapter-title" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:5px 8px;color:rgba(255,255,255,0.85);font-size:13px"/>
@@ -1762,6 +1767,30 @@ function renderAbResult(data){
       <button onclick="saveAbChapter('${c.id}', this)" class="btn sm" style="padding:4px 10px">Save</button>
     </div>
   `).join('');
+}
+
+// Per Bot 56 — the server's fallback chapter title is just the raw
+// filename minus extension (chosen deliberately, since Per usually
+// supplies real titles up front) — but for a batch like this, uploaded
+// straight from a zip full of numbered filenames, that leaves every
+// title looking like "03_Part_One_#U2014_Meet_the_Hijacker" instead of
+// "Part One — Meet the Hijacker". Mirrors the exact same cleanup used
+// when this book's chapter list was first built by hand, now available
+// as one click here instead of 51 manual edits.
+function cleanUpTitleFromFilename(raw) {
+  let name = raw.replace(/^\d+_/, ''); // leading "03_" style number prefix
+  name = name.replace(/#U2014/g, '—').replace(/#U2019/g, "'");
+  name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  return name;
+}
+async function cleanUpAbChapterTitles(){
+  const rows = document.querySelectorAll('#abChapterTable [data-chapter-id]');
+  for (const row of rows) {
+    const titleInput = row.querySelector('.ab-chapter-title');
+    titleInput.value = cleanUpTitleFromFilename(titleInput.value);
+    const saveBtn = row.querySelector('button.btn.sm');
+    await saveAbChapter(row.dataset.chapterId, saveBtn);
+  }
 }
 
 function playAbChapterPreview(startSeconds){
