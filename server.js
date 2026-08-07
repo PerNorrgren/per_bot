@@ -7753,6 +7753,103 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
 });
 
 // ── R2 upload — Step 2: browser has finished uploading directly to R2; save the metadata row. ──
+// ── Audiobook chapter combining (Per Bot 46) ── Author's Republic (the
+// audiobook distribution aggregator) requires separate per-chapter MP3
+// files for submission — that's not optional, it's how their platform
+// works. Rather than fighting that, this takes the same chapter files
+// and does something useful with them here too: stitches them into one
+// continuous file for in-app playback via ffmpeg (same technique
+// already proven for the signal-script pause splicing — naive
+// Buffer.concat of separate MP3s doesn't work, verified directly
+// earlier this cycle), and computes each chapter's start time directly
+// from where its source file actually started, rather than anyone
+// typing timestamps by hand. Uses local disk upload (not the R2
+// presigned-direct-upload path everything else here uses) since ffmpeg
+// needs real files on disk to work with, not just an R2 key.
+app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']), upload.array('files'), async (req, res) => {
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'audiobook-'));
+  try {
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ error: 'No chapter files provided.' });
+    const { title, description, categoryId, subcategoryId, visibility } = req.body;
+    if (!title || !categoryId) return res.status(400).json({ error: 'Title and category are required.' });
+    let chapterTitles;
+    try { chapterTitles = JSON.parse(req.body.chapterTitles || '[]'); } catch (e) { chapterTitles = []; }
+
+    // Probe each file's real duration via ffprobe, in upload order —
+    // multer's req.files preserves the order files were appended to the
+    // multipart form, which the client controls (drag order / list order).
+    const durations = [];
+    for (const f of files) {
+      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', f.path]);
+      durations.push(parseFloat(stdout.trim()) || 0);
+    }
+
+    // Concat demuxer needs a plain list file — same mechanism as the
+    // signal-script splicing, just concatenating real chapter content
+    // instead of TTS segments + generated silence.
+    const listPath = path.join(tmpDir, 'list.txt');
+    const listContent = files.map(f => `file '${f.path.replace(/'/g, "'\\''")}'`).join('\n');
+    await fsp.writeFile(listPath, listContent);
+    const outPath = path.join(tmpDir, 'combined.mp3');
+    await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
+
+    const buffer = await fsp.readFile(outPath);
+    const key = `library/${uuidv4()}.mp3`;
+    await media.uploadPublicObject(key, buffer, 'audio/mpeg');
+
+    const fileId = uuidv4();
+    db.addLibraryFile(
+      fileId, title.trim(), description || '', key, `${title.trim()}.mp3`,
+      'audio/mpeg', buffer.length, categoryId, subcategoryId || null, visibility || 'client',
+      'r2', false, 'book', null, null
+    );
+
+    // Chapter start times: chapter 0 starts at 0, each subsequent
+    // chapter starts at the sum of every prior file's real duration —
+    // exact, since it's derived from the same files that were just
+    // concatenated in this same order, not estimated separately.
+    let cumulative = 0;
+    const chapters = [];
+    for (let i = 0; i < files.length; i++) {
+      const chapterTitle = (chapterTitles[i] || files[i].originalname.replace(/\.[^.]+$/, '')).trim();
+      const chapterId = uuidv4();
+      db.createChapter(chapterId, fileId, chapterTitle, cumulative, i);
+      chapters.push({ id: chapterId, title: chapterTitle, start_seconds: cumulative });
+      cumulative += durations[i];
+    }
+
+    res.json({ ok: true, fileId, chapters, totalDurationSeconds: cumulative });
+  } catch (e) {
+    console.error('audiobook-combine error:', e.message);
+    res.status(500).json({ error: e.message });
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    // multer's disk storage leaves the originals in uploads/ — clean
+    // those up too, they've served their purpose once combined.
+    (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
+  }
+});
+
+// Chapter list for a given file — used by both the admin editor and
+// (later) the client player.
+app.get('/api/admin/library/:id/chapters', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getChaptersForFile(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/library/chapters/:chapterId', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { title, startSeconds } = req.body;
+    if (!title || startSeconds == null) return res.status(400).json({ error: 'Title and start time are required.' });
+    db.updateChapter(req.params.chapterId, title.trim(), Number(startSeconds));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/library/chapters/:chapterId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteChapter(req.params.chapterId); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
   try {
     const { title, categoryId, subcategoryId, visibility } = req.body;
@@ -7887,6 +7984,42 @@ app.get('/newsletter-videos/:key', async (req, res) => {
 // ── Playback URL — checked against the SAME tier-gating logic as the Content tab listing. ──
 // Only generates a (short-lived, signed) R2 URL after access is confirmed. Legacy disk files
 // fall back to the existing /uploads/:filename route, unaffected by this migration.
+// Per Bot 46 — client-facing counterpart to the admin chapter endpoints
+// above. Same auth/tier gate as playback-url itself, since chapter
+// titles and timestamps aren't meaningfully sensitive on their own, but
+// there's no reason to expose them to someone who couldn't play the
+// file anyway.
+app.get('/api/content/library/:id/chapters', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    res.json(db.getChaptersForFile(req.params.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Resume position — per person, per file. GET returns 0 for a file
+// they've never played, same as a fresh start; no separate "not found"
+// case to handle client-side.
+app.get('/api/content/library/:id/position', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
+  try {
+    res.json({ positionSeconds: db.getPlaybackPosition(req.user.id, req.params.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/content/library/:id/position', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
+  try {
+    const position = Number(req.body.positionSeconds);
+    if (!Number.isFinite(position) || position < 0) return res.status(400).json({ error: 'Invalid position.' });
+    db.savePlaybackPosition(req.user.id, req.params.id, position);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);

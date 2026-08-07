@@ -719,6 +719,16 @@
     .np-progress { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.15); cursor:pointer; position:relative; }
     .np-progress-fill { height:100%; border-radius:3px; background:rgba(180,230,200,0.8); width:0%; }
     .np-time { font-size:11px; color:rgba(255,255,255,0.4); min-width:34px; text-align:right; }
+    /* Per Bot 46 — chapter list, only ever rendered for files that
+       actually have chapters (audiobooks combined via the admin
+       audiobook-combine flow); everything else's now-playing card looks
+       exactly as it did before this was added. */
+    .now-playing-chapters { width:100%; max-width:400px; max-height:240px; overflow-y:auto; margin-top:6px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px; }
+    .np-chapter-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:9px 6px; cursor:pointer; border-radius:6px; font-size:13px; color:rgba(255,255,255,0.6); }
+    .np-chapter-row:hover { background:rgba(255,255,255,0.06); }
+    .np-chapter-row.active { color:rgba(180,230,200,0.95); background:rgba(180,230,200,0.08); }
+    .np-chapter-title { text-align:left; flex:1; }
+    .np-chapter-time { font-size:11px; color:rgba(255,255,255,0.35); flex-shrink:0; }
 
     /* Start screen — identical to Mare Bot */
     #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:flex; align-items:center; justify-content:center; z-index:99; }
@@ -2840,6 +2850,17 @@
   let _contentData   = [];
   let _userPlaylists = [];
   let _currentAudioFile = null;
+  // Per Bot 46 — chapters for whatever's currently loaded (empty for
+  // anything without them, which is most audio — meditations, signal
+  // scripts, etc. never call the chapters endpoint at all since
+  // _currentChapters just stays empty and the UI below renders nothing
+  // extra). _lastSavedPosition throttles how often position gets
+  // POSTed — every timeupdate tick would be dozens of requests a
+  // minute for nothing; only sending on a real few-second change since
+  // the last save is enough to survive a crashed tab without hammering
+  // the server on every frame.
+  let _currentChapters = [];
+  let _lastSavedPosition = -1;
 
   // Mini player state
   let mpAudio = null;
@@ -2937,14 +2958,29 @@
     // /uploads/:filename path as before. Either way, the URL is resolved fresh here
     // rather than built from file.filename directly, so access control is never bypassed.
     let playUrl;
+    let resumePosition = 0;
+    _currentChapters = [];
     try {
-      const res  = await fetch(`/api/content/library/${file.id}/playback-url`);
-      const data = await res.json();
-      if (!res.ok || !data.url) {
+      const [playRes, chaptersRes, positionRes] = await Promise.all([
+        fetch(`/api/content/library/${file.id}/playback-url`),
+        fetch(`/api/content/library/${file.id}/chapters`).catch(() => null),
+        fetch(`/api/content/library/${file.id}/position`).catch(() => null),
+      ]);
+      const data = await playRes.json();
+      if (!playRes.ok || !data.url) {
         if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
         return;
       }
       playUrl = data.url;
+      // Chapters/position are nice-to-haves, not required for playback
+      // to work — a failure on either just means no chapter list and no
+      // resume, never a blocked play.
+      if (chaptersRes && chaptersRes.ok) {
+        try { _currentChapters = await chaptersRes.json(); } catch { _currentChapters = []; }
+      }
+      if (positionRes && positionRes.ok) {
+        try { resumePosition = (await positionRes.json()).positionSeconds || 0; } catch { resumePosition = 0; }
+      }
     } catch {
       if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
       return;
@@ -2955,6 +2991,17 @@
     if (myToken !== _mpToken) return;
 
     mpAudio = new Audio(playUrl);
+    _lastSavedPosition = -1;
+    // Resume close to where they left off — skipped if it's right at the
+    // very start (nothing to resume) or right at the very end (almost
+    // certainly means they finished it last time; starting over reads
+    // better than reopening one second from the end).
+    mpAudio.addEventListener('loadedmetadata', () => {
+      if (myToken !== _mpToken) return;
+      if (resumePosition > 5 && (!mpAudio.duration || resumePosition < mpAudio.duration - 15)) {
+        mpAudio.currentTime = resumePosition;
+      }
+    });
     mpAudio.addEventListener('timeupdate', () => {
       if (myToken !== _mpToken) return; // stale/abandoned instance
       const pct = mpAudio.duration ? (mpAudio.currentTime / mpAudio.duration * 100) : 0;
@@ -2963,6 +3010,28 @@
       const mpTimeEl = document.getElementById('mpTime'); if (mpTimeEl) mpTimeEl.textContent = timeText;
       const npFillEl = document.getElementById('npFill'); if (npFillEl) npFillEl.style.width = pct + '%';
       const npTimeEl = document.getElementById('npTime'); if (npTimeEl) npTimeEl.textContent = timeText;
+      updateActiveChapterHighlight(mpAudio.currentTime);
+      // Save roughly every 10 real seconds of playback — enough to
+      // survive a crashed tab without turning every timeupdate tick
+      // (which fires many times a second) into a network request.
+      if (Math.abs(mpAudio.currentTime - _lastSavedPosition) >= 10) {
+        _lastSavedPosition = mpAudio.currentTime;
+        fetch(`/api/content/library/${file.id}/position`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionSeconds: mpAudio.currentTime })
+        }).catch(() => {});
+      }
+    });
+    mpAudio.addEventListener('pause', () => {
+      if (myToken !== _mpToken || !mpAudio) return;
+      // Always save on an actual pause, regardless of the 10-second
+      // throttle above — this is the moment someone's most likely to
+      // close the tab next, so it's worth a guaranteed save here even
+      // if the throttled save just fired a second ago.
+      fetch(`/api/content/library/${file.id}/position`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionSeconds: mpAudio.currentTime })
+      }).catch(() => {});
     });
     mpAudio.addEventListener('ended', () => {
       if (myToken !== _mpToken) return; // stale/abandoned instance
@@ -2972,6 +3041,14 @@
       // Update play buttons
       document.querySelectorAll('.play-btn.playing').forEach(b => b.classList.remove('playing'));
       document.querySelectorAll('.play-btn').forEach(b => b.textContent = '▶');
+      // Finished naturally — next open should start from the beginning,
+      // not one second from the end, so this explicitly clears the saved
+      // position rather than leaving whatever the last throttled save
+      // happened to catch.
+      fetch(`/api/content/library/${file.id}/position`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionSeconds: 0 })
+      }).catch(() => {});
       handleAudioStopped();
     });
     mpAudio.play();
@@ -3006,6 +3083,31 @@
     const rect = e.currentTarget.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     mpAudio.currentTime = ((clientX - rect.left) / rect.width) * mpAudio.duration;
+  }
+
+  // Per Bot 46 — jump straight to a chapter's start. Plays if paused,
+  // same as tapping a chapter in any real audiobook app should do —
+  // browsing chapters and starting playback are the same gesture, not
+  // two separate steps.
+  function mpSeekToChapter(startSeconds) {
+    if (!mpAudio) return;
+    mpAudio.currentTime = startSeconds;
+    if (mpAudio.paused) { mpAudio.play(); setAllPlayBtns('⏸'); }
+    updateActiveChapterHighlight(startSeconds);
+  }
+
+  // Highlights whichever chapter currentTime currently falls within —
+  // the last one whose start_seconds is at or before currentTime, since
+  // chapters are sorted and each one runs until the next one starts.
+  function updateActiveChapterHighlight(currentTime) {
+    if (!_currentChapters.length) return;
+    let activeId = _currentChapters[0].id;
+    for (const c of _currentChapters) {
+      if (c.start_seconds <= currentTime) activeId = c.id; else break;
+    }
+    document.querySelectorAll('.np-chapter-row').forEach(el => {
+      el.classList.toggle('active', el.dataset.chapterId === activeId);
+    });
   }
 
   function mpClose() {
@@ -5824,6 +5926,21 @@
     _showingNowPlaying = true;
     document.getElementById('playerTitle').textContent = file.title;
     document.getElementById('playerText').innerHTML = '';
+    // Per Bot 46 — chapter list, only rendered when the file actually
+    // has any (almost everything won't — meditations, signal scripts,
+    // ordinary audio files never populate library_file_chapters at
+    // all, so _currentChapters is just empty for them and this whole
+    // block silently produces nothing).
+    const chapterListHtml = _currentChapters.length ? `
+      <div class="now-playing-chapters">
+        ${_currentChapters.map(c => `
+          <div class="np-chapter-row" data-chapter-id="${c.id}" onclick="mpSeekToChapter(${c.start_seconds})">
+            <span class="np-chapter-title">${escapeHtml(c.title)}</span>
+            <span class="np-chapter-time">${fmtTime(c.start_seconds)}</span>
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
     document.getElementById('playerMedia').innerHTML = `
       <div class="now-playing-card">
         <div class="now-playing-icon">🎧</div>
@@ -5837,6 +5954,7 @@
           </div>
           <span class="np-time" id="npTime">0:00</span>
         </div>
+        ${chapterListHtml}
       </div>
     `;
     pushPlayerHistoryState();
