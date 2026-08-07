@@ -1033,7 +1033,10 @@
         </div>
         <div class="content-scroll" id="contentScroll"></div>
         <div class="mini-player" id="miniPlayer">
-          <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer">—</div>
+          <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer;display:flex;align-items:center;gap:6px">
+            <span id="miniPlayerTitleText">—</span>
+            <span style="font-size:11px;color:rgba(255,255,255,0.35);flex-shrink:0" title="Open full player">⌃</span>
+          </div>
           <div class="mini-player-controls">
             <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
             <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
@@ -2946,7 +2949,7 @@
 
     if (mpAudio) { mpAudio.pause(); mpAudio = null; }
     _currentAudioFile = file;
-    document.getElementById('miniPlayerTitle').textContent = file.title;
+    document.getElementById('miniPlayerTitleText').textContent = file.title;
     document.getElementById('miniPlayer').classList.add('visible');
     document.getElementById('mpFill').style.width = '0%';
     document.getElementById('mpTime').textContent = '0:00';
