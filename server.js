@@ -7789,7 +7789,7 @@ app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']),
   try { chapterTitles = JSON.parse(req.body.chapterTitles || '[]'); } catch (e) { chapterTitles = []; }
 
   const jobId = uuidv4();
-  audiobookJobs.set(jobId, { status: 'processing' });
+  audiobookJobs.set(jobId, { status: 'processing', stage: 'Starting…' });
   res.json({ ok: true, jobId }); // respond right away — the upload itself has already completed by this point, everything slow happens below, after the response
 
   (async () => {
@@ -7799,11 +7799,13 @@ app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']),
       // multer's req.files preserves the order files were appended to the
       // multipart form, which the client controls (drag order / list order).
       const durations = [];
-      for (const f of files) {
-        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', f.path]);
+      for (let i = 0; i < files.length; i++) {
+        audiobookJobs.set(jobId, { status: 'processing', stage: `Checking file lengths — ${i + 1} of ${files.length}` });
+        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', files[i].path]);
         durations.push(parseFloat(stdout.trim()) || 0);
       }
 
+      audiobookJobs.set(jobId, { status: 'processing', stage: `Combining ${files.length} chapter files into one` });
       // Concat demuxer needs a plain list file — same mechanism as the
       // signal-script splicing, just concatenating real chapter content
       // instead of TTS segments + generated silence.
@@ -7814,9 +7816,11 @@ app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']),
       await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
 
       const buffer = await fsp.readFile(outPath);
+      audiobookJobs.set(jobId, { status: 'processing', stage: `Uploading the combined file (${(buffer.length / 1024 / 1024).toFixed(0)}MB)` });
       const key = `library/${uuidv4()}.mp3`;
       await media.uploadPublicObject(key, buffer, 'audio/mpeg');
 
+      audiobookJobs.set(jobId, { status: 'processing', stage: 'Saving chapters' });
       const fileId = uuidv4();
       db.addLibraryFile(
         fileId, title.trim(), description || '', key, `${title.trim()}.mp3`,

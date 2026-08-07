@@ -457,8 +457,15 @@
       <div style="font-size:12px;color:rgba(255,255,255,0.2);margin-top:6px">Selecting multiple files in order in the file picker keeps that order here</div>
     </div>
     <div id="abFileList" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
-    <div class="modal-err" id="abErr"></div>
-    <div id="abProgress" style="display:none;font-size:13px;color:rgba(255,255,255,0.5);margin-top:10px">Combining chapters — this can take a minute for a full-length book…</div>
+    <div id="abErr" style="display:none;margin-top:14px;padding:12px 16px;background:rgba(255,120,100,0.08);border:1px solid rgba(255,120,100,0.3);border-radius:8px;font-size:13px;color:rgba(255,160,140,0.95)"></div>
+    <div id="abProgress" style="display:none;margin-top:14px;padding:14px 16px;background:rgba(180,230,200,0.06);border:1px solid rgba(180,230,200,0.25);border-radius:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="ab-spinner" style="width:14px;height:14px;border:2px solid rgba(180,230,200,0.25);border-top-color:rgba(180,230,200,0.9);border-radius:50%;animation:ab-spin 0.8s linear infinite;flex-shrink:0"></div>
+        <div style="font-size:14px;color:rgba(220,240,230,0.95)" id="abProgressStage">Starting…</div>
+      </div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:6px;padding-left:24px" id="abProgressElapsed"></div>
+    </div>
+    <style>@keyframes ab-spin { to { transform: rotate(360deg); } }</style>
 
     <!-- Shown after a successful combine — editable chapter table -->
     <div id="abResult" style="display:none;margin-top:18px">
@@ -1638,10 +1645,11 @@ async function doAudiobookCombine(){
   const subcategoryId = document.getElementById('abSub').value;
   const errEl = document.getElementById('abErr');
   errEl.textContent = '';
+  errEl.style.display = 'none';
 
-  if (!title) { errEl.textContent = 'Enter a title.'; return; }
-  if (!categoryId) { errEl.textContent = 'Choose a category.'; return; }
-  if (!abFiles.length) { errEl.textContent = 'Select at least one chapter file.'; return; }
+  if (!title) { errEl.textContent = 'Enter a title.'; errEl.style.display = ''; return; }
+  if (!categoryId) { errEl.textContent = 'Choose a category.'; errEl.style.display = ''; return; }
+  if (!abFiles.length) { errEl.textContent = 'Select at least one chapter file.'; errEl.style.display = ''; return; }
 
   const formData = new FormData();
   abFiles.forEach(f => formData.append('files', f));
@@ -1657,8 +1665,16 @@ async function doAudiobookCombine(){
 
   document.getElementById('abCombineBtn').disabled = true;
   const progressEl = document.getElementById('abProgress');
+  const stageEl = document.getElementById('abProgressStage');
+  const elapsedEl = document.getElementById('abProgressElapsed');
+  const showError = (msg) => {
+    errEl.textContent = msg;
+    errEl.style.display = '';
+    progressEl.style.display = 'none';
+  };
   progressEl.style.display = '';
-  progressEl.textContent = 'Uploading chapter files…';
+  stageEl.textContent = 'Uploading chapter files…';
+  elapsedEl.textContent = '';
   try {
     // Per Bot 51 — this used to be one request that waited for the
     // whole combine to finish. A real ~200MB, 51-file book pushed that
@@ -1669,27 +1685,31 @@ async function doAudiobookCombine(){
     // work happens after that response, and this polls for it.
     const res = await fetch('/api/admin/library/audiobook-combine', { method: 'POST', body: formData });
     const data = await res.json();
-    if (!res.ok) { errEl.textContent = data.error || 'Could not start combining.'; return; }
+    if (!res.ok) { showError(data.error || 'Could not start combining.'); return; }
 
-    progressEl.textContent = 'Combining chapters — this can take a few minutes for a full-length book…';
     const startedAt = Date.now();
     while (true) {
       await new Promise(r => setTimeout(r, 3000));
       const statusRes = await fetch(`/api/admin/library/audiobook-combine/status/${data.jobId}`);
       const statusData = await statusRes.json();
-      if (!statusRes.ok) { errEl.textContent = statusData.error || 'Lost track of the job.'; return; }
-      if (statusData.status === 'error') { errEl.textContent = statusData.error || 'Could not combine chapters.'; return; }
+      if (!statusRes.ok) { showError(statusData.error || 'Lost track of the job.'); return; }
+      if (statusData.status === 'error') { showError(statusData.error || 'Could not combine chapters.'); return; }
       if (statusData.status === 'done') {
         renderAbResult(statusData);
         document.getElementById('abCombineBtn').style.display = 'none';
         break;
       }
-      const elapsedMin = Math.floor((Date.now() - startedAt) / 60000);
-      progressEl.textContent = `Still combining… ${elapsedMin > 0 ? elapsedMin + ' min so far' : 'just started'}`;
+      // Per Bot 52 — real stage from the server (which file it's
+      // checking, that it's now combining, that it's now uploading),
+      // not a single static "still combining" message the whole time.
+      stageEl.textContent = statusData.stage || 'Working…';
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      const mins = Math.floor(elapsedSec / 60), secs = elapsedSec % 60;
+      elapsedEl.textContent = `${mins > 0 ? mins + ' min ' : ''}${secs}s elapsed`;
     }
     loadAll();
   } catch(e) {
-    errEl.textContent = 'Network error: ' + e.message;
+    showError('Network error: ' + e.message);
   } finally {
     document.getElementById('abCombineBtn').disabled = false;
     document.getElementById('abProgress').style.display = 'none';
