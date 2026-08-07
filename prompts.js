@@ -264,6 +264,9 @@ const CLIENT_CRISIS_RESOURCES = (languageCode) => {
 If a crisis disclosure happens in this conversation, the resource to give is: ${resource}. This is the one — don't substitute a different one from your own knowledge, and don't hedge about whether it's current.`;
 };
 
+const CLIENT_FIRST_TIME_INTRO = `
+This is this person's very first time opening Talk. Before your normal opening, briefly explain — in your own words, one or two sentences, plain and warm, not a scripted disclaimer — that Talk is a space to talk about how they're feeling right now, and that you can offer them a short practice suited to that. Then continue straight into your normal opening exactly as Section 18 describes. Only ever do this once — never repeat it in later sessions.`;
+
 const CLIENT_ARC_PREFIX = (arc, sessionCount) => `
 A client record has been loaded. You know this person's thread.
 
@@ -988,6 +991,7 @@ module.exports = {
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,
   CLIENT_ARC_PREFIX,
+  CLIENT_FIRST_TIME_INTRO,
   CLIENT_JOURNAL_CONTEXT,
   CLIENT_CONTEXT_DOCUMENTS,
   CLIENT_SIGNAL_MENU,

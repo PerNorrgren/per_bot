@@ -5322,6 +5322,16 @@ function pruneLoginLog() {
 }
 
 // ── Talk-to-Per session log (Per Bot 20) ──
+// Per Bot 43 — is this genuinely someone's first-ever Talk session? Used
+// to give a brief explanation of what Talk actually is, once, rather
+// than every time. excludeSessionId matters because startTalkSession
+// (right below) already inserts THIS session's own row before the
+// system prompt gets built each turn — without excluding it, a
+// brand-new first-timer would immediately see their own just-started
+// session and conclude they'd used Talk before.
+function hasEverUsedTalk(userId, excludeSessionId) {
+  return !!queryOne(`SELECT 1 as x FROM talk_sessions WHERE user_id=? AND id != ? LIMIT 1`, [userId, excludeSessionId || '']);
+}
 function startTalkSession(id, userId) {
   getDbSync().run(`INSERT INTO talk_sessions (id, user_id) VALUES (?,?)`, [id, userId]);
   save();
@@ -6599,7 +6609,7 @@ module.exports = {
   updateClientDetails, updateUserName, deleteClient,
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
-  countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers, hasEverLoggedIn,
+  countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers, hasEverLoggedIn, hasEverUsedTalk,
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions

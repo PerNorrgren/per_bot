@@ -6039,6 +6039,13 @@ app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
       const cId = session.clientId;
       if (cId) {
         const client = db.getUser(cId);
+        // Per Bot 43 — this session's own row was already inserted by
+        // startTalkSession before we ever get here (see getChatSession
+        // above), so this has to exclude sessionId itself or a genuine
+        // first-timer would already see one "prior" session: their own.
+        if (!db.hasEverUsedTalk(cId, sessionId)) {
+          sp += prompts.CLIENT_FIRST_TIME_INTRO;
+        }
         // Arc, framework, presentation, and shared journal entries are all
         // facilitator-set (or facilitator-relationship-derived) clinical
         // context — they apply regardless of pref_keep_history, which is
