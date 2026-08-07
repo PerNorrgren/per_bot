@@ -249,6 +249,7 @@
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
           <button class="btn" onclick="openDuplicatesScan()">Scan for duplicate files</button>
           <button class="btn" onclick="openDomainRefsScan()">Scan for old domain links</button>
+          <button class="btn" onclick="openAudiobookUpload()">↑ Upload audiobook</button>
           <button class="btn primary" onclick="openUpload()">↑ Upload files</button>
         </div>
         <div class="bulk-bar" id="bulkBar">
@@ -417,6 +418,58 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('uploadModal')">Cancel</button>
       <button class="modal-ok" id="upBtn" onclick="doUpload()">Upload all</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Audiobook Modal (Per Bot 46) -->
+<div class="modal-overlay" id="audiobookModal">
+  <div class="modal" style="max-width:680px">
+    <h3>Upload audiobook</h3>
+    <div class="modal-note" style="margin-bottom:14px">
+      Author's Republic (and most audiobook distributors) require separate files per chapter for submission — so upload those same chapter files here too. They'll be stitched into one continuous file for in-app playback, with chapter start times worked out automatically from each file's real length, not typed in by hand.
+    </div>
+    <div class="modal-row">
+      <div><label>Title</label><input type="text" id="abTitle" placeholder="The Alarm That Would Not Stop"/></div>
+      <div><label>Category</label><select id="abCat" onchange="onAbCatChange()"><option value="">Select…</option></select></div>
+      <div><label>Subcategory</label><select id="abSub"><option value="">Select…</option></select></div>
+    </div>
+    <div class="modal-row">
+      <div><label>Description</label><input type="text" id="abDesc" placeholder="Optional"/></div>
+      <div>
+        <label>Visibility</label>
+        <select id="abVis">
+          <option value="registered">Explorer</option>
+          <option value="member" selected>Member</option>
+          <option value="client">Client</option>
+          <option value="facilitator">Facilitator</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin:14px 0 8px">
+      <label style="font-size:12px;color:rgba(255,255,255,0.5)">Chapter files, in order</label>
+    </div>
+    <div class="drop-zone" id="abDropZone" onclick="document.getElementById('abFileInput').click()">
+      <input type="file" id="abFileInput" accept="audio/*" multiple style="display:none"/>
+      <div style="font-size:28px;margin-bottom:10px">🎧</div>
+      <div style="font-size:14px;color:rgba(255,255,255,0.4)">Select chapter files, in the order they should play</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.2);margin-top:6px">Selecting multiple files in order in the file picker keeps that order here</div>
+    </div>
+    <div id="abFileList" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
+    <div class="modal-err" id="abErr"></div>
+    <div id="abProgress" style="display:none;font-size:13px;color:rgba(255,255,255,0.5);margin-top:10px">Combining chapters — this can take a minute for a full-length book…</div>
+
+    <!-- Shown after a successful combine — editable chapter table -->
+    <div id="abResult" style="display:none;margin-top:18px">
+      <div style="font-size:13px;color:rgba(180,230,200,0.9);margin-bottom:10px">Combined and uploaded. Chapters below — edit a title or start time and press Save on that row; the play button previews from that exact point.</div>
+      <audio id="abPreviewAudio" style="display:none"></audio>
+      <div id="abChapterTable" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('audiobookModal')">Close</button>
+      <button class="modal-ok" id="abCombineBtn" onclick="doAudiobookCombine()">Combine &amp; upload</button>
     </div>
   </div>
 </div>

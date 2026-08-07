@@ -161,6 +161,42 @@ async function getDb() {
     FOREIGN KEY (subcategory_id) REFERENCES categories(id)
   )`);
 
+  // ── Audiobook chapters (Per Bot 46) ── A single combined audio file
+  // (see combineAudiobookChapters in server.js — separate chapter files
+  // are required for Author's Republic distribution anyway, so the app
+  // takes those same files, stitches them into one continuous file for
+  // in-app playback via ffmpeg, and computes each chapter's start time
+  // directly from where its source file actually started — no manual
+  // timestamp entry, no room for a typo to put a chapter five seconds
+  // off. Editable afterward regardless (rename a chapter, nudge a
+  // boundary), just not required to get an accurate table in the first
+  // place. sort_order rather than relying on chapter_number staying
+  // contiguous — reordering later shouldn't mean renumbering everything.
+  db.run(`CREATE TABLE IF NOT EXISTS library_file_chapters (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    start_seconds REAL NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES library_files(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_chapters_file ON library_file_chapters(file_id, sort_order)`);
+
+  // ── Playback resume position (Per Bot 46) ── Per file per person —
+  // works for any audio file, not just audiobooks specifically, though
+  // audiobooks are the case where it actually matters (nobody needs to
+  // resume a two-minute meditation from 0:47). One row per (user, file),
+  // upserted on every meaningful playback update rather than only on
+  // close, so a crashed tab or a killed app doesn't lose the position.
+  db.run(`CREATE TABLE IF NOT EXISTS library_playback_progress (
+    user_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    position_seconds REAL NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, file_id)
+  )`);
+
   // ── Content shares (Per Bot 22) ── Many-to-many: any file shared with
   // any number of specific people, independent of facilitator assignment
   // and independent of tier — a practice is person-level, not
@@ -3493,6 +3529,44 @@ function updateTrackOrder(refId, sortOrder) {
 }
 
 // ── Users (all non-facilitator accounts) ──
+// ── Audiobook chapters (Per Bot 46) ──
+function getChaptersForFile(fileId) {
+  return queryAll(`SELECT * FROM library_file_chapters WHERE file_id=? ORDER BY sort_order ASC`, [fileId]);
+}
+function createChapter(id, fileId, title, startSeconds, sortOrder) {
+  getDbSync().run(
+    `INSERT INTO library_file_chapters (id,file_id,title,start_seconds,sort_order) VALUES (?,?,?,?,?)`,
+    [id, fileId, title, startSeconds, sortOrder]
+  );
+  save();
+}
+function updateChapter(id, title, startSeconds) {
+  getDbSync().run(`UPDATE library_file_chapters SET title=?, start_seconds=? WHERE id=?`, [title, startSeconds, id]);
+  save();
+}
+function deleteChapter(id) {
+  getDbSync().run(`DELETE FROM library_file_chapters WHERE id=?`, [id]);
+  save();
+}
+function deleteChaptersForFile(fileId) {
+  getDbSync().run(`DELETE FROM library_file_chapters WHERE file_id=?`, [fileId]);
+  save();
+}
+
+// ── Playback resume position (Per Bot 46) ──
+function getPlaybackPosition(userId, fileId) {
+  const row = queryOne(`SELECT position_seconds FROM library_playback_progress WHERE user_id=? AND file_id=?`, [userId, fileId]);
+  return row ? row.position_seconds : 0;
+}
+function savePlaybackPosition(userId, fileId, positionSeconds) {
+  getDbSync().run(
+    `INSERT INTO library_playback_progress (user_id, file_id, position_seconds, updated_at) VALUES (?,?,?,datetime('now'))
+     ON CONFLICT(user_id, file_id) DO UPDATE SET position_seconds=excluded.position_seconds, updated_at=excluded.updated_at`,
+    [userId, fileId, positionSeconds]
+  );
+  save();
+}
+
 function createUser(id, name, facilitatorId, email, passwordHash, categoryId, subcategoryId, consent) {
   const c = consent || {};
   getDbSync().run(
@@ -6610,6 +6684,8 @@ module.exports = {
   // Membership
   setMemberTier, setMemberExpiry, upgradeToMember, downgradeToExplorer, markAsClient, markAsSystemClient,
   countActiveTrials, extendAllActiveTrials, countLapsedTrialUsers, regrantTrialForLapsedUsers, hasEverLoggedIn, hasEverUsedTalk,
+  getChaptersForFile, createChapter, updateChapter, deleteChapter, deleteChaptersForFile,
+  getPlaybackPosition, savePlaybackPosition,
   // Preferences
   updateUserPreferences, userFlagsFromRecord,
   // Sessions
