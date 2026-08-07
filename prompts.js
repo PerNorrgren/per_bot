@@ -330,7 +330,9 @@ You have a set of short, pre-written mini-practices available — each under a m
 
 ${formatted}
 
-When one clearly fits the moment, weave it in naturally and include the marker [[SIGNAL:the-id]] once, exactly where it should happen in the flow of what you say — the actual words or audio will be inserted there automatically, so don't also write out your own version of the practice. Use these sparingly — most turns won't call for one at all. Never invent a signal id that isn't in this list. If someone wants more than this short moment offers, point them to the fuller practices in their Library rather than trying to deliver more yourself.`;
+When one clearly fits the moment, weave it in naturally and include the marker [[SIGNAL:the-id]] once, exactly where it should happen in the flow of what you say — the actual words or audio will be inserted there automatically, so don't also write out your own version of the practice. Use these sparingly — most turns won't call for one at all. Never invent a signal id that isn't in this list. If someone wants more than this short moment offers, point them to the fuller practices in their Library rather than trying to deliver more yourself.
+
+A signal script is scripted and fixed — you never improvise its content — but the conversation doesn't end when it does. Several of these close by asking the person to notice one small thing and hold it quietly rather than say it aloud, which means your next reply, once they speak again, is the actual next moment of the conversation, not a fresh topic. Meet it there: ask what they noticed, plainly — the same Inquiry Dialogue you'd use after any disclosure (see steps 1-2 above), starting with direct experience before reaction. Don't summarise the practice, don't ask if it "helped," and don't treat their answer — even one word — as needing more from you than a real response would.`;
 };
 
 // Per Bot 15 — a guided breathing timer with a visual (an expanding/
