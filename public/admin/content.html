@@ -1250,7 +1250,7 @@ async function loadAll(){
       + skins.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
     skinSel.value=curVal;
   }
-  populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF','alPickerCatF','pdPickerCatF');
+  populateCatSels('libCat','upCat','efCat','cCat','plCat','catParent','courseCatF','plCatF','alPickerCatF','pdPickerCatF','abCat');
   populateKindSels('alPickerTypeF','pdPickerTypeF');
   populateInstanceCourseSels();
   // Not gated behind "only if empty" any more — content kinds can change
@@ -1584,6 +1584,138 @@ function openUpload(){
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
 
+// Per Bot 50 — this whole block was missing entirely. The modal, the
+// button, and the backend all existed and worked in isolation, but
+// nothing on the client actually opened the modal, collected the
+// files, called the endpoint, or rendered what came back — found only
+// because the button threw "openAudiobookUpload is not defined" on the
+// real deployed page.
+let abFiles = [];
+
+function openAudiobookUpload(){
+  abFiles = [];
+  document.getElementById('abTitle').value = '';
+  document.getElementById('abDesc').value = '';
+  document.getElementById('abCat').value = '';
+  document.getElementById('abSub').innerHTML = '<option value="">Select…</option>';
+  document.getElementById('abVis').value = 'member';
+  document.getElementById('abFileList').innerHTML = '';
+  document.getElementById('abErr').textContent = '';
+  document.getElementById('abProgress').style.display = 'none';
+  document.getElementById('abResult').style.display = 'none';
+  document.getElementById('abChapterTable').innerHTML = '';
+  document.getElementById('abCombineBtn').style.display = '';
+  document.getElementById('abFileInput').value = '';
+  openModal('audiobookModal');
+}
+function onAbCatChange(){ populateSub('abCat','abSub'); }
+
+document.getElementById('abFileInput').addEventListener('change', (e) => {
+  // Appends rather than replaces, so picking files in more than one
+  // browse still keeps everything — order follows selection order,
+  // matching the note already in the modal about the picker preserving
+  // order.
+  abFiles = abFiles.concat(Array.from(e.target.files));
+  renderAbFileList();
+  e.target.value = '';
+});
+
+function renderAbFileList(){
+  const el = document.getElementById('abFileList');
+  el.innerHTML = abFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:rgba(255,255,255,0.04);border-radius:6px;font-size:13px">
+      <span style="color:rgba(255,255,255,0.35);min-width:24px">${i+1}.</span>
+      <span style="flex:1;color:rgba(255,255,255,0.8)">${escapeHtml(f.name)}</span>
+      <span onclick="removeAbFile(${i})" style="cursor:pointer;color:rgba(255,255,255,0.35)" title="Remove">✕</span>
+    </div>
+  `).join('');
+}
+function removeAbFile(i){ abFiles.splice(i, 1); renderAbFileList(); }
+
+async function doAudiobookCombine(){
+  const title = document.getElementById('abTitle').value.trim();
+  const categoryId = document.getElementById('abCat').value;
+  const subcategoryId = document.getElementById('abSub').value;
+  const errEl = document.getElementById('abErr');
+  errEl.textContent = '';
+
+  if (!title) { errEl.textContent = 'Enter a title.'; return; }
+  if (!categoryId) { errEl.textContent = 'Choose a category.'; return; }
+  if (!abFiles.length) { errEl.textContent = 'Select at least one chapter file.'; return; }
+
+  const formData = new FormData();
+  abFiles.forEach(f => formData.append('files', f));
+  formData.append('title', title);
+  formData.append('description', document.getElementById('abDesc').value.trim());
+  formData.append('categoryId', categoryId);
+  if (subcategoryId) formData.append('subcategoryId', subcategoryId);
+  formData.append('visibility', document.getElementById('abVis').value);
+  // No chapter titles supplied here -- the server already falls back to
+  // each file's own name (minus extension) when this is empty, which is
+  // exactly what the "Chapter files, in order" filenames are for.
+  formData.append('chapterTitles', '[]');
+
+  document.getElementById('abCombineBtn').disabled = true;
+  document.getElementById('abProgress').style.display = '';
+  try {
+    const res = await fetch('/api/admin/library/audiobook-combine', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || 'Could not combine chapters.'; return; }
+    renderAbResult(data);
+    document.getElementById('abCombineBtn').style.display = 'none';
+    loadAll();
+  } catch(e) {
+    errEl.textContent = 'Network error: ' + e.message;
+  } finally {
+    document.getElementById('abCombineBtn').disabled = false;
+    document.getElementById('abProgress').style.display = 'none';
+  }
+}
+
+function renderAbResult(data){
+  document.getElementById('abResult').style.display = '';
+  const audio = document.getElementById('abPreviewAudio');
+  // Playback URL is resolved the same tier-checked way the real player
+  // does, not built from the raw key directly.
+  fetch(`/api/content/library/${data.fileId}/playback-url`).then(r => r.json()).then(pd => {
+    if (pd.url) audio.src = pd.url;
+  });
+
+  const table = document.getElementById('abChapterTable');
+  table.innerHTML = data.chapters.map(c => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px" data-chapter-id="${c.id}">
+      <button onclick="playAbChapterPreview(${c.start_seconds})" style="background:none;border:none;color:rgba(180,230,200,0.9);cursor:pointer;font-size:14px" title="Preview from here">▶</button>
+      <input type="text" value="${escapeHtml(c.title)}" class="ab-chapter-title" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:5px 8px;color:rgba(255,255,255,0.85);font-size:13px"/>
+      <input type="number" value="${Math.round(c.start_seconds)}" class="ab-chapter-start" style="width:80px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:5px 8px;color:rgba(255,255,255,0.85);font-size:13px"/>
+      <span style="font-size:11px;color:rgba(255,255,255,0.3)">sec</span>
+      <button onclick="saveAbChapter('${c.id}', this)" class="btn sm" style="padding:4px 10px">Save</button>
+    </div>
+  `).join('');
+}
+
+function playAbChapterPreview(startSeconds){
+  const audio = document.getElementById('abPreviewAudio');
+  audio.currentTime = startSeconds;
+  audio.play();
+}
+
+async function saveAbChapter(chapterId, btn){
+  const row = btn.closest('[data-chapter-id]');
+  const title = row.querySelector('.ab-chapter-title').value.trim();
+  const startSeconds = Number(row.querySelector('.ab-chapter-start').value);
+  if (!title) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/library/chapters/${chapterId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, startSeconds })
+    });
+    if (res.ok) { btn.textContent = 'Saved'; setTimeout(() => { btn.textContent = 'Save'; }, 1200); }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function applyBatchVisibility(vis) {
   if (!vis) return;
   upQueue.forEach(it => { it.vis = vis; it.inferred = false; });
@@ -1617,6 +1749,22 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover
 dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');addToQ(e.dataTransfer.files);});
 document.getElementById('bulkInput').addEventListener('change',e=>addToQ(e.target.files));
+
+// Per Bot 50 — same drag-and-drop pattern as the main drop zone above,
+// for the audiobook upload modal's chapter file picker.
+const abDz = document.getElementById('abDropZone');
+abDz.addEventListener('dragover', e => { e.preventDefault(); abDz.classList.add('dragover'); });
+abDz.addEventListener('dragleave', () => abDz.classList.remove('dragover'));
+abDz.addEventListener('drop', e => {
+  e.preventDefault();
+  abDz.classList.remove('dragover');
+  abFiles = abFiles.concat(Array.from(e.dataTransfer.files));
+  renderAbFileList();
+});
+
+function escapeHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 
 // ── Filename inference ──
 const CAT_KEYWORDS = {
