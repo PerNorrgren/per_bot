@@ -7753,7 +7753,7 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
 });
 
 // ── R2 upload — Step 2: browser has finished uploading directly to R2; save the metadata row. ──
-// ── Audiobook chapter combining (Per Bot 46) ── Author's Republic (the
+// ── Audiobook chapter combining (Per Bot 51) ── Author's Republic (the
 // audiobook distribution aggregator) requires separate per-chapter MP3
 // files for submission — that's not optional, it's how their platform
 // works. Rather than fighting that, this takes the same chapter files
@@ -7763,72 +7763,99 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
 // Buffer.concat of separate MP3s doesn't work, verified directly
 // earlier this cycle), and computes each chapter's start time directly
 // from where its source file actually started, rather than anyone
-// typing timestamps by hand. Uses local disk upload (not the R2
-// presigned-direct-upload path everything else here uses) since ffmpeg
-// needs real files on disk to work with, not just an R2 key.
+// typing timestamps by hand.
+//
+// This used to do all of that — upload, ffprobe every file, ffmpeg
+// concat, then upload the combined file to storage — inside one HTTP
+// request. That worked fine in testing with a handful of small files,
+// but broke on a real 51-chapter, ~200MB book: Railway enforces a hard
+// 5-minute limit on every public HTTP request, not configurable at the
+// application level (confirmed directly against Railway's own support
+// documentation), and the full sequence for a real book can plausibly
+// exceed that. The fix is this endpoint now only accepts the upload and
+// returns a job id immediately — the actual ffprobe/ffmpeg/storage work
+// happens after the response, tracked in-memory and polled via the
+// status endpoint below. audiobookJobs is intentionally just an
+// in-memory Map, not persisted — this is a single admin doing one
+// combine at a time, and a server restart mid-job is rare enough that
+// "retry from the admin UI" is a perfectly reasonable recovery path.
+const audiobookJobs = new Map();
 app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']), upload.array('files'), async (req, res) => {
-  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'audiobook-'));
-  try {
-    const files = req.files || [];
-    if (!files.length) return res.status(400).json({ error: 'No chapter files provided.' });
-    const { title, description, categoryId, subcategoryId, visibility } = req.body;
-    if (!title || !categoryId) return res.status(400).json({ error: 'Title and category are required.' });
-    let chapterTitles;
-    try { chapterTitles = JSON.parse(req.body.chapterTitles || '[]'); } catch (e) { chapterTitles = []; }
+  const files = req.files || [];
+  if (!files.length) return res.status(400).json({ error: 'No chapter files provided.' });
+  const { title, description, categoryId, subcategoryId, visibility } = req.body;
+  if (!title || !categoryId) return res.status(400).json({ error: 'Title and category are required.' });
+  let chapterTitles;
+  try { chapterTitles = JSON.parse(req.body.chapterTitles || '[]'); } catch (e) { chapterTitles = []; }
 
-    // Probe each file's real duration via ffprobe, in upload order —
-    // multer's req.files preserves the order files were appended to the
-    // multipart form, which the client controls (drag order / list order).
-    const durations = [];
-    for (const f of files) {
-      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', f.path]);
-      durations.push(parseFloat(stdout.trim()) || 0);
+  const jobId = uuidv4();
+  audiobookJobs.set(jobId, { status: 'processing' });
+  res.json({ ok: true, jobId }); // respond right away — the upload itself has already completed by this point, everything slow happens below, after the response
+
+  (async () => {
+    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'audiobook-'));
+    try {
+      // Probe each file's real duration via ffprobe, in upload order —
+      // multer's req.files preserves the order files were appended to the
+      // multipart form, which the client controls (drag order / list order).
+      const durations = [];
+      for (const f of files) {
+        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', f.path]);
+        durations.push(parseFloat(stdout.trim()) || 0);
+      }
+
+      // Concat demuxer needs a plain list file — same mechanism as the
+      // signal-script splicing, just concatenating real chapter content
+      // instead of TTS segments + generated silence.
+      const listPath = path.join(tmpDir, 'list.txt');
+      const listContent = files.map(f => `file '${f.path.replace(/'/g, "'\\''")}'`).join('\n');
+      await fsp.writeFile(listPath, listContent);
+      const outPath = path.join(tmpDir, 'combined.mp3');
+      await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
+
+      const buffer = await fsp.readFile(outPath);
+      const key = `library/${uuidv4()}.mp3`;
+      await media.uploadPublicObject(key, buffer, 'audio/mpeg');
+
+      const fileId = uuidv4();
+      db.addLibraryFile(
+        fileId, title.trim(), description || '', key, `${title.trim()}.mp3`,
+        'audio/mpeg', buffer.length, categoryId, subcategoryId || null, visibility || 'client',
+        'r2', false, 'book', null, null
+      );
+
+      // Chapter start times: chapter 0 starts at 0, each subsequent
+      // chapter starts at the sum of every prior file's real duration —
+      // exact, since it's derived from the same files that were just
+      // concatenated in this same order, not estimated separately.
+      let cumulative = 0;
+      const chapters = [];
+      for (let i = 0; i < files.length; i++) {
+        const chapterTitle = (chapterTitles[i] || files[i].originalname.replace(/\.[^.]+$/, '')).trim();
+        const chapterId = uuidv4();
+        db.createChapter(chapterId, fileId, chapterTitle, cumulative, i);
+        chapters.push({ id: chapterId, title: chapterTitle, start_seconds: cumulative });
+        cumulative += durations[i];
+      }
+
+      audiobookJobs.set(jobId, { status: 'done', fileId, chapters, totalDurationSeconds: cumulative });
+    } catch (e) {
+      console.error('audiobook-combine background error:', e.message);
+      audiobookJobs.set(jobId, { status: 'error', error: e.message });
+    } finally {
+      await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      files.forEach(f => fs.unlink(f.path, () => {}));
+      // Job results don't need to live forever — clear this one out well
+      // after any reasonable polling window so audiobookJobs doesn't
+      // grow without bound across many combines over time.
+      setTimeout(() => audiobookJobs.delete(jobId), 30 * 60 * 1000);
     }
-
-    // Concat demuxer needs a plain list file — same mechanism as the
-    // signal-script splicing, just concatenating real chapter content
-    // instead of TTS segments + generated silence.
-    const listPath = path.join(tmpDir, 'list.txt');
-    const listContent = files.map(f => `file '${f.path.replace(/'/g, "'\\''")}'`).join('\n');
-    await fsp.writeFile(listPath, listContent);
-    const outPath = path.join(tmpDir, 'combined.mp3');
-    await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
-
-    const buffer = await fsp.readFile(outPath);
-    const key = `library/${uuidv4()}.mp3`;
-    await media.uploadPublicObject(key, buffer, 'audio/mpeg');
-
-    const fileId = uuidv4();
-    db.addLibraryFile(
-      fileId, title.trim(), description || '', key, `${title.trim()}.mp3`,
-      'audio/mpeg', buffer.length, categoryId, subcategoryId || null, visibility || 'client',
-      'r2', false, 'book', null, null
-    );
-
-    // Chapter start times: chapter 0 starts at 0, each subsequent
-    // chapter starts at the sum of every prior file's real duration —
-    // exact, since it's derived from the same files that were just
-    // concatenated in this same order, not estimated separately.
-    let cumulative = 0;
-    const chapters = [];
-    for (let i = 0; i < files.length; i++) {
-      const chapterTitle = (chapterTitles[i] || files[i].originalname.replace(/\.[^.]+$/, '')).trim();
-      const chapterId = uuidv4();
-      db.createChapter(chapterId, fileId, chapterTitle, cumulative, i);
-      chapters.push({ id: chapterId, title: chapterTitle, start_seconds: cumulative });
-      cumulative += durations[i];
-    }
-
-    res.json({ ok: true, fileId, chapters, totalDurationSeconds: cumulative });
-  } catch (e) {
-    console.error('audiobook-combine error:', e.message);
-    res.status(500).json({ error: e.message });
-  } finally {
-    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    // multer's disk storage leaves the originals in uploads/ — clean
-    // those up too, they've served their purpose once combined.
-    (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
-  }
+  })();
+});
+app.get('/api/admin/library/audiobook-combine/status/:jobId', auth.requireAuthApi(['admin']), (req, res) => {
+  const job = audiobookJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found — it may have finished a while ago, or the server restarted since it started.' });
+  res.json(job);
 });
 
 // Chapter list for a given file — used by both the admin editor and

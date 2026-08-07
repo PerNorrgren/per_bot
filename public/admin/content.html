@@ -1656,13 +1656,37 @@ async function doAudiobookCombine(){
   formData.append('chapterTitles', '[]');
 
   document.getElementById('abCombineBtn').disabled = true;
-  document.getElementById('abProgress').style.display = '';
+  const progressEl = document.getElementById('abProgress');
+  progressEl.style.display = '';
+  progressEl.textContent = 'Uploading chapter files…';
   try {
+    // Per Bot 51 — this used to be one request that waited for the
+    // whole combine to finish. A real ~200MB, 51-file book pushed that
+    // past Railway's hard 5-minute request limit (not adjustable at the
+    // application level), which is exactly the "net::ERR_FAILED" this
+    // was rebuilt to fix. Now the initial request only uploads the
+    // files and gets a job id back quickly; the actual ffmpeg/storage
+    // work happens after that response, and this polls for it.
     const res = await fetch('/api/admin/library/audiobook-combine', { method: 'POST', body: formData });
     const data = await res.json();
-    if (!res.ok) { errEl.textContent = data.error || 'Could not combine chapters.'; return; }
-    renderAbResult(data);
-    document.getElementById('abCombineBtn').style.display = 'none';
+    if (!res.ok) { errEl.textContent = data.error || 'Could not start combining.'; return; }
+
+    progressEl.textContent = 'Combining chapters — this can take a few minutes for a full-length book…';
+    const startedAt = Date.now();
+    while (true) {
+      await new Promise(r => setTimeout(r, 3000));
+      const statusRes = await fetch(`/api/admin/library/audiobook-combine/status/${data.jobId}`);
+      const statusData = await statusRes.json();
+      if (!statusRes.ok) { errEl.textContent = statusData.error || 'Lost track of the job.'; return; }
+      if (statusData.status === 'error') { errEl.textContent = statusData.error || 'Could not combine chapters.'; return; }
+      if (statusData.status === 'done') {
+        renderAbResult(statusData);
+        document.getElementById('abCombineBtn').style.display = 'none';
+        break;
+      }
+      const elapsedMin = Math.floor((Date.now() - startedAt) / 60000);
+      progressEl.textContent = `Still combining… ${elapsedMin > 0 ? elapsedMin + ' min so far' : 'just started'}`;
+    }
     loadAll();
   } catch(e) {
     errEl.textContent = 'Network error: ' + e.message;
