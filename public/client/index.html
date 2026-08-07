@@ -1033,7 +1033,7 @@
         </div>
         <div class="content-scroll" id="contentScroll"></div>
         <div class="mini-player" id="miniPlayer">
-          <div class="mini-player-title" id="miniPlayerTitle">—</div>
+          <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer">—</div>
           <div class="mini-player-controls">
             <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
             <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
@@ -3070,6 +3070,20 @@
     if (!mpAudio) return;
     if (mpAudio.paused) { mpAudio.play(); setAllPlayBtns('⏸'); }
     else { mpAudio.pause(); setAllPlayBtns('▶'); }
+  }
+  // Per Bot 58 — the mini-player bar (bottom of the screen) never had a
+  // way back into the full Now Playing card, which is the only place
+  // chapters and jump-to-chapter actually render. renderNowPlayingCard
+  // only ever got called automatically if the full overlay happened to
+  // already be open the moment playback started — the much more common
+  // case, playing something from an ordinary list (Favourites, Library),
+  // landed a person in the mini-bar with no way to reach chapters at
+  // all, even for a file that has them. Tapping the bar now opens the
+  // same full card any other entry point does.
+  function expandMiniPlayer() {
+    if (!_currentAudioFile) return;
+    renderNowPlayingCard(_currentAudioFile);
+    document.getElementById('miniPlayer').classList.remove('visible');
   }
   function mpRestart() {
     if (!mpAudio) return;

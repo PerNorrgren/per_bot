@@ -423,6 +423,30 @@
 </div>
 
 <!-- Upload Audiobook Modal (Per Bot 46) -->
+<!-- Edit Chapters Modal (Per Bot 57) — reachable any time for an
+     existing audiobook, via the "Chapters" button on its file row.
+     Previously the chapter editor only ever appeared once, immediately
+     after a fresh combine finished, with no way back into it later. -->
+<div class="modal-overlay" id="editChaptersModal">
+  <div class="modal" style="max-width:680px">
+    <h3 id="ecTitle">Chapters</h3>
+    <div class="modal-note" style="margin-bottom:14px">Edit a title or start time and press Save on that row. The play button previews from that exact point.</div>
+    <audio id="ecPreviewAudio" style="display:none"></audio>
+    <div id="ecLoading" style="font-size:13px;color:rgba(255,255,255,0.4)">Loading chapters…</div>
+    <div id="ecChapterWrap" style="display:none">
+      <div style="margin-bottom:10px">
+        <button class="btn sm" onclick="cleanUpEcChapterTitles()">Clean up all titles</button>
+        <span style="font-size:12px;color:rgba(255,255,255,0.35);margin-left:8px">Strips number prefixes and underscores, fixes filename artifacts — across every chapter at once</span>
+      </div>
+      <div id="ecChapterTable" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+    <div class="modal-err" id="ecErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('editChaptersModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="audiobookModal">
   <div class="modal" style="max-width:680px">
     <h3>Upload audiobook</h3>
@@ -1377,6 +1401,7 @@ function renderLibCards(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★ Unfeature':'☆ Feature'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})">${f.talk_practice?'🗣️ Remove from Talk':'🗣️ Add to Talk'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
@@ -1421,6 +1446,7 @@ function renderLibList(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
@@ -1790,6 +1816,88 @@ async function cleanUpAbChapterTitles(){
     titleInput.value = cleanUpTitleFromFilename(titleInput.value);
     const saveBtn = row.querySelector('button.btn.sm');
     await saveAbChapter(row.dataset.chapterId, saveBtn);
+  }
+}
+
+// Per Bot 57 — standalone chapter editor, reachable any time via the
+// "Chapters" button on an existing audiobook's file row, not just once
+// right after a fresh combine. Mirrors the same row markup and
+// play/save behaviour as the post-combine result table (renderAbResult
+// above), but fetches existing chapters instead of using a combine
+// response, and uses its own ec-prefixed element IDs throughout so it
+// can't collide with the upload modal if both ever happened to be
+// touched in the same session.
+async function openEditChapters(fileId, title){
+  document.getElementById('ecTitle').textContent = `Chapters — ${title}`;
+  document.getElementById('ecErr').textContent = '';
+  document.getElementById('ecErr').style.display = 'none';
+  document.getElementById('ecLoading').style.display = '';
+  document.getElementById('ecChapterWrap').style.display = 'none';
+  openModal('editChaptersModal');
+
+  try {
+    const [chaptersRes, playbackRes] = await Promise.all([
+      fetch(`/api/admin/library/${fileId}/chapters`),
+      fetch(`/api/content/library/${fileId}/playback-url`),
+    ]);
+    const chapters = await chaptersRes.json();
+    const playbackData = await playbackRes.json();
+    if (!chaptersRes.ok) throw new Error(chapters.error || 'Could not load chapters.');
+
+    if (playbackData.url) document.getElementById('ecPreviewAudio').src = playbackData.url;
+
+    if (!chapters.length) {
+      document.getElementById('ecLoading').textContent = 'This file has no chapters.';
+      return;
+    }
+    document.getElementById('ecLoading').style.display = 'none';
+    document.getElementById('ecChapterWrap').style.display = '';
+    document.getElementById('ecChapterTable').innerHTML = chapters.map(c => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px" data-chapter-id="${c.id}">
+        <button onclick="playEcChapterPreview(${c.start_seconds})" style="background:none;border:none;color:rgba(180,230,200,0.9);cursor:pointer;font-size:14px" title="Preview from here">▶</button>
+        <input type="text" value="${escapeHtml(c.title)}" class="ec-chapter-title" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:5px 8px;color:rgba(255,255,255,0.85);font-size:13px"/>
+        <input type="number" value="${Math.round(c.start_seconds)}" class="ec-chapter-start" style="width:80px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:5px 8px;color:rgba(255,255,255,0.85);font-size:13px"/>
+        <span style="font-size:11px;color:rgba(255,255,255,0.3)">sec</span>
+        <button onclick="saveEcChapter('${c.id}', this)" class="btn sm" style="padding:4px 10px">Save</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('ecLoading').style.display = 'none';
+    document.getElementById('ecErr').textContent = e.message;
+    document.getElementById('ecErr').style.display = '';
+  }
+}
+
+function playEcChapterPreview(startSeconds){
+  const audio = document.getElementById('ecPreviewAudio');
+  audio.currentTime = startSeconds;
+  audio.play();
+}
+
+async function saveEcChapter(chapterId, btn){
+  const row = btn.closest('[data-chapter-id]');
+  const title = row.querySelector('.ec-chapter-title').value.trim();
+  const startSeconds = Number(row.querySelector('.ec-chapter-start').value);
+  if (!title) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/library/chapters/${chapterId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, startSeconds })
+    });
+    if (res.ok) { btn.textContent = 'Saved'; setTimeout(() => { btn.textContent = 'Save'; }, 1200); }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function cleanUpEcChapterTitles(){
+  const rows = document.querySelectorAll('#ecChapterTable [data-chapter-id]');
+  for (const row of rows) {
+    const titleInput = row.querySelector('.ec-chapter-title');
+    titleInput.value = cleanUpTitleFromFilename(titleInput.value);
+    const saveBtn = row.querySelector('button.btn.sm');
+    await saveEcChapter(row.dataset.chapterId, saveBtn);
   }
 }
 
