@@ -7753,7 +7753,7 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
 });
 
 // ── R2 upload — Step 2: browser has finished uploading directly to R2; save the metadata row. ──
-// ── Audiobook chapter combining (Per Bot 51) ── Author's Republic (the
+// ── Audiobook chapter combining (Per Bot 53) ── Author's Republic (the
 // audiobook distribution aggregator) requires separate per-chapter MP3
 // files for submission — that's not optional, it's how their platform
 // works. Rather than fighting that, this takes the same chapter files
@@ -7765,52 +7765,77 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
 // from where its source file actually started, rather than anyone
 // typing timestamps by hand.
 //
-// This used to do all of that — upload, ffprobe every file, ffmpeg
-// concat, then upload the combined file to storage — inside one HTTP
-// request. That worked fine in testing with a handful of small files,
-// but broke on a real 51-chapter, ~200MB book: Railway enforces a hard
-// 5-minute limit on every public HTTP request, not configurable at the
-// application level (confirmed directly against Railway's own support
-// documentation), and the full sequence for a real book can plausibly
-// exceed that. The fix is this endpoint now only accepts the upload and
-// returns a job id immediately — the actual ffprobe/ffmpeg/storage work
-// happens after the response, tracked in-memory and polled via the
-// status endpoint below. audiobookJobs is intentionally just an
-// in-memory Map, not persisted — this is a single admin doing one
-// combine at a time, and a server restart mid-job is rare enough that
-// "retry from the admin UI" is a perfectly reasonable recovery path.
+// This went through two earlier versions. The first did everything —
+// upload, ffprobe, ffmpeg, storage upload — inside one HTTP request,
+// which broke on a real 51-file, ~200MB book: Railway enforces a hard
+// 5-minute limit on every public HTTP request, confirmed directly
+// against Railway's own support documentation, not configurable at the
+// application level. The second version made the server-side
+// processing happen in the background after an immediate response —
+// correct in principle, but it didn't fix the real bottleneck: the
+// files were still being uploaded through this Node server via multer
+// before that response could even happen, so a slow connection
+// uploading ~200MB could itself exceed 5 minutes with nothing after the
+// upload even having started yet.
+//
+// This version fixes the actual bottleneck: the browser uploads each
+// chapter file DIRECTLY to R2 via a presigned URL first (the exact same
+// mechanism /api/content/library/presign-upload already provides for
+// every other upload in this app), never touching this Node server for
+// the large transfer at all — R2 uploads aren't subject to Railway's
+// proxy timeout in any way. This endpoint then only receives a small
+// JSON payload (the R2 keys, in order, plus metadata), starts a
+// background job, downloads each file back from R2 server-side (fast —
+// R2-to-Railway is not bandwidth-constrained by anyone's home
+// connection), and does the same ffprobe/ffmpeg/re-upload sequence as
+// before, exactly as it did when working with locally-uploaded files.
 const audiobookJobs = new Map();
-app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']), upload.array('files'), async (req, res) => {
-  const files = req.files || [];
-  if (!files.length) return res.status(400).json({ error: 'No chapter files provided.' });
-  const { title, description, categoryId, subcategoryId, visibility } = req.body;
+app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']), async (req, res) => {
+  const { title, description, categoryId, subcategoryId, visibility, chapters: chapterFiles } = req.body;
+  if (!Array.isArray(chapterFiles) || !chapterFiles.length) return res.status(400).json({ error: 'No chapter files provided.' });
   if (!title || !categoryId) return res.status(400).json({ error: 'Title and category are required.' });
-  let chapterTitles;
-  try { chapterTitles = JSON.parse(req.body.chapterTitles || '[]'); } catch (e) { chapterTitles = []; }
 
   const jobId = uuidv4();
   audiobookJobs.set(jobId, { status: 'processing', stage: 'Starting…' });
-  res.json({ ok: true, jobId }); // respond right away — the upload itself has already completed by this point, everything slow happens below, after the response
+  res.json({ ok: true, jobId }); // respond immediately — this request never carried any file data, so it's always fast regardless of book size
 
   (async () => {
     const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'audiobook-'));
     try {
-      // Probe each file's real duration via ffprobe, in upload order —
-      // multer's req.files preserves the order files were appended to the
-      // multipart form, which the client controls (drag order / list order).
+      // Download each chapter back from R2 into a local temp file —
+      // ffmpeg/ffprobe need real files on disk, not R2 keys directly.
+      // This step is fast: R2-to-Railway bandwidth isn't constrained by
+      // anyone's home upload speed the way the original browser upload was.
+      const localPaths = [];
+      for (let i = 0; i < chapterFiles.length; i++) {
+        audiobookJobs.set(jobId, { status: 'processing', stage: `Fetching chapter ${i + 1} of ${chapterFiles.length}` });
+        const obj = await media.getPublicObject(chapterFiles[i].key);
+        const localPath = path.join(tmpDir, `chapter${i}.mp3`);
+        await new Promise((resolve, reject) => {
+          const writeStream = fs.createWriteStream(localPath);
+          obj.Body.pipe(writeStream);
+          obj.Body.on('error', reject);
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+        });
+        localPaths.push(localPath);
+      }
+
+      // Probe each file's real duration via ffprobe, in the same order
+      // the chapters were uploaded/selected.
       const durations = [];
-      for (let i = 0; i < files.length; i++) {
-        audiobookJobs.set(jobId, { status: 'processing', stage: `Checking file lengths — ${i + 1} of ${files.length}` });
-        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', files[i].path]);
+      for (let i = 0; i < localPaths.length; i++) {
+        audiobookJobs.set(jobId, { status: 'processing', stage: `Checking file lengths — ${i + 1} of ${localPaths.length}` });
+        const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', localPaths[i]]);
         durations.push(parseFloat(stdout.trim()) || 0);
       }
 
-      audiobookJobs.set(jobId, { status: 'processing', stage: `Combining ${files.length} chapter files into one` });
+      audiobookJobs.set(jobId, { status: 'processing', stage: `Combining ${localPaths.length} chapter files into one` });
       // Concat demuxer needs a plain list file — same mechanism as the
       // signal-script splicing, just concatenating real chapter content
       // instead of TTS segments + generated silence.
       const listPath = path.join(tmpDir, 'list.txt');
-      const listContent = files.map(f => `file '${f.path.replace(/'/g, "'\\''")}'`).join('\n');
+      const listContent = localPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
       await fsp.writeFile(listPath, listContent);
       const outPath = path.join(tmpDir, 'combined.mp3');
       await execFileAsync('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
@@ -7834,8 +7859,8 @@ app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']),
       // concatenated in this same order, not estimated separately.
       let cumulative = 0;
       const chapters = [];
-      for (let i = 0; i < files.length; i++) {
-        const chapterTitle = (chapterTitles[i] || files[i].originalname.replace(/\.[^.]+$/, '')).trim();
+      for (let i = 0; i < chapterFiles.length; i++) {
+        const chapterTitle = (chapterFiles[i].title || chapterFiles[i].originalname.replace(/\.[^.]+$/, '')).trim();
         const chapterId = uuidv4();
         db.createChapter(chapterId, fileId, chapterTitle, cumulative, i);
         chapters.push({ id: chapterId, title: chapterTitle, start_seconds: cumulative });
@@ -7843,12 +7868,19 @@ app.post('/api/admin/library/audiobook-combine', auth.requireAuthApi(['admin']),
       }
 
       audiobookJobs.set(jobId, { status: 'done', fileId, chapters, totalDurationSeconds: cumulative });
+
+      // The R2 originals were only ever needed to build the combined
+      // file — safe to remove now rather than leaving 51 duplicate
+      // chapter files sitting in storage permanently alongside the one
+      // combined file that's actually used going forward.
+      for (const cf of chapterFiles) {
+        media.deleteObject(cf.key).catch(() => {});
+      }
     } catch (e) {
       console.error('audiobook-combine background error:', e.message);
       audiobookJobs.set(jobId, { status: 'error', error: e.message });
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      files.forEach(f => fs.unlink(f.path, () => {}));
       // Job results don't need to live forever — clear this one out well
       // after any reasonable polling window so audiobookJobs doesn't
       // grow without bound across many combines over time.

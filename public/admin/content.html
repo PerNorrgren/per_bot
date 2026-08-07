@@ -1651,18 +1651,6 @@ async function doAudiobookCombine(){
   if (!categoryId) { errEl.textContent = 'Choose a category.'; errEl.style.display = ''; return; }
   if (!abFiles.length) { errEl.textContent = 'Select at least one chapter file.'; errEl.style.display = ''; return; }
 
-  const formData = new FormData();
-  abFiles.forEach(f => formData.append('files', f));
-  formData.append('title', title);
-  formData.append('description', document.getElementById('abDesc').value.trim());
-  formData.append('categoryId', categoryId);
-  if (subcategoryId) formData.append('subcategoryId', subcategoryId);
-  formData.append('visibility', document.getElementById('abVis').value);
-  // No chapter titles supplied here -- the server already falls back to
-  // each file's own name (minus extension) when this is empty, which is
-  // exactly what the "Chapter files, in order" filenames are for.
-  formData.append('chapterTitles', '[]');
-
   document.getElementById('abCombineBtn').disabled = true;
   const progressEl = document.getElementById('abProgress');
   const stageEl = document.getElementById('abProgressStage');
@@ -1673,21 +1661,62 @@ async function doAudiobookCombine(){
     progressEl.style.display = 'none';
   };
   progressEl.style.display = '';
-  stageEl.textContent = 'Uploading chapter files…';
   elapsedEl.textContent = '';
+  const startedAt = Date.now();
+  const tickElapsed = () => {
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    const mins = Math.floor(elapsedSec / 60), secs = elapsedSec % 60;
+    elapsedEl.textContent = `${mins > 0 ? mins + ' min ' : ''}${secs}s elapsed`;
+  };
+
   try {
-    // Per Bot 51 — this used to be one request that waited for the
-    // whole combine to finish. A real ~200MB, 51-file book pushed that
-    // past Railway's hard 5-minute request limit (not adjustable at the
-    // application level), which is exactly the "net::ERR_FAILED" this
-    // was rebuilt to fix. Now the initial request only uploads the
-    // files and gets a job id back quickly; the actual ffmpeg/storage
-    // work happens after that response, and this polls for it.
-    const res = await fetch('/api/admin/library/audiobook-combine', { method: 'POST', body: formData });
+    // Per Bot 53 — the previous version made server-side processing
+    // happen in the background, but that didn't fix the actual
+    // bottleneck: the files were still being uploaded through this Node
+    // server via multer before anything else could even start, and a
+    // slow connection sending ~200MB could exceed Railway's hard
+    // 5-minute request limit on that upload alone. Each chapter file
+    // now goes straight to R2 via a presigned URL — the same mechanism
+    // every other upload in this app already uses — never touching this
+    // server for the large transfer at all.
+    const uploadedChapters = [];
+    for (let i = 0; i < abFiles.length; i++) {
+      const file = abFiles[i];
+      stageEl.textContent = `Uploading chapter ${i + 1} of ${abFiles.length} — ${file.name}`;
+      tickElapsed();
+
+      const presignRes = await fetch('/api/content/library/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' })
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok) { showError(`Could not prepare upload for "${file.name}": ${presignData.error || 'unknown error'}`); return; }
+
+      const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'audio/mpeg' }, body: file });
+      if (!putRes.ok) { showError(`Upload failed for "${file.name}" (${putRes.status}). Try again — this file wasn't received.`); return; }
+
+      uploadedChapters.push({ key: presignData.key, originalname: file.name, title: file.name.replace(/\.[^.]+$/, '') });
+    }
+
+    stageEl.textContent = 'All chapters uploaded — starting the combine…';
+    tickElapsed();
+
+    // This request only carries the R2 keys and metadata now — no file
+    // data at all — so it's always fast regardless of how big the book is.
+    const res = await fetch('/api/admin/library/audiobook-combine', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        description: document.getElementById('abDesc').value.trim(),
+        categoryId,
+        subcategoryId: subcategoryId || null,
+        visibility: document.getElementById('abVis').value,
+        chapters: uploadedChapters,
+      })
+    });
     const data = await res.json();
     if (!res.ok) { showError(data.error || 'Could not start combining.'); return; }
 
-    const startedAt = Date.now();
     while (true) {
       await new Promise(r => setTimeout(r, 3000));
       const statusRes = await fetch(`/api/admin/library/audiobook-combine/status/${data.jobId}`);
@@ -1699,13 +1728,11 @@ async function doAudiobookCombine(){
         document.getElementById('abCombineBtn').style.display = 'none';
         break;
       }
-      // Per Bot 52 — real stage from the server (which file it's
-      // checking, that it's now combining, that it's now uploading),
-      // not a single static "still combining" message the whole time.
+      // Real stage from the server (which chapter it's fetching back
+      // from storage, that it's now combining, that it's now uploading),
+      // not a single static message the whole time.
       stageEl.textContent = statusData.stage || 'Working…';
-      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-      const mins = Math.floor(elapsedSec / 60), secs = elapsedSec % 60;
-      elapsedEl.textContent = `${mins > 0 ? mins + ' min ' : ''}${secs}s elapsed`;
+      tickElapsed();
     }
     loadAll();
   } catch(e) {
