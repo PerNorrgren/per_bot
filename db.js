@@ -3977,25 +3977,26 @@ function extendAllActiveTrials(days, userIds) {
   return queryAll(`SELECT id, name, email, language, trial_ends_at FROM users WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
 }
 
-// ── Re-grant a lapsed trial (Per Bot 40) — distinct from
+// ── Give trial (Per Bot 40, broadened Per Bot 54) — distinct from
 // extendAllActiveTrials above: that only touches people with a
-// currently-active, not-yet-expired trial_ends_at. Someone whose trial
-// already lapsed has trial_ends_at cleared to NULL by the sweep (see
-// sweepExpiredMemberships) along with member_tier dropping to 0 — there's
-// no existing trial_ends_at left to extend, so this grants a genuinely
-// fresh one instead. member_since is never cleared by the sweep, so
-// "member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL"
-// reliably means "was on a trial or membership before, not currently."
-// Deliberately requires an explicit list of IDs — no "nothing selected
-// means everyone" fallback like the active-trial version has, since the
-// Explorers list is mostly people who never had a trial at all (direct
-// free signups), and defaulting to all of them would grant trials to
-// people who never asked for or had one.
+// currently-active, not-yet-expired trial_ends_at. This instead targets
+// anyone currently on Explorer (member_tier=0) — whether they had a
+// trial before and it lapsed, or they've never had one at all — and
+// grants a genuinely fresh one. Originally restricted to people with
+// prior trial history (member_since IS NOT NULL AND trial_ends_at IS
+// NULL), on the reasoning that a "nothing selected means everyone"
+// fallback shouldn't accidentally grant trials to people who never
+// asked. That reasoning doesn't apply here: the caller always passes an
+// explicit, hand-picked list of IDs (never a bulk-everyone default), so
+// there's no accidental-blast risk — only the person actually selected
+// gets a trial, first-timer or not. member_tier=0 alone is sufficient:
+// anyone already on an active trial or paid membership is member_tier>=1
+// and simply isn't in this set.
 function countLapsedTrialUsers(userIds) {
   if (!userIds || !userIds.length) return 0;
   const placeholders = userIds.map(() => '?').join(',');
   return queryOne(
-    `SELECT COUNT(*) as n FROM users WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+    `SELECT COUNT(*) as n FROM users WHERE member_tier=0 AND id IN (${placeholders})`,
     userIds
   ).n;
 }
@@ -4006,13 +4007,13 @@ function regrantTrialForLapsedUsers(userIds, days, tier = 1) {
   if (!userIds || !userIds.length) return [];
   const placeholders = userIds.map(() => '?').join(',');
   const before = queryAll(
-    `SELECT id FROM users WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+    `SELECT id FROM users WHERE member_tier=0 AND id IN (${placeholders})`,
     userIds
   );
   if (!before.length) return [];
   getDbSync().run(
     `UPDATE users SET member_tier=?, trial_ends_at=datetime('now', '+' || ? || ' days')
-     WHERE member_tier=0 AND trial_ends_at IS NULL AND member_since IS NOT NULL AND id IN (${placeholders})`,
+     WHERE member_tier=0 AND id IN (${placeholders})`,
     [tier, days, ...userIds]
   );
   save();

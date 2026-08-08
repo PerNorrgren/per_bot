@@ -379,7 +379,7 @@
           <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Number of days</label>
           <input type="number" id="regrantTrialDays" value="14" min="1" max="365" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
         </div>
-        <div class="modal-note">For people whose trial already lapsed (they're back on Explorer, with no active trial to extend) — this starts a fresh trial from today, at Member level 1. Anyone selected who never had a trial in the first place is skipped automatically.</div>
+        <div class="modal-note">Starts a fresh trial from today, at Member level 1, for whichever of your selected people are currently on Explorer — whether they had a trial before or never have. Anyone already a Member or on an active trial is skipped automatically.</div>
         <div>
           <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Let them know</label>
           <select id="regrantTrialEmailType" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none">
@@ -449,7 +449,7 @@
         <div id="upgradeExpiryField" style="display:none">
           <label style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.35);display:block;margin-bottom:6px">Membership expiry</label>
           <input type="date" id="upgradeExpiryDate" style="width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:10px 12px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:14px;outline:none"/>
-          <div class="modal-note" style="margin-top:6px">Leave blank for permanent, no automatic expiry. Only affects this one person — for matching an existing subscription or manually extending access.</div>
+          <div class="modal-note" style="margin-top:6px" id="upgradeExpiryNote">Leave blank for permanent, no automatic expiry. Only affects this one person — for matching an existing subscription or manually extending access.</div>
         </div>
       </div>
       <div class="modal-err" id="upgradeErr"></div>
@@ -2302,17 +2302,23 @@
     document.getElementById('upgradeUserName').textContent = name || `${ids.length} user${ids.length>1?'s':''} selected`;
     document.getElementById('upgradeUserId').value = ids.join(',');
     if (level) document.getElementById('upgradeMemberLevel').value = level;
-    // Per Bot 20 — manual expiry only makes sense for exactly one person
-    // at a time (applying one shared date across a bulk selection would
-    // silently overwrite everyone's individual expiry with the same
-    // value) — hidden entirely for multi-select, shown and prefilled
-    // with their current expiry (blank = permanent) for a single edit.
+    // Per Bot 20, broadened Per Bot 54 — now shown for any selection
+    // size, since bulk-granting the same trial length to a group of
+    // freshly-upgraded Explorers is a real, common case (see the Give
+    // Trial flow's own bulk pattern). For a single edit it's prefilled
+    // with that person's current expiry, same as before. For a bulk
+    // selection it starts blank and carries an explicit warning that the
+    // date entered will overwrite everyone selected the same way —
+    // deliberate, not hidden, so it can't happen by accident.
     const expiryField = document.getElementById('upgradeExpiryField');
+    const expiryNote = document.getElementById('upgradeExpiryNote');
+    expiryField.style.display = '';
     if (ids.length === 1) {
       document.getElementById('upgradeExpiryDate').value = currentExpiry || '';
-      expiryField.style.display = '';
+      expiryNote.textContent = 'Leave blank for permanent, no automatic expiry. Only affects this one person — for matching an existing subscription or manually extending access.';
     } else {
-      expiryField.style.display = 'none';
+      document.getElementById('upgradeExpiryDate').value = '';
+      expiryNote.textContent = `Leave blank for permanent, no automatic expiry. If set, this same date applies to all ${ids.length} selected people — e.g. set 2 weeks out to give this whole group a trial period.`;
     }
     document.getElementById('upgradeErr').textContent='';
     openModal('upgradeModal');
@@ -2336,8 +2342,8 @@
       const data = await (await fetch(`/api/admin/trials/lapsed-count?userIds=${ids.join(',')}`)).json();
       document.getElementById('regrantTrialCount').textContent =
         data.count === 0
-          ? `None of your ${ids.length} selected ${ids.length === 1 ? 'person' : 'people'} had a trial before — nothing to give here. (Use Upgrade instead for a first-time trial.)`
-          : `${data.count} of your ${ids.length} selected ${ids.length === 1 ? 'person' : 'people'} previously had a trial that's since lapsed.`;
+          ? `None of your ${ids.length} selected ${ids.length === 1 ? 'person is' : 'people are'} currently on Explorer — nothing to give here.`
+          : `${data.count} of your ${ids.length} selected ${ids.length === 1 ? 'person is' : 'people are'} on Explorer and will get a fresh trial.`;
     } catch(e) {
       document.getElementById('regrantTrialCount').textContent = 'Could not load the count — you can still proceed.';
     }
@@ -2348,7 +2354,7 @@
     if (!days || days <= 0) { document.getElementById('regrantTrialErr').textContent = 'Enter a number of days greater than 0.'; return; }
     const emailType = document.getElementById('regrantTrialEmailType').value;
     const emailNote = emailType === 'none' ? ' No email will be sent.' : '';
-    if (!(await appConfirm(`Give a fresh ${days}-day trial to whichever of your ${ids.length} selected people previously had one?${emailNote} Anyone who never had a trial is skipped.`))) return;
+    if (!(await appConfirm(`Give a fresh ${days}-day trial to whichever of your ${ids.length} selected people are currently on Explorer?${emailNote} Anyone already a Member or on an active trial is skipped.`))) return;
     try {
       const res = await fetch('/api/admin/trials/regrant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days, userIds: ids, emailType }) });
       const data = await res.json();
@@ -2429,13 +2435,15 @@
     try {
       await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/upgrade`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({level})})));
       if (facId) await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/assign-facilitator`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId:facId})})));
-      // Per Bot 20 — only ever applies to a single-person edit (field is
-      // hidden for bulk selections), and only sent if visible — safe to
-      // always include when it is, since blank means "set to permanent"
-      // which is a real, deliberate choice, not an accidental no-op.
-      if (ids.length === 1 && document.getElementById('upgradeExpiryField').style.display !== 'none') {
+      // Per Bot 20, broadened Per Bot 54 — now applies to every selected
+      // person, not just a single edit. Blank still means "set to
+      // permanent" for all of them — a real, deliberate choice, not an
+      // accidental no-op. The modal's own note warns before saving that
+      // one date applies to the whole selection, so this can't surprise
+      // anyone the way a silently-skipped bulk expiry would have.
+      if (document.getElementById('upgradeExpiryField').style.display !== 'none') {
         const expiresAt = document.getElementById('upgradeExpiryDate').value || null;
-        await fetch(`/api/admin/users/${ids[0]}/expiry`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expiresAt})});
+        await Promise.all(ids.map(id=>fetch(`/api/admin/users/${id}/expiry`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expiresAt})})));
       }
       closeModal('upgradeModal'); userSel.clear(); loadUsers(); loadMembers();
     } catch(e) { document.getElementById('upgradeErr').textContent='Error: '+e.message; }

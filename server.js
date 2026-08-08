@@ -2156,10 +2156,11 @@ app.post('/api/admin/trials/extend-all', auth.requireAuthApi(['admin']), async (
     res.json({ ok: true, affected: affectedRows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
-// Per Bot 40 — re-grants a fresh trial to selected people whose trial
-// already lapsed (member_tier=0, trial_ends_at cleared, but member_since
-// shows they had one before). Always requires an explicit selection —
-// no bulk-everyone mode, since most Explorers never had a trial at all.
+// Per Bot 40, broadened Per Bot 54 — grants a fresh trial to selected
+// Explorers (member_tier=0), whether their trial lapsed before or they
+// never had one. Always requires an explicit selection — no
+// bulk-everyone mode, since that's the safety check now doing the work
+// instead of trial history: only whoever the admin actually picked.
 app.get('/api/admin/trials/lapsed-count', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const userIds = req.query.userIds ? String(req.query.userIds).split(',').filter(Boolean) : [];
