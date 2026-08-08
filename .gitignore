@@ -1,3 +1,7 @@
 .env
 node_modules/
 db/
+*.zip
+per_bot_backup_*/
+per_bot_BACKUP_*
+.DS_Store
