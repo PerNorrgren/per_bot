@@ -840,6 +840,34 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_steps_campaign ON campaign_steps(campaign_id)`);
 
+  // ── Message versions (Per Bot 54) — comms2 foundation ──
+  // Shared history table for the "settings-style" message types that
+  // used to be a single flat app_config row each (Reminder, Renewal,
+  // Birthday, Newsletter Welcome, Trial Extended — and eventually Trial
+  // sequence's 4 stages and Savers Protocol's 7, see MESSAGE_TYPE_REGISTRY
+  // below) — one row per saved version, exactly one is_active=1 per type
+  // at a time, so Per gets a real history of what's been used instead of
+  // a value silently overwritten in place. MOTD, Newsletter, and Campaign
+  // steps already have their own genuine list tables (messages_of_the_day,
+  // newsletters, campaign_steps) and keep using those — this table is
+  // deliberately only for the types that never had a list before.
+  // extra is a JSON blob for whatever fields don't fit subject/body (SMS
+  // body, day-threshold) — see MESSAGE_TYPE_REGISTRY for the shape per
+  // type. label is an optional short human note ("Imported from live
+  // settings", "Christmas version") shown in the history list.
+  db.run(`CREATE TABLE IF NOT EXISTS message_versions (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    label TEXT,
+    subject TEXT,
+    body TEXT,
+    format TEXT DEFAULT 'plain',
+    extra TEXT,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_message_versions_type ON message_versions(type)`);
+
   // ── Email log (Per Bot 8) ──
   // Every email the app sends — welcome, password reset, reminders,
   // renewals, message alerts, newsletters, anything — logs itself here via
@@ -1970,6 +1998,14 @@ async function getDb() {
   try {
     db.run(`UPDATE users SET timezone='Europe/London' WHERE timezone IS NULL AND (pref_email_motd=1 OR pref_sms=1)`);
   } catch(e) { /* ignore */ }
+
+  // ── Backfill: seed message_versions from live app_config (Per Bot 54,
+  // comms2 foundation) ── See importLiveConfigIntoMessageVersions itself
+  // for the full explanation — this only ever touches a type that has no
+  // versions yet, so it's safe to run on every boot.
+  try {
+    importLiveConfigIntoMessageVersions();
+  } catch(e) { console.error('[message_versions import]', e.message); }
 
   // pref_sms used to be the only SMS preference, wired up exclusively for
   // MOTD — carry forward anyone who'd already opted in so this restructure
@@ -6261,6 +6297,134 @@ function getUserByStripeSubscription(stripeSubscriptionId) {
 // ── App config (Path A: one deployment per facilitator/org) ──
 function getAppConfig() { return queryOne(`SELECT * FROM app_config WHERE id='default'`); }
 
+// ── Message versions (Per Bot 54) — comms2 foundation ──
+// One registry entry per "settings-style" type, describing where its
+// live value used to (and, until step 3 of the comms2 build, still
+// does) live in app_config — subjectCol/bodyCol/formatCol map straight
+// onto existing columns, extraCols map into the JSON `extra` blob. This
+// is what importFromLiveConfig reads FROM, and it's also the source of
+// truth comms2's UI will use to know which extra fields to render for
+// each type (days threshold, SMS body, etc.) — one registry, not a
+// hardcoded field list duplicated in the front-end.
+const MESSAGE_TYPE_REGISTRY = {
+  reminder:            { label: 'Reminder (inactivity)',        subjectCol: 'reminder_subject',            bodyCol: 'reminder_body',            formatCol: 'reminder_format',            extraCols: { days: 'reminder_days', sms_body: 'reminder_sms_body' } },
+  renewal:             { label: 'Renewal reminder',             subjectCol: 'renewal_reminder_subject',    bodyCol: 'renewal_reminder_body',    formatCol: 'renewal_reminder_format',    extraCols: { days: 'renewal_reminder_days', sms_body: 'renewal_reminder_sms_body' } },
+  birthday:             { label: 'Birthday message',            subjectCol: 'birthday_email_subject',      bodyCol: 'birthday_email_body',      formatCol: 'birthday_email_format',      extraCols: { sms_body: 'birthday_sms_body' } },
+  newsletter_welcome:   { label: 'Newsletter \u2192 Explorer welcome', subjectCol: 'newsletter_welcome_subject', bodyCol: 'newsletter_welcome_body', formatCol: 'newsletter_welcome_format', extraCols: {} },
+  trial_extended:       { label: 'Trial extended / restarted',  subjectCol: 'trial_extended_subject',      bodyCol: 'trial_extended_body',      formatCol: 'trial_extended_format',      extraCols: {} },
+  trial_day3:           { label: 'Trial sequence \u2014 Day 3',      subjectCol: 'trial_day3_subject',          bodyCol: 'trial_day3_body',          formatCol: 'trial_day3_format',          extraCols: {} },
+  trial_day7:           { label: 'Trial sequence \u2014 Day 7',      subjectCol: 'trial_day7_subject',          bodyCol: 'trial_day7_body',          formatCol: 'trial_day7_format',          extraCols: {} },
+  trial_day10:          { label: 'Trial sequence \u2014 Day 10',     subjectCol: 'trial_day10_subject',         bodyCol: 'trial_day10_body',         formatCol: 'trial_day10_format',         extraCols: {} },
+  trial_day14:          { label: 'Trial sequence \u2014 Day 14',     subjectCol: 'trial_day14_subject',         bodyCol: 'trial_day14_body',         formatCol: 'trial_day14_format',         extraCols: {} },
+  savers_cancel_day0:   { label: 'Savers \u2014 Cancellation, day 0',    subjectCol: 'savers_cancel_day0_subject',   bodyCol: 'savers_cancel_day0_body',   formatCol: 'savers_cancel_day0_format',   extraCols: {} },
+  savers_cancel_grace0: { label: 'Savers \u2014 Cancellation, grace start', subjectCol: 'savers_cancel_grace0_subject', bodyCol: 'savers_cancel_grace0_body', formatCol: 'savers_cancel_grace0_format', extraCols: {} },
+  savers_cancel_mid:    { label: 'Savers \u2014 Cancellation, mid-grace',  subjectCol: 'savers_cancel_mid_subject',    bodyCol: 'savers_cancel_mid_body',    formatCol: 'savers_cancel_mid_format',    extraCols: {} },
+  savers_cancel_final:  { label: 'Savers \u2014 Cancellation, final',      subjectCol: 'savers_cancel_final_subject',  bodyCol: 'savers_cancel_final_body',  formatCol: 'savers_cancel_final_format',  extraCols: {} },
+  savers_failure_day0:  { label: 'Savers \u2014 Payment failure, day 0',   subjectCol: 'savers_failure_day0_subject',  bodyCol: 'savers_failure_day0_body',  formatCol: 'savers_failure_day0_format',  extraCols: {} },
+  savers_failure_mid:   { label: 'Savers \u2014 Payment failure, mid',     subjectCol: 'savers_failure_mid_subject',   bodyCol: 'savers_failure_mid_body',   formatCol: 'savers_failure_mid_format',   extraCols: {} },
+  savers_failure_final: { label: 'Savers \u2014 Payment failure, final',   subjectCol: 'savers_failure_final_subject', bodyCol: 'savers_failure_final_body', formatCol: 'savers_failure_final_format', extraCols: {} },
+};
+
+function isKnownMessageType(type) { return Object.prototype.hasOwnProperty.call(MESSAGE_TYPE_REGISTRY, type); }
+
+function parseExtra(row) {
+  if (!row) return row;
+  let extra = {};
+  try { extra = row.extra ? JSON.parse(row.extra) : {}; } catch(e) {}
+  return { ...row, extra };
+}
+
+function listMessageVersions(type) {
+  if (!isKnownMessageType(type)) return [];
+  return queryAll(`SELECT * FROM message_versions WHERE type=? ORDER BY created_at DESC`, [type]).map(parseExtra);
+}
+function getActiveMessageVersion(type) {
+  if (!isKnownMessageType(type)) return null;
+  return parseExtra(queryOne(`SELECT * FROM message_versions WHERE type=? AND is_active=1 LIMIT 1`, [type]));
+}
+function getMessageVersion(id) {
+  return parseExtra(queryOne(`SELECT * FROM message_versions WHERE id=?`, [id]));
+}
+// Creates a new version. makeActive=true both inserts it flagged active
+// AND clears the flag off whatever was active before, in one call — the
+// two must always move together or a type could end up with zero or two
+// active versions.
+function createMessageVersion(type, fields, makeActive) {
+  if (!isKnownMessageType(type)) throw new Error('Unknown message type: ' + type);
+  const id = crypto.randomUUID();
+  if (makeActive) getDbSync().run(`UPDATE message_versions SET is_active=0 WHERE type=?`, [type]);
+  getDbSync().run(
+    `INSERT INTO message_versions (id, type, label, subject, body, format, extra, is_active) VALUES (?,?,?,?,?,?,?,?)`,
+    [id, type, fields.label || null, fields.subject || null, fields.body || null, fields.format || 'plain', JSON.stringify(fields.extra || {}), makeActive ? 1 : 0]
+  );
+  save();
+  return getMessageVersion(id);
+}
+function updateMessageVersion(id, fields) {
+  const row = queryOne(`SELECT * FROM message_versions WHERE id=?`, [id]);
+  if (!row) return null;
+  const sets = [], params = [];
+  ['label','subject','body','format'].forEach(k => { if (fields[k] !== undefined) { sets.push(`${k}=?`); params.push(fields[k]); } });
+  if (fields.extra !== undefined) { sets.push('extra=?'); params.push(JSON.stringify(fields.extra || {})); }
+  if (!sets.length) return getMessageVersion(id);
+  getDbSync().run(`UPDATE message_versions SET ${sets.join(',')} WHERE id=?`, [...params, id]);
+  save();
+  return getMessageVersion(id);
+}
+// Flips is_active off every other version of this type and on for this
+// one, atomically (same reasoning as makeActive in createMessageVersion
+// above — never leave a type with zero or two active rows).
+function activateMessageVersion(id) {
+  const row = queryOne(`SELECT * FROM message_versions WHERE id=?`, [id]);
+  if (!row) return null;
+  getDbSync().run(`UPDATE message_versions SET is_active=0 WHERE type=?`, [row.type]);
+  getDbSync().run(`UPDATE message_versions SET is_active=1 WHERE id=?`, [id]);
+  save();
+  return getMessageVersion(id);
+}
+function deleteMessageVersion(id) {
+  const row = queryOne(`SELECT * FROM message_versions WHERE id=?`, [id]);
+  if (!row) return { error: 'Not found.' };
+  if (row.is_active) return { error: "Can't delete the active version — activate a different one first." };
+  getDbSync().run(`DELETE FROM message_versions WHERE id=?`, [id]);
+  save();
+  return { ok: true };
+}
+// Per-type warning for comms2's UI — true means "nothing is marked
+// active for this type," which for the always-on settings types means
+// the automated send has nothing to draw from and needs attention.
+function hasActiveMessageVersion(type) {
+  return !!queryOne(`SELECT 1 as x FROM message_versions WHERE type=? AND is_active=1 LIMIT 1`, [type]);
+}
+// One-time seed (Per Bot 54) — for every registry type with zero rows
+// yet, pulls its current live value straight out of app_config and
+// inserts it as the first version, flagged active immediately. Safe to
+// call on every startup: only ever acts on a type that has no versions
+// at all yet, so it can't create duplicates or disturb a type Per has
+// already started managing through comms2. This is import-only — it
+// does NOT change what the live send functions read from (they still
+// read app_config directly until step 3 of the comms2 build).
+function importLiveConfigIntoMessageVersions() {
+  const cfg = getAppConfig();
+  if (!cfg) return;
+  Object.keys(MESSAGE_TYPE_REGISTRY).forEach(type => {
+    const existing = queryOne(`SELECT 1 as x FROM message_versions WHERE type=? LIMIT 1`, [type]);
+    if (existing) return;
+    const def = MESSAGE_TYPE_REGISTRY[type];
+    const subject = cfg[def.subjectCol] || null;
+    const body = cfg[def.bodyCol] || null;
+    const format = cfg[def.formatCol] || 'plain';
+    // Only actually worth importing if there's something there — a type
+    // Per never customised (still running on the built-in default copy
+    // baked into the send function itself) gets nothing to import, and
+    // stays with zero versions until comms2's first real Save.
+    if (!subject && !body) return;
+    const extra = {};
+    Object.keys(def.extraCols || {}).forEach(k => { extra[k] = cfg[def.extraCols[k]]; });
+    createMessageVersion(type, { label: 'Imported from live settings', subject, body, format, extra }, true);
+  });
+}
+
 // ── Skins (Per Bot 20) ──
 // slug is validated at the API layer (server.js) before it ever reaches
 // here — lowercase, hyphenated, URL-safe, since it's used directly in
@@ -6704,6 +6868,10 @@ module.exports = {
   recordPlay, getContentHistory,
   // Content categories seed
   seedContentCategories,
+  // Message versions (Per Bot 54, comms2 foundation)
+  MESSAGE_TYPE_REGISTRY, isKnownMessageType, listMessageVersions, getActiveMessageVersion, getMessageVersion,
+  createMessageVersion, updateMessageVersion, activateMessageVersion, deleteMessageVersion, hasActiveMessageVersion,
+  importLiveConfigIntoMessageVersions,
   // Favourites
   addFavourite, removeFavourite, getFavourites,
   // User playlists

@@ -2123,6 +2123,58 @@ app.get('/api/admin/clients', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getAllUsersAdmin(req.query.archived === '1'));
 });
 
+// ── Message versions (Per Bot 54) — comms2 foundation ── Generic
+// list/create(duplicate)/update/activate/delete for every registry type
+// in db.MESSAGE_TYPE_REGISTRY. One set of routes serves all of them —
+// the type-specific field shape (SMS body, day-threshold) lives in
+// MESSAGE_TYPE_REGISTRY.extraCols, not in separate routes per type.
+// /types is what comms2's front-end reads to build its list of tables
+// and know which extra fields to render for each.
+app.get('/api/admin/message-versions/types', auth.requireAuthApi(['admin']), (req, res) => {
+  const types = Object.keys(db.MESSAGE_TYPE_REGISTRY).map(type => ({
+    type, label: db.MESSAGE_TYPE_REGISTRY[type].label,
+    extraFields: Object.keys(db.MESSAGE_TYPE_REGISTRY[type].extraCols || {}),
+    hasActive: db.hasActiveMessageVersion(type),
+  }));
+  res.json(types);
+});
+app.get('/api/admin/message-versions', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const type = req.query.type;
+    if (!db.isKnownMessageType(type)) return res.status(400).json({ error: 'Unknown message type: ' + type });
+    res.json(db.listMessageVersions(type));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/message-versions', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { type, label, subject, body, format, extra, makeActive } = req.body;
+    if (!db.isKnownMessageType(type)) return res.status(400).json({ error: 'Unknown message type: ' + type });
+    const row = db.createMessageVersion(type, { label, subject, body, format, extra }, !!makeActive);
+    res.json({ ok: true, version: row });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/message-versions/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const row = db.updateMessageVersion(req.params.id, req.body || {});
+    if (!row) return res.status(404).json({ error: 'Version not found.' });
+    res.json({ ok: true, version: row });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/message-versions/:id/activate', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const row = db.activateMessageVersion(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Version not found.' });
+    res.json({ ok: true, version: row });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/message-versions/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const result = db.deleteMessageVersion(req.params.id);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Bulk trial extension (Per Bot 38) — "everyone currently on trial
 // gets N more days," in one action, rather than editing people one at a
 // time. GET returns a live count for the confirmation prompt; POST does
