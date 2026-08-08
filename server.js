@@ -9878,6 +9878,12 @@ app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req
 // ── Admin comms page ──
 app.get('/admin/comms',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
 app.get('/admin/comms/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
+// Per Bot 54 — comms2 is the in-progress replacement for comms.html
+// (see message_versions above): same login gate, served alongside the
+// original rather than in place of it, so both can run side by side
+// until comms2 is fully built and tested and comms.html is retired.
+app.get('/admin/comms2',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms2.html')));
+app.get('/admin/comms2/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms2.html')));
 
 // Per Bot 15n — Talk & Tomte and Sales & Marketing, split out of the
 // Users/Communications pages as part of the six-area admin restructure

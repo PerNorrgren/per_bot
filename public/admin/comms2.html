@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Comms 2 (beta) — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
+  <!-- Per Bot 54 — same shared editor primitives comms.html/sales.html
+       already use (token insertion, light rich editor, format toggle).
+       This page is the first to build its whole message-editing UI on
+       top of MessageEditor rather than hand-rolling its own per type. -->
+  <script src="/js/message-editor.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+    .btn:disabled, .btn.disabled { opacity:0.35; pointer-events:none; cursor:not-allowed; }
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
+
+    .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:36px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    .version-row { display:flex; align-items:center; gap:12px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); flex-wrap:wrap; }
+    .version-row:last-child { border-bottom:none; }
+    .version-main { flex:1; min-width:200px; }
+    .version-label { font-size:13px; color:rgba(255,255,255,0.8); }
+    .version-subject { font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px; }
+    .version-meta { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; }
+    .version-actions { display:flex; gap:6px; align-items:center; flex-shrink:0; }
+    .active-pill { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; padding:4px 10px; border-radius:12px; background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.85); border:1px solid rgba(180,230,200,0.3); }
+    .empty-note { padding:20px; font-size:13px; color:rgba(255,255,255,0.35); }
+
+    .warn-banner { display:flex; align-items:center; gap:10px; padding:11px 16px; margin-bottom:10px; border-radius:10px; background:rgba(255,180,60,0.09); border:1px solid rgba(255,180,60,0.28); color:rgba(255,200,110,0.9); font-size:12px; }
+    .info-banner { padding:14px 18px; border-radius:10px; background:rgba(120,170,255,0.07); border:1px solid rgba(120,170,255,0.22); color:rgba(160,195,255,0.85); font-size:12px; line-height:1.6; }
+
+    label { display:block; font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:6px; }
+    input, textarea, select { font-family:'Georgia',serif; }
+    .inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:8px 10px; font-size:13px; color:rgba(255,255,255,0.8); outline:none; width:100%; }
+    .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+    textarea.inline-input { resize:vertical; }
+
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:600px; display:flex; flex-direction:column; gap:16px; max-height:90vh; overflow-y:auto; }
+    .modal-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; flex-wrap:wrap; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .format-toggle { display:flex; gap:6px; margin-bottom:10px; }
+    .format-toggle button { padding:6px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.5); font-size:12px; font-family:'Georgia',serif; cursor:pointer; }
+    .format-toggle button.active { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
+    #editorRichBody { background:#0d1210; border-radius:8px; min-height:160px; }
+    .ql-toolbar.ql-snow { border-color:rgba(255,255,255,0.12) !important; }
+    .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; }
+    .field-group { display:flex; flex-direction:column; gap:6px; }
+    .checkbox-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.7); }
+    .checkbox-row input { width:15px; height:15px; accent-color:rgba(180,230,200,0.7); }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div style="position:relative">
+    <div class="logo" style="font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(255,255,255,0.35)" data-brand="name">Deeper Mindfulness</div>
+    <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+      <span class="logo-name">Comms 2 (beta)</span>
+      <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+    </button>
+    <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+      <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+      <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span id="a11yMenuSlot" style="position:relative"></span>
+    <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
+    <a href="/admin/content" class="btn">Content</a>
+    <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+    <a href="/admin/comms" class="btn">Communications</a>
+    <a href="/admin/comms2" class="btn primary">Comms 2 (beta)</a>
+    <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+    <a href="/admin/reports" class="btn">Reports</a>
+    <a href="/setup" class="btn">Settings</a>
+  </div>
+</div>
+
+<div class="page">
+
+  <div class="info-banner">
+    <strong>This page is in testing.</strong> Every version you save or activate here is real and kept — but activating a version does <strong>not yet</strong> change what actually sends. Reminder, Renewal, Birthday, Newsletter Welcome, and Trial Extended still send using the settings on the original Communications page until that switch-over is built and tested. Think of this as building and rehearsing the history safely before it goes live.
+  </div>
+
+  <div id="typeSections"></div>
+
+</div>
+
+<!-- ── Shared message editor ── one modal, config-driven per type ── -->
+<div class="modal-overlay" id="editorModal">
+  <div class="modal">
+    <h3 id="editorTitle">New version</h3>
+    <input type="hidden" id="editorType"/>
+    <input type="hidden" id="editorId"/>
+
+    <div class="field-group">
+      <label>Label <span style="text-transform:none;color:rgba(255,255,255,0.25)">— a short note to tell this version apart later, e.g. "Christmas 2026"</span></label>
+      <input class="inline-input" type="text" id="editorLabel" placeholder="Optional"/>
+    </div>
+
+    <div class="field-group">
+      <label>Subject</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="inline-input" type="text" id="editorSubject" style="flex:1"/>
+        <span id="editorSubjectTokenWrap"></span>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <label>Body</label>
+      <div id="editorFormatToggleWrap"></div>
+      <textarea class="inline-input" id="editorPlainBody" rows="6" style="width:100%"></textarea>
+      <div id="editorRichBody" style="display:none"></div>
+      <div style="margin-top:6px" id="editorBodyTokenWrap"></div>
+    </div>
+
+    <div id="editorExtraFields"></div>
+
+    <label class="checkbox-row">
+      <input type="checkbox" id="editorMakeActive"/>
+      Make this the active version
+    </label>
+
+    <div class="modal-err" id="editorErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('editorModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveEditor()">Save version</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Which of the registry types this page shows, in this order ──
+  // (Trial sequence and Savers Protocol stay on the Sales page per the
+  // agreed split — they'll open this same modal from there once wired
+  // up, not get their own tables here.)
+  const COMMS2_TYPES = ['reminder', 'renewal', 'birthday', 'newsletter_welcome', 'trial_extended'];
+  let TYPE_META = {}; // filled from /api/admin/message-versions/types
+
+  function logout() { fetch('/api/logout',{method:'POST'}).then(()=>window.location.href='/login'); }
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', e => {
+    const m = document.getElementById('adminMenu');
+    if (m && !e.target.closest('.topbar')) m.style.display = 'none';
+  });
+  async function loadPeopleNavBadge() {
+    try {
+      const res = await fetch('/api/admin/notification-counts');
+      const data = await res.json();
+      const total = (data.pendingFacilitatorRequests||0) + (data.unseenEnquiries||0);
+      const badge = document.getElementById('peopleNavBadge');
+      if (!badge) return;
+      if (total > 0) { badge.textContent = total > 9 ? '9+' : total; badge.style.display = 'inline-flex'; }
+      else { badge.style.display = 'none'; }
+    } catch(e) { /* quiet — decorative */ }
+  }
+  loadPeopleNavBadge();
+
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  function escHtml(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtDate(s) {
+    if (!s) return '—';
+    try { return new Date(s.replace(' ','T')+'Z').toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+    catch { return s.slice(0,16); }
+  }
+
+  // ── Extra-field definitions per type — matches db.js
+  // MESSAGE_TYPE_REGISTRY.extraCols keys. Not derived automatically from
+  // the API (which only returns the key names, not how to render them)
+  // since "days" needs a number input and "sms_body" needs a textarea —
+  // deliberately small and explicit rather than inventing a generic
+  // field-type system for five known cases.
+  const EXTRA_FIELD_RENDERERS = {
+    days: { label: 'Days threshold', render: (val) => `<div class="field-group"><label>Days threshold</label><input class="inline-input" type="number" min="1" max="30" id="editorExtra_days" value="${val ?? ''}" style="width:100px"/></div>` },
+    sms_body: { label: 'SMS body', render: (val) => `<div class="field-group"><label>SMS body</label><textarea class="inline-input" id="editorExtra_sms_body" rows="2">${escHtml(val ?? '')}</textarea></div>` },
+  };
+
+  // ── Boot ──
+  async function init() {
+    const typesRes = await fetch('/api/admin/message-versions/types');
+    const types = await typesRes.json();
+    types.forEach(t => { TYPE_META[t.type] = t; });
+    renderSections();
+    await Promise.all(COMMS2_TYPES.map(loadTable));
+  }
+
+  function renderSections() {
+    const wrap = document.getElementById('typeSections');
+    wrap.innerHTML = COMMS2_TYPES.map(type => {
+      const meta = TYPE_META[type] || { label: type };
+      return `
+        <div>
+          <div class="section-label">${escHtml(meta.label)}</div>
+          <div id="warn_${type}" class="warn-banner" style="display:none">
+            ⚠ No active version for ${escHtml(meta.label)} — once this type switches over to comms2, the automated send will have nothing to use.
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Versions</div>
+              <button class="btn sm primary" onclick="openEditor('${type}')">New version</button>
+            </div>
+            <div id="list_${type}"><div class="empty-note">Loading…</div></div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function loadTable(type) {
+    try {
+      const res = await fetch(`/api/admin/message-versions?type=${type}`);
+      const rows = await res.json();
+      const listEl = document.getElementById(`list_${type}`);
+      const warnEl = document.getElementById(`warn_${type}`);
+      const hasActive = rows.some(r => r.is_active);
+      warnEl.style.display = hasActive ? 'none' : 'flex';
+      if (!rows.length) {
+        listEl.innerHTML = `<div class="empty-note">No versions yet — click "New version" to write the first one.</div>`;
+        return;
+      }
+      listEl.innerHTML = rows.map(r => `
+        <div class="version-row">
+          <div class="version-main">
+            <div class="version-label">${escHtml(r.label || '(untitled)')}</div>
+            <div class="version-subject">${escHtml(r.subject || '(no subject)')}</div>
+            <div class="version-meta">Saved ${fmtDate(r.created_at)}</div>
+          </div>
+          <div class="version-actions">
+            ${r.is_active ? '<span class="active-pill">Active</span>' : `<button class="btn sm" onclick="activateVersion('${r.id}','${type}')">Make active</button>`}
+            <button class="btn sm" onclick="editVersion('${r.id}','${type}')">Edit</button>
+            <button class="btn sm" onclick="duplicateVersion('${r.id}','${type}')">Duplicate</button>
+            <button class="btn sm danger" ${r.is_active ? 'disabled title="Activate a different version first"' : ''} onclick="deleteVersionRow('${r.id}','${type}')">Delete</button>
+          </div>
+        </div>`).join('');
+    } catch(e) {
+      document.getElementById(`list_${type}`).innerHTML = `<div class="empty-note">Couldn't load — ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // ── Editor ──
+  let editorFormat = 'plain';
+
+  function renderEditorFormatToggle() {
+    document.getElementById('editorFormatToggleWrap').innerHTML = MessageEditor.formatToggleHtml('editorBodyFmt', editorFormat, 'setEditorFormat');
+  }
+  function setEditorFormat(_idPrefix, fmt) {
+    editorFormat = fmt;
+    renderEditorFormatToggle();
+    const plainEl = document.getElementById('editorPlainBody');
+    const richEl = document.getElementById('editorRichBody');
+    if (fmt === 'rich') {
+      plainEl.style.display = 'none';
+      richEl.style.display = 'block';
+      if (!MessageEditor.isMounted('editorRichBody')) {
+        MessageEditor.mountRich('editorRichBody', plainEl.value ? plainEl.value.replace(/\n/g,'<br>') : '');
+      }
+    } else {
+      richEl.style.display = 'none';
+      plainEl.style.display = 'block';
+    }
+    renderEditorTokenWraps();
+  }
+  function renderEditorTokenWraps() {
+    document.getElementById('editorSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('editorSubject', MessageEditor.standardTokens());
+    document.getElementById('editorBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
+      'editorRichBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: editorFormat === 'rich' }
+    );
+  }
+
+  function renderExtraFields(type, extra) {
+    const meta = TYPE_META[type];
+    const keys = (meta && meta.extraFields) || [];
+    const wrap = document.getElementById('editorExtraFields');
+    if (!keys.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = keys.map(k => (EXTRA_FIELD_RENDERERS[k] ? EXTRA_FIELD_RENDERERS[k].render((extra||{})[k]) : '')).join('');
+  }
+  function collectExtraFields(type) {
+    const meta = TYPE_META[type];
+    const keys = (meta && meta.extraFields) || [];
+    const extra = {};
+    keys.forEach(k => {
+      const el = document.getElementById(`editorExtra_${k}`);
+      if (el) extra[k] = el.type === 'number' ? Number(el.value) : el.value;
+    });
+    return extra;
+  }
+
+  function openEditor(type, prefill) {
+    document.getElementById('editorType').value = type;
+    document.getElementById('editorId').value = (prefill && prefill.__editId) || '';
+    document.getElementById('editorTitle').textContent = (prefill && prefill.__editId) ? 'Edit version' : (TYPE_META[type] ? `New ${TYPE_META[type].label} version` : 'New version');
+    document.getElementById('editorLabel').value = (prefill && prefill.label) || '';
+    document.getElementById('editorSubject').value = (prefill && prefill.subject) || '';
+    document.getElementById('editorPlainBody').value = (prefill && prefill.body) || '';
+    document.getElementById('editorMakeActive').checked = false;
+    document.getElementById('editorErr').textContent = '';
+    editorFormat = (prefill && prefill.format) || 'plain';
+    renderEditorFormatToggle();
+    document.getElementById('editorPlainBody').style.display = editorFormat === 'rich' ? 'none' : 'block';
+    document.getElementById('editorRichBody').style.display = editorFormat === 'rich' ? 'block' : 'none';
+    if (editorFormat === 'rich') {
+      MessageEditor.mountRich('editorRichBody', (prefill && prefill.body) || '');
+    } else {
+      MessageEditor.destroy('editorRichBody');
+      document.getElementById('editorRichBody').innerHTML = '';
+    }
+    renderEditorTokenWraps();
+    renderExtraFields(type, prefill && prefill.extra);
+    openModal('editorModal');
+  }
+
+  async function editVersion(id, type) {
+    const res = await fetch(`/api/admin/message-versions?type=${type}`);
+    const rows = await res.json();
+    const row = rows.find(r => r.id === id);
+    if (!row) return;
+    openEditor(type, { ...row, __editId: id });
+  }
+  async function duplicateVersion(id, type) {
+    const res = await fetch(`/api/admin/message-versions?type=${type}`);
+    const rows = await res.json();
+    const row = rows.find(r => r.id === id);
+    if (!row) return;
+    // No __editId — Save always creates a fresh row for a duplicate,
+    // never overwrites the one it was copied from.
+    openEditor(type, { ...row, label: row.label ? `${row.label} (copy)` : '' });
+  }
+
+  async function saveEditor() {
+    const type = document.getElementById('editorType').value;
+    const id = document.getElementById('editorId').value;
+    const label = document.getElementById('editorLabel').value.trim();
+    const subject = document.getElementById('editorSubject').value.trim();
+    const body = editorFormat === 'rich' ? MessageEditor.getHtml('editorRichBody') : document.getElementById('editorPlainBody').value;
+    const extra = collectExtraFields(type);
+    const makeActive = document.getElementById('editorMakeActive').checked;
+    const errEl = document.getElementById('editorErr');
+    errEl.textContent = '';
+    if (!subject && !body) { errEl.textContent = 'Write a subject or body first.'; return; }
+    try {
+      let res;
+      if (id) {
+        res = await fetch(`/api/admin/message-versions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, subject, body, format: editorFormat, extra }) });
+        if (res.ok && makeActive) await fetch(`/api/admin/message-versions/${id}/activate`, { method: 'POST' });
+      } else {
+        res = await fetch('/api/admin/message-versions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, label, subject, body, format: editorFormat, extra, makeActive }) });
+      }
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Could not save.'; return; }
+      closeModal('editorModal');
+      loadTable(type);
+    } catch(e) { errEl.textContent = 'Error: ' + e.message; }
+  }
+
+  async function activateVersion(id, type) {
+    if (!(await appConfirm('Make this the active version? (Not yet used by real sends — see the note at the top of this page.)'))) return;
+    await fetch(`/api/admin/message-versions/${id}/activate`, { method: 'POST' });
+    loadTable(type);
+  }
+  async function deleteVersionRow(id, type) {
+    if (!(await appConfirm('Delete this version? This cannot be undone.'))) return;
+    const res = await fetch(`/api/admin/message-versions/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { await appAlert(data.error || 'Could not delete.'); return; }
+    loadTable(type);
+  }
+
+  init();
+</script>
+<script>window.TOMTE_PAGE = 'Admin — Comms 2';</script>
+</body>
+</html>
