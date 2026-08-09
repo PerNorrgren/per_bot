@@ -1,14 +1,13 @@
 // ── Unified message editor — shared primitives (Per Bot 19, extended
-// Per Bot 54 for comms2) ── Used by Trial sequence, Savers Protocol,
-// Campaign email steps (sales.html), and now comms2.html's Reminder/
-// Renewal/Birthday/Newsletter Welcome/Trial Extended. Newsletters
-// (comms.html) keeps its own existing, heavier editor as-is —
-// columns/video/image-resize are genuinely newsletter-grade features
-// with no equivalent need in a short transactional message. This module
-// is lighter by design: bold/italic/underline/headers/link/image, plus
-// (Per Bot 54) the same "Generate & insert" AI feature Newsletter has,
-// simplified — no columns-block insertion logic, since nothing using
-// this module has columns.
+// Per Bot 54) ── Used everywhere a message gets composed: comms2.html's
+// Reminder/Renewal/Birthday/Newsletter Welcome/Trial Extended,
+// sales.html's Trial sequence/Savers Protocol/Campaign steps, and
+// (Per Bot 54) Newsletter and MOTD too. Per: "the rich editor with all
+// features is the one I want for all messages" — mountRich below is now
+// the exact full Newsletter editor (columns, video, buttons, image
+// resize, AI Help), generalized to mount on any containerId rather than
+// the single hardcoded Newsletter instance it started as. There is
+// deliberately only one rich editor implementation left in this app.
 (function (window) {
   'use strict';
 
@@ -98,49 +97,714 @@
     document.head.appendChild(style);
   }
 
-  // ── Rich editor — bold/italic/underline/headers/link/image. Headers
-  // added Per Bot 54 (Per: "no headers" — the original scope for this
-  // module deliberately left them out for short transactional emails,
-  // but a subject line or two of structure is a reasonable ask even for
-  // those, and it's harmless for every existing consumer of this
-  // module too). ──
-  function mountRich(containerId, initialHtml, opts) {
-    opts = opts || {};
-    ensureStyles();
-    if (instances[containerId]) { destroy(containerId); }
-    const container = document.getElementById(containerId);
-    if (container) container.classList.add('me-ql-wrap');
-    const q = new Quill('#' + containerId, {
-      theme: 'snow',
-      placeholder: opts.placeholder || '',
-      modules: { toolbar: [[{ header: [2, 3, false] }], ['bold', 'italic', 'underline'], ['link', 'image'], ['clean']] },
-    });
-    if (opts.imageUploadEndpoint) {
-      const toolbar = q.getModule('toolbar');
-      toolbar.addHandler('image', () => uploadImage(q, opts.imageUploadEndpoint));
+  // ── Full rich editor (Per Bot 54) — Per: "the rich editor with all
+  // features is the one I want for all messages." This is the exact
+  // Newsletter editor from comms.html, generalized to mount on any
+  // containerId instead of a single hardcoded '#newsletterRichEditor'
+  // singleton — headers, alignment, lists, link, image (upload, link,
+  // copy, resize), video (link or upload with poster), buttons, 1/2/3
+  // side-by-side columns, AI Help (rewrite the whole message), and
+  // (Per Bot 54) the Generate & insert dropdown. Every comment below
+  // describing a specific bug and its fix is preserved verbatim from
+  // the original — hard-won knowledge about Quill 1.3.7's internals
+  // that any future change here needs to keep in mind, not just
+  // decoration.
+  //
+  // lastClickedImage/lastCellSelection stay module-level (not per-
+  // container) since only one heavy editor is ever visible/interactive
+  // at a time on any given page — matches how it always worked in
+  // comms.html, just no longer assuming there's exactly one editor that
+  // will ever exist for the lifetime of the page.
+
+  let _blotsRegistered = false;
+  function ensureBlotsRegistered() {
+    if (_blotsRegistered || typeof Quill === 'undefined') return;
+    _blotsRegistered = true;
+    const BlockEmbed = Quill.import('blots/block/embed');
+
+    // Columns block. Table-based markup (not flexbox/grid) because real
+    // email clients — Outlook especially — don't reliably support CSS
+    // layout; a table is the one thing that actually renders consistently
+    // side-by-side across clients. Quill treats the whole block as a
+    // single atomic embed (like an image) and won't try to track edits
+    // inside it via its own Delta model — but each cell is explicitly
+    // marked contenteditable="true", so the browser still lets you click
+    // in and type or drop an image directly, independent of Quill's model.
+    class ColumnsBlot extends BlockEmbed {
+      static create(value) {
+        const node = super.create();
+        const count = (value && value.count) || 2;
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:14px 0;';
+        const cellWidth = Math.floor(100 / count);
+        let cells = '';
+        for (let i = 0; i < count; i++) {
+          const pad = i < count - 1 ? '0 16px 0 0' : '0';
+          cells += `<td valign="top" contenteditable="true" style="width:${cellWidth}%;padding:${pad};vertical-align:top;outline:none" data-column-cell="true"><p>Column text or image…</p></td>`;
+        }
+        node.innerHTML = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cells}</tr></table>`;
+        return node;
+      }
+      // Reads back whatever's actually in the DOM now, not a stored value
+      // from insertion time — the cells are live editable regions, so
+      // their content changes after the block is first inserted.
+      static value(node) { return node.innerHTML; }
     }
-    if (initialHtml) q.clipboard.dangerouslyPasteHTML(initialHtml);
-    instances[containerId] = q;
-    return q;
+    ColumnsBlot.blotName = 'columnsBlock';
+    ColumnsBlot.tagName = 'DIV';
+    ColumnsBlot.className = 'ql-columns-block';
+    Quill.register(ColumnsBlot);
+
+    // Button — a real Quill link (Quill's own well-tested built-in
+    // mechanism, not custom insertion logic), just tagged with a class so
+    // it survives Quill's serialization and can be found and converted
+    // into a properly inline-styled button server-side before sending.
+    const Link = Quill.import('formats/link');
+    class ButtonLink extends Link {
+      static create(value) {
+        const node = super.create(value);
+        node.setAttribute('class', 'nl-button');
+        return node;
+      }
+    }
+    ButtonLink.blotName = 'buttonLink';
+    Quill.register(ButtonLink, true);
+
+    // Video block — atomic embed like ColumnsBlot above, since there's
+    // nothing editable inside it (just the bulletproof video/poster/
+    // fallback-link markup built in buildVideoBlockHtml below). Storing
+    // the fully-built HTML as the blot's value means the editor never
+    // has to reconstruct it from parts on reload.
+    class VideoBlot extends BlockEmbed {
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:14px 0;';
+        node.innerHTML = value.html;
+        return node;
+      }
+      static value(node) { return { html: node.innerHTML }; }
+    }
+    VideoBlot.blotName = 'videoBlock';
+    VideoBlot.tagName = 'DIV';
+    VideoBlot.className = 'ql-video-block';
+    Quill.register(VideoBlot);
   }
 
-  async function uploadImage(q, endpoint) {
-    const input = document.createElement('input');
-    input.type = 'file'; input.accept = 'image/*';
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (!file) return;
+  let lastClickedImage = null;
+  let lastCellSelection = null;
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) { return; }
+    const node = sel.getRangeAt(0).startContainer;
+    const el = node.nodeType === 1 ? node : node.parentElement;
+    const cellEl = el ? el.closest('[data-column-cell]') : null;
+    lastCellSelection = cellEl ? { cellEl, range: sel.getRangeAt(0).cloneRange(), browserSel: sel } : null;
+  });
+
+  function insertNodeAtCellRange(target, node) {
+    target.range.deleteContents();
+    target.range.insertNode(node);
+    target.range.setStartAfter(node);
+    target.range.collapse(true);
+    target.browserSel.removeAllRanges();
+    target.browserSel.addRange(target.range);
+  }
+
+  // ── Shared insertion targeting ── A columns block is a single atomic
+  // unit as far as Quill's own selection/Delta model is concerned —
+  // clicking inside one of its cells moves the browser's real cursor
+  // there, but quill.getSelection() has no visibility into it at all.
+  // Every custom insertion (image, video link, button, image link) needs
+  // to check the REAL browser selection first and look for a column-cell
+  // ancestor. Tracking the last known cell selection continuously
+  // (selectionchange listener above), rather than trying to catch it
+  // fresh after the fact, sidesteps Quill's toolbar mousedown handling
+  // stomping on the real browser selection before a click handler fires.
+  function getInsertionTarget(q) {
+    if (lastCellSelection && document.contains(lastCellSelection.cellEl)) {
+      return { inCell: true, range: lastCellSelection.range, browserSel: lastCellSelection.browserSel };
+    }
+    return { inCell: false, quillRange: q.getSelection(true) || { index: q.getLength() } };
+  }
+  function inCell() {
+    return !!(lastCellSelection && document.contains(lastCellSelection.cellEl));
+  }
+  function restoreCellSelection() {
+    lastCellSelection.browserSel.removeAllRanges();
+    lastCellSelection.browserSel.addRange(lastCellSelection.range);
+  }
+  function formatInCellOrQuill(q, format) {
+    if (inCell()) { restoreCellSelection(); document.execCommand(format); return; }
+    q.format(format, !q.getFormat()[format]);
+  }
+
+  function insertColumnsBlock(q, count) {
+    const range = q.getSelection(true) || { index: q.getLength() };
+    q.insertEmbed(range.index, 'columnsBlock', { count });
+    q.setSelection(range.index + 1);
+  }
+
+  async function linkSelectedImage(q) {
+    if (lastClickedImage && document.contains(lastClickedImage)) {
+      const url = await window.appPrompt('Link this image to:');
+      if (!url || !url.trim()) return;
+      const a = document.createElement('a');
+      a.href = url.trim();
+      lastClickedImage.parentNode.insertBefore(a, lastClickedImage);
+      a.appendChild(lastClickedImage);
+      return;
+    }
+    const range = q.getSelection();
+    if (!range || range.length === 0) { window.appAlert('Click directly on an image to select it first, then click this button.'); return; }
+    const [leaf] = q.getLeaf(range.index);
+    if (!leaf || !leaf.domNode || leaf.domNode.tagName !== 'IMG') { window.appAlert("That selection isn't an image — click directly on an image first."); return; }
+    const url = await window.appPrompt('Link this image to:');
+    if (!url || !url.trim()) return;
+    q.formatText(range.index, 1, 'link', url.trim());
+  }
+
+  // Reliable clipboard copy for an image already in the editor, meant to
+  // pair with the pasted-image fix below: copy an image out with this
+  // button, paste it back in anywhere (including a different spot in the
+  // same message) as a way to move one, since Quill has no drag-
+  // reposition. Does its own fresh fetch() of the image rather than
+  // relying on the browser's native right-click "Copy Image" — that
+  // reads whatever the browser currently has decoded/cached, which can
+  // go stale; this always copies what's actually at the URL right now.
+  async function copySelectedImage(q) {
+    let img = (lastClickedImage && document.contains(lastClickedImage)) ? lastClickedImage : null;
+    if (!img) {
+      const range = q.getSelection();
+      const leaf = range ? q.getLeaf(range.index)[0] : null;
+      if (leaf && leaf.domNode && leaf.domNode.tagName === 'IMG') img = leaf.domNode;
+    }
+    if (!img) { window.appAlert('Click directly on an image to select it first, then click this button.'); return; }
+    try {
+      // Real bug found (kept here as a warning for anyone touching this
+      // again): `await fetch(...)` THEN `await navigator.clipboard.write(...)`
+      // loses the user-gesture context in Safari (and some Chrome
+      // policies) by the time the write actually happens — the write
+      // then silently fails, leaving whatever was on the clipboard before
+      // untouched. Fix: pass the fetch as a still-pending promise straight
+      // into ClipboardItem — the constructor call itself is synchronous
+      // within this click handler's call stack, which is what the browser
+      // actually checks, even though the promise it's holding resolves
+      // later.
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': fetch(img.src).then(r => r.blob()) })
+      ]);
+      window.appAlert('Image copied — paste it anywhere with your normal paste shortcut, including elsewhere in this message.');
+    } catch (e) {
+      try {
+        await navigator.clipboard.writeText(img.src);
+        window.appAlert('Could not copy the image itself (your browser may not support it) — copied the image link instead.');
+      } catch (e2) {
+        window.appAlert('Could not copy this image. Try right-click > Copy Image instead.');
+      }
+    }
+  }
+
+  // Resize, not compress: the resize handles already let someone drag an
+  // image down to a smaller display size, but that's purely CSS — the
+  // underlying file is still whatever full size it was uploaded at. This
+  // re-encodes the actual file at the size it's currently being shown at,
+  // keeping PNG (lossless) rather than switching to a lossy format.
+  async function shrinkSelectedImage(q) {
+    let img = (lastClickedImage && document.contains(lastClickedImage)) ? lastClickedImage : null;
+    if (!img) {
+      const range = q.getSelection();
+      const leaf = range ? q.getLeaf(range.index)[0] : null;
+      if (leaf && leaf.domNode && leaf.domNode.tagName === 'IMG') img = leaf.domNode;
+    }
+    if (!img) { window.appAlert('Click directly on an image to select it first, then click this button.'); return; }
+    const targetWidth = Math.round(img.getBoundingClientRect().width);
+    if (!targetWidth || targetWidth < 20) { window.appAlert("Could not read this image's current display size."); return; }
+    try {
+      const res = await fetch(img.src);
+      const blob = await res.blob();
+      const bitmap = await createImageBitmap(blob);
+      if (bitmap.width <= targetWidth) {
+        window.appAlert(`This image is already ${bitmap.width}px wide, no bigger than its current display size — nothing to shrink.`);
+        return;
+      }
+      const scale = targetWidth / bitmap.width;
+      const targetHeight = Math.round(bitmap.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      const newBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      const formData = new FormData();
+      formData.append('file', newBlob, 'resized.png');
+      const uploadRes = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+      const data = await uploadRes.json();
+      if (!data.url) { window.appAlert(data.error || 'Could not resize this image.'); return; }
+      const savingsPct = Math.round((1 - newBlob.size / blob.size) * 100);
+      img.removeAttribute('width');
+      img.style.width = '';
+      img.src = data.url;
+      window.appAlert(`Resized to ${targetWidth}×${targetHeight}px${savingsPct > 0 ? ` — about ${savingsPct}% smaller` : ''}, keeping the email lighter.`);
+    } catch (e) {
+      window.appAlert('Could not resize this image. Please try again.');
+    }
+  }
+
+  async function insertNewsletterButton(q) {
+    const result = await window.appPromptMulti([
+      { label: 'Button text' },
+      { label: 'Button link (https://...)' },
+    ]);
+    if (result === null) return;
+    const [text, url] = result;
+    if (!text || !text.trim()) return;
+    if (!url || !url.trim()) return;
+    const label = text.trim();
+    const linkUrl = url.trim();
+    // Native OS color picker rather than a custom modal — click() on a
+    // hidden <input type="color"> opens it immediately. Defaults to
+    // today's green, so leaving it alone (or just closing the picker)
+    // reproduces the exact old behaviour with nothing to configure.
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.value = '#2d6a4f';
+    colorInput.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
+    document.body.appendChild(colorInput);
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      insertNewsletterButtonWithColor(q, label, linkUrl, colorInput.value);
+      colorInput.remove();
+    };
+    colorInput.addEventListener('change', finish, { once: true });
+    colorInput.addEventListener('blur', () => setTimeout(finish, 150), { once: true });
+    colorInput.click();
+  }
+  function insertNewsletterButtonWithColor(q, label, linkUrl, color) {
+    const target = getInsertionTarget(q);
+    if (target.inCell) {
+      const a = document.createElement('a');
+      a.href = linkUrl;
+      a.className = 'nl-button';
+      a.style.background = color;
+      a.textContent = label;
+      insertNodeAtCellRange(target, a);
+      return;
+    }
+    q.insertText(target.quillRange.index, label, 'buttonLink', linkUrl);
+    q.insertText(target.quillRange.index + label.length, '\n');
+    q.setSelection(target.quillRange.index + label.length + 1);
+    // Quill's Link format only carries an href, no color concept — applied
+    // directly to the DOM node right after insertion instead.
+    const leaf = q.getLeaf(target.quillRange.index)[0];
+    if (leaf && leaf.domNode) leaf.domNode.style.background = color;
+  }
+
+  async function insertVideoLink(q) {
+    const url = await window.appPrompt('Paste the video link (YouTube, Vimeo, or any URL):');
+    if (!url || !url.trim()) return;
+    const target = getInsertionTarget(q);
+    const label = '▶ Watch the video';
+    if (target.inCell) {
+      const a = document.createElement('a');
+      a.href = url.trim();
+      a.textContent = label;
+      insertNodeAtCellRange(target, a);
+      return;
+    }
+    q.insertText(target.quillRange.index, label, 'link', url.trim());
+    q.insertText(target.quillRange.index + label.length, '\n');
+    q.setSelection(target.quillRange.index + label.length + 1);
+  }
+
+  // Builds the standard "bulletproof" video-in-email pattern: a real
+  // <video> tag for clients that support inline playback (Apple Mail, iOS
+  // Mail), wrapped so Outlook (which renders via Word and chokes on
+  // <video>) is steered to a plain poster-image fallback via MSO
+  // conditional comments instead.
+  function buildVideoBlockHtml(videoUrl, posterUrl) {
+    const posterImg = posterUrl
+      ? `<img src="${posterUrl}" alt="Watch the video" width="100%" style="max-width:480px;border-radius:8px;display:block;margin:0 auto"/>`
+      : `<div style="max-width:480px;margin:0 auto;padding:40px 20px;background:#f0f0eb;border-radius:8px;text-align:center;font-family:Georgia,serif;color:#2d6a4f;font-size:15px">▶ Watch the video</div>`;
+    return `<div style="text-align:center">
+      <a href="${videoUrl}" target="_blank" style="text-decoration:none">
+        <!--[if !mso]><!-->
+        <video poster="${posterUrl}" controls="controls" width="100%" style="max-width:480px;border-radius:8px;display:block;margin:0 auto">
+          <source src="${videoUrl}" type="video/mp4">
+          ${posterImg}
+        </video>
+        <!--<![endif]-->
+        <!--[if mso]>${posterImg}<![endif]-->
+      </a>
+    </div>`;
+  }
+  function insertVideoBlockAtTarget(q, target, videoUrl, posterUrl) {
+    const html = buildVideoBlockHtml(videoUrl, posterUrl);
+    if (target.inCell) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      div.setAttribute('contenteditable', 'false');
+      insertNodeAtCellRange(target, div);
+      if (!div.nextSibling) div.parentNode.insertBefore(document.createTextNode('\u00A0'), div.nextSibling);
+      return;
+    }
+    q.insertEmbed(target.quillRange.index, 'videoBlock', { html });
+    q.insertText(target.quillRange.index + 1, ' ');
+    q.setSelection(target.quillRange.index + 2);
+  }
+  function uploadFileGetUrl(endpoint, file) {
+    return new Promise(async (resolve, reject) => {
       const fd = new FormData();
       fd.append('file', file);
       try {
         const res = await fetch(endpoint, { method: 'POST', body: fd });
         const data = await res.json();
-        if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed.');
-        const range = q.getSelection(true);
-        q.insertEmbed(range ? range.index : q.getLength(), 'image', data.url, 'user');
-      } catch (e) { alert(e.message); }
+        if (data.url) resolve(data.url); else reject(new Error(data.error || 'Upload failed.'));
+      } catch (e) { reject(e); }
+    });
+  }
+  async function insertNewsletterVideo(q) {
+    const target = getInsertionTarget(q);
+    const videoInput = document.createElement('input');
+    videoInput.type = 'file';
+    videoInput.accept = 'video/*';
+    videoInput.onchange = async () => {
+      const videoFile = videoInput.files[0];
+      if (!videoFile) return;
+      let videoUrl;
+      try {
+        videoUrl = await uploadFileGetUrl('/api/admin/newsletter-videos', videoFile);
+      } catch (e) { window.appAlert(e.message || 'Could not upload video.'); return; }
+      let posterUrl = '';
+      if (await window.appConfirm('Add a thumbnail image for the video? Recommended — without one, inboxes that can\'t play it inline just show a plain "Watch the video" box instead of a picture.')) {
+        const imgInput = document.createElement('input');
+        imgInput.type = 'file';
+        imgInput.accept = 'image/*';
+        posterUrl = await new Promise((resolve) => {
+          imgInput.onchange = async () => {
+            const imgFile = imgInput.files[0];
+            if (!imgFile) { resolve(''); return; }
+            try { resolve(await uploadFileGetUrl('/api/admin/newsletter-images', imgFile)); }
+            catch (e) { window.appAlert('Could not upload thumbnail — inserting without one.'); resolve(''); }
+          };
+          imgInput.click();
+        });
+      }
+      insertVideoBlockAtTarget(q, target, videoUrl, posterUrl);
+    };
+    videoInput.click();
+  }
+  // Dynamically-created hidden file input, one per call — same pattern
+  // as the light editor's old uploadImage helper — rather than a static
+  // page element with a fixed id, so this works for any container on any
+  // page, not just Newsletter's own modal.
+  async function uploadImageIntoEditor(q) {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*';
+    const target = getInsertionTarget(q);
+    if (!target.inCell) q.insertText(target.quillRange.index, 'Uploading image…');
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) { if (!target.inCell) q.deleteText(target.quillRange.index, 'Uploading image…'.length); return; }
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.url) {
+          if (!target.inCell) q.deleteText(target.quillRange.index, 'Uploading image…'.length);
+          window.appAlert(data.error || 'Could not upload image.');
+          return;
+        }
+        if (target.inCell) {
+          const img = document.createElement('img');
+          img.src = data.url;
+          img.style.maxWidth = '100%';
+          insertNodeAtCellRange(target, img);
+          // The image-resize module's click-to-select and alignment
+          // toolbar need a real sibling node to attach to — an image with
+          // nothing after it couldn't be "selected" at all.
+          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
+        } else {
+          q.deleteText(target.quillRange.index, 'Uploading image…'.length);
+          q.insertEmbed(target.quillRange.index, 'image', data.url);
+          if (target.quillRange.index + 1 >= q.getLength() - 1) q.insertText(target.quillRange.index + 1, ' ');
+          q.setSelection(target.quillRange.index + 1);
+        }
+      } catch (e) {
+        if (!target.inCell) q.deleteText(target.quillRange.index, 'Uploading image…'.length);
+        window.appAlert('Network error — could not upload image.');
+      }
     };
     input.click();
+  }
+
+  // AI Help — reads the whole editor, sends it for a full rewrite,
+  // replaces the editor's content outright on success. No accept/discard
+  // step by design — easy to amend anything afterward, and a review
+  // modal would just add friction for something meant to be a quick
+  // "make this better" nudge. Distinct from the Generate & insert
+  // dropdown (aiGenerateHtml/runAiGenerate below) — this improves what's
+  // already there; that inserts something new alongside it.
+  async function runAiPolish(q, btn) {
+    if (!btn) return;
+    if (!q.getText().trim()) { window.appAlert('Write something first.'); return; }
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: q.root.innerHTML }) });
+      const data = await res.json();
+      if (data.html) q.root.innerHTML = data.html;
+      else window.appAlert(data.error || 'Could not get a suggestion right now.');
+    } catch (e) {
+      window.appAlert('Something went wrong — please try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
+  function mountRich(containerId, initialHtml, opts) {
+    opts = opts || {};
+    ensureStyles();
+    ensureBlotsRegistered();
+    if (instances[containerId]) { destroy(containerId); }
+    const container = document.getElementById(containerId);
+    if (container) container.classList.add('me-ql-wrap');
+    if (window.ImageResize && Quill.imports['modules/imageResize'] === undefined) {
+      Quill.register('modules/imageResize', window.ImageResize.default || window.ImageResize);
+    }
+    const q = new Quill('#' + containerId, {
+      theme: 'snow',
+      placeholder: opts.placeholder || '',
+      modules: {
+        toolbar: {
+          container: [
+            [{ header: [2, 3, false] }],
+            ['bold', 'italic', 'underline'],
+            [{ align: [] }],
+            [{ list: 'ordered' }, { list: 'bullet' }],
+            ['link', 'image', 'image-link', 'image-copy', 'image-resize', 'video-link'],
+            ['nl-video'],
+            ['nl-button'],
+            ['columns-1', 'columns-2', 'columns-3'],
+            ['ai-polish'],
+            ['clean'],
+          ],
+          handlers: {
+            image: () => uploadImageIntoEditor(q),
+            'video-link': () => insertVideoLink(q),
+            'nl-video': () => insertNewsletterVideo(q),
+            'image-link': () => linkSelectedImage(q),
+            'image-copy': () => copySelectedImage(q),
+            'image-resize': () => shrinkSelectedImage(q),
+            'nl-button': () => insertNewsletterButton(q),
+            'columns-1': () => insertColumnsBlock(q, 1),
+            'columns-2': () => insertColumnsBlock(q, 2),
+            'columns-3': () => insertColumnsBlock(q, 3),
+            'ai-polish': function () { runAiPolish(q, this.container.querySelector('.ql-ai-polish')); },
+            // Every standard format button below has the same problem the
+            // paste fix further down solves: Quill's default handlers
+            // operate on ITS OWN Delta-model selection, which has no
+            // concept of a position inside a column cell's raw
+            // contenteditable. Each handler here checks a live cell
+            // selection and, when it's active, restores the real browser
+            // selection and applies the native equivalent instead —
+            // otherwise falling through to Quill's own default behaviour.
+            bold: () => formatInCellOrQuill(q, 'bold'),
+            italic: () => formatInCellOrQuill(q, 'italic'),
+            underline: () => formatInCellOrQuill(q, 'underline'),
+            list: (value) => {
+              if (inCell()) { restoreCellSelection(); document.execCommand(value === 'ordered' ? 'insertOrderedList' : 'insertUnorderedList'); return; }
+              const current = q.getFormat().list;
+              q.format('list', current === value ? false : value);
+            },
+            align: (value) => {
+              if (inCell()) {
+                restoreCellSelection();
+                document.execCommand(value === 'center' ? 'justifyCenter' : value === 'right' ? 'justifyRight' : value === 'justify' ? 'justifyFull' : 'justifyLeft');
+                return;
+              }
+              q.format('align', value);
+            },
+            // appPrompt() (an in-app modal, not native prompt()) for both
+            // cases — Quill's own Snow-theme tooltip only has room for a
+            // few characters of the URL and doesn't work inside a cell at
+            // all.
+            link: async () => {
+              if (inCell()) {
+                restoreCellSelection();
+                const sel = lastCellSelection.browserSel;
+                const anchor = sel.anchorNode && sel.anchorNode.nodeType === 1
+                  ? sel.anchorNode.closest('a')
+                  : sel.anchorNode && sel.anchorNode.parentElement && sel.anchorNode.parentElement.closest('a');
+                if (anchor) { document.execCommand('unlink'); return; }
+                const url = await window.appPrompt('Link this text to:');
+                if (!url || !url.trim()) return;
+                restoreCellSelection();
+                document.execCommand('createLink', false, url.trim());
+                return;
+              }
+              const range = q.getSelection();
+              if (!range) return;
+              const current = q.getFormat(range).link;
+              if (current) { q.format('link', false); return; }
+              const url = await window.appPrompt('Link this text to:');
+              if (url && url.trim()) q.format('link', url.trim());
+            },
+            clean: () => {
+              // The one that was actually destructive — Quill's default
+              // "clean" calls removeFormat() on its own selection, which
+              // (same root cause as everything else here) resolved to the
+              // columns block's own position and stripped the embed
+              // format itself, deleting the whole block. Native
+              // removeFormat on the cell's real selection has no way to
+              // reach outside the cell, so it can't touch the block.
+              if (inCell()) { restoreCellSelection(); document.execCommand('removeFormat'); return; }
+              const range = q.getSelection();
+              if (range) q.removeFormat(range.index, range.length);
+            },
+          },
+        },
+        imageResize: { modules: ['Resize', 'DisplaySize', 'Toolbar'] },
+      },
+    });
+    // Quill has no built-in icons/labels for any of these custom buttons —
+    // the toolbar array above just references format names that don't
+    // exist, which renders blank buttons; label them after Quill builds
+    // the toolbar DOM. Scoped to this instance's own toolbar container
+    // (not a page-wide document.querySelector) so mounting a second
+    // heavy editor elsewhere on the same page can never label the wrong
+    // one's buttons.
+    const toolbarEl = q.getModule('toolbar').container;
+    const label = (cls, text, title) => {
+      const el = toolbarEl.querySelector(cls);
+      if (el) { el.textContent = text; el.title = title; }
+    };
+    label('.ql-video-link', '▶', 'Insert a video link');
+    label('.ql-nl-video', '🎬', 'Upload a video and insert an inline player');
+    label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
+    label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
+    label('.ql-image-resize', '🗜️', "Click an image first, resize it with its own handles to the size you want it shown at, then click here — shrinks the actual file to match, keeping the email lighter");
+    label('.ql-nl-button', '▭', 'Insert a button');
+    label('.ql-columns-1', '1 col', 'Insert a single wide column');
+    label('.ql-columns-2', '2 col', 'Insert two side-by-side columns');
+    label('.ql-columns-3', '3 col', 'Insert three side-by-side columns');
+    label('.ql-ai-polish', '✨ AI Help', 'Suggest an improved version of the whole message');
+
+    // Tracks the last image clicked anywhere in the editor, including
+    // inside a columns-block cell — see linkSelectedImage above for why
+    // this has to work independently of Quill's own selection tracking.
+    q.root.addEventListener('click', (e) => {
+      if (e.target && e.target.tagName === 'IMG') lastClickedImage = e.target;
+    });
+
+    // Editing an existing link/button by clicking it — NEW links go
+    // through appPrompt (above) instead of Quill's own Snow-theme
+    // tooltip; this covers clicking an EXISTING link or button already
+    // in the document, a separate code path Quill's theme handles
+    // automatically and unprompted otherwise. Capture-phase so Quill's
+    // own tooltip never gets to see the click at all.
+    //
+    // Root(); Quill.find(a) resolves the clicked node back to its Blot so
+    // quill.formatText/deleteText/insertText can update the real Delta —
+    // a plain DOM edit outside Quill's API gets silently reverted by its
+    // MutationObserver on the next re-render, since the Delta never
+    // agreed the change happened.
+    q.root.addEventListener('click', async (e) => {
+      const a = e.target.closest('a');
+      if (!a || !q.root.contains(a)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const blot = Quill.find(a);
+      if (!blot) return;
+      const index = blot.offset(q.scroll);
+      const length = blot.length();
+      const isButton = a.classList.contains('nl-button');
+      const currentHref = a.getAttribute('href') || '';
+      if (isButton) {
+        const currentLabel = a.textContent || '';
+        const color = a.style.background || '#2d6a4f';
+        const result = await window.appPromptMulti([
+          { label: 'Button text', defaultValue: currentLabel },
+          { label: 'Button link (https://...)', defaultValue: currentHref },
+        ]);
+        if (result === null) return;
+        const [newLabel, newUrl] = result;
+        const finalLabel = (newLabel || '').trim() || currentLabel;
+        const finalUrl = (newUrl || '').trim() || currentHref;
+        q.deleteText(index, length);
+        q.insertText(index, finalLabel, 'buttonLink', finalUrl);
+        q.setSelection(index + finalLabel.length);
+        const leaf = q.getLeaf(index)[0];
+        if (leaf && leaf.domNode) leaf.domNode.style.background = color;
+        return;
+      }
+      const newUrl = await window.appPrompt('Link this text to (leave blank to remove the link):', currentHref);
+      if (newUrl === null) return;
+      q.formatText(index, length, 'link', newUrl.trim() || false);
+    }, true);
+
+    // Pasted-image fix, pairs with the Copy Image toolbar button above
+    // (copy an image out via that button, paste it back in anywhere —
+    // including a different spot — as a way to move one, since Quill has
+    // no drag-reposition). Without this, Quill's own default paste
+    // handling for image clipboard data embeds it as a giant inline
+    // base64 data-URI rather than a real hosted image. Capture phase so
+    // this runs before Quill's handler; uploads through the exact same
+    // endpoint a manual image upload already uses.
+    q.root.addEventListener('paste', async (e) => {
+      const items = (e.clipboardData || window.clipboardData)?.items;
+      const imageItem = items && Array.from(items).find(it => it.type && it.type.startsWith('image/'));
+      if (!imageItem) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const target = getInsertionTarget(q);
+      const file = imageItem.getAsFile();
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/admin/newsletter-images', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.url) { window.appAlert(data.error || 'Could not paste that image.'); return; }
+        if (target.inCell) {
+          const img = document.createElement('img');
+          img.src = data.url;
+          img.style.maxWidth = '100%';
+          insertNodeAtCellRange(target, img);
+          if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
+        } else {
+          q.insertEmbed(target.quillRange.index, 'image', data.url);
+          if (target.quillRange.index + 1 >= q.getLength() - 1) q.insertText(target.quillRange.index + 1, ' ');
+          q.setSelection(target.quillRange.index + 1);
+        }
+      } catch (e2) {
+        window.appAlert('Network error — could not paste that image.');
+      }
+    }, true);
+
+    // Paste-into-column fix — Quill treats the whole columns block as one
+    // atomic embed and has no concept of a cursor position *inside* a
+    // cell, so its own paste handler (bubble-phase) drops pasted content
+    // right after the block instead of into the cell being looked at.
+    // Capture phase runs before Quill ever sees the event. Plain text
+    // rather than rich HTML deliberately — clipboard HTML from Word/
+    // Google Docs tends to carry styling that breaks once this goes
+    // through the email-client conversion step.
+    q.root.addEventListener('paste', (e) => {
+      const cell = e.target && e.target.closest ? e.target.closest('[data-column-cell]') : null;
+      if (!cell) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+      document.execCommand('insertText', false, text);
+    }, true);
+
+    if (initialHtml) q.clipboard.dangerouslyPasteHTML(initialHtml);
+    instances[containerId] = q;
+    return q;
   }
 
   function destroy(containerId) {
@@ -169,6 +833,13 @@
   // rich/plain toggle, same as comms.html's own commsAiGenerateSelect).
   const AI_LABELS = { motd: 'Message of the Day style', limerick: 'Mindful limerick (hidden signal)', haiku: 'Surprising haiku', poem: 'Nature poem, Mary Oliver style', sumie: 'Sumi-e style line art' };
   const aiState = {}; // containerId -> { type, jobId, pollTimer, result }
+  // Tracks the plain text of the most recently inserted haiku/limerick/
+  // poem, so the sumie generator can key off a specific, known piece
+  // deterministically (haiku, then limerick, then poem, then falling
+  // back to the editor's general text) rather than the model having to
+  // guess which lines in an undifferentiated whole-body text dump were
+  // the poem versus the intro paragraph versus anything else.
+  const _lastInsertedByType = { haiku: null, limerick: null, poem: null };
 
   function aiGenerateHtml(containerId) {
     const options = Object.keys(AI_LABELS).map(k => `<option value="${k}">${AI_LABELS[k]}</option>`).join('');
@@ -197,7 +868,11 @@
     st.type = type;
     st.jobId = null;
     st.result = null;
-    st.range = q ? (q.getSelection(true) || { index: q.getLength(), length: 0 }) : null;
+    // Captured now, at the moment generation starts, not re-read later —
+    // cell-aware (getInsertionTarget), same as every other insertion in
+    // the heavy editor, so this lands in a columns cell correctly if
+    // that's where the cursor was.
+    st.target = q ? getInsertionTarget(q) : null;
     document.getElementById(`${containerId}_aiPanel`).style.display = 'block';
     document.getElementById(`${containerId}_aiTitle`).textContent = AI_LABELS[type] || 'Generating';
     startAiJob(containerId, type);
@@ -212,7 +887,7 @@
       const body = { type };
       if (type === 'sumie') {
         const q = instances[containerId];
-        body.context = q ? q.getText() : '';
+        body.context = _lastInsertedByType.haiku || _lastInsertedByType.limerick || _lastInsertedByType.poem || (q ? q.getText() : '');
       }
       const res = await fetch('/api/admin/comms-ai-generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
@@ -233,7 +908,10 @@
       data = await res.json();
     } catch (e) {
       // A failed poll request itself doesn't mean the job failed — the
-      // job keeps running server-side regardless. Just retry.
+      // job keeps running server-side regardless. Just retry. (A locked/
+      // backgrounded phone can throttle setTimeout itself, not just abort
+      // the odd fetch, so re-polling on visibilitychange below closes
+      // that gap too.)
       st.pollTimer = setTimeout(() => pollAiJob(containerId), 2000);
       return;
     }
@@ -246,6 +924,23 @@
     document.getElementById(`${containerId}_aiRetry`).style.display = '';
     document.getElementById(`${containerId}_aiInsert`).style.display = '';
   }
+
+  // A locked/backgrounded phone can throttle setTimeout itself, not just
+  // abort the odd fetch, so a pending poll can end up waiting far longer
+  // than 2s to actually fire once the tab comes back. Re-polling
+  // immediately on return, instead of waiting for that possibly-delayed
+  // timer, closes the gap between "I unlocked my phone" and "the result
+  // actually shows up."
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    Object.keys(aiState).forEach(containerId => {
+      const st = aiState[containerId];
+      if (st && st.jobId && !st.result) {
+        if (st.pollTimer) clearTimeout(st.pollTimer);
+        pollAiJob(containerId);
+      }
+    });
+  });
 
   function showAiError(containerId, message) {
     document.getElementById(`${containerId}_aiBody`).innerHTML = `<span style="color:rgba(255,120,100,0.85)">${message}</span>`;
@@ -268,25 +963,47 @@
     if (panel) panel.style.display = 'none';
   }
 
+  // Commits the previewed result into the document, at the insertion
+  // point captured back when generation started — mirrors the
+  // image-upload flow's cell-vs-Quill handling exactly.
   function insertAiResult(containerId) {
     const st = aiState[containerId];
     const q = instances[containerId];
-    if (!st || !st.result || !q) return;
-    if (st.type === 'sumie') {
-      const idx = st.range ? st.range.index : q.getLength();
-      q.insertEmbed(idx, 'image', st.result.imageUrl);
-      q.setSelection(idx + 1);
+    if (!st || !st.result || !q || !st.target) return;
+    const { type, target, result } = st;
+    if (type === 'sumie') {
+      if (target.inCell) {
+        const img = document.createElement('img');
+        img.src = result.imageUrl;
+        img.style.maxWidth = '100%';
+        insertNodeAtCellRange(target, img);
+        if (!img.nextSibling) img.parentNode.insertBefore(document.createTextNode('\u00A0'), img.nextSibling);
+      } else {
+        q.insertEmbed(target.quillRange.index, 'image', result.imageUrl);
+        if (target.quillRange.index + 1 >= q.getLength() - 1) q.insertText(target.quillRange.index + 1, ' ');
+        q.setSelection(target.quillRange.index + 1);
+      }
     } else {
-      const idx = st.range ? st.range.index : q.getLength();
-      q.clipboard.dangerouslyPasteHTML(idx, st.result.html + '<br/>');
-      q.setSelection(idx + 1);
+      if (_lastInsertedByType.hasOwnProperty(type)) {
+        _lastInsertedByType[type] = result.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
+      if (target.inCell) {
+        const wrap = document.createElement('span');
+        wrap.innerHTML = result.html;
+        insertNodeAtCellRange(target, wrap);
+      } else {
+        q.clipboard.dangerouslyPasteHTML(target.quillRange.index, result.html + '<br/>');
+        q.setSelection(target.quillRange.index + 1);
+      }
     }
     closeAiPreview(containerId);
   }
 
+  function getInstance(containerId) { return instances[containerId]; }
+
   window.MessageEditor = {
     insertTokenAtField, insertTokenAtRich, standardTokens, tokenSelectHtml,
-    formatToggleHtml, mountRich, destroy, getHtml, isMounted,
+    formatToggleHtml, mountRich, destroy, getHtml, isMounted, getInstance,
     aiGenerateHtml, runAiGenerate, retryAiGenerate, closeAiPreview, insertAiResult,
     renderVersionSection, refreshVersionSection,
   };
