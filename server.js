@@ -1294,20 +1294,42 @@ async function sendDueCampaignEmailSteps() {
   return dueSteps.length;
 }
 
+// ── message_versions switch-over (Per Bot 24, per the comms2 handover) ──
+// Resolves the live content for a message type: the active saved version
+// in message_versions if one exists, otherwise the exact same hardcoded
+// fallback each send function has always used — so a type nobody's ever
+// customized keeps behaving identically, and the OLD app_config-driven
+// settings form (comms.html, not yet retired) simply stops being read
+// for whichever type has been switched over. Reused for every type as
+// each gets switched, one at a time, per the handover's ordering.
+function resolveMessageContent(type, fallback) {
+  const active = db.getActiveMessageVersion(type);
+  if (!active) return { subject: fallback.subject, body: fallback.body, format: fallback.format || 'plain', extra: fallback.extra || {} };
+  return {
+    subject: active.subject || fallback.subject,
+    body: active.body || fallback.body,
+    format: active.format || fallback.format || 'plain',
+    extra: Object.assign({}, fallback.extra || {}, active.extra || {}),
+  };
+}
+
 // ── Inactivity reminder (Per Bot 5, item 8) ──
 // ── Inactivity reminder — shared HTML, used by both the real send and the ──
 // admin test-send endpoint, so a test email matches a real one exactly.
+// Per Bot 24 — switched over to message_versions (see resolveMessageContent
+// above). This is the FIRST of the 16 types being switched, per the
+// handover's plan — Renewal, Birthday, and the rest still read the old
+// app_config columns for now, one at a time, each tested before moving on.
 function buildReminderHtml(user, b) {
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
-  const bodyText = fillTemplate(
-    cfg.reminder_body || "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
-    tokens
-  );
+  const content = resolveMessageContent('reminder', {
+    body: "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
+  });
+  const bodyText = fillTemplate(content.body, tokens);
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
-      ${renderMessageBody(bodyText, cfg.reminder_format)}
+      ${renderMessageBody(bodyText, content.format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1316,15 +1338,17 @@ function buildReminderHtml(user, b) {
 
 function emailInactivityReminder(user) {
   const b = brand();
-  const cfg = db.getAppConfig() || {};
-  const subject = fillTemplate(cfg.reminder_subject || "Whenever you're ready", buildMessageTokens(user));
+  const content = resolveMessageContent('reminder', { subject: "Whenever you're ready" });
+  const subject = fillTemplate(content.subject, buildMessageTokens(user));
   return sendEmail(user.email, subject, buildReminderHtml(user, b));
 }
 
 function buildReminderSms(userName, b) {
-  const cfg = db.getAppConfig() || {};
+  const content = resolveMessageContent('reminder', {
+    extra: { sms_body: "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}" },
+  });
   const bodyText = fillTemplate(
-    cfg.reminder_sms_body || "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}",
+    content.extra.sms_body,
     { name: userName, link: `${APP_URL}/client/` }
   );
   return `${b.name}: ${bodyText}`;
@@ -1338,8 +1362,11 @@ function buildReminderSms(userName, b) {
 // too, for anyone who's opted into pref_sms_reminders and has a phone
 // number on file — independent of whether they also want the email.
 async function sendInactivityReminders() {
-  const cfg = db.getAppConfig() || {};
-  const days = Number.isInteger(cfg.reminder_days) ? cfg.reminder_days : parseInt(cfg.reminder_days, 10) || 4;
+  // Per Bot 24 — days threshold now also comes from the active
+  // message_versions row (extra.days) via resolveMessageContent, same
+  // switch-over as the subject/body/SMS above.
+  const content = resolveMessageContent('reminder', { extra: { days: 4 } });
+  const days = Number.isInteger(content.extra.days) ? content.extra.days : parseInt(content.extra.days, 10) || 4;
   const inactive = db.getInactiveUsers(days);
   const b = brand();
   let sentEmail = 0, sentSms = 0;
@@ -11157,8 +11184,12 @@ app.post('/api/admin/reminders/test', auth.requireAuthApi(['admin']), async (req
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
-    const cfg = db.getAppConfig() || {};
-    const testSubject = (subject && subject.trim()) || cfg.reminder_subject || "Whenever you're ready";
+    // Per Bot 24 — falls back to the active message_versions row now,
+    // not app_config directly (see resolveMessageContent) — an unsaved
+    // subject typed into the request body still previews first, same as
+    // before, since that's the old comms.html form's "preview before
+    // saving" behaviour and hasn't been retired yet.
+    const testSubject = (subject && subject.trim()) || resolveMessageContent('reminder', { subject: "Whenever you're ready" }).subject;
     const b = brand();
     const realUser = db.getUserByEmail(toEmail.toLowerCase());
 
