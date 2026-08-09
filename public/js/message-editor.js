@@ -815,11 +815,28 @@
   }
 
   function destroy(containerId) {
-    // Quill has no formal teardown — dropping the reference and letting
-    // the container's innerHTML get replaced by the caller is enough
-    // (same assumption the message-builder's mbQuillInstances already
-    // relies on elsewhere in this app).
+    // Per Bot 24 — this used to only drop the JS reference and rely on
+    // "the container's innerHTML gets replaced by the caller" — but
+    // Quill's auto-generated toolbar (the array-config form used here)
+    // is inserted as a DOM sibling BEFORE the container element, not
+    // inside it, so clearing the container's own innerHTML was never
+    // enough to remove it. Re-mounting the same containerId (e.g.
+    // re-opening "Edit version" on a different row) left every previous
+    // toolbar still sitting in the DOM, stacking up visually one per
+    // re-mount — that's the actual toolbar element removed here now,
+    // not just the reference to it.
+    const q = instances[containerId];
+    if (q) {
+      try {
+        const toolbarModule = q.getModule('toolbar');
+        if (toolbarModule && toolbarModule.container && toolbarModule.container.parentNode) {
+          toolbarModule.container.parentNode.removeChild(toolbarModule.container);
+        }
+      } catch(e) {}
+    }
     delete instances[containerId];
+    const container = document.getElementById(containerId);
+    if (container) container.innerHTML = '';
   }
 
   function getHtml(containerId) {
@@ -1094,6 +1111,44 @@
       .me-checkbox-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.7); }
       .me-checkbox-row input { width:15px; height:15px; accent-color:rgba(180,230,200,0.7); }
       #meVeRichBody { background:#0d1210; border-radius:8px; min-height:140px; }
+      /* Per Bot 24 — Quill dark-theme overrides, ported from comms.html's
+         page-level <style> block. This modal is shared across comms.html,
+         comms2.html, and sales.html — comms.html happened to already have
+         its own copy of these rules (harmless duplication, same values),
+         but comms2.html had none at all, so its toolbar rendered with
+         Quill's default near-black icons — invisible against this dark
+         modal. Centralising the fix here means it's correct regardless of
+         which page mounts the editor, rather than depending on each page
+         remembering to duplicate this block. */
+      .ql-toolbar.ql-snow { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; }
+      .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; min-height:140px; font-family:'Georgia',serif; font-size:14px; }
+      .ql-editor { color:rgba(255,255,255,0.85); min-height:140px; }
+      .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
+      .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5); }
+      .ql-snow .ql-fill { fill:rgba(255,255,255,0.5); }
+      .ql-snow .ql-picker { color:rgba(255,255,255,0.5); }
+      .ql-snow .ql-picker-options { background:#1a221e; border-color:rgba(255,255,255,0.12) !important; }
+      .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
+      .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
+      .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
+      .ql-columns-block table { border-collapse:collapse; }
+      .ql-columns-block td[data-column-cell] { border:1px dashed rgba(180,230,200,0.25); }
+      .ql-editor a.nl-button { display:inline-block; background:#2d6a4f; color:#fff !important; padding:9px 20px; border-radius:6px; text-decoration:none !important; font-size:13px; }
+      .ql-toolbar.ql-snow .ql-formats button.ql-image-link,
+      .ql-toolbar.ql-snow .ql-formats button.ql-image-copy,
+      .ql-toolbar.ql-snow .ql-formats button.ql-image-resize,
+      .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+      .ql-toolbar.ql-snow .ql-formats button.ql-nl-video { width:auto; padding:0 6px; font-size:14px; }
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-3 { width:auto; padding:0 8px; font-size:11px; }
+      /* Text-content buttons (not SVG-icon ones), which never had an
+         equivalent override and sat at Quill's default near-black. */
+      .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+      .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+      .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.5); }
     `;
     document.head.appendChild(style);
   }
