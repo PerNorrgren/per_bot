@@ -91,6 +91,20 @@
       .me-ql-wrap .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
       .me-ql-wrap .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
       .me-ql-wrap .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
+      /* Per Bot 24 — text-content buttons (1 col/2 col/3 col, AI Help),
+         not the SVG-icon ones above (B/I/U/alignment/lists/link/image),
+         which already get their colour from .ql-stroke/.ql-fill. These
+         never had an equivalent override, so they sat at the browser's
+         plain default black button text — invisible on this dark
+         toolbar. (Fixed once already, but in ensureVersionStyles() below
+         — the modal's OWN styling, not this function, which is the one
+         mountRich actually uses for the real editor toolbar. That
+         earlier fix never did anything; this is the one that matters.) */
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.5); }
       .me-ai-panel { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:14px; margin-top:8px; }
       .me-ai-body { font-size:13px; line-height:1.6; color:rgba(255,255,255,0.8); max-height:240px; overflow-y:auto; }
     `;
@@ -1301,7 +1315,12 @@
     document.getElementById('meVePlainBody').value = (prefill && prefill.body) || '';
     document.getElementById('meVeMakeActive').checked = false;
     document.getElementById('meVeErr').textContent = '';
-    _veFormat = (prefill && prefill.format) || 'plain';
+    // Per Bot 24 — defaults to Rich always now, regardless of what
+    // format a version happens to already be saved as, matching "the
+    // rich editor with all features is the one I want for all messages"
+    // — Plain is still one click away via the toggle if wanted for a
+    // specific version, this just changes which one opens first.
+    _veFormat = 'rich';
     renderVeFormatToggle();
     document.getElementById('meVePlainBody').style.display = _veFormat === 'rich' ? 'none' : 'block';
     document.getElementById('meVeRichBody').style.display = _veFormat === 'rich' ? 'block' : 'none';
