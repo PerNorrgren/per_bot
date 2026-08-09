@@ -1202,6 +1202,11 @@
       body: "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
       extra: { days: 5, sms_body: 'Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}' },
     },
+    birthday: {
+      subject: 'Happy birthday from all of us',
+      body: 'Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.',
+      extra: { sms_body: 'Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}.' },
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {

@@ -1456,27 +1456,25 @@ async function sendRenewalReminders() {
 // to send this — there's no separate preference toggle to check, unlike
 // every other message type in this file. Month/day only, everywhere —
 // nothing here ever sees or uses a birth year.
-function buildBirthdayHtml(user, b) {
-  const cfg = db.getAppConfig() || {};
+function buildBirthdayHtml(user, b, override) {
   const tokens = buildMessageTokens(user);
-  const bodyText = fillTemplate(
-    cfg.birthday_email_body || "Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.",
-    tokens
-  );
+  const content = resolveMessageContent('birthday', {
+    body: "Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.",
+  }, override);
+  const bodyText = fillTemplate(content.body, tokens);
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Happy birthday, ${tokens.name}!</h1>
-      ${renderMessageBody(bodyText, cfg.birthday_email_format)}
+      ${renderMessageBody(bodyText, content.format)}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`;
 }
-function buildBirthdaySms(userName, b) {
-  const cfg = db.getAppConfig() || {};
-  const bodyText = fillTemplate(
-    cfg.birthday_sms_body || "Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}.",
-    { name: userName, brand: b.name }
-  );
+function buildBirthdaySms(userName, b, override) {
+  const content = resolveMessageContent('birthday', {
+    extra: { sms_body: "Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}." },
+  }, override);
+  const bodyText = fillTemplate(content.extra.sms_body, { name: userName, brand: b.name });
   return bodyText;
 }
 
@@ -1489,11 +1487,13 @@ async function sendBirthdayMessages() {
   const day   = today.getDate();
   const matches = db.getUsersWithBirthdayToday(month, day);
   const b = brand();
-  const cfg = db.getAppConfig() || {};
+  // Per Bot 24 — subject now comes from the active message_versions row
+  // too, same switch-over as Reminder/Renewal.
+  const content = resolveMessageContent('birthday', { subject: 'Happy birthday from all of us' });
   let sentEmail = 0, sentSms = 0;
   for (const user of matches) {
     if (user.email) {
-      const subject = fillTemplate(cfg.birthday_email_subject || 'Happy birthday from all of us', buildMessageTokens(user));
+      const subject = fillTemplate(content.subject, buildMessageTokens(user));
       await sendEmail(user.email, subject, buildBirthdayHtml(user, b));
       sentEmail++;
     }
@@ -11326,8 +11326,7 @@ app.post('/api/admin/birthday/test', auth.requireAuthApi(['admin']), async (req,
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
-    const cfg = db.getAppConfig() || {};
-    const testSubject = (subject && subject.trim()) || cfg.birthday_email_subject || 'Happy birthday from all of us';
+    const testSubject = (subject && subject.trim()) || resolveMessageContent('birthday', { subject: 'Happy birthday from all of us' }).subject;
     const b = brand();
     const realUser = db.getUserByEmail(toEmail.toLowerCase());
 
@@ -11380,11 +11379,8 @@ const TYPE_TEST_SENDERS = {
     sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildRenewalReminderSms(adminName, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), brand(), override)),
   },
   birthday: {
-    email: (toEmail, realUser) => {
-      const cfg = db.getAppConfig() || {};
-      return sendEmail(toEmail, `[TEST] ${cfg.birthday_email_subject || 'Happy birthday from all of us'}`, buildBirthdayHtml(realUser, brand()));
-    },
-    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildBirthdaySms(adminName, brand())),
+    email: (toEmail, realUser, override) => sendEmail(toEmail, `[TEST] ${resolveMessageContent('birthday', { subject: 'Happy birthday from all of us' }, override).subject}`, buildBirthdayHtml(realUser, brand(), override)),
+    sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildBirthdaySms(adminName, brand(), override)),
   },
   newsletter_welcome: { email: (toEmail, realUser) => emailWelcomeFromNewsletter(realUser), sms: null },
   trial_extended:     { email: (toEmail, realUser) => emailTrialUpdated(realUser, 14, 'features', false), sms: null },
