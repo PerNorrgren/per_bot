@@ -288,5 +288,346 @@
     insertTokenAtField, insertTokenAtRich, standardTokens, tokenSelectHtml,
     formatToggleHtml, mountRich, destroy, getHtml, isMounted,
     aiGenerateHtml, runAiGenerate, retryAiGenerate, closeAiPreview, insertAiResult,
+    renderVersionSection, refreshVersionSection,
   };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // ── Version sections (Per Bot 54) — the generic "versions list +
+  // shared editor modal" UI, factored out of comms2.html so sales.html
+  // (Trial sequence, Savers Protocol) can use the exact same thing
+  // instead of a second hand-copied implementation. One call —
+  // MessageEditor.renderVersionSection(el, type, opts) — renders a
+  // complete section (warning banner, card, table, New button) into any
+  // container, for any type in db.js's MESSAGE_TYPE_REGISTRY. The editor
+  // modal itself is injected into <body> once and shared across every
+  // section on the page, however many there are.
+  //
+  // All injected class names are "me-"-prefixed and scoped under
+  // .me-version-ui so this can drop into comms.html or sales.html —
+  // pages with their own long-established .card/.btn/.modal-overlay
+  // rules — without any risk of colliding with or overriding them.
+  // ═══════════════════════════════════════════════════════════════════
+
+  let _versionStylesInjected = false;
+  function ensureVersionStyles() {
+    if (_versionStylesInjected) return;
+    _versionStylesInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+      .me-version-ui { font-family:'Georgia',serif; }
+      .me-section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+      .me-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+      .me-card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+      .me-card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+      .me-btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; display:inline-flex; align-items:center; gap:5px; }
+      .me-btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+      .me-btn.me-primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+      .me-btn.me-primary:hover { background:rgba(180,230,200,0.1); }
+      .me-btn.me-danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+      .me-btn.me-danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+      .me-btn.me-sm { padding:5px 10px; font-size:10px; }
+      .me-btn:disabled { opacity:0.35; pointer-events:none; }
+      .me-version-row { display:flex; align-items:center; gap:12px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); flex-wrap:wrap; }
+      .me-version-row:last-child { border-bottom:none; }
+      .me-version-main { flex:1; min-width:200px; }
+      .me-version-label { font-size:13px; color:rgba(255,255,255,0.8); }
+      .me-version-subject { font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px; }
+      .me-version-meta { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; }
+      .me-version-actions { display:flex; gap:6px; align-items:center; flex-shrink:0; }
+      .me-active-pill { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; padding:4px 10px; border-radius:12px; background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.85); border:1px solid rgba(180,230,200,0.3); }
+      .me-empty-note { padding:20px; font-size:13px; color:rgba(255,255,255,0.35); }
+      .me-warn-banner { display:flex; align-items:center; gap:10px; padding:11px 16px; margin-bottom:10px; border-radius:10px; background:rgba(255,180,60,0.09); border:1px solid rgba(255,180,60,0.28); color:rgba(255,200,110,0.9); font-size:12px; }
+      .me-modal-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+      .me-modal-overlay.me-open { display:flex; }
+      .me-modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:600px; display:flex; flex-direction:column; gap:16px; max-height:90vh; overflow-y:auto; font-family:'Georgia',serif; color:rgba(255,255,255,0.82); }
+      .me-modal h3 { font-weight:normal; }
+      .me-modal label { display:block; font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:6px; }
+      .me-field-group { display:flex; flex-direction:column; gap:6px; }
+      .me-inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:8px 10px; font-size:13px; color:rgba(255,255,255,0.8); outline:none; width:100%; font-family:'Georgia',serif; }
+      .me-inline-input:focus { border-color:rgba(180,230,200,0.3); }
+      textarea.me-inline-input { resize:vertical; }
+      .me-modal-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
+      .me-modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; flex-wrap:wrap; }
+      .me-modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+      .me-modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+      .me-checkbox-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.7); }
+      .me-checkbox-row input { width:15px; height:15px; accent-color:rgba(180,230,200,0.7); }
+      #meVeRichBody { background:#0d1210; border-radius:8px; min-height:140px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  let _typesMetaCache = null;
+  async function getTypesMeta() {
+    if (_typesMetaCache) return _typesMetaCache;
+    const res = await fetch('/api/admin/message-versions/types');
+    const list = await res.json();
+    _typesMetaCache = {};
+    list.forEach(t => { _typesMetaCache[t.type] = t; });
+    return _typesMetaCache;
+  }
+
+  const VERSION_EXTRA_FIELD_RENDERERS = {
+    days: { render: (val) => `<div class="me-field-group"><label>Days threshold</label><input class="me-inline-input" type="number" min="1" max="30" id="meVeExtra_days" value="${val ?? ''}" style="width:100px"/></div>` },
+    sms_body: { render: (val) => `<div class="me-field-group"><label>SMS body</label><textarea class="me-inline-input" id="meVeExtra_sms_body" rows="2">${escVe(val ?? '')}</textarea></div>` },
+  };
+  function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtVeDate(s) {
+    if (!s) return '—';
+    try { return new Date(s.replace(' ','T')+'Z').toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
+    catch { return s.slice(0,16); }
+  }
+
+  const sectionsByType = {}; // type -> { listEl, warnEl, opts }
+  let _veModalInjected = false;
+  function ensureVersionModal() {
+    if (_veModalInjected) return;
+    _veModalInjected = true;
+    ensureVersionStyles();
+    const overlay = document.createElement('div');
+    overlay.className = 'me-modal-overlay';
+    overlay.id = 'meVeModalOverlay';
+    overlay.innerHTML = `
+      <div class="me-modal">
+        <h3 id="meVeTitle">New version</h3>
+        <input type="hidden" id="meVeType"/>
+        <input type="hidden" id="meVeId"/>
+        <div class="me-field-group">
+          <label>Label <span style="text-transform:none;color:rgba(255,255,255,0.25)">— a short note to tell this version apart later, e.g. "Christmas 2026"</span></label>
+          <input class="me-inline-input" type="text" id="meVeLabel" placeholder="Optional"/>
+        </div>
+        <div class="me-field-group">
+          <label>Subject</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="me-inline-input" type="text" id="meVeSubject" style="flex:1"/>
+            <span id="meVeSubjectTokenWrap"></span>
+          </div>
+        </div>
+        <div class="me-field-group">
+          <label>Body</label>
+          <div id="meVeFormatToggleWrap"></div>
+          <textarea class="me-inline-input" id="meVePlainBody" rows="6" style="width:100%"></textarea>
+          <div id="meVeRichBody" style="display:none"></div>
+          <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="meVeBodyTokenWrap"></div>
+          <div id="meVeAiGenerateWrap" style="display:none"></div>
+        </div>
+        <div id="meVeExtraFields"></div>
+        <label class="me-checkbox-row">
+          <input type="checkbox" id="meVeMakeActive"/>
+          Make this the active version
+        </label>
+        <div class="me-modal-err" id="meVeErr"></div>
+        <div class="me-modal-btns">
+          <button class="me-modal-cancel" type="button" onclick="MessageEditor.closeVersionEditor()">Cancel</button>
+          <button class="me-modal-ok" type="button" onclick="MessageEditor.saveVersionEditor()">Save version</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+
+  let _veFormat = 'plain';
+  function renderVeFormatToggle() {
+    document.getElementById('meVeFormatToggleWrap').innerHTML = formatToggleHtml('meVeBodyFmt', _veFormat, 'MessageEditor._setVeFormat');
+  }
+  function _setVeFormat(_idPrefix, fmt) {
+    _veFormat = fmt;
+    renderVeFormatToggle();
+    const plainEl = document.getElementById('meVePlainBody');
+    const richEl = document.getElementById('meVeRichBody');
+    if (fmt === 'rich') {
+      plainEl.style.display = 'none';
+      richEl.style.display = 'block';
+      if (!isMounted('meVeRichBody')) mountRich('meVeRichBody', plainEl.value ? plainEl.value.replace(/\n/g,'<br>') : '');
+    } else {
+      richEl.style.display = 'none';
+      plainEl.style.display = 'block';
+    }
+    renderVeTokenWraps();
+  }
+  function renderVeTokenWraps() {
+    const type = document.getElementById('meVeType').value;
+    const extraTokens = (sectionsByType[type] && sectionsByType[type].opts.extraTokens) || null;
+    document.getElementById('meVeSubjectTokenWrap').innerHTML = tokenSelectHtml('meVeSubject', standardTokens(extraTokens));
+    document.getElementById('meVeBodyTokenWrap').innerHTML = tokenSelectHtml(
+      'meVeRichBody', standardTokens(extraTokens), { placeholder: 'Insert field into body…', rich: _veFormat === 'rich' }
+    );
+    const aiWrap = document.getElementById('meVeAiGenerateWrap');
+    if (_veFormat === 'rich') { aiWrap.style.display = ''; aiWrap.innerHTML = aiGenerateHtml('meVeRichBody'); }
+    else { aiWrap.style.display = 'none'; aiWrap.innerHTML = ''; }
+  }
+  function renderVeExtraFields(type, extra) {
+    getTypesMeta().then(metaMap => {
+      const keys = (metaMap[type] && metaMap[type].extraFields) || [];
+      const wrap = document.getElementById('meVeExtraFields');
+      wrap.innerHTML = keys.map(k => (VERSION_EXTRA_FIELD_RENDERERS[k] ? VERSION_EXTRA_FIELD_RENDERERS[k].render((extra||{})[k]) : '')).join('');
+    });
+  }
+  async function collectVeExtraFields(type) {
+    const metaMap = await getTypesMeta();
+    const keys = (metaMap[type] && metaMap[type].extraFields) || [];
+    const extra = {};
+    keys.forEach(k => {
+      const el = document.getElementById(`meVeExtra_${k}`);
+      if (el) extra[k] = el.type === 'number' ? Number(el.value) : el.value;
+    });
+    return extra;
+  }
+
+  async function openVersionEditor(type, prefill) {
+    ensureVersionModal();
+    closeAiPreview('meVeRichBody');
+    const metaMap = await getTypesMeta();
+    document.getElementById('meVeType').value = type;
+    document.getElementById('meVeId').value = (prefill && prefill.__editId) || '';
+    document.getElementById('meVeTitle').textContent = (prefill && prefill.__editId) ? 'Edit version' : (metaMap[type] ? `New ${metaMap[type].label} version` : 'New version');
+    document.getElementById('meVeLabel').value = (prefill && prefill.label) || '';
+    document.getElementById('meVeSubject').value = (prefill && prefill.subject) || '';
+    document.getElementById('meVePlainBody').value = (prefill && prefill.body) || '';
+    document.getElementById('meVeMakeActive').checked = false;
+    document.getElementById('meVeErr').textContent = '';
+    _veFormat = (prefill && prefill.format) || 'plain';
+    renderVeFormatToggle();
+    document.getElementById('meVePlainBody').style.display = _veFormat === 'rich' ? 'none' : 'block';
+    document.getElementById('meVeRichBody').style.display = _veFormat === 'rich' ? 'block' : 'none';
+    if (_veFormat === 'rich') mountRich('meVeRichBody', (prefill && prefill.body) || '');
+    else { destroy('meVeRichBody'); document.getElementById('meVeRichBody').innerHTML = ''; }
+    renderVeTokenWraps();
+    renderVeExtraFields(type, prefill && prefill.extra);
+    document.getElementById('meVeModalOverlay').classList.add('me-open');
+  }
+  function closeVersionEditor() {
+    const overlay = document.getElementById('meVeModalOverlay');
+    if (overlay) overlay.classList.remove('me-open');
+  }
+
+  async function editVersionRow(id, type) {
+    const res = await fetch(`/api/admin/message-versions?type=${type}`);
+    const rows = await res.json();
+    const row = rows.find(r => r.id === id);
+    if (!row) return;
+    openVersionEditor(type, { ...row, __editId: id });
+  }
+  async function duplicateVersionRow(id, type) {
+    const res = await fetch(`/api/admin/message-versions?type=${type}`);
+    const rows = await res.json();
+    const row = rows.find(r => r.id === id);
+    if (!row) return;
+    openVersionEditor(type, { ...row, label: row.label ? `${row.label} (copy)` : '' });
+  }
+  async function saveVersionEditor() {
+    const type = document.getElementById('meVeType').value;
+    const id = document.getElementById('meVeId').value;
+    const label = document.getElementById('meVeLabel').value.trim();
+    const subject = document.getElementById('meVeSubject').value.trim();
+    const body = _veFormat === 'rich' ? getHtml('meVeRichBody') : document.getElementById('meVePlainBody').value;
+    const extra = await collectVeExtraFields(type);
+    const makeActive = document.getElementById('meVeMakeActive').checked;
+    const errEl = document.getElementById('meVeErr');
+    errEl.textContent = '';
+    if (!subject && !body) { errEl.textContent = 'Write a subject or body first.'; return; }
+    try {
+      let res;
+      if (id) {
+        res = await fetch(`/api/admin/message-versions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, subject, body, format: _veFormat, extra }) });
+        if (res.ok && makeActive) await fetch(`/api/admin/message-versions/${id}/activate`, { method: 'POST' });
+      } else {
+        res = await fetch('/api/admin/message-versions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, label, subject, body, format: _veFormat, extra, makeActive }) });
+      }
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Could not save.'; return; }
+      closeVersionEditor();
+      refreshVersionSection(type);
+    } catch (e) { errEl.textContent = 'Error: ' + e.message; }
+  }
+  async function activateVersionRow(id, type) {
+    if (!(await window.appConfirm('Make this the active version?'))) return;
+    await fetch(`/api/admin/message-versions/${id}/activate`, { method: 'POST' });
+    refreshVersionSection(type);
+  }
+  async function deleteVersionRow(id, type) {
+    if (!(await window.appConfirm('Delete this version? This cannot be undone.'))) return;
+    const res = await fetch(`/api/admin/message-versions/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { await window.appAlert(data.error || 'Could not delete.'); return; }
+    refreshVersionSection(type);
+  }
+
+  // Renders a complete section — warning banner, card, "New version"
+  // button, table of versions — into containerEl for the given type.
+  // opts: { label (override registry default), extraTokens: [{value,
+  // label}] (e.g. Savers cancel-day0's {{period_end}}), newButtonLabel }
+  async function renderVersionSection(containerEl, type, opts) {
+    opts = opts || {};
+    ensureVersionStyles();
+    ensureVersionModal();
+    const metaMap = await getTypesMeta();
+    const meta = metaMap[type] || { label: type };
+    const label = opts.label || meta.label;
+    containerEl.classList.add('me-version-ui');
+    containerEl.innerHTML = `
+      <div class="me-section-label">${escVe(label)}</div>
+      <div class="me-warn-banner" style="display:none"></div>
+      <div class="me-card">
+        <div class="me-card-header">
+          <div class="me-card-title">Versions</div>
+          <button class="me-btn me-sm me-primary" type="button">${escVe(opts.newButtonLabel || 'New version')}</button>
+        </div>
+        <div class="me-version-list"><div class="me-empty-note">Loading…</div></div>
+      </div>`;
+    const warnEl = containerEl.querySelector('.me-warn-banner');
+    const listEl = containerEl.querySelector('.me-version-list');
+    const newBtn = containerEl.querySelector('.me-btn.me-primary');
+    newBtn.addEventListener('click', () => openVersionEditor(type));
+    sectionsByType[type] = { warnEl, listEl, opts };
+    await refreshVersionSection(type);
+  }
+
+  async function refreshVersionSection(type) {
+    const sec = sectionsByType[type];
+    if (!sec) return;
+    try {
+      const res = await fetch(`/api/admin/message-versions?type=${type}`);
+      const rows = await res.json();
+      const hasActive = rows.some(r => r.is_active);
+      sec.warnEl.style.display = hasActive ? 'none' : 'flex';
+      sec.warnEl.innerHTML = hasActive ? '' : `⚠ No active version — this type has nothing for an automated send to use once it switches over to the new system.`;
+      if (!rows.length) {
+        sec.listEl.innerHTML = `<div class="me-empty-note">No versions yet — click "New version" to write the first one.</div>`;
+        return;
+      }
+      sec.listEl.innerHTML = rows.map(r => `
+        <div class="me-version-row">
+          <div class="me-version-main">
+            <div class="me-version-label">${escVe(r.label || '(untitled)')}</div>
+            <div class="me-version-subject">${escVe(r.subject || '(no subject)')}</div>
+            <div class="me-version-meta">Saved ${fmtVeDate(r.created_at)}</div>
+          </div>
+          <div class="me-version-actions">
+            ${r.is_active ? '<span class="me-active-pill">Active</span>' : `<button class="me-btn me-sm" type="button" data-act="activate" data-id="${r.id}">Make active</button>`}
+            <button class="me-btn me-sm" type="button" data-act="edit" data-id="${r.id}">Edit</button>
+            <button class="me-btn me-sm" type="button" data-act="duplicate" data-id="${r.id}">Duplicate</button>
+            <button class="me-btn me-sm me-danger" type="button" data-act="delete" data-id="${r.id}" ${r.is_active ? 'disabled title="Activate a different version first"' : ''}>Delete</button>
+          </div>
+        </div>`).join('');
+      sec.listEl.querySelectorAll('button[data-act]').forEach(btn => {
+        const id = btn.getAttribute('data-id');
+        const act = btn.getAttribute('data-act');
+        btn.addEventListener('click', () => {
+          if (act === 'activate') activateVersionRow(id, type);
+          else if (act === 'edit') editVersionRow(id, type);
+          else if (act === 'duplicate') duplicateVersionRow(id, type);
+          else if (act === 'delete') deleteVersionRow(id, type);
+        });
+      });
+    } catch (e) {
+      sec.listEl.innerHTML = `<div class="me-empty-note">Couldn't load — ${escVe(e.message)}</div>`;
+    }
+  }
+
+  // A few internal functions need to be reachable from the modal's own
+  // inline onclick handlers (format toggle, save, cancel) — exposed here
+  // rather than kept fully private.
+  window.MessageEditor.closeVersionEditor = closeVersionEditor;
+  window.MessageEditor.saveVersionEditor = saveVersionEditor;
+  window.MessageEditor._setVeFormat = _setVeFormat;
 })(window);

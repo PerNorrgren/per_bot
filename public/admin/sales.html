@@ -283,40 +283,24 @@
   <!-- Trial sequence (Per Bot 18) -->
   <div>
     <div class="section-label">Trial sequence</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Day 3 / 7 / 10 / 14 emails</div>
-      </div>
-      <div style="padding:0 20px 4px" class="modal-note">Sent automatically at each day mark, once per trial member. Follows the same selling-copy rules as Offers and course descriptions — no urgency or scarcity language, no hype words. Leave a field blank to use the built-in default shown as its placeholder.</div>
-      <div id="trialSeqBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
-      <div style="padding:0 20px 18px;display:flex;gap:8px;align-items:center">
-        <button class="btn sm primary" onclick="saveTrialSequence()">Save all</button>
-        <div class="feedback" id="trialSeqFeedback"></div>
-      </div>
-    </div>
+    <div style="padding:0 0 4px" class="modal-note">Sent automatically at each day mark, once per trial member. Follows the same selling-copy rules as Offers and course descriptions — no urgency or scarcity language, no hype words.</div>
+    <div id="sec_trial_day3" style="margin-top:12px"></div>
+    <div id="sec_trial_day7" style="margin-top:12px"></div>
+    <div id="sec_trial_day10" style="margin-top:12px"></div>
+    <div id="sec_trial_day14" style="margin-top:12px"></div>
   </div>
 
-  <!-- Savers Protocol (Per Bot 18) -->
+  <!-- Savers Protocol (Per Bot 18, tables moved onto message_versions Per Bot 54) -->
   <div>
     <div class="section-label">Savers Protocol</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Cancellation win-back</div>
-      </div>
-      <div style="padding:0 20px 4px" class="modal-note">Day 0 fires the moment someone schedules a cancellation — an acknowledgment only, their paid time is untouched. Grace 0/Mid/Final cover a bonus 14 days once their real term actually ends. Different voice from the payment-failure side below on purpose: this was a decision, not a mistake.</div>
-      <div id="saversCancelBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
-    </div>
-    <div class="card" style="margin-top:12px">
-      <div class="card-header">
-        <div class="card-title">Payment-failure win-back</div>
-      </div>
-      <div style="padding:0 20px 4px" class="modal-note">Day 0 fires immediately on a genuine payment failure (not one already mid-cancellation). A firm 14-day window from that moment, independent of Stripe's own retry schedule. Warm and practical, not a sales pitch — usually nobody's fault at all.</div>
-      <div id="saversFailureBody" style="padding:14px 20px 18px;display:flex;flex-direction:column;gap:18px"></div>
-    </div>
-    <div style="padding:12px 0;display:flex;gap:8px;align-items:center">
-      <button class="btn sm primary" onclick="saveSaversSequence()">Save all</button>
-      <div class="feedback" id="saversSeqFeedback"></div>
-    </div>
+    <div style="padding:0 0 4px" class="modal-note">Cancellation win-back: Day 0 fires the moment someone schedules a cancellation — an acknowledgment only, their paid time is untouched. Grace start/mid/final cover a bonus 14 days once their real term actually ends. Payment-failure win-back: Day 0 fires immediately on a genuine payment failure (not one already mid-cancellation), independent of Stripe's own retry schedule. Different voice on purpose between the two — this was a decision, not a mistake.</div>
+    <div id="sec_savers_cancel_day0" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_grace0" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_mid" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_final" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_day0" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_mid" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_final" style="margin-top:12px"></div>
   </div>
 
   <!-- Funnel report (Per Bot 18) -->
@@ -1056,7 +1040,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); loadTrialSequence(); loadSaversSequence(); loadCampaigns();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); initVersionSections(); loadCampaigns();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -1354,191 +1338,37 @@
     el.setSelectionRange(pos, pos);
   }
 
-  const TRIAL_STEPS = [
-    { key: 'trialDay3',  label: 'Day 3',  hint: 'Points at what they haven\'t explored yet.' },
-    { key: 'trialDay7',  label: 'Day 7',  hint: 'Return-frequency nudge — short and often, not one big session.' },
-    { key: 'trialDay10', label: 'Day 10', hint: '4 days left — the value case for staying, no pressure.' },
-    { key: 'trialDay14', label: 'Day 14', hint: 'Trial just ended — soft invitation back, any time.' },
-  ];
-  let _trialCfg = {};
-  async function loadTrialSequence() {
-    _trialCfg = await fetch('/api/admin/settings/trial-sequence').then(r=>r.json()).catch(()=>({}));
-    const el = document.getElementById('trialSeqBody');
-    el.innerHTML = TRIAL_STEPS.map(s => {
-      const format = _trialCfg[s.key+'Format'] || 'plain';
-      const bodyId = s.key + 'Body';
-      return `
-      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <div style="font-size:13px;color:rgba(255,255,255,0.75)">${s.label} <span style="color:rgba(255,255,255,0.35);font-weight:normal">— ${s.hint}</span></div>
-          <button class="btn sm" onclick="testSendTrialStep('${s.key.replace('trialDay','day')}')">Send test</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input class="inline-input" type="text" id="${s.key}Subject" style="flex:1" placeholder="Using the built-in default subject" value="${escHtml(_trialCfg[s.key+'Subject']||'')}"/>
-          ${MessageEditor.tokenSelectHtml(s.key+'Subject', MessageEditor.standardTokens())}
-        </div>
-        ${MessageEditor.formatToggleHtml(bodyId, format, 'setTrialStepFormat')}
-        <textarea class="inline-input" id="${bodyId}_plain" rows="4" style="width:100%;resize:vertical;${format==='rich'?'display:none':''}" placeholder="Using the built-in default copy — leave blank to keep it">${escHtml(_trialCfg[s.key+'Body']||'')}</textarea>
-        <div id="${bodyId}_rich" style="${format==='rich'?'':'display:none'}"></div>
-        <div style="margin-top:4px" id="${bodyId}TokenWrap">${MessageEditor.tokenSelectHtml(format==='rich' ? bodyId+'_rich' : bodyId+'_plain', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: format==='rich' })}</div>
-      </div>
-    `; }).join('');
-    TRIAL_STEPS.forEach(s => {
-      if ((_trialCfg[s.key+'Format']||'plain') === 'rich') {
-        MessageEditor.mountRich(s.key+'Body_rich', _trialCfg[s.key+'Body'] || '', { placeholder: 'Using the built-in default copy…' });
-      }
-    });
-  }
   // Plain bodies stored as newline text; when switching an existing plain
   // draft into rich mode for the first time, seed the Quill editor with
-  // paragraph breaks preserved rather than one run-on line.
+  // paragraph breaks preserved rather than one run-on line. Still used
+  // by Campaign steps' own setCampaignStepFormat below — Trial
+  // sequence/Savers Protocol no longer need it themselves (moved onto
+  // the shared version-editor modal, which handles this internally).
   function renderPlainAsRichPreview(text) {
     return String(text).split(/\n\s*\n/).map(p => `<p>${escHtml(p.trim())}</p>`).join('');
   }
-  function setTrialStepFormat(bodyId, format) {
-    const key = bodyId.replace('Body','');
-    _trialCfg[key+'Format'] = format;
-    document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';
-    document.getElementById(bodyId+'_richBtn').className = format==='rich' ? 'active' : '';
-    const plainEl = document.getElementById(bodyId+'_plain');
-    const richEl = document.getElementById(bodyId+'_rich');
-    if (format === 'rich') {
-      plainEl.style.display = 'none'; richEl.style.display = '';
-      if (!MessageEditor.isMounted(bodyId+'_rich')) {
-        MessageEditor.mountRich(bodyId+'_rich', renderPlainAsRichPreview(plainEl.value));
-      }
-    } else {
-      richEl.style.display = 'none'; plainEl.style.display = '';
-    }
-    const tokenWrap = document.getElementById(bodyId+'TokenWrap');
-    if (tokenWrap) {
-      tokenWrap.innerHTML = MessageEditor.tokenSelectHtml(format==='rich' ? bodyId+'_rich' : bodyId+'_plain', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: format==='rich' });
-    }
-  }
-  async function saveTrialSequence() {
-    const body = {};
-    TRIAL_STEPS.forEach(s => {
-      const bodyId = s.key + 'Body';
-      const format = _trialCfg[s.key+'Format'] || 'plain';
-      body[s.key+'Subject'] = document.getElementById(s.key+'Subject').value;
-      body[s.key+'Body'] = format === 'rich' ? MessageEditor.getHtml(bodyId+'_rich') : document.getElementById(bodyId+'_plain').value;
-      body[s.key+'Format'] = format;
-    });
-    try {
-      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      showFeedback('trialSeqFeedback', 'Saved.', 'ok');
-    } catch(e) {
-      showFeedback('trialSeqFeedback', 'Could not save — please try again.', 'err');
-    }
-  }
-  async function testSendTrialStep(step) {
-    showFeedback('trialSeqFeedback', 'Sending…', 'ok');
-    try {
-      const res = await fetch('/api/admin/settings/trial-sequence/test-send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ step }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Could not send test.');
-      showFeedback('trialSeqFeedback', 'Sent to ' + data.sentTo + '.', 'ok');
-    } catch(e) {
-      showFeedback('trialSeqFeedback', e.message, 'err');
-    }
-  }
 
-  // ── Savers Protocol (Per Bot 18) ──
-  const SAVERS_CANCEL_STEPS = [
-    { key: 'saversCancelDay0',   testStep: 'cancel_day0',   label: 'Day 0',   hint: 'Fires the moment they schedule a cancellation — acknowledgment only, paid time untouched.', extraToken: '{{period_end}}' },
-    { key: 'saversCancelGrace0', testStep: 'cancel_grace0', label: 'Grace 0', hint: 'Fires once their real term ends — the bonus 14 days starts here.' },
-    { key: 'saversCancelMid',    testStep: 'cancel_mid',    label: 'Grace day 7', hint: 'Gentle mid-point reminder.' },
-    { key: 'saversCancelFinal',  testStep: 'cancel_final',  label: 'Grace day 13', hint: 'Last day before Explorer.' },
-  ];
-  const SAVERS_FAILURE_STEPS = [
-    { key: 'saversFailureDay0',  testStep: 'failure_day0',  label: 'Day 0',  hint: 'Fires immediately on a genuine payment failure (not one already mid-cancellation).' },
-    { key: 'saversFailureMid',   testStep: 'failure_mid',   label: 'Day 7',  hint: 'Gentle follow-up.' },
-    { key: 'saversFailureFinal', testStep: 'failure_final', label: 'Day 13', hint: 'Last day before Explorer.' },
-  ];
-  let _saversCfg = {};
-  function renderSaversStepGroup(containerId, steps, cfg) {
-    const el = document.getElementById(containerId);
-    el.innerHTML = steps.map(s => {
-      const format = cfg[s.key+'Format'] || 'plain';
-      const bodyId = s.key + 'Body';
-      const extra = s.extraToken ? [{ value: s.extraToken, label: 'Real term end date' }] : null;
-      return `
-      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <div style="font-size:13px;color:rgba(255,255,255,0.75)">${s.label} <span style="color:rgba(255,255,255,0.35);font-weight:normal">— ${s.hint}</span></div>
-          <button class="btn sm" onclick="testSendSaversStep('${s.testStep}')">Send test</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input class="inline-input" type="text" id="${s.key}Subject" style="flex:1" placeholder="Using the built-in default subject" value="${escHtml(cfg[s.key+'Subject']||'')}"/>
-          ${MessageEditor.tokenSelectHtml(s.key+'Subject', MessageEditor.standardTokens(extra))}
-        </div>
-        ${MessageEditor.formatToggleHtml(bodyId, format, 'setSaversStepFormat')}
-        <textarea class="inline-input" id="${bodyId}_plain" rows="4" style="width:100%;resize:vertical;${format==='rich'?'display:none':''}" placeholder="Using the built-in default copy — leave blank to keep it">${escHtml(cfg[s.key+'Body']||'')}</textarea>
-        <div id="${bodyId}_rich" style="${format==='rich'?'':'display:none'}"></div>
-        <div style="margin-top:4px" id="${bodyId}TokenWrap">${MessageEditor.tokenSelectHtml(format==='rich' ? bodyId+'_rich' : bodyId+'_plain', MessageEditor.standardTokens(extra), { placeholder: 'Insert field into body…', rich: format==='rich' })}</div>
-      </div>
-    `; }).join('');
-    steps.forEach(s => {
-      if ((cfg[s.key+'Format']||'plain') === 'rich') {
-        MessageEditor.mountRich(s.key+'Body_rich', cfg[s.key+'Body'] || '', { placeholder: 'Using the built-in default copy…' });
-      }
+  // ── Trial sequence + Savers Protocol (Per Bot 18, moved onto the
+  // shared message_versions system Per Bot 54) ── Each stage gets its
+  // own version history + active tick via MessageEditor.renderVersionSection
+  // — same UI as comms2.html, same shared editor modal. Send-test isn't
+  // wired up yet here (it tested the old flat live settings directly;
+  // once the switch-over step makes these actually control sends, test
+  // sends come back naturally against the real active version instead).
+  const TRIAL_SEQ_TYPES = ['trial_day3', 'trial_day7', 'trial_day10', 'trial_day14'];
+  const SAVERS_TYPES = ['savers_cancel_day0', 'savers_cancel_grace0', 'savers_cancel_mid', 'savers_cancel_final', 'savers_failure_day0', 'savers_failure_mid', 'savers_failure_final'];
+  function initVersionSections() {
+    TRIAL_SEQ_TYPES.forEach(type => {
+      MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type);
     });
-  }
-  function setSaversStepFormat(bodyId, format) {
-    const key = bodyId.replace('Body','');
-    _saversCfg[key+'Format'] = format;
-    document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';
-    document.getElementById(bodyId+'_richBtn').className = format==='rich' ? 'active' : '';
-    const plainEl = document.getElementById(bodyId+'_plain');
-    const richEl = document.getElementById(bodyId+'_rich');
-    if (format === 'rich') {
-      plainEl.style.display = 'none'; richEl.style.display = '';
-      if (!MessageEditor.isMounted(bodyId+'_rich')) {
-        MessageEditor.mountRich(bodyId+'_rich', renderPlainAsRichPreview(plainEl.value));
-      }
-    } else {
-      richEl.style.display = 'none'; plainEl.style.display = '';
-    }
-    const tokenWrap = document.getElementById(bodyId+'TokenWrap');
-    if (tokenWrap) {
-      // saversCancelDay0Body is the one step with an extra token
-      // ({{period_end}}) — preserved here so toggling format doesn't
-      // silently drop it from the dropdown.
-      const extra = key === 'saversCancelDay0' ? [{ value: '{{period_end}}', label: 'Real term end date' }] : null;
-      tokenWrap.innerHTML = MessageEditor.tokenSelectHtml(format==='rich' ? bodyId+'_rich' : bodyId+'_plain', MessageEditor.standardTokens(extra), { placeholder: 'Insert field into body…', rich: format==='rich' });
-    }
-  }
-  async function loadSaversSequence() {
-    _saversCfg = await fetch('/api/admin/settings/savers-sequence').then(r=>r.json()).catch(()=>({}));
-    renderSaversStepGroup('saversCancelBody', SAVERS_CANCEL_STEPS, _saversCfg);
-    renderSaversStepGroup('saversFailureBody', SAVERS_FAILURE_STEPS, _saversCfg);
-  }
-  async function saveSaversSequence() {
-    const body = {};
-    [...SAVERS_CANCEL_STEPS, ...SAVERS_FAILURE_STEPS].forEach(s => {
-      const bodyId = s.key + 'Body';
-      const format = _saversCfg[s.key+'Format'] || 'plain';
-      body[s.key+'Subject'] = document.getElementById(s.key+'Subject').value;
-      body[s.key+'Body'] = format === 'rich' ? MessageEditor.getHtml(bodyId+'_rich') : document.getElementById(bodyId+'_plain').value;
-      body[s.key+'Format'] = format;
+    SAVERS_TYPES.forEach(type => {
+      // Cancellation day-0 is the one stage with its own extra token —
+      // the real end date of their current paid term, since that email
+      // fires the moment they schedule a cancellation, before the term
+      // itself has actually ended.
+      const opts = type === 'savers_cancel_day0' ? { extraTokens: [{ value: '{{period_end}}', label: 'Real term end date' }] } : {};
+      MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type, opts);
     });
-    try {
-      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      showFeedback('saversSeqFeedback', 'Saved.', 'ok');
-    } catch(e) {
-      showFeedback('saversSeqFeedback', 'Could not save — please try again.', 'err');
-    }
-  }
-  async function testSendSaversStep(step) {
-    showFeedback('saversSeqFeedback', 'Sending…', 'ok');
-    try {
-      const res = await fetch('/api/admin/settings/savers-sequence/test-send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ step }) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Could not send test.');
-      showFeedback('saversSeqFeedback', 'Sent to ' + data.sentTo + '.', 'ok');
-    } catch(e) {
-      showFeedback('saversSeqFeedback', e.message, 'err');
-    }
   }
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Sales & Marketing';</script>
