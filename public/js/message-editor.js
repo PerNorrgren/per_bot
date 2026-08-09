@@ -1207,6 +1207,27 @@
       body: 'Just a little note to say happy birthday, {{name}}! Wishing you a day with a bit of extra ease in it.',
       extra: { sms_body: 'Happy birthday, {{name}}! Wishing you a great day, from all of us at {{brand}}.' },
     },
+    newsletter_welcome: {
+      subject: "Welcome to Deeper Mindfulness — you're in",
+      body: `Dear {{name}},
+
+Hope you're well, and that things are good with you.
+
+A short note to welcome you to the new, rebuilt Deeper Mindfulness — genuinely rebuilt, not just refreshed, and we hope you feel that the moment you're in it.
+
+If you have an existing subscription to Deeper Mindfulness, it has carried over in full, nothing to renew or reconsider. All you need to do is follow this link: {{invite_link}}
+
+Once you're in, everything is open to you — courses, practices, poems, blogs, whitepapers, all of it, fully. If you find something missing, just let me know and I will add it promptly.
+
+One new thing worth knowing about: Talk. It's not a scripted practice — it's somewhere to think something through out loud, and it listens and responds to whatever you're actually carrying in that moment, not a fixed script. I'd love to know what you make of it.
+
+You can also set up practice reminders — a small message once a day, by email or text, whichever suits you.
+
+Hope this lands well, and that the new app becomes a good place for you.
+
+Warmly,
+Per`,
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {

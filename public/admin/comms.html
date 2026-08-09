@@ -478,53 +478,8 @@
   <!-- Per Bot 24 — Birthday settings moved fully to Comms 2 too, same
        pattern as Reminder/Renewal. -->
 
-  <!-- ── Newsletter → Explorer welcome (Per Bot 19) ── -->
-  <div>
-    <div class="section-label">Newsletter subscriber welcome</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Newsletter → Explorer welcome settings</div>
-        <button class="btn sm primary" onclick="saveNewsletterWelcomeConfig()">Save</button>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">When this sends</div>
-          <div class="config-desc">Automatically, whenever a genuine newsletter-only contact (no password yet) is promoted to Explorer or above — replaces the bare "your account is ready" email for this specific case only. Every other way of activating an account is unaffected.</div>
-        </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Subject line</div>
-          <div class="config-desc">Email subject sent when they're welcomed in</div>
-        </div>
-        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="newsletterWelcomeSubject" spellcheck="true" placeholder="Welcome to Deeper Mindfulness — you're in" style="width:280px"/>
-          <span id="newsletterWelcomeSubjectTokenWrap"></span>
-        </div>
-      </div>
-      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
-        <div>
-          <div class="config-label">Welcome message (email)</div>
-          <div class="config-desc">Write the whole email here — greeting, sign-off, everything. Only the small brand label at the top and the "manage email preferences" line at the bottom are fixed. In Rich message mode, select some text and use the link tool to point it at {{invite_link}} — that gives a proper clickable link instead of a bare URL. {{name}}, {{invite_link}}, and {{expiry_date}} are all available as tokens.</div>
-        </div>
-        <div id="newsletterWelcomeBody_toggleWrap"></div>
-        <textarea class="inline-input" id="newsletterWelcomeBody_plain" rows="6" style="width:100%;resize:vertical" placeholder="A short note to properly welcome you in — you've been reading along as a subscriber, and now you have a full account, with everything open to you."></textarea>
-        <div id="newsletterWelcomeBody_rich" style="display:none"></div>
-        <div id="newsletterWelcomeBodyTokenWrap"></div>
-      </div>
-      <div class="config-row" style="border-bottom:none">
-        <div>
-          <div class="config-label">Send test</div>
-          <div class="config-desc">Sends using the settings above (even if not saved yet) — if the address matches a real account, it's a genuine working link</div>
-        </div>
-        <div class="config-val">
-          <input class="inline-input" type="email" id="newsletterWelcomeTestTo" placeholder="Defaults to your email" style="width:200px"/>
-          <button class="btn sm" id="newsletterWelcomeTestBtn" onclick="sendTestNewsletterWelcome()">Send test</button>
-        </div>
-      </div>
-      <div style="padding:0 20px 14px"><div class="feedback" id="newsletterWelcomeFeedback"></div></div>
-    </div>
-  </div>
+  <!-- Per Bot 24 — Newsletter → Explorer welcome settings moved fully to
+       Comms 2, same pattern as Reminder/Renewal/Birthday. -->
 
   <!-- ── Trial extended / restarted (Per Bot 42) ── -->
   <div>
@@ -2475,88 +2430,8 @@
   function renderPlainAsRichPreview(text) {
     return String(text).split(/\n\s*\n/).map(p => `<p>${escHtml ? escHtml(p.trim()) : p.trim()}</p>`).join('');
   }
-  let _newsletterWelcomeFormat = 'plain';
-  async function loadNewsletterWelcomeConfig() {
-    document.getElementById('newsletterWelcomeSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('newsletterWelcomeSubject', MessageEditor.standardTokens());
-    try {
-      const res = await fetch('/api/setup/config');
-      const cfg = await res.json();
-      document.getElementById('newsletterWelcomeSubject').value = cfg.newsletter_welcome_subject || '';
-      document.getElementById('newsletterWelcomeBody_plain').value = cfg.newsletter_welcome_body || '';
-      _newsletterWelcomeFormat = cfg.newsletter_welcome_format || 'plain';
-    } catch(e) { /* fields keep their HTML defaults */ }
-
-    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
-      _newsletterWelcomeFormat === 'rich' ? 'newsletterWelcomeBody_rich' : 'newsletterWelcomeBody_plain',
-      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: _newsletterWelcomeFormat === 'rich' }
-    );
-    document.getElementById('newsletterWelcomeBody_toggleWrap').innerHTML =
-      MessageEditor.formatToggleHtml('newsletterWelcomeBody', _newsletterWelcomeFormat, 'setNewsletterWelcomeFormat');
-    if (_newsletterWelcomeFormat === 'rich') {
-      document.getElementById('newsletterWelcomeBody_plain').style.display = 'none';
-      document.getElementById('newsletterWelcomeBody_rich').style.display = '';
-      const bodyVal = document.getElementById('newsletterWelcomeBody_plain').value;
-      MessageEditor.mountRich('newsletterWelcomeBody_rich', bodyVal || '');
-    }
-  }
-
-  function setNewsletterWelcomeFormat(bodyId, format) {
-    _newsletterWelcomeFormat = format;
-    document.getElementById(bodyId+'_plainBtn').className = format==='plain' ? 'active' : '';
-    document.getElementById(bodyId+'_richBtn').className = format==='rich' ? 'active' : '';
-    const plainEl = document.getElementById(bodyId+'_plain');
-    const richEl = document.getElementById(bodyId+'_rich');
-    if (format === 'rich') {
-      plainEl.style.display = 'none'; richEl.style.display = '';
-      if (!MessageEditor.isMounted(bodyId+'_rich')) {
-        MessageEditor.mountRich(bodyId+'_rich', renderPlainAsRichPreview(plainEl.value));
-      }
-    } else {
-      richEl.style.display = 'none'; plainEl.style.display = '';
-    }
-    document.getElementById('newsletterWelcomeBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
-      format === 'rich' ? bodyId+'_rich' : bodyId+'_plain',
-      MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: format === 'rich' }
-    );
-  }
-
-  async function saveNewsletterWelcomeConfig() {
-    const subject = document.getElementById('newsletterWelcomeSubject').value.trim();
-    const body = _newsletterWelcomeFormat === 'rich'
-      ? MessageEditor.getHtml('newsletterWelcomeBody_rich')
-      : document.getElementById('newsletterWelcomeBody_plain').value.trim();
-    try {
-      const res  = await fetch('/api/admin/settings', {
-        method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ newsletterWelcomeSubject: subject || null, newsletterWelcomeBody: body || null, newsletterWelcomeFormat: _newsletterWelcomeFormat })
-      });
-      const data = await res.json();
-      if (data.ok) showFeedback('newsletterWelcomeFeedback', 'Saved.', 'ok');
-      else         showFeedback('newsletterWelcomeFeedback', data.error || 'Could not save.', 'err');
-    } catch(e) {
-      showFeedback('newsletterWelcomeFeedback', 'Network error — could not save.', 'err');
-    }
-  }
-
-  async function sendTestNewsletterWelcome() {
-    const to  = document.getElementById('newsletterWelcomeTestTo').value.trim();
-    const btn = document.getElementById('newsletterWelcomeTestBtn');
-
-    btn.disabled = true; btn.textContent = 'Sending…';
-    try {
-      const res  = await fetch('/api/admin/newsletter-welcome/test', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ to: to || undefined })
-      });
-      const data = await res.json();
-      if (data.ok) showFeedback('newsletterWelcomeFeedback', `Test sent to ${data.to}`, 'ok');
-      else         showFeedback('newsletterWelcomeFeedback', data.error || 'Could not send test.', 'err');
-    } catch(e) {
-      showFeedback('newsletterWelcomeFeedback', 'Network error — could not send test.', 'err');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Send test';
-    }
-  }
+  // ── Newsletter → Explorer welcome — settings/test moved to Comms 2
+  // (Per Bot 24), same pattern as Reminder/Renewal/Birthday above. ──
 
   // ── Trial extended / restarted (Per Bot 42) — same shape as
   // Newsletter → Explorer welcome just above; kept as its own separate
@@ -2784,7 +2659,6 @@
     loadMotd();
     loadTestDestination();
     loadTomteBroadcastStatus();
-    loadNewsletterWelcomeConfig();
     loadTrialExtendedConfig();
     loadNewsletters();
     loadScheduledMessages();

@@ -817,11 +817,9 @@ function emailWelcomeFacilitator(name, email, tempPassword) {
 // bulk import, lead conversion) is a different psychological moment —
 // "someone set this account up for you" — and keeps emailWelcomeClient's
 // original immediate-password behaviour unchanged.
-function emailWelcomeFromNewsletter(user) {
+function emailWelcomeFromNewsletter(user, override) {
   const b = brand();
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
-  const subject = fillTemplate(cfg.newsletter_welcome_subject || `Welcome to ${b.name} — you're in`, tokens);
   // Per Bot 19h — no more fixed "Dear {{name}}, Hope you're well" greeting
   // or fixed "Sign in and set up your password →" button below it. Per
   // writes the whole thing himself now, including his own greeting,
@@ -849,11 +847,18 @@ Hope this lands well, and that the new app becomes a good place for you.
 
 Warmly,
 Per`;
-  const body = fillTemplate(cfg.newsletter_welcome_body || defaultBody, tokens);
+  // Per Bot 24 — switched over to message_versions (see
+  // resolveMessageContent) — subject and body now come from the active
+  // saved version if one exists, same hardcoded fallback text above
+  // otherwise. override lets the generic test-send endpoint preview
+  // exactly what's currently typed in comms2's form, saved or not.
+  const content = resolveMessageContent('newsletter_welcome', { subject: `Welcome to ${b.name} — you're in`, body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      ${renderMessageBody(body, cfg.newsletter_welcome_format)}
+      ${renderMessageBody(body, content.format)}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`
@@ -11382,7 +11387,7 @@ const TYPE_TEST_SENDERS = {
     email: (toEmail, realUser, override) => sendEmail(toEmail, `[TEST] ${resolveMessageContent('birthday', { subject: 'Happy birthday from all of us' }, override).subject}`, buildBirthdayHtml(realUser, brand(), override)),
     sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildBirthdaySms(adminName, brand(), override)),
   },
-  newsletter_welcome: { email: (toEmail, realUser) => emailWelcomeFromNewsletter(realUser), sms: null },
+  newsletter_welcome: { email: (toEmail, realUser, override) => emailWelcomeFromNewsletter(realUser, override), sms: null },
   trial_extended:     { email: (toEmail, realUser) => emailTrialUpdated(realUser, 14, 'features', false), sms: null },
   trial_day3:  { email: (toEmail, realUser) => emailTrialDay3(realUser),  sms: null },
   trial_day7:  { email: (toEmail, realUser) => emailTrialDay7(realUser),  sms: null },
