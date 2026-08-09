@@ -69,8 +69,9 @@
     .format-toggle button { padding:6px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.5); font-size:12px; font-family:'Georgia',serif; cursor:pointer; }
     .format-toggle button.active { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
     #editorRichBody { background:#0d1210; border-radius:8px; min-height:160px; }
-    .ql-toolbar.ql-snow { border-color:rgba(255,255,255,0.12) !important; }
-    .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; }
+    /* Quill dark-theme overrides now live in message-editor.js itself
+       (ensureStyles) so every page using MessageEditor gets them
+       automatically — this page doesn't need its own copy. */
     .field-group { display:flex; flex-direction:column; gap:6px; }
     .checkbox-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.7); }
     .checkbox-row input { width:15px; height:15px; accent-color:rgba(180,230,200,0.7); }
@@ -138,7 +139,8 @@
       <div id="editorFormatToggleWrap"></div>
       <textarea class="inline-input" id="editorPlainBody" rows="6" style="width:100%"></textarea>
       <div id="editorRichBody" style="display:none"></div>
-      <div style="margin-top:6px" id="editorBodyTokenWrap"></div>
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="editorBodyTokenWrap"></div>
+      <div id="editorAiGenerateWrap" style="display:none"></div>
     </div>
 
     <div id="editorExtraFields"></div>
@@ -278,15 +280,20 @@
     renderEditorFormatToggle();
     const plainEl = document.getElementById('editorPlainBody');
     const richEl = document.getElementById('editorRichBody');
+    const aiWrap = document.getElementById('editorAiGenerateWrap');
     if (fmt === 'rich') {
       plainEl.style.display = 'none';
       richEl.style.display = 'block';
       if (!MessageEditor.isMounted('editorRichBody')) {
         MessageEditor.mountRich('editorRichBody', plainEl.value ? plainEl.value.replace(/\n/g,'<br>') : '');
       }
+      aiWrap.style.display = 'block';
+      aiWrap.innerHTML = MessageEditor.aiGenerateHtml('editorRichBody');
     } else {
       richEl.style.display = 'none';
       plainEl.style.display = 'block';
+      aiWrap.style.display = 'none';
+      aiWrap.innerHTML = '';
     }
     renderEditorTokenWraps();
   }
@@ -295,6 +302,17 @@
     document.getElementById('editorBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml(
       'editorRichBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: editorFormat === 'rich' }
     );
+    // AI generate & insert (Per: "no AI helper" — same feature Newsletter
+    // has, ported into the shared editor) only makes sense in rich mode,
+    // same as Newsletter's own version — it inserts formatted HTML.
+    const aiWrap = document.getElementById('editorAiGenerateWrap');
+    if (editorFormat === 'rich') {
+      aiWrap.style.display = '';
+      aiWrap.innerHTML = MessageEditor.aiGenerateHtml('editorRichBody');
+    } else {
+      aiWrap.style.display = 'none';
+      aiWrap.innerHTML = '';
+    }
   }
 
   function renderExtraFields(type, extra) {
@@ -316,6 +334,7 @@
   }
 
   function openEditor(type, prefill) {
+    MessageEditor.closeAiPreview('editorRichBody');
     document.getElementById('editorType').value = type;
     document.getElementById('editorId').value = (prefill && prefill.__editId) || '';
     document.getElementById('editorTitle').textContent = (prefill && prefill.__editId) ? 'Edit version' : (TYPE_META[type] ? `New ${TYPE_META[type].label} version` : 'New version');
