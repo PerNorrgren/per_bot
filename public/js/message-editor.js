@@ -1212,6 +1212,26 @@
           <input type="checkbox" id="meVeMakeActive"/>
           Make this the active version
         </label>
+        <!-- Per Bot 24 — generic "Send test" for every message type, so
+             this doesn't have to be rebuilt per-type as each gets
+             switched over to message_versions. Sends whatever's LIVE for
+             this type right now (the active saved version if one exists,
+             otherwise current app_config) — see the backend endpoint for
+             why that's always accurate, not stale. Shown for every type;
+             the SMS half only appears for types that actually have one
+             (sms_body in their extra fields). -->
+        <div class="me-field-group" id="meVeTestSendWrap" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
+          <label>Send test — uses what's currently live, not what's unsaved in this form</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input class="me-inline-input" type="email" id="meVeTestEmailTo" placeholder="Defaults to your email" style="flex:1;min-width:160px"/>
+            <button class="me-btn me-sm" type="button" onclick="MessageEditor.sendVersionTest('email')" id="meVeTestEmailBtn">Send test email</button>
+          </div>
+          <div id="meVeTestSmsRow" style="display:none;margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input class="me-inline-input" type="tel" id="meVeTestSmsTo" placeholder="+447..." style="flex:1;min-width:160px"/>
+            <button class="me-btn me-sm" type="button" onclick="MessageEditor.sendVersionTest('sms')" id="meVeTestSmsBtn">Send test SMS</button>
+          </div>
+          <div class="me-modal-err" id="meVeTestFeedback"></div>
+        </div>
         <div class="me-modal-err" id="meVeErr"></div>
         <div class="me-modal-btns">
           <button class="me-modal-cancel" type="button" onclick="MessageEditor.closeVersionEditor()">Cancel</button>
@@ -1289,7 +1309,55 @@
     else { destroy('meVeRichBody'); document.getElementById('meVeRichBody').innerHTML = ''; }
     renderVeTokenWraps();
     renderVeExtraFields(type, prefill && prefill.extra);
+    // Per Bot 24 — Send test panel: SMS half only shown for types that
+    // actually have one (same check renderVeExtraFields already makes
+    // for the sms_body field itself), and the to-fields/feedback are
+    // reset per open so a stale address or result from editing a
+    // different version's test-send doesn't linger.
+    const hasTestSend = !!TYPE_TEST_SENDER_TYPES[type];
+    document.getElementById('meVeTestSendWrap').style.display = hasTestSend ? '' : 'none';
+    const hasSms = hasTestSend && (metaMap[type] && (metaMap[type].extraFields || []).includes('sms_body'));
+    document.getElementById('meVeTestSmsRow').style.display = hasSms ? 'flex' : 'none';
+    document.getElementById('meVeTestEmailTo').value = '';
+    document.getElementById('meVeTestSmsTo').value = '';
+    document.getElementById('meVeTestFeedback').textContent = '';
     document.getElementById('meVeModalOverlay').classList.add('me-open');
+  }
+  // Per Bot 24 — mirrors TYPE_TEST_SENDERS in server.js, just the keys —
+  // used only to decide whether to show the Send test panel at all for a
+  // given type. Kept in sync manually as each type gets its backend
+  // handler added; a type missing here simply hides the panel rather
+  // than showing a button that would 400.
+  const TYPE_TEST_SENDER_TYPES = {
+    reminder: true, renewal: true, birthday: true, newsletter_welcome: true, trial_extended: true,
+    trial_day3: true, trial_day7: true, trial_day10: true, trial_day14: true,
+    savers_cancel_day0: true, savers_cancel_grace0: true, savers_cancel_mid: true, savers_cancel_final: true,
+    savers_failure_day0: true, savers_failure_mid: true, savers_failure_final: true,
+  };
+  async function sendVersionTest(kind) {
+    const type = document.getElementById('meVeType').value;
+    const feedback = document.getElementById('meVeTestFeedback');
+    const btn = document.getElementById(kind === 'sms' ? 'meVeTestSmsBtn' : 'meVeTestEmailBtn');
+    const to = document.getElementById(kind === 'sms' ? 'meVeTestSmsTo' : 'meVeTestEmailTo').value.trim();
+    feedback.style.color = '';
+    feedback.textContent = '';
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      const res = await fetch(`/api/admin/message-versions/${type}/test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: to || undefined, kind }),
+      });
+      const data = await res.json();
+      if (data.ok) { feedback.style.color = 'rgba(180,230,200,0.85)'; feedback.textContent = `Sent to ${data.to}`; }
+      else { feedback.textContent = data.error || 'Could not send test.'; }
+    } catch (e) {
+      feedback.textContent = 'Network error — could not send test.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
   }
   function closeVersionEditor() {
     const overlay = document.getElementById('meVeModalOverlay');
@@ -1426,4 +1494,6 @@
   window.MessageEditor.closeVersionEditor = closeVersionEditor;
   window.MessageEditor.saveVersionEditor = saveVersionEditor;
   window.MessageEditor._setVeFormat = _setVeFormat;
+  // Per Bot 24 — Send test panel's button handlers.
+  window.MessageEditor.sendVersionTest = sendVersionTest;
 })(window);

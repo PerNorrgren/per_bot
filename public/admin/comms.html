@@ -467,72 +467,10 @@
     </div>
   </div>
 
-  <!-- ── Reminders ── -->
-  <div>
-    <div class="section-label">Practice reminders</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Reminder settings</div>
-        <button class="btn sm primary" onclick="saveReminderConfig()">Save</button>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Inactivity threshold</div>
-          <div class="config-desc">Send a reminder email if a user hasn't listened to anything in this many days</div>
-        </div>
-        <div class="config-val">
-          <input class="inline-input" type="number" id="reminderDays" value="4" min="1" max="30" style="width:60px"/>
-          days
-        </div>
-      </div>
-      <div class="config-row">
-        <div>
-          <div class="config-label">Reminder subject line</div>
-          <div class="config-desc">Email subject sent to inactive users</div>
-        </div>
-        <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="reminderSubject" spellcheck="true" value="It's been a few days — your practice space is here" style="width:280px"/>
-          <span id="reminderSubjectTokenWrap"></span>
-        </div>
-      </div>
-      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
-        <div>
-          <div class="config-label">Reminder message (email)</div>
-          <div class="config-desc">The paragraph inside the email — greeting and link stay fixed either side of it. {{name}}, {{invite_link}}, and {{expiry_date}} are all available.</div>
-        </div>
-        <textarea class="inline-input" id="reminderBody" rows="3" style="width:100%;resize:vertical" placeholder="It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help."></textarea>
-        <div id="reminderBodyTokenWrap"></div>
-      </div>
-      <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
-        <div>
-          <div class="config-label">Reminder message (SMS)</div>
-          <div class="config-desc">Full text message, kept short. {{name}} and {{link}} are available.</div>
-        </div>
-        <textarea class="inline-input" id="reminderSmsBody" rows="2" style="width:100%;resize:vertical" placeholder="It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}"></textarea>
-      </div>
-      <div class="config-row" style="border-bottom:none">
-        <div>
-          <div class="config-label">Send test reminder</div>
-          <div class="config-desc">Sends using the subject above (even if not saved yet) — defaults to your own email, or type another address</div>
-        </div>
-        <div class="config-val">
-          <input class="inline-input" type="email" id="reminderTestTo" placeholder="Defaults to your email" style="width:200px"/>
-          <button class="btn sm" id="reminderTestBtn" onclick="sendTestReminder()">Send test</button>
-        </div>
-      </div>
-      <div class="config-row" style="border-bottom:none">
-        <div>
-          <div class="config-label">Send test SMS</div>
-          <div class="config-desc">Same reminder, as a text message</div>
-        </div>
-        <div class="config-val">
-          <input class="inline-input" type="tel" id="reminderTestSmsTo" placeholder="+447..." style="width:200px"/>
-          <button class="btn sm" id="reminderTestSmsBtn" onclick="sendTestReminderSms()">Send test</button>
-        </div>
-      </div>
-      <div style="padding:0 20px 14px"><div class="feedback" id="reminderFeedback"></div></div>
-    </div>
-  </div>
+  <!-- Per Bot 24 — Reminder settings moved fully to Comms 2. The real
+       send has read from message_versions (not these fields) since the
+       switch-over; comms2 now also has its own "Send test" (generic,
+       any type), so nothing here was still doing real work. -->
 
   <!-- ── Renewal reminders ── -->
   <div>
@@ -2641,90 +2579,11 @@
   }
 
   // ════════════════════════════════════
-  // Reminders
+  // Reminders — settings/test moved to Comms 2 (Per Bot 24). The old
+  // endpoints these called (/api/admin/reminders/test etc.) still exist
+  // and still work — comms2's generic Send test panel now uses them via
+  // the shared /api/admin/message-versions/:type/test wrapper instead.
   // ════════════════════════════════════
-  async function loadReminderConfig() {
-    document.getElementById('reminderSubjectTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('reminderSubject', MessageEditor.standardTokens());
-    document.getElementById('reminderBodyTokenWrap').innerHTML = MessageEditor.tokenSelectHtml('reminderBody', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…' });
-    try {
-      const res = await fetch('/api/setup/config');
-      const cfg = await res.json();
-      if (cfg.reminder_days)     document.getElementById('reminderDays').value = cfg.reminder_days;
-      if (cfg.reminder_subject)  document.getElementById('reminderSubject').value = cfg.reminder_subject;
-      document.getElementById('reminderBody').value    = cfg.reminder_body || '';
-      document.getElementById('reminderSmsBody').value = cfg.reminder_sms_body || '';
-    } catch(e) { /* fields keep their HTML defaults */ }
-  }
-
-  async function saveReminderConfig() {
-    const days    = parseInt(document.getElementById('reminderDays').value, 10);
-    const subject = document.getElementById('reminderSubject').value.trim();
-    const body    = document.getElementById('reminderBody').value.trim();
-    const smsBody = document.getElementById('reminderSmsBody').value.trim();
-    if (!Number.isInteger(days) || days < 1 || days > 30) {
-      showFeedback('reminderFeedback', 'Threshold must be a number of days between 1 and 30.', 'err');
-      return;
-    }
-    if (!subject) {
-      showFeedback('reminderFeedback', 'Subject line cannot be empty.', 'err');
-      return;
-    }
-    try {
-      const res  = await fetch('/api/admin/settings', {
-        method: 'PATCH', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ reminderDays: days, reminderSubject: subject, reminderBody: body || null, reminderSmsBody: smsBody || null })
-      });
-      const data = await res.json();
-      if (data.ok) showFeedback('reminderFeedback', 'Settings saved — the daily reminder job will use these values from now on.', 'ok');
-      else         showFeedback('reminderFeedback', data.error || 'Could not save.', 'err');
-    } catch(e) {
-      showFeedback('reminderFeedback', 'Network error — could not save.', 'err');
-    }
-  }
-
-  async function sendTestReminder() {
-    const subject = document.getElementById('reminderSubject').value.trim();
-    const to      = document.getElementById('reminderTestTo').value.trim();
-    const btn     = document.getElementById('reminderTestBtn');
-
-    if (!subject) { showFeedback('reminderFeedback', 'Write a subject line first.', 'err'); return; }
-
-    btn.disabled = true; btn.textContent = 'Sending…';
-    try {
-      const res  = await fetch('/api/admin/reminders/test', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ subject, to: to || undefined })
-      });
-      const data = await res.json();
-      if (data.ok) showFeedback('reminderFeedback', `Test sent to ${data.to}`, 'ok');
-      else         showFeedback('reminderFeedback', data.error || 'Could not send test.', 'err');
-    } catch(e) {
-      showFeedback('reminderFeedback', 'Network error — could not send test.', 'err');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Send test';
-    }
-  }
-
-  async function sendTestReminderSms() {
-    const to  = document.getElementById('reminderTestSmsTo').value.trim();
-    const btn = document.getElementById('reminderTestSmsBtn');
-    if (!to) { showFeedback('reminderFeedback', 'Enter a phone number first.', 'err'); return; }
-
-    btn.disabled = true; btn.textContent = 'Sending…';
-    try {
-      const res  = await fetch('/api/admin/reminders/test-sms', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ to })
-      });
-      const data = await res.json();
-      if (data.ok) showFeedback('reminderFeedback', `Test sent to ${data.to}`, 'ok');
-      else         showFeedback('reminderFeedback', data.error || 'Could not send test.', 'err');
-    } catch(e) {
-      showFeedback('reminderFeedback', 'Network error — could not send test.', 'err');
-    } finally {
-      btn.disabled = false; btn.textContent = 'Send test';
-    }
-  }
 
   // ── Renewal reminders ──
   async function loadRenewalConfig() {
@@ -3074,11 +2933,11 @@
       const phone = cfg.test_phone || '';
       document.getElementById('testDestEmail').value = email;
       document.getElementById('testDestPhone').value = phone;
-      ['motdTestTo','reminderTestTo','renewalTestTo','newsletterTestTo','birthdayTestTo'].forEach(id => {
+      ['motdTestTo','renewalTestTo','newsletterTestTo','birthdayTestTo'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = email;
       });
-      ['motdTestPhone','reminderTestSmsTo','renewalTestSmsTo','birthdayTestSmsTo'].forEach(id => {
+      ['motdTestPhone','renewalTestSmsTo','birthdayTestSmsTo'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = phone;
       });
@@ -3198,7 +3057,6 @@
     loadMotd();
     loadTestDestination();
     loadTomteBroadcastStatus();
-    loadReminderConfig();
     loadRenewalConfig();
     loadBirthdayConfig();
     loadNewsletterWelcomeConfig();

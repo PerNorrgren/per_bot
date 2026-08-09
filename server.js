@@ -11332,6 +11332,77 @@ app.post('/api/admin/birthday/test-sms', auth.requireAuthApi(['admin']), async (
   }
 });
 
+// ── Generic "Send test" for comms2 (Per Bot 24) ── One endpoint covering
+// every type in MESSAGE_TYPE_REGISTRY, so comms2's shared editor doesn't
+// need per-type wiring — reuses each type's existing send-building logic
+// exactly as-is (the individual /api/admin/reminders/test etc. endpoints
+// above stay working too, for the old comms.html forms until each is
+// retired). For a type already switched over to message_versions (see
+// resolveMessageContent), this naturally reflects the active saved
+// version; for a type not yet switched, it reflects current app_config —
+// either way, always an accurate preview of what a real send looks like
+// today, never stale or misleading.
+const TYPE_TEST_SENDERS = {
+  reminder: {
+    email: (toEmail, realUser) => sendEmail(toEmail, `[TEST] ${resolveMessageContent('reminder', { subject: "Whenever you're ready" }).subject}`, buildReminderHtml(realUser, brand())),
+    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildReminderSms(adminName, brand())),
+  },
+  renewal: {
+    email: (toEmail, realUser) => {
+      const cfg = db.getAppConfig() || {};
+      const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      return sendEmail(toEmail, `[TEST] ${cfg.renewal_reminder_subject || 'Your membership renews soon'}`, buildRenewalReminderHtml(realUser, realUser.member_expires_at || sampleExpiry, brand()));
+    },
+    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildRenewalReminderSms(adminName, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), brand())),
+  },
+  birthday: {
+    email: (toEmail, realUser) => {
+      const cfg = db.getAppConfig() || {};
+      return sendEmail(toEmail, `[TEST] ${cfg.birthday_email_subject || 'Happy birthday from all of us'}`, buildBirthdayHtml(realUser, brand()));
+    },
+    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildBirthdaySms(adminName, brand())),
+  },
+  newsletter_welcome: { email: (toEmail, realUser) => emailWelcomeFromNewsletter(realUser), sms: null },
+  trial_extended:     { email: (toEmail, realUser) => emailTrialUpdated(realUser, 14, 'features', false), sms: null },
+  trial_day3:  { email: (toEmail, realUser) => emailTrialDay3(realUser),  sms: null },
+  trial_day7:  { email: (toEmail, realUser) => emailTrialDay7(realUser),  sms: null },
+  trial_day10: { email: (toEmail, realUser) => emailTrialDay10(realUser), sms: null },
+  trial_day14: { email: (toEmail, realUser) => emailTrialDay14(realUser), sms: null },
+  savers_cancel_day0:   { email: (toEmail, realUser) => emailSaversCancelDay0(realUser, '[example date]'), sms: null },
+  savers_cancel_grace0: { email: (toEmail, realUser) => emailSaversCancelGrace0(realUser), sms: null },
+  savers_cancel_mid:    { email: (toEmail, realUser) => emailSaversCancelMid(realUser),    sms: null },
+  savers_cancel_final:  { email: (toEmail, realUser) => emailSaversCancelFinal(realUser),  sms: null },
+  savers_failure_day0:  { email: (toEmail, realUser) => emailSaversFailureDay0(realUser),  sms: null },
+  savers_failure_mid:   { email: (toEmail, realUser) => emailSaversFailureMid(realUser),   sms: null },
+  savers_failure_final: { email: (toEmail, realUser) => emailSaversFailureFinal(realUser), sms: null },
+};
+app.post('/api/admin/message-versions/:type/test', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { type } = req.params;
+    const handlers = TYPE_TEST_SENDERS[type];
+    if (!handlers) return res.status(400).json({ error: 'No test-send available for this message type yet.' });
+    const { to, kind } = req.body;
+    if (kind === 'sms') {
+      if (!handlers.sms) return res.status(400).json({ error: 'This message type has no SMS version.' });
+      if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
+      const admin = db.getFacilitatorById(req.user.id);
+      const toPhone = resolveTestPhone(to, admin && admin.phone);
+      if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
+      const result = await handlers.sms(toPhone, req.user.name || 'there');
+      if (result && result.ok === false) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
+      return res.json({ ok: true, to: toPhone });
+    }
+    const toEmail = resolveTestEmail(to, req.user.email);
+    if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
+    const realUser = db.getUserByEmail(toEmail.toLowerCase()) || { id: null, name: req.user.name || 'there', email: toEmail };
+    await handlers.email(toEmail, realUser);
+    res.json({ ok: true, to: toEmail });
+  } catch (e) {
+    console.error(`message-versions test-send (${req.params.type}) error:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Newsletters — admin ── One-off broadcasts to everyone opted into "News
 // and updates", independent of membership tier. Compose → (optionally edit,
 // test) → Send. No queue, no auto-schedule — content differs every time, so
