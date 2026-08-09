@@ -1302,7 +1302,20 @@ async function sendDueCampaignEmailSteps() {
 // settings form (comms.html, not yet retired) simply stops being read
 // for whichever type has been switched over. Reused for every type as
 // each gets switched, one at a time, per the handover's ordering.
-function resolveMessageContent(type, fallback) {
+// Per Bot 24 — override (optional, third param) lets a caller test
+// exactly what's currently typed in the comms2 form, not just the saved
+// active version — the whole point of a "test" button while editing.
+// Takes priority over the active version, which takes priority over the
+// hardcoded fallback, same layering either way.
+function resolveMessageContent(type, fallback, override) {
+  if (override) {
+    return {
+      subject: override.subject || fallback.subject,
+      body: override.body || fallback.body,
+      format: override.format || fallback.format || 'plain',
+      extra: Object.assign({}, fallback.extra || {}, override.extra || {}),
+    };
+  }
   const active = db.getActiveMessageVersion(type);
   if (!active) return { subject: fallback.subject, body: fallback.body, format: fallback.format || 'plain', extra: fallback.extra || {} };
   return {
@@ -1320,11 +1333,11 @@ function resolveMessageContent(type, fallback) {
 // above). This is the FIRST of the 16 types being switched, per the
 // handover's plan — Renewal, Birthday, and the rest still read the old
 // app_config columns for now, one at a time, each tested before moving on.
-function buildReminderHtml(user, b) {
+function buildReminderHtml(user, b, override) {
   const tokens = buildMessageTokens(user);
   const content = resolveMessageContent('reminder', {
     body: "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
-  });
+  }, override);
   const bodyText = fillTemplate(content.body, tokens);
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
@@ -1343,10 +1356,10 @@ function emailInactivityReminder(user) {
   return sendEmail(user.email, subject, buildReminderHtml(user, b));
 }
 
-function buildReminderSms(userName, b) {
+function buildReminderSms(userName, b, override) {
   const content = resolveMessageContent('reminder', {
     extra: { sms_body: "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}" },
-  });
+  }, override);
   const bodyText = fillTemplate(
     content.extra.sms_body,
     { name: userName, link: `${APP_URL}/client/` }
@@ -11353,8 +11366,8 @@ app.post('/api/admin/birthday/test-sms', auth.requireAuthApi(['admin']), async (
 // today, never stale or misleading.
 const TYPE_TEST_SENDERS = {
   reminder: {
-    email: (toEmail, realUser) => sendEmail(toEmail, `[TEST] ${resolveMessageContent('reminder', { subject: "Whenever you're ready" }).subject}`, buildReminderHtml(realUser, brand())),
-    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildReminderSms(adminName, brand())),
+    email: (toEmail, realUser, override) => sendEmail(toEmail, `[TEST] ${resolveMessageContent('reminder', { subject: "Whenever you're ready" }, override).subject}`, buildReminderHtml(realUser, brand(), override)),
+    sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildReminderSms(adminName, brand(), override)),
   },
   renewal: {
     email: (toEmail, realUser) => {
@@ -11390,21 +11403,21 @@ app.post('/api/admin/message-versions/:type/test', auth.requireAuthApi(['admin']
     const { type } = req.params;
     const handlers = TYPE_TEST_SENDERS[type];
     if (!handlers) return res.status(400).json({ error: 'No test-send available for this message type yet.' });
-    const { to, kind } = req.body;
+    const { to, kind, override } = req.body;
     if (kind === 'sms') {
       if (!handlers.sms) return res.status(400).json({ error: 'This message type has no SMS version.' });
       if (!sms.isConfigured()) return res.status(400).json({ error: 'SMS is not configured yet — set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER in Railway.' });
       const admin = db.getFacilitatorById(req.user.id);
       const toPhone = resolveTestPhone(to, admin && admin.phone);
       if (!toPhone) return res.status(400).json({ error: 'Enter a phone number to send the test to (e.g. +447...), or add your own number in My Account first.' });
-      const result = await handlers.sms(toPhone, req.user.name || 'there');
+      const result = await handlers.sms(toPhone, req.user.name || 'there', override);
       if (result && result.ok === false) return res.status(400).json({ error: result.error || 'Could not send SMS.' });
       return res.json({ ok: true, to: toPhone });
     }
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
     const realUser = db.getUserByEmail(toEmail.toLowerCase()) || { id: null, name: req.user.name || 'there', email: toEmail };
-    await handlers.email(toEmail, realUser);
+    await handlers.email(toEmail, realUser, override);
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error(`message-versions test-send (${req.params.type}) error:`, e.message);

@@ -1252,7 +1252,7 @@
              the SMS half only appears for types that actually have one
              (sms_body in their extra fields). -->
         <div class="me-field-group" id="meVeTestSendWrap" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:14px">
-          <label>Send test — uses what's currently live, not what's unsaved in this form</label>
+          <label>Send test — sends exactly what's in this form right now, saved or not</label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
             <input class="me-inline-input" type="email" id="meVeTestEmailTo" placeholder="Defaults to your email" style="flex:1;min-width:160px"/>
             <button class="me-btn me-sm" type="button" onclick="MessageEditor.sendVersionTest('email')" id="meVeTestEmailBtn">Send test email</button>
@@ -1389,9 +1389,21 @@
     btn.disabled = true;
     btn.textContent = 'Sending…';
     try {
+      // Per Bot 24 — sends exactly what's currently in the form as an
+      // override, not just whatever's already saved as the active
+      // version. Same fields saveVersionEditor itself would save — a
+      // test now genuinely previews unsaved edits, the way the old
+      // per-type comms.html forms did, rather than only ever showing
+      // what was last saved.
+      const override = {
+        subject: document.getElementById('meVeSubject').value.trim(),
+        body: _veFormat === 'rich' ? getHtml('meVeRichBody') : document.getElementById('meVePlainBody').value,
+        format: _veFormat,
+        extra: await collectVeExtraFields(type),
+      };
       const res = await fetch(`/api/admin/message-versions/${type}/test`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: to || undefined, kind }),
+        body: JSON.stringify({ to: to || undefined, kind, override }),
       });
       const data = await res.json();
       if (data.ok) { feedback.style.color = 'rgba(180,230,200,0.85)'; feedback.textContent = `Sent to ${data.to}`; }
