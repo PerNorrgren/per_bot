@@ -1665,7 +1665,16 @@ app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(
 // introduced them.
 app.get('/js/dialogs.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'dialogs.js')));
 app.get('/js/call.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'call.js')));
-app.get('/js/message-editor.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'message-editor.js')));
+// Per Bot 24 — explicit no-store here, unlike the other static routes
+// above. This file is under active iteration (comms2's shared editor) —
+// without this, a deploy that changes it can leave a browser silently
+// running a stale cached copy with no visible sign anything's wrong,
+// which is exactly what happened testing the Reminder switch-over: a
+// real deploy landed, but the old file kept being served/executed
+// client-side. no-store forces a real fetch every time, at the cost of
+// one small request per page load — worth it for a file that changes
+// this often right now.
+app.get('/js/message-editor.js', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(path.join(__dirname, 'public', 'js', 'message-editor.js')); });
 app.get('/',                (req, res) => res.redirect('/login'));
 
 function roleRouter(allowedRoles, file) {

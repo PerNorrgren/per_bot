@@ -1181,6 +1181,23 @@
     days: { render: (val) => `<div class="me-field-group"><label>Days threshold</label><input class="me-inline-input" type="number" min="1" max="30" id="meVeExtra_days" value="${val ?? ''}" style="width:100px"/></div>` },
     sms_body: { render: (val) => `<div class="me-field-group"><label>SMS body</label><textarea class="me-inline-input" id="meVeExtra_sms_body" rows="2" spellcheck="true">${escVe(val ?? '')}</textarea></div>` },
   };
+  // Per Bot 24 — mirrors the hardcoded fallback text baked into each
+  // switched-over type's real send function in server.js
+  // (resolveMessageContent's fallback argument at each call site). A
+  // version whose subject/body/extra field is genuinely blank — never
+  // customised before comms2 existed — used to show as an empty field
+  // here, which looked like something had failed to load even though
+  // real sends were working fine (falling back to this same text). Now
+  // pre-filled instead, so editing always starts from what a real send
+  // actually looks like. Extended as each type gets switched over; a
+  // type not listed here just leaves blank fields blank, same as before.
+  const DEFAULT_MESSAGE_TEXT = {
+    reminder: {
+      subject: "Whenever you're ready",
+      body: "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
+      extra: { days: 4, sms_body: "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}" },
+    },
+  };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {
     if (!s) return '—';
@@ -1289,7 +1306,14 @@
     getTypesMeta().then(metaMap => {
       const keys = (metaMap[type] && metaMap[type].extraFields) || [];
       const wrap = document.getElementById('meVeExtraFields');
-      wrap.innerHTML = keys.map(k => (VERSION_EXTRA_FIELD_RENDERERS[k] ? VERSION_EXTRA_FIELD_RENDERERS[k].render((extra||{})[k]) : '')).join('');
+      const typeDefaults = (DEFAULT_MESSAGE_TEXT[type] && DEFAULT_MESSAGE_TEXT[type].extra) || {};
+      // Per Bot 24 — same blank-fills-with-default treatment as
+      // subject/body above, per key.
+      wrap.innerHTML = keys.map(k => {
+        const val = (extra||{})[k];
+        const fallback = (val === undefined || val === null || val === '') ? typeDefaults[k] : undefined;
+        return VERSION_EXTRA_FIELD_RENDERERS[k] ? VERSION_EXTRA_FIELD_RENDERERS[k].render(fallback !== undefined ? fallback : val) : '';
+      }).join('');
     });
   }
   async function collectVeExtraFields(type) {
@@ -1311,8 +1335,9 @@
     document.getElementById('meVeId').value = (prefill && prefill.__editId) || '';
     document.getElementById('meVeTitle').textContent = (prefill && prefill.__editId) ? 'Edit version' : (metaMap[type] ? `New ${metaMap[type].label} version` : 'New version');
     document.getElementById('meVeLabel').value = (prefill && prefill.label) || '';
-    document.getElementById('meVeSubject').value = (prefill && prefill.subject) || '';
-    document.getElementById('meVePlainBody').value = (prefill && prefill.body) || '';
+    const typeDefaults = DEFAULT_MESSAGE_TEXT[type] || {};
+    document.getElementById('meVeSubject').value = (prefill && prefill.subject) || typeDefaults.subject || '';
+    document.getElementById('meVePlainBody').value = (prefill && prefill.body) || typeDefaults.body || '';
     document.getElementById('meVeMakeActive').checked = false;
     document.getElementById('meVeErr').textContent = '';
     // Per Bot 24 — defaults to Rich always now, regardless of what
@@ -1324,7 +1349,7 @@
     renderVeFormatToggle();
     document.getElementById('meVePlainBody').style.display = _veFormat === 'rich' ? 'none' : 'block';
     document.getElementById('meVeRichBody').style.display = _veFormat === 'rich' ? 'block' : 'none';
-    if (_veFormat === 'rich') mountRich('meVeRichBody', (prefill && prefill.body) || '');
+    if (_veFormat === 'rich') mountRich('meVeRichBody', (prefill && prefill.body) || typeDefaults.body || '');
     else { destroy('meVeRichBody'); document.getElementById('meVeRichBody').innerHTML = ''; }
     renderVeTokenWraps();
     renderVeExtraFields(type, prefill && prefill.extra);
