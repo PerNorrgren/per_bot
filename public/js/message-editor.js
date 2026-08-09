@@ -1228,6 +1228,10 @@ Hope this lands well, and that the new app becomes a good place for you.
 Warmly,
 Per`,
     },
+    trial_extended: {
+      subject: "Your trial's been extended",
+      body: "Hi {{name}},\n\nWe've been rolling out a lot of new things lately, so we've extended your trial by {{days}} days — until {{expiry_date}} — to give you a proper chance to see and try what's new.\n\nSign in at {{invite_link}} whenever you're ready.",
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {

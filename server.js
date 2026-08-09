@@ -880,21 +880,25 @@ Per`;
 // that's a real, separate gap worth fixing in buildMessageTokens itself
 // since every template using {{invite_link}} would benefit, not just
 // this one; noted rather than silently solved here.
-function emailTrialUpdated(user, days, messageType, isRestart) {
+function emailTrialUpdated(user, days, messageType, isRestart, override) {
   const b = brand();
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user, { extra: { days: String(days) } });
   const actionPhrase = isRestart ? `started a new ${days}-day trial for you` : `extended your trial by ${days} days`;
   const defaultBody = messageType === 'simple'
     ? `Hi {{name}},\n\nJust a quick note — we've ${actionPhrase}. Your access now runs until {{expiry_date}}.\n\nSign in at {{invite_link}} whenever you're ready.`
     : `Hi {{name}},\n\nWe've been rolling out a lot of new things lately, so we've ${actionPhrase} — until {{expiry_date}} — to give you a proper chance to see and try what's new.\n\nSign in at {{invite_link}} whenever you're ready.`;
   const subjectDefault = isRestart ? `A fresh trial, on us` : `Your trial's been extended`;
-  const subject = fillTemplate(cfg.trial_extended_subject || subjectDefault, tokens);
-  const body = fillTemplate(cfg.trial_extended_body || defaultBody, tokens);
+  // Per Bot 24 — switched over to message_versions. Note the same custom
+  // text applies regardless of messageType/isRestart once someone saves
+  // a version — that's unchanged from how the old app_config field
+  // already worked, just carried forward rather than newly introduced.
+  const content = resolveMessageContent('trial_extended', { subject: subjectDefault, body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      ${renderMessageBody(body, cfg.trial_extended_format)}
+      ${renderMessageBody(body, content.format)}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <div style="font-size:12px;color:#aaa">${b.name}</div>
     </div>`
@@ -11388,7 +11392,7 @@ const TYPE_TEST_SENDERS = {
     sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildBirthdaySms(adminName, brand(), override)),
   },
   newsletter_welcome: { email: (toEmail, realUser, override) => emailWelcomeFromNewsletter(realUser, override), sms: null },
-  trial_extended:     { email: (toEmail, realUser) => emailTrialUpdated(realUser, 14, 'features', false), sms: null },
+  trial_extended:     { email: (toEmail, realUser, override) => emailTrialUpdated(realUser, 14, 'features', false, override), sms: null },
   trial_day3:  { email: (toEmail, realUser) => emailTrialDay3(realUser),  sms: null },
   trial_day7:  { email: (toEmail, realUser) => emailTrialDay7(realUser),  sms: null },
   trial_day10: { email: (toEmail, realUser) => emailTrialDay10(realUser), sms: null },
