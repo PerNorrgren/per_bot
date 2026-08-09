@@ -27,10 +27,15 @@
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
 
     /* ── Topbar ── */
-    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    /* Per Bot 24 — two-row header: the logo/account row and the section
+       nav row used to share one horizontal line, cramming every nav
+       button to the far right. flex-direction:column above is the whole
+       fix — the two existing children (logo block, .topbar-right) simply
+       stack instead of sitting side by side, no markup changes needed. */
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -486,7 +491,7 @@
           <div class="config-desc">Email subject sent to inactive users</div>
         </div>
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="reminderSubject" value="It's been a few days — your practice space is here" style="width:280px"/>
+          <input class="inline-input" type="text" id="reminderSubject" spellcheck="true" value="It's been a few days — your practice space is here" style="width:280px"/>
           <span id="reminderSubjectTokenWrap"></span>
         </div>
       </div>
@@ -553,7 +558,7 @@
           <div class="config-desc">Email subject sent ahead of renewal</div>
         </div>
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="renewalSubject" value="Your membership renews soon" style="width:280px"/>
+          <input class="inline-input" type="text" id="renewalSubject" spellcheck="true" value="Your membership renews soon" style="width:280px"/>
           <span id="renewalSubjectTokenWrap"></span>
         </div>
       </div>
@@ -616,7 +621,7 @@
           <div class="config-desc">Email subject sent on the day</div>
         </div>
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="birthdaySubject" placeholder="Happy birthday from all of us" style="width:280px"/>
+          <input class="inline-input" type="text" id="birthdaySubject" spellcheck="true" placeholder="Happy birthday from all of us" style="width:280px"/>
           <span id="birthdaySubjectTokenWrap"></span>
         </div>
       </div>
@@ -679,7 +684,7 @@
           <div class="config-desc">Email subject sent when they're welcomed in</div>
         </div>
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="newsletterWelcomeSubject" placeholder="Welcome to Deeper Mindfulness — you're in" style="width:280px"/>
+          <input class="inline-input" type="text" id="newsletterWelcomeSubject" spellcheck="true" placeholder="Welcome to Deeper Mindfulness — you're in" style="width:280px"/>
           <span id="newsletterWelcomeSubjectTokenWrap"></span>
         </div>
       </div>
@@ -727,7 +732,7 @@
           <div class="config-desc">Email subject sent with the extended/fresh trial</div>
         </div>
         <div class="config-val" style="flex:1;justify-content:flex-end;padding-left:20px;gap:6px">
-          <input class="inline-input" type="text" id="trialExtendedSubject" placeholder="More time to explore what's new" style="width:280px"/>
+          <input class="inline-input" type="text" id="trialExtendedSubject" spellcheck="true" placeholder="More time to explore what's new" style="width:280px"/>
           <span id="trialExtendedSubjectTokenWrap"></span>
         </div>
       </div>
@@ -836,7 +841,7 @@
     <div>
       <label>Subject</label>
       <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" id="newsletterSubject" placeholder="e.g. What's new this month" style="flex:1"/>
+        <input type="text" id="newsletterSubject" spellcheck="true" placeholder="e.g. What's new this month" style="flex:1"/>
         <select onchange="if(this.value){insertNewsletterToken('subject',this.value);this.value='';}" style="font-size:11px;width:auto">
           <option value="">Insert field…</option>
           <option value="{{name}}">Recipient's name</option>
@@ -877,6 +882,14 @@
     </div>
     <div style="margin-top:14px">
       <label>Who receives this</label>
+      <!-- Per Bot 24 — explicit-selected-list mode. Populated only when
+           this compose screen was opened via "Message" on the Members
+           page (see checkForExplicitRecipients below) — otherwise stays
+           hidden and behaves exactly as before, segment picker included. -->
+      <div id="newsletterExplicitBanner" style="display:none;padding:10px 12px;border-radius:8px;background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.25);color:rgba(180,230,200,0.85);font-size:12px;margin-bottom:8px">
+        Sending to <strong id="newsletterExplicitLabel"></strong> — the specific people selected on the Members page, not a segment.
+        <a style="margin-left:8px;color:rgba(255,255,255,0.5);cursor:pointer;text-decoration:underline" onclick="clearExplicitRecipients()">Use a segment instead</a>
+      </div>
       <div class="day-picker" id="newsletterAudiencePicker">
         <button type="button" class="day-chip" data-seg="newsletter_only" onclick="toggleAudienceSeg(this)">Newsletter-only</button>
         <button type="button" class="day-chip" data-seg="explorer" onclick="toggleAudienceSeg(this)">Explorer</button>
@@ -1470,6 +1483,12 @@
         theme: 'snow',
         modules: { toolbar: mbToolbarConfig() },
       });
+      // Per Bot 24 — explicit spell-check, same as message-editor.js's
+      // shared mountRich (this is comms.html's own separate, older Quill
+      // instance for the plain "MOTD"-style editor, not yet migrated to
+      // the shared component).
+      q.root.setAttribute('spellcheck', 'true');
+      q.root.setAttribute('autocorrect', 'on');
       // Custom toolbar icon/handler for the audio button — Quill's toolbar
       // module only auto-wires formats it already knows about; a genuinely
       // new one needs its handler set explicitly.
@@ -2081,6 +2100,39 @@
     `).join('');
   }
 
+  // Per Bot 24 — explicit-selected-list compose. _explicitRecipientIds
+  // is null in the normal (segment-based) case; set only when this
+  // screen was opened via "Message" on the Members page.
+  let _explicitRecipientIds = null;
+  function checkForExplicitRecipients() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('composeToSelected') !== '1') return;
+    const raw = sessionStorage.getItem('comms_explicit_recipient_ids');
+    const label = sessionStorage.getItem('comms_explicit_recipient_label');
+    sessionStorage.removeItem('comms_explicit_recipient_ids');
+    sessionStorage.removeItem('comms_explicit_recipient_label');
+    // Clean the query string regardless of whether this actually had
+    // anything to read — a stale/direct visit to this URL shouldn't
+    // leave composeToSelected=1 sitting there for a later reload to
+    // misread.
+    window.history.replaceState({}, '', window.location.pathname);
+    let ids;
+    try { ids = JSON.parse(raw || '[]'); } catch(e) { ids = []; }
+    if (!Array.isArray(ids) || !ids.length) return;
+    openNewsletterModal();
+    _explicitRecipientIds = ids;
+    document.getElementById('newsletterExplicitLabel').textContent = label || `${ids.length} selected people`;
+    document.getElementById('newsletterExplicitBanner').style.display = '';
+    document.getElementById('newsletterAudiencePicker').style.display = 'none';
+    refreshAudienceCount();
+  }
+  function clearExplicitRecipients() {
+    _explicitRecipientIds = null;
+    document.getElementById('newsletterExplicitBanner').style.display = 'none';
+    document.getElementById('newsletterAudiencePicker').style.display = '';
+    refreshAudienceCount();
+  }
+
   function getSelectedAudience() {
     const active = Array.from(document.querySelectorAll('#newsletterAudiencePicker .day-chip.active')).map(c => c.dataset.seg);
     return active.length ? active.join(',') : 'all';
@@ -2095,11 +2147,20 @@
 
   async function refreshAudienceCount() {
     const el = document.getElementById('newsletterAudienceCount');
-    const audience = getSelectedAudience();
     el.textContent = 'Checking…';
     try {
-      const res  = await fetch(`/api/admin/newsletters/recipient-count?segments=${encodeURIComponent(audience)}`);
+      // Per Bot 24 — explicit-list mode skips the segment query entirely
+      // and asks for a count against the exact id list instead.
+      const url = _explicitRecipientIds
+        ? `/api/admin/newsletters/recipient-count?userIds=${encodeURIComponent(_explicitRecipientIds.join(','))}`
+        : `/api/admin/newsletters/recipient-count?segments=${encodeURIComponent(getSelectedAudience())}`;
+      const res  = await fetch(url);
       const data = await res.json();
+      if (_explicitRecipientIds) {
+        el.textContent = `${data.count} of ${_explicitRecipientIds.length} selected people opted into News and updates`;
+        return;
+      }
+      const audience = getSelectedAudience();
       const who  = audience === 'all' ? 'everyone opted into News and updates' : audienceSummary(audience);
       el.textContent = `${data.count} recipient${data.count === 1 ? '' : 's'} — ${who}`;
     } catch(e) {
@@ -2195,6 +2256,14 @@
     document.getElementById('newsletterErr').textContent = '';
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
+    // Per Bot 24 — a genuinely fresh compose always starts back in normal
+    // segment mode, even if the previous newsletter composed in this same
+    // page session was an explicit-list one. checkForExplicitRecipients
+    // re-applies explicit state itself, after this call, when that's
+    // actually what's wanted.
+    _explicitRecipientIds = null;
+    document.getElementById('newsletterExplicitBanner').style.display = 'none';
+    document.getElementById('newsletterAudiencePicker').style.display = '';
     setSelectedAudience('all'); // no chips active = everyone, matches backend default
     document.getElementById('newsletterOffer').value = '';
     document.getElementById('newsletterSourceTag').value = '';
@@ -2220,6 +2289,7 @@
     document.getElementById('newsletterTestTo').value = '';
     document.getElementById('newsletterTestFeedback').textContent = '';
     setSelectedAudience(n.audience);
+    applyExplicitStateFromNewsletter(n);
     document.getElementById('newsletterOffer').value = n.offer_id || '';
     document.getElementById('newsletterSourceTag').value = n.source_tag || '';
     refreshAudienceCount();
@@ -2242,6 +2312,21 @@
   // already-sent, since picking an old one to reuse as a starting point is
   // the whole point. Deliberately does NOT set newsletterEditId, so Save
   // creates a new row rather than overwriting the original.
+  function applyExplicitStateFromNewsletter(n) {
+    // Per Bot 24 — restores explicit-selected-list state (banner shown,
+    // segment picker hidden) when editing/duplicating a draft that was
+    // originally composed that way, instead of silently reverting it to
+    // segment mode with a confusing empty/blank audience.
+    let ids = null;
+    if (n.explicit_user_ids) { try { ids = JSON.parse(n.explicit_user_ids); } catch(e) { ids = null; } }
+    if (Array.isArray(ids) && ids.length) {
+      _explicitRecipientIds = ids;
+      document.getElementById('newsletterExplicitLabel').textContent = `${ids.length} selected people`;
+      document.getElementById('newsletterExplicitBanner').style.display = '';
+      document.getElementById('newsletterAudiencePicker').style.display = 'none';
+    }
+  }
+
   function duplicateNewsletter(id) {
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
@@ -2252,6 +2337,7 @@
     if (n.format === 'rich') { getQuill().root.innerHTML = n.body; }
     else { document.getElementById('newsletterBody').value = n.body; }
     setSelectedAudience(n.audience);
+    applyExplicitStateFromNewsletter(n);
     refreshAudienceCount();
   }
 
@@ -2380,6 +2466,11 @@
     if (!body)    { err.textContent = 'Please write the body.'; return; }
 
     if (document.getElementById('newsletterRecurringToggle').checked) {
+      // Per Bot 24 — explicit-selected-list doesn't make sense for a
+      // recurring schedule (a fixed list of specific people, re-sent to
+      // forever, isn't what "selected these people on Members" means) —
+      // block it here rather than silently dropping the list.
+      if (_explicitRecipientIds) { err.textContent = 'A message to a specific selected list can\'t be a repeating schedule — turn off Repeat first.'; return; }
       const { type, config } = getRecurrenceConfig();
       if (type === 'weekly' && !config.daysOfWeek.length) { err.textContent = 'Pick at least one day of the week.'; return; }
       const scheduledId = document.getElementById('scheduledMessageEditId').value;
@@ -2399,6 +2490,11 @@
 
     const id = document.getElementById('newsletterEditId').value;
     const payload = { subject, body, audience, format: newsletterFormat, offerId: document.getElementById('newsletterOffer').value || null, sourceTag: document.getElementById('newsletterSourceTag').value.trim() || null };
+    // Per Bot 24 — explicit-selected-list, when active, rides alongside
+    // the normal payload; the backend prioritises this over `audience`
+    // entirely when present (see parseNewsletterExplicitIds/
+    // getNewsletterRecipients).
+    if (_explicitRecipientIds) payload.explicitUserIds = _explicitRecipientIds;
     let res;
     if (id) {
       res = await fetch(`/api/admin/newsletters/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
@@ -3109,6 +3205,10 @@
     loadTrialExtendedConfig();
     loadNewsletters();
     loadScheduledMessages();
+    // Per Bot 24 — opens straight into compose, pre-filled with the
+    // explicit-selected-list, if this page load came from Members'
+    // "Message" button. No-op otherwise.
+    checkForExplicitRecipients();
   });
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Communications';</script>

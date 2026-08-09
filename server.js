@@ -1017,7 +1017,7 @@ function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEve
       <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:24px">${introLine}</p>
       <div style="background:#f5f5f0;border-radius:10px;padding:20px;margin-bottom:24px">
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Sign in at</div>
-        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{appUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
+        <div style="font-size:15px;color:#1a1a1a;margin-bottom:16px"><a href="{{loginUrl}}" style="color:#2d6a4f">{{appUrl}}</a></div>
         <div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#888;margin-bottom:6px">Temporary password</div>
         <div style="font-size:18px;font-family:monospace;color:#1a1a1a;letter-spacing:0.05em;${accessUntil ? 'margin-bottom:16px' : ''}">{{tempPassword}}</div>
         ${trialLine}
@@ -1025,7 +1025,12 @@ function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEve
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <div style="font-size:12px;color:#aaa">{{brand}}</div>
     </div>`
-  }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL }, email);
+  }, { brand: b.name, name, email, tempPassword, appUrl: APP_URL,
+    // Per Bot 24 — same pre-fill mechanism login.html already supports
+    // for the newsletter-welcome email's {{invite_link}} — this just
+    // wasn't using it. The visible link text still shows the plain
+    // appUrl, only the actual href carries the email.
+    loginUrl: `${APP_URL}/login?email=${encodeURIComponent(email)}` }, email);
 }
 
 // ── Trial email sequence (Per Bot 5, item 4) ──
@@ -1737,10 +1742,30 @@ app.post('/api/auth/reset-password', async (req, res) => {
       const grantedTrial = grantFirstPasswordTrialIfEligible(user);
       db.updateClientPassword(user.id, hash);
       db.clearUserResetToken(user.id);
-      return res.json({ ok: true, grantedTrial });
+      // Per Bot 24 — passwordless/silent login: clicking a valid reset
+      // link and choosing a new password now signs the person straight
+      // in, the same way a real /api/login success does (same token
+      // shape, same cookie) — no separate trip to the sign-in page where
+      // they'd have had to type their email (and now their brand-new
+      // password) all over again immediately after just setting it.
+      const freshUser = db.getUser(user.id);
+      const authToken = auth.createToken({ role: 'client', id: freshUser.id, name: freshUser.name, email: freshUser.email });
+      res.cookie(auth.COOKIE_NAME, authToken, auth.COOKIE_OPTIONS);
+      try { db.logLogin(freshUser.id, 'client', 'login'); } catch(e) { console.error('[login_log] failed:', e.message); }
+      return res.json({ ok: true, grantedTrial, loggedIn: true, redirect: '/client/' });
     }
     const fac = db.getFacilitatorByResetToken(token);
-    if (fac) { db.updateFacilitatorPassword(fac.id, hash); db.clearFacilitatorResetToken(fac.id); return res.json({ ok: true }); }
+    if (fac) {
+      db.updateFacilitatorPassword(fac.id, hash);
+      db.clearFacilitatorResetToken(fac.id);
+      const freshFac = db.getFacilitatorById ? db.getFacilitatorById(fac.id) : fac;
+      const role = freshFac.role || fac.role;
+      const authToken = auth.createToken({ role, id: freshFac.id, name: freshFac.name, email: freshFac.email });
+      res.cookie(auth.COOKIE_NAME, authToken, auth.COOKIE_OPTIONS);
+      try { db.logLogin(freshFac.id, role, 'login'); } catch(e) { console.error('[login_log] failed:', e.message); }
+      const redirectMap = { admin: '/admin/', facilitator: '/facilitator/' };
+      return res.json({ ok: true, loggedIn: true, redirect: redirectMap[role] || '/login' });
+    }
     res.status(400).json({ error: 'This reset link is invalid or has expired. Request a new one from the login page.' });
   } catch(e) {
     console.error('reset-password error:', e);
@@ -2097,7 +2122,7 @@ app.patch('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), async (
       `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px">
         <h1 style="font-size:22px;font-weight:normal">Password reset</h1>
         <p>Your temporary password: <strong style="font-family:monospace;font-size:18px">${tempPassword}</strong></p>
-        <p><a href="${APP_URL}">${APP_URL}</a></p>
+        <p><a href="${APP_URL}/login?email=${encodeURIComponent(fac.email)}">${APP_URL}</a></p>
       </div>`
     );
     return res.json({ ok: true, tempPassword });
@@ -5730,7 +5755,17 @@ async function runCommsAiGenerateJob(jobId, type, context) {
 
     const gen = COMMS_AI_GENERATORS[type];
     if (!gen) throw new Error('Unknown generator type.');
-    const raw = await callClaudeWithRetry(gen.prompt, gen.userMessage, 2000, gen.disableThinking);
+    // Per Bot 24 — optional topic/subject, typed in by the admin rather
+    // than always generating something untargeted (previously every
+    // haiku/poem/limerick came out about a fairly generic default
+    // subject regardless of what the newsletter was actually about).
+    // Appended to the existing userMessage rather than replacing it, so
+    // the compositional rules already in the system prompt (kireji,
+    // AABBA structure, signal-hiding, etc.) still apply in full.
+    const userMessage = context && context.trim()
+      ? `${gen.userMessage} Make it about: ${context.trim()}`
+      : gen.userMessage;
+    const raw = await callClaudeWithRetry(gen.prompt, userMessage, 2000, gen.disableThinking);
     let text;
     if (gen.parseJsonArray) {
       let arr;
@@ -10171,7 +10206,8 @@ app.post('/api/admin/settings/savers-sequence/test-send', auth.requireAuthApi(['
 
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format', trialExtendedSubject: 'trial_extended_subject', trialExtendedBody: 'trial_extended_body', trialExtendedFormat: 'trial_extended_format' };
+    const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format', trialExtendedSubject: 'trial_extended_subject', trialExtendedBody: 'trial_extended_body', trialExtendedFormat: 'trial_extended_format', defaultLessonVisibility: 'default_lesson_visibility' /* Per Bot 24 */,
+  whatsNewEnabled: 'whats_new_enabled', whatsNewBody: 'whats_new_body', whatsNewLinkType: 'whats_new_link_type', whatsNewLinkId: 'whats_new_link_id' /* Per Bot 24 */ };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });
@@ -10279,6 +10315,14 @@ app.get('/api/config', (req, res) => {
       talkPersonaName: cfg.talk_persona_name || 'Per',
       talkPersonaPhotoUrl: faviconUrl(cfg.talk_persona_photo_url) || '/assets/tomte.png',
       allowCustomVoice: cfg.allow_custom_voice === null || cfg.allow_custom_voice === undefined ? true : !!cfg.allow_custom_voice,
+      // Per Bot 24 — "What's New" home promo (item 11). whatsNewBody is
+      // rich HTML written by an admin, not user input — same trust level
+      // as tagline/legalEntityName above, already rendered unescaped
+      // elsewhere in this same response's consumers.
+      whatsNewEnabled: !!cfg.whats_new_enabled,
+      whatsNewBody: cfg.whats_new_body || '',
+      whatsNewLinkType: cfg.whats_new_link_type || null,
+      whatsNewLinkId: cfg.whats_new_link_id || null,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -11348,8 +11392,14 @@ app.get('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => 
 // Accepts ?segments=explorer,member1 (comma-separated) so the compose modal
 // can show a live count as the admin ticks/unticks audience checkboxes,
 // before ever saving a draft. No query param, or 'all', means everyone.
+// Per Bot 24 — also accepts ?userIds=id1,id2,... for the explicit-list
+// compose flow, taking priority over segments when present (same rule as
+// getNewsletterRecipients itself).
 app.get('/api/admin/newsletters/recipient-count', auth.requireAuthApi(['admin']), (req, res) => {
-  try { res.json({ count: db.getNewsletterRecipients(req.query.segments || 'all').length }); }
+  try {
+    const userIds = req.query.userIds ? String(req.query.userIds).split(',').filter(Boolean) : null;
+    res.json({ count: db.getNewsletterRecipients(req.query.segments || 'all', userIds).length });
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -11362,26 +11412,37 @@ function newsletterBodyIsEmpty(body, format) {
   return format === 'rich' ? !body.replace(/<[^>]*>/g, '').trim() : !body.trim();
 }
 
+// Per Bot 24 — small shared parse for newsletters.explicit_user_ids
+// (JSON array or null), used everywhere a saved newsletter's real
+// recipients need resolving.
+function parseNewsletterExplicitIds(newsletter) {
+  if (!newsletter || !newsletter.explicit_user_ids) return null;
+  try { const arr = JSON.parse(newsletter.explicit_user_ids); return Array.isArray(arr) && arr.length ? arr : null; }
+  catch(e) { return null; }
+}
+
 app.post('/api/admin/newsletters', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience, format, offerId, sourceTag } = req.body;
+    const { subject, body, audience, format, offerId, sourceTag, explicitUserIds } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
     if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const id = uuidv4();
-    db.addNewsletter(id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag);
+    db.addNewsletter(id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag, null,
+      Array.isArray(explicitUserIds) ? explicitUserIds : null);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/admin/newsletters/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { subject, body, audience, format, offerId, sourceTag } = req.body;
+    const { subject, body, audience, format, offerId, sourceTag, explicitUserIds } = req.body;
     if (!subject || !subject.trim()) return res.status(400).json({ error: 'Subject is required.' });
     if (newsletterBodyIsEmpty(body, format)) return res.status(400).json({ error: 'Body is required.' });
     const existing = db.getNewsletter(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Newsletter not found.' });
     if (existing.status !== 'draft') return res.status(400).json({ error: 'Already sent — sent newsletters cannot be edited.' });
-    db.updateNewsletter(req.params.id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag);
+    db.updateNewsletter(req.params.id, subject.trim(), format === 'rich' ? body : body.trim(), audience, format, offerId, sourceTag,
+      Array.isArray(explicitUserIds) ? explicitUserIds : null);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -11558,7 +11619,7 @@ app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), asyn
     if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
     if (newsletter.status !== 'draft') return res.status(400).json({ error: 'Already sent.' });
 
-    const recipients = db.getNewsletterRecipients(newsletter.audience);
+    const recipients = db.getNewsletterRecipients(newsletter.audience, parseNewsletterExplicitIds(newsletter));
 
     // Pre-log every recipient as pending BEFORE any sending starts — the
     // core fix. Even if the server crashes or redeploys one email into the
@@ -11616,7 +11677,7 @@ app.post('/api/admin/newsletters/:id/retry', auth.requireAuthApi(['admin']), asy
     const outstanding = log.filter(r => r.status !== 'sent');
     if (!outstanding.length) return res.json({ ok: true, started: false, message: 'Nothing outstanding — everyone already sent.' });
 
-    const allRecipients = db.getNewsletterRecipients(newsletter.audience);
+    const allRecipients = db.getNewsletterRecipients(newsletter.audience, parseNewsletterExplicitIds(newsletter));
     const byUserId = {};
     allRecipients.forEach(u => { byUserId[u.id] = u; });
     const retryRecipients = outstanding.map(r => byUserId[r.user_id]).filter(Boolean);
@@ -11666,7 +11727,7 @@ app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']),
   try {
     const newsletter = db.getNewsletter(req.params.id);
     if (!newsletter) return res.status(404).json({ error: 'Newsletter not found.' });
-    const recipients = db.getNewsletterRecipients(newsletter.audience);
+    const recipients = db.getNewsletterRecipients(newsletter.audience, parseNewsletterExplicitIds(newsletter));
 
     const scwEmails = await scwListEmailsBySubjectSince(newsletter.subject, newsletter.created_at);
     const reachedAddresses = new Set(scwEmails.map(e => (e.rcpt_to || '').toLowerCase()));

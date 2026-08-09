@@ -15,13 +15,16 @@
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow:hidden; }
     .app { display:flex; height:100vh; flex-direction:column; }
-    .topbar { padding:14px 24px; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; gap:16px; flex-shrink:0; }
+    .topbar { padding:12px 24px 0; background:rgba(255,255,255,0.04); border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; gap:8px; flex-shrink:0; }
+    /* Per Bot 24 — two-row header, see HTML restructure above. */
+    .topbar-row1 { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .topbar-row2 { display:flex; align-items:center; gap:16px; padding:6px 0 10px; border-top:1px solid rgba(255,255,255,0.05); flex-wrap:wrap; }
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:16px; color:rgba(255,255,255,0.75); }
-    .nav-tabs { display:flex; gap:4px; margin-left:24px; }
+    .nav-tabs { display:flex; gap:4px; }
     .nav-tab { padding:7px 16px; border-radius:6px; border:none; background:none; color:rgba(255,255,255,0.4); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
     .nav-tab.active { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.85); }
-    .topbar-right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .topbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .btn { padding:7px 14px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -31,6 +34,9 @@
     .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
     .btn.danger:hover { background:rgba(255,100,80,0.08); }
     .btn.sm { padding:5px 10px; font-size:10px; }
+    /* Per Bot 24 — upload ticker spinner */
+    .upload-ticker-spin { display:inline-block; animation: uploadSpin 1.4s linear infinite; }
+    @keyframes uploadSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
     /* Per Bot 15m — added for the new Breathing patterns tab, matching
        the card/section-label convention used on the other admin pages. */
     .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
@@ -181,35 +187,50 @@
 <body>
 <div class="app">
   <div class="topbar">
-    <div style="position:relative">
-      <div class="logo" data-brand="name">Deeper Mindfulness</div>
-      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
-        <span class="logo-name" style="font-size:18px">Content</span>
-        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
-      </button>
-      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
-        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
-        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+    <!-- Per Bot 24 — two-row header. Row 1: logo/account + the permanent
+         section nav (was crammed onto one line with the Library/Courses/
+         etc. sub-tabs before). Row 2: this page's own contextual sub-nav
+         (only content.html has one currently) + the upload ticker. -->
+    <div class="topbar-row1">
+      <div style="position:relative">
+        <div class="logo" data-brand="name">Deeper Mindfulness</div>
+        <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+          <span class="logo-name" style="font-size:18px">Content</span>
+          <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+        </button>
+        <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+          <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+          <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span id="a11yMenuSlot" style="position:relative"></span>
+        <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
+        <a href="/admin/content" class="btn primary">Content</a>
+        <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+        <a href="/admin/comms" class="btn">Communications</a>
+        <a href="/admin/comms2" class="btn" style="color:rgba(180,230,200,0.8)">Comms 2 (beta)</a>
+        <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+        <a href="/admin/reports" class="btn">Reports</a>
+        <a href="/setup" class="btn">Settings</a>
       </div>
     </div>
-    <div class="nav-tabs">
-      <button class="nav-tab active" data-tab="library">Library</button>
-      <button class="nav-tab" data-tab="courses">Courses</button>
-      <button class="nav-tab" data-tab="instances">Instances</button>
-      <button class="nav-tab" data-tab="playlists">Playlists</button>
-      <button class="nav-tab" data-tab="categories">Categories</button>
-      <button class="nav-tab" data-tab="breathing">Breathing</button>
-    </div>
-    <div class="topbar-right">
-      <span id="a11yMenuSlot" style="position:relative"></span>
-      <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
-      <a href="/admin/content" class="btn primary">Content</a>
-      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
-      <a href="/admin/comms" class="btn">Communications</a>
-      <a href="/admin/comms2" class="btn" style="color:rgba(180,230,200,0.8)">Comms 2 (beta)</a>
-      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
-      <a href="/admin/reports" class="btn">Reports</a>
-      <a href="/setup" class="btn">Settings</a>
+    <div class="topbar-row2">
+      <div class="nav-tabs">
+        <button class="nav-tab active" data-tab="library">Library</button>
+        <button class="nav-tab" data-tab="courses">Courses</button>
+        <button class="nav-tab" data-tab="instances">Instances</button>
+        <button class="nav-tab" data-tab="playlists">Playlists</button>
+        <button class="nav-tab" data-tab="categories">Categories</button>
+        <button class="nav-tab" data-tab="breathing">Breathing</button>
+      </div>
+      <!-- Per Bot 24 — persistent upload ticker. Hidden unless a bulk
+           upload is actually running (see _bulkUploadState), so it stays
+           out of the way otherwise. Clicking it reopens the upload modal
+           to see the full queue. -->
+      <div id="uploadTicker" onclick="reopenUploadModal()" style="display:none;align-items:center;gap:8px;padding:6px 12px;border-radius:7px;background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.25);color:rgba(180,230,200,0.85);font-size:11px;letter-spacing:0.05em;cursor:pointer;white-space:nowrap;margin-left:auto">
+        <span class="upload-ticker-spin">☯</span> <span id="uploadTickerText">Uploading…</span>
+      </div>
     </div>
   </div>
   <div class="content">
@@ -247,6 +268,7 @@
             <button id="viewBtnCards" onclick="setLibView('cards')">Cards</button>
             <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
+          <button class="btn" onclick="openContentSettings()" title="Default visibility for newly-created lessons, and other content-wide settings">⚙ Settings</button>
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
           <button class="btn" onclick="openDuplicatesScan()">Scan for duplicate files</button>
           <button class="btn" onclick="openDomainRefsScan()">Scan for old domain links</button>
@@ -408,6 +430,23 @@
         <select id="upAssignedClient" oninput="applyBatchAssignedClient(this.value)"><option value="">Select a client…</option></select>
       </div>
     </div>
+    <!-- Per Bot 24 — auto-organize into a course, grouped by a "SessionN"
+         pattern in each filename. Deliberately preview-and-confirm rather
+         than auto-creating silently — see openAutoCourseConfirm below —
+         same dry-run-first pattern as the mojibake/duplicate scans on
+         this page. -->
+    <div style="margin:4px 0 14px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
+        <input type="checkbox" id="upAutoCourse" onchange="toggleUpAutoCourse(this.checked)"/>
+        Course — group these files into lessons by "Session N" in each filename
+      </label>
+      <div id="upAutoCourseRow" style="display:none;margin-top:8px;display:flex;flex-direction:column;gap:8px">
+        <select id="upAutoCourseTarget">
+          <option value="__new__">Create a new course…</option>
+        </select>
+        <input type="text" id="upAutoCourseNewTitle" placeholder="New course title" style="display:none"/>
+      </div>
+    </div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('bulkInput').click()">
       <input type="file" id="bulkInput" multiple style="display:none"/>
       <div style="font-size:28px;margin-bottom:10px">📂</div>
@@ -419,6 +458,23 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('uploadModal')">Cancel</button>
       <button class="modal-ok" id="upBtn" onclick="doUpload()">Upload all</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 24 — auto-course grouping preview. Shows exactly what will be
+     created/added before anything actually happens — deliberately a
+     separate confirm step, not automatic, since a wrong session-number
+     parse could otherwise silently misfile things into the wrong lesson. -->
+<div class="modal-overlay" id="autoCourseModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Confirm course organization</h3>
+    <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Grouped by "Session N" found in each filename. Files with no session number found are listed separately below and won't be added to any lesson — add those by hand afterward. Titles are a best guess from the filename — edit any of them before confirming.</div>
+    <div id="acBody" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
+    <div class="modal-err" id="acErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('autoCourseModal')">Cancel</button>
+      <button class="modal-ok" id="acConfirmBtn" onclick="confirmAutoCourse()">Create / add lessons</button>
     </div>
   </div>
 </div>
@@ -614,6 +670,32 @@
     <div class="modal-err" id="epErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeEpubPreview()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 24 — content-wide settings, starting with default lesson
+     visibility. Small and single-purpose for now; a natural place to add
+     more content-wide settings later without cluttering the identity
+     wizard at /setup, which this deliberately doesn't touch. -->
+<div class="modal-overlay" id="contentSettingsModal">
+  <div class="modal" style="max-width:480px">
+    <h3>Content settings</h3>
+    <div style="margin-top:10px">
+      <label>Default visibility for new lessons</label>
+      <select id="csDefaultLessonVis">
+        <option value="registered">Explorer</option>
+        <option value="member">Member</option>
+        <option value="client">Client</option>
+        <option value="facilitator">Facilitator</option>
+        <option value="admin">Admin</option>
+      </select>
+      <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-top:6px">Applied whenever "+ Add lesson" opens — still changeable per lesson as always, this just sets the starting point.</div>
+    </div>
+    <div class="modal-err" id="csErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('contentSettingsModal')">Cancel</button>
+      <button class="modal-ok" onclick="saveContentSettings()">Save</button>
     </div>
   </div>
 </div>
@@ -1260,7 +1342,34 @@ function populateKindSels(...ids){
   });
 }
 
+// Per Bot 24 — content-wide settings, cached here at page load so
+// openAddLesson() (elsewhere) can use the real admin-set default rather
+// than a hardcoded value. See contentSettingsModal + saveContentSettings.
+let _defaultLessonVisibility = 'client';
+async function loadContentSettings(){
+  try {
+    const cfg = await fetch('/api/setup/config').then(r=>r.json());
+    _defaultLessonVisibility = cfg.default_lesson_visibility || 'registered';
+  } catch(e) { /* keep previous/fallback value */ }
+}
+function openContentSettings(){
+  document.getElementById('csDefaultLessonVis').value = _defaultLessonVisibility;
+  document.getElementById('csErr').textContent = '';
+  openModal('contentSettingsModal');
+}
+async function saveContentSettings(){
+  const val = document.getElementById('csDefaultLessonVis').value;
+  try {
+    const res = await fetch('/api/admin/settings', {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({defaultLessonVisibility: val})});
+    const d = await res.json();
+    if (d.error) { document.getElementById('csErr').textContent = d.error; return; }
+    _defaultLessonVisibility = val;
+    closeModal('contentSettingsModal');
+  } catch(e) { document.getElementById('csErr').textContent = 'Could not save — please try again.'; }
+}
+
 async function loadAll(){
+  loadContentSettings();
   const [cats,files,courses,pls,instances,kinds,skins]=await Promise.all([
     fetch('/api/content/categories').then(r=>r.json()),
     fetch('/api/content/library').then(r=>r.json()),
@@ -1364,7 +1473,12 @@ function filterLib(){
 // through filterLib. This is what the text editor's Next button walks
 // through — whatever's currently filtered/visible, in the same order.
 let _currentLibFiltered = [];
+// Per Bot 24 — natural sort applied here (not just in the lesson-file
+// picker above) so the main Library view — cards and list alike —
+// respects careful session-numbered filenames too, rather than showing
+// files in upload order.
 function renderLib(files){
+  files = naturalSortFiles(files);
   _currentLibFiltered = files;
   if (_libView === 'cards') renderLibCards(files); else renderLibList(files);
   updateBulkBar();
@@ -2167,6 +2281,10 @@ async function uploadOneFile(it, cat, sub) {
     fd.append('facilitatorResource', facResource);
     const res = await fetch('/api/content/library', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
+    // Per Bot 24 — same fileId capture as the primary path below, for
+    // auto-course grouping.
+    const legacyData = await res.json().catch(()=>({}));
+    it.fileId = legacyData.id || null;
     return;
   }
 
@@ -2204,6 +2322,11 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('facilitatorResource', facResource);
   const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
   if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');
+  // Per Bot 24 — captured so the auto-course grouping step (which runs
+  // after the whole batch finishes) can attach the actual created file
+  // by id, not just by name.
+  const savedData = await confirmRes.json().catch(()=>({}));
+  it.fileId = savedData.id || null;
 }
 
 // Opens a library file in a new tab. Asks the server for a playback URL rather than
@@ -2522,6 +2645,138 @@ function nextTextEditor() {
   openTextEditor(next.id, next.title);
 }
 
+// Per Bot 24 — bulk upload no longer tied to the modal staying open.
+// _bulkUploadState is page-level, so closing the modal (closeUploadModal
+// below) just hides the dialog — the upload loop itself keeps running
+// and the top-bar ticker keeps updating regardless. Reopening the modal
+// (or clicking the ticker) shows the same live queue again. This does
+// NOT survive navigating to a different page or closing the tab — the
+// browser has to stay open and on this page, since each file uploads
+// directly from here to R2 and nothing server-side can pick that up if
+// the tab holding the file in memory goes away.
+let _bulkUploadState = null; // {total, done, currentName, active}
+
+function updateUploadTicker(){
+  const el = document.getElementById('uploadTicker');
+  const txt = document.getElementById('uploadTickerText');
+  if (!_bulkUploadState || !_bulkUploadState.active) { el.style.display = 'none'; return; }
+  el.style.display = 'inline-flex';
+  txt.textContent = `Uploading ${_bulkUploadState.done}/${_bulkUploadState.total} — ${_bulkUploadState.currentName||''}`;
+}
+function reopenUploadModal(){
+  if (!_bulkUploadState) return;
+  openModal('uploadModal');
+  renderQ();
+}
+function closeUploadModal(){
+  // Only actually closes the dialog — see _bulkUploadState comment above.
+  closeModal('uploadModal');
+}
+
+// Per Bot 24 — auto-course grouping from filenames.
+function toggleUpAutoCourse(checked){
+  document.getElementById('upAutoCourseRow').style.display = checked ? 'flex' : 'none';
+  if (!checked) return;
+  const sel = document.getElementById('upAutoCourseTarget');
+  sel.innerHTML = '<option value="__new__">Create a new course…</option>'
+    + allCourses.map(c=>`<option value="${c.id}">${c.title}</option>`).join('');
+  sel.onchange = () => {
+    document.getElementById('upAutoCourseNewTitle').style.display = sel.value==='__new__' ? '' : 'none';
+  };
+  sel.onchange();
+}
+
+// Looks for "Session" followed by a number anywhere in the filename
+// (case-insensitive, tolerant of "Session4", "Session 4", "Session_4").
+// Everything after that number becomes the title guess — underscores and
+// duration hints like "28min"/"4 min" cleaned up, since those describe
+// which specific audio file this is, not the lesson's actual name.
+// Returns null (ungrouped) if no session number is found at all — safer
+// than guessing, since a wrong guess here would misfile a real file.
+function parseSessionInfo(filename){
+  const noExt = filename.replace(/\.[^.]+$/, '');
+  const m = noExt.match(/session[\s_-]*0*([0-9]+)/i);
+  if (!m) return null;
+  const num = parseInt(m[1], 10);
+  let rest = noExt.slice(m.index + m[0].length);
+  rest = rest.replace(/^[\s_-]+/, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/\b\d{1,3}\s?min\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return { num, titleGuess: rest || `Session ${num}` };
+}
+
+let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse
+function openAutoCourseConfirm(){
+  const groups = {};
+  const ungrouped = [];
+  upQueue.forEach(it => {
+    if (!it.fileId) return; // failed uploads never reach here anyway
+    const info = parseSessionInfo(it.file.name);
+    if (!info) { ungrouped.push(it); return; }
+    if (!groups[info.num]) groups[info.num] = { num: info.num, titleGuess: info.titleGuess, items: [] };
+    groups[info.num].items.push(it);
+  });
+  _acGroups = Object.values(groups).sort((a,b)=>a.num-b.num);
+  const body = document.getElementById('acBody');
+  body.innerHTML = _acGroups.map((g,gi)=>`
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:10px 12px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <span style="font-size:15px;color:rgba(255,255,255,0.25);min-width:20px">${g.num}</span>
+        <input type="text" value="${g.titleGuess.replace(/"/g,'&quot;')}" oninput="_acGroups[${gi}].titleGuess=this.value" style="flex:1"/>
+      </div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.35);padding-left:28px">${g.items.map(it=>it.file.name).join(', ')}</div>
+    </div>
+  `).join('') + (ungrouped.length ? `
+    <div style="font-size:11px;color:rgba(255,180,60,0.75);padding:8px 4px">No session number found — won't be added to any lesson: ${ungrouped.map(it=>it.file.name).join(', ')}</div>
+  ` : '');
+  document.getElementById('acErr').textContent = '';
+  openModal('autoCourseModal');
+}
+
+async function confirmAutoCourse(){
+  const err = document.getElementById('acErr');
+  const target = document.getElementById('upAutoCourseTarget').value;
+  let courseId = target;
+  if (target === '__new__') {
+    const title = document.getElementById('upAutoCourseNewTitle').value.trim();
+    if (!title) { err.textContent = 'Enter a title for the new course.'; return; }
+    const cat = document.getElementById('upCat').value;
+    const sub = document.getElementById('upSub').value;
+    const res = await fetch('/api/content/courses', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title, description:'', categoryId:cat||null, subcategoryId:sub||null})});
+    const d = await res.json();
+    if (d.error || !d.id) { err.textContent = d.error || 'Could not create the course.'; return; }
+    courseId = d.id;
+  }
+  // Existing lessons in the target course, so a session number that
+  // already has a lesson gets files added to it rather than a duplicate
+  // lesson created alongside it.
+  const existingLessons = await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json()).catch(()=>[]);
+  const existingByNum = {};
+  existingLessons.forEach(l => { existingByNum[l.lesson_number] = l; });
+
+  for (const g of _acGroups) {
+    const fileIds = g.items.map(it=>it.fileId).filter(Boolean);
+    if (!fileIds.length) continue;
+    const existing = existingByNum[g.num];
+    if (existing) {
+      for (const fid of fileIds) {
+        await fetch('/api/content/lesson-file-refs', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({lessonId: existing.id, fileId: fid})});
+      }
+    } else {
+      await fetch('/api/content/lessons', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({courseId, lessonNumber:g.num, title:g.titleGuess, visibility:_defaultLessonVisibility||'client', accessStatus:'visible', fileIds})});
+    }
+  }
+  closeModal('autoCourseModal');
+  closeModal('uploadModal');
+  loadAll();
+  openCourseDetail(courseId);
+}
+
 async function doUpload(){
   const cat=document.getElementById('upCat').value;
   const sub=document.getElementById('upSub').value;
@@ -2531,19 +2786,34 @@ async function doUpload(){
   err.textContent='';
   const btn=document.getElementById('upBtn');
   setBtnLoading(btn, true, 'Uploading…');
+  _bulkUploadState = { total: upQueue.length, done: 0, currentName: upQueue[0]?.file.name||'', active: true };
+  updateUploadTicker();
   for(const it of upQueue){
     it.progress = 0;
+    _bulkUploadState.currentName = it.file.name;
+    updateUploadTicker();
     try {
       await uploadOneFile(it, cat, sub);
       it.progress = 100;
+      _bulkUploadState.done++;
+      updateUploadTicker();
     } catch (e) {
       err.textContent = `${it.file.name}: ${e.message}`;
       setBtnLoading(btn, false);
       renderQ();
+      _bulkUploadState.active = false;
+      updateUploadTicker();
+      appAlert(`Upload stopped: ${it.file.name} — ${e.message}. ${_bulkUploadState.done} of ${_bulkUploadState.total} finished before this.`);
       return; // stop the batch on first failure so the admin sees which file failed
     }
   }
   setBtnLoading(btn, false);
+  _bulkUploadState.active = false;
+  updateUploadTicker();
+  if (document.getElementById('upAutoCourse').checked) {
+    openAutoCourseConfirm();
+    return;
+  }
   closeModal('uploadModal');
   loadAll();
 }
@@ -2690,9 +2960,17 @@ async function toggleFileTalkPractice(id,talk_practice){
 }
 
 // ── File picker ──
+// Per Bot 24 — natural sort (numeric-aware, so "Session2" sorts before
+// "Session10" rather than after it) by title. The picker previously
+// rendered allFiles in whatever order they loaded in (recent-upload-first
+// in practice), which bore no relation to careful session-numbered
+// filenames — this instead respects that naming convention directly.
+function naturalSortFiles(files){
+  return [...files].sort((a,b)=>(a.title||'').localeCompare(b.title||'',undefined,{numeric:true,sensitivity:'base'}));
+}
 function renderPicker(pickerId,selIds=[]){
   const el=document.getElementById(pickerId);
-  el.innerHTML=allFiles.map(f=>`
+  el.innerHTML=naturalSortFiles(allFiles).map(f=>`
     <div class="picker-item${selIds.includes(f.id)?' sel':''}" data-id="${f.id}" data-cat="${f.category_id||''}" data-subcat="${f.subcategory_id||''}" data-kind="${f.content_type||''}" onclick="togglePick(this)">
       <input type="checkbox" style="accent-color:#b4e6c8;pointer-events:none" ${selIds.includes(f.id)?'checked':''}/>
       <span style="font-size:16px">${ficon(f.file_type)}</span>
@@ -2939,10 +3217,18 @@ async function openEnrolmentsModal(instanceId,instanceTitle){
 function renderCourses(courses){
   const el=document.getElementById('courseList');
   if(!courses.length){el.innerHTML='<div class="empty">No courses yet.</div>';return;}
-  el.innerHTML=courses.map(c=>`
+  // Per Bot 24 — "Featured" (Add to Home carousel) silently does nothing
+  // without an open Instance too — the fine print in the edit modal said
+  // so, but it's easy to miss there and the course just quietly never
+  // appears. Surfacing it directly on the card instead, wherever the
+  // admin will actually see it.
+  el.innerHTML=courses.map(c=>{
+    const hasOpenInstance = allInstances.some(i=>i.course_id===c.id && i.status==='open');
+    const featuredButNoInstance = c.featured && !hasOpenInstance;
+    return `
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
         <div class="item-row-meta">${c.description||''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
@@ -2956,7 +3242,7 @@ function renderCourses(courses){
         <button class="btn sm danger" onclick="delCourse('${c.id}')">Delete</button>
       </div>
     </div>
-  `).join('');
+  `;}).join('');
 }
 
 function openNewCourse(){
@@ -3062,9 +3348,13 @@ async function openCourseDetail(courseId){
   for(const l of lessons){
     const files=await fetch(`/api/content/lessons/${l.id}/files`).then(r=>r.json());
     const seqVal = l.file_sequence_override===null||l.file_sequence_override===undefined ? '' : (l.file_sequence_override?'1':'0');
+    // Per Bot 24 — re-open this row on render if it was open before this
+    // refresh (see _expandedLessonIds above), instead of always starting
+    // collapsed.
+    const wasOpen = _expandedLessonIds.has(l.id);
     h+=`<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:9px;overflow:hidden">
       <div style="padding:11px 14px;display:flex;align-items:center;gap:10px">
-        <button onclick="toggleLessonCollapse('${l.id}')" title="Show/hide files" style="background:none;border:none;color:rgba(255,255,255,0.35);font-size:12px;cursor:pointer;padding:2px 4px" id="lesson-chevron-${l.id}">▶</button>
+        <button onclick="toggleLessonCollapse('${l.id}')" title="Show/hide files" style="background:none;border:none;color:rgba(255,255,255,0.35);font-size:12px;cursor:pointer;padding:2px 4px" id="lesson-chevron-${l.id}">${wasOpen?'▼':'▶'}</button>
         <div style="font-size:16px;color:rgba(255,255,255,0.2);min-width:22px">${l.lesson_number}</div>
         <div style="flex:1"><div style="font-size:13px;color:rgba(255,255,255,0.78)">${l.title}${l.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${l.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}</div><div style="margin-top:3px">${vbadge(l.visibility)}</div></div>
         <select style="font-size:11px" title="File sequence for this lesson" onchange="setLessonFileSequence('${l.id}',this.value)">
@@ -3077,7 +3367,7 @@ async function openCourseDetail(courseId){
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
       </div>
-      ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" id="lesson-files-${l.id}" style="display:none;border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;flex-direction:column;gap:6px">
+      ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" id="lesson-files-${l.id}" style="display:${wasOpen?'flex':'none'};border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;flex-direction:column;gap:6px">
         <span style="font-size:11px;color:rgba(255,255,255,0.3);display:flex;gap:5px;align-items:center;margin-bottom:2px">
           Mandatory: <button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',true)">All</button><button class="btn sm" onclick="setLessonMandatoryAll('${l.id}',false)">None</button>
         </span>
@@ -3180,6 +3470,14 @@ async function coDragEnd(e) {
 // meant a very long scroll just to find the Close button at the bottom
 // (now also duplicated at the top — see the modal header). Collapsed by
 // default; toggling one lesson doesn't affect the others.
+// Per Bot 24 — tracks which lesson rows are open across a full re-render
+// of the course detail modal. Deleting a file (rmLessonFile), reordering,
+// or any other mutation inside an expanded row calls openCourseDetail()
+// to refresh, which used to rebuild every row collapsed by default —
+// closing the exact row you were working in, so removing a second file
+// meant re-finding and re-expanding it every time. Set here, read by
+// openCourseDetail's render loop below.
+const _expandedLessonIds = new Set();
 function toggleLessonCollapse(lessonId) {
   const listEl = document.getElementById('lesson-files-' + lessonId);
   const chevron = document.getElementById('lesson-chevron-' + lessonId);
@@ -3187,6 +3485,7 @@ function toggleLessonCollapse(lessonId) {
   const isOpen = listEl.style.display === 'flex';
   listEl.style.display = isOpen ? 'none' : 'flex';
   if (chevron) chevron.textContent = isOpen ? '▶' : '▼';
+  if (isOpen) _expandedLessonIds.delete(lessonId); else _expandedLessonIds.add(lessonId);
 }
 
 async function saveCourseSequence(){
@@ -3294,7 +3593,12 @@ function openAddLesson(){
   addFilesLessonId=null;editingLessonId=null;
   document.getElementById('alTitle').textContent='Add lesson';
   document.getElementById('alNum').value='';document.getElementById('alLessonTitle').value='';
-  document.getElementById('alVis').value='client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
+  // Per Bot 24 — was hardcoded to 'client' here; now reads the
+  // admin-settable default (Content settings), cached at page load by
+  // loadContentSettings(). Falls back to 'client' only if that hasn't
+  // loaded yet for some reason, matching the old hardcoded behaviour
+  // rather than silently defaulting to something the admin didn't choose.
+  document.getElementById('alVis').value=_defaultLessonVisibility||'client';document.getElementById('alAccessStatus').value='visible';document.getElementById('alErr').textContent='';
   document.getElementById('alLessonId').value='';
   document.getElementById('alPickerWrap').style.display='';
   document.getElementById('alPickerHint').style.display='none';
@@ -3362,7 +3666,16 @@ async function rmLessonFile(refId){
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
 async function delCourse(id){if(!(await appConfirm('Delete course and all lessons?')))return;await fetch(`/api/content/courses/${id}`,{method:'DELETE'});loadAll();}
-async function toggleCourseFeatured(id,featured){await fetch(`/api/content/courses/${id}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});loadAll();}
+// Per Bot 24 — a one-time heads-up right when Feature is clicked, in
+// addition to the persistent card badge above (renderCourses) — catches
+// it at the moment of the decision rather than only after the fact.
+async function toggleCourseFeatured(id,featured){
+  await fetch(`/api/content/courses/${id}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});
+  if (featured && !allInstances.some(i=>i.course_id===id && i.status==='open')) {
+    appAlert("Featured — but this course has no open Instance yet, so it won't actually show in the Home carousel until it does. Add one under Instances.");
+  }
+  loadAll();
+}
 
 // ── Quiz builder (Per Bot 5 follow-on) ──
 // Full-refresh pattern throughout, same as openCourseDetail above — re-fetch

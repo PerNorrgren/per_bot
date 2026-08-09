@@ -1959,6 +1959,31 @@ async function getDb() {
     // visually flags them, by "(five minutes)" in the topic.
     "ALTER TABLE talk_signal_scripts ADD COLUMN length_minutes INTEGER DEFAULT 1",
     "UPDATE talk_signal_scripts SET length_minutes=5 WHERE topic LIKE '%(five minutes)%' AND length_minutes=1",
+    // Per Bot 24 — settable default visibility for newly-created lessons
+    // (System Setup). Stored value is the same internal tier key used
+    // everywhere else (registered/member/client/facilitator/admin) —
+    // 'registered' is the internal value for "Explorer", the sensible
+    // default for most new content, replacing the previously hardcoded
+    // 'client' default that had to be manually changed every time.
+    "ALTER TABLE app_config ADD COLUMN default_lesson_visibility TEXT DEFAULT 'registered'",
+    // Per Bot 24 — compose-to-explicit-selected-list for newsletters.
+    // JSON-encoded array of user ids, set instead of (not alongside) the
+    // usual segment-based audience — see getNewsletterRecipients below,
+    // which checks this first and, if present, ignores `audience`
+    // entirely rather than trying to combine the two. NULL for every
+    // existing/ordinary newsletter, so nothing about current behaviour
+    // changes.
+    "ALTER TABLE newsletters ADD COLUMN explicit_user_ids TEXT",
+    // Per Bot 24 — "What's New" home promo, replacing the old fixed
+    // Quick Practice buttons on the client home screen. Admin-editable
+    // rich text (whats_new_body) plus an optional direct link to a
+    // specific practice or course — see /api/config and the client home
+    // render for how this gets used. Disabled (whats_new_enabled=0) by
+    // default so nothing changes until an admin actually sets it up.
+    "ALTER TABLE app_config ADD COLUMN whats_new_enabled INTEGER DEFAULT 0",
+    "ALTER TABLE app_config ADD COLUMN whats_new_body TEXT",
+    "ALTER TABLE app_config ADD COLUMN whats_new_link_type TEXT",
+    "ALTER TABLE app_config ADD COLUMN whats_new_link_id TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -5212,18 +5237,20 @@ function markMotdSentForUser(userId, todayStr) {
 // when this particular row was auto-created by a recurring schedule firing
 // — purely for display in the newsletters list ("from a schedule"), not
 // read by the send pipeline itself.
-function addNewsletter(id, subject, body, audience, format, offerId, sourceTag, scheduledMessageId) {
+function addNewsletter(id, subject, body, audience, format, offerId, sourceTag, scheduledMessageId, explicitUserIds) {
   getDbSync().run(
-    `INSERT INTO newsletters (id,subject,body,status,audience,format,offer_id,source_tag,scheduled_message_id) VALUES (?,?,?,'draft',?,?,?,?,?)`,
-    [id, subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null, scheduledMessageId || null]
+    `INSERT INTO newsletters (id,subject,body,status,audience,format,offer_id,source_tag,scheduled_message_id,explicit_user_ids) VALUES (?,?,?,'draft',?,?,?,?,?,?)`,
+    [id, subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null, scheduledMessageId || null,
+     (explicitUserIds && explicitUserIds.length) ? JSON.stringify(explicitUserIds) : null]
   );
   save();
 }
 function getNewsletter(id) { return queryOne('SELECT * FROM newsletters WHERE id=?', [id]); }
 function getAllNewsletters() { return queryAll('SELECT * FROM newsletters ORDER BY created_at DESC'); }
-function updateNewsletter(id, subject, body, audience, format, offerId, sourceTag) {
-  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=?, format=?, offer_id=?, source_tag=? WHERE id=? AND status='draft'",
-    [subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null, id]);
+function updateNewsletter(id, subject, body, audience, format, offerId, sourceTag, explicitUserIds) {
+  getDbSync().run("UPDATE newsletters SET subject=?, body=?, audience=?, format=?, offer_id=?, source_tag=?, explicit_user_ids=? WHERE id=? AND status='draft'",
+    [subject, body, audience || 'all', format || 'plain', offerId || null, sourceTag || null,
+     (explicitUserIds && explicitUserIds.length) ? JSON.stringify(explicitUserIds) : null, id]);
   save();
 }
 function deleteNewsletterDraft(id) {
@@ -6165,10 +6192,21 @@ function reportTalkUsage() {
 
 // segments: array of keys from NEWSLETTER_AUDIENCE_CLAUSES, or the string/array
 // containing 'all' for everyone opted in regardless of tier or login status.
-function getNewsletterRecipients(segments) {
+// Per Bot 24 — explicitUserIds (from a newsletter's own explicit_user_ids
+// column, already parsed from JSON by the caller) takes over entirely
+// when present — a specific hand-picked list of people, not a named
+// segment. Still respects pref_email_news/archived like every other
+// send; picking someone by hand doesn't override their own opt-out.
+function getNewsletterRecipients(segments, explicitUserIds) {
   const base = `pref_email_news=1 AND email IS NOT NULL AND archived=0`;
-  const list = Array.isArray(segments) ? segments : String(segments || 'all').split(',').map(s => s.trim()).filter(Boolean);
   const cols = `id, name, email, trial_ends_at, (password_hash IS NOT NULL) as has_login`;
+
+  if (Array.isArray(explicitUserIds) && explicitUserIds.length) {
+    const placeholders = explicitUserIds.map(() => '?').join(',');
+    return queryAll(`SELECT ${cols} FROM users WHERE ${base} AND id IN (${placeholders})`, explicitUserIds);
+  }
+
+  const list = Array.isArray(segments) ? segments : String(segments || 'all').split(',').map(s => s.trim()).filter(Boolean);
 
   if (!list.length || list.includes('all')) {
     return queryAll(`SELECT ${cols} FROM users WHERE ${base}`);

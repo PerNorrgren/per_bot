@@ -14,10 +14,15 @@
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
 
-    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    /* Per Bot 24 — two-row header: the logo/account row and the section
+       nav row used to share one horizontal line, cramming every nav
+       button to the far right. flex-direction:column above is the whole
+       fix — the two existing children (logo block, .topbar-right) simply
+       stack instead of sitting side by side, no markup changes needed. */
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
     @keyframes yy-spin { to { transform: rotate(360deg); } }
     .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:5px; animation:yy-spin 0.85s linear infinite; }
@@ -169,24 +174,9 @@
      one-off (tracking the 2026-07 mailing-list migration to Explorer);
      the counts bar above is the ongoing source of truth going forward. -->
 
-<!-- Per Bot 19p — browsable email send log, defaults to today. -->
-<div>
-  <div class="section-label">Email log</div>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Recent sends<span class="card-count" id="emailLogCount"></span></div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="emailLogDateFilter" onchange="loadEmailLog()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);border-radius:7px;padding:6px 10px;font-family:Georgia,serif;font-size:13px">
-          <option value="today">Today</option>
-          <option value="all">All (last 500)</option>
-        </select>
-        <button class="btn sm" onclick="loadEmailLog()">Refresh</button>
-      </div>
-    </div>
-    <div class="card-search-wrap"><input class="card-search" id="emailLogSearch" placeholder="Search by email or subject…" oninput="renderEmailLog()"/></div>
-    <div class="table" id="emailLogTable"><div class="loading">Loading…</div></div>
-  </div>
-</div>
+<!-- Per Bot 24 — Email Log moved to Comms2 (item 12 on the running
+     list) — this is a communications record, not a people one. See
+     comms2.html for the current version. -->
 
 <!-- Admins -->
     <div>
@@ -277,6 +267,7 @@
             <button class="btn sm disabled" id="memberResetPwBtn" onclick="resetSelectedMemberPassword()">Reset password</button>
             <button class="btn sm disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
             <button class="btn sm disabled" id="memberGetSubsBtn" onclick="getSelectedMemberSubscriptions()">Get Subscriptions</button>
+            <button class="btn sm disabled" id="memberMessageBtn" onclick="messageSelectedMembers()" title="Compose a message to exactly the people selected, not a segment">Message</button>
           </div>
         </div>
         <div class="card-search-wrap"><input class="card-search" id="memberSearch" placeholder="Search members… (* and ? wildcards)" oninput="renderMembers()"/></div>
@@ -567,20 +558,6 @@
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('confirmModal')">Cancel</button>
         <button class="btn danger" id="confirmOkBtn" style="padding:8px 18px;border-radius:8px;font-family:Georgia,serif;font-size:13px" onclick="confirmAction()">Confirm</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Email Preview Modal (Per Bot 21) -->
-  <div class="modal-overlay" id="emailPreviewModal" onclick="if(event.target===this)closeModal('emailPreviewModal')">
-    <div class="modal modal-wide">
-      <h3>Email preview</h3>
-      <div class="modal-note" id="emailPreviewMeta" style="margin-top:-10px"></div>
-      <div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.12)">
-        <iframe id="emailPreviewFrame" sandbox="" style="width:100%;height:60vh;border:0;background:#fff;display:block"></iframe>
-      </div>
-      <div class="modal-btns">
-        <button class="modal-cancel" onclick="closeModal('emailPreviewModal')">Close</button>
       </div>
     </div>
   </div>
@@ -1823,7 +1800,7 @@
   // ── MEMBERS ──
   // ══════════════════════════════════════════
   let _memberData = [];
-  const memberSel = makeSelection(['memberEditBtn','memberDetailsBtn','memberResetPwBtn','memberDelBtn','memberGetSubsBtn'], 'memberEditBtn');
+  const memberSel = makeSelection(['memberEditBtn','memberDetailsBtn','memberResetPwBtn','memberDelBtn','memberGetSubsBtn','memberMessageBtn'], 'memberEditBtn');
 
   async function loadMembers() {
     memberSel.clear();
@@ -2136,6 +2113,21 @@
   let _subsResultRows = [];
   let _subsResultRequestedCount = 0;
   async function getSelectedMemberSubscriptions() { return getSubscriptionsFor([...memberSel.sel], 'memberGetSubsBtn'); }
+
+  // Per Bot 24 — compose-to-explicit-selected-list. Stores exactly the
+  // selected person ids (plus a display name for the compose screen) in
+  // sessionStorage and hands off to the Communications page, which reads
+  // it back and pre-fills a "specific people" audience instead of the
+  // usual named segment. sessionStorage rather than a URL param since a
+  // few hundred ids would make an unwieldy (and easy to accidentally
+  // truncate) URL.
+  function messageSelectedMembers() {
+    const ids = [...memberSel.sel];
+    if (!ids.length) return;
+    sessionStorage.setItem('comms_explicit_recipient_ids', JSON.stringify(ids));
+    sessionStorage.setItem('comms_explicit_recipient_label', `${ids.length} selected member${ids.length===1?'':'s'}`);
+    window.location.href = '/admin/comms?composeToSelected=1';
+  }
   async function getSelectedUserSubscriptions() { return getSubscriptionsFor([...userSel.sel], 'userGetSubsBtn'); }
   async function getSubscriptionsFor(ids, btnId) {
     if (!ids.length) return;
@@ -2590,69 +2582,8 @@
   // action alongside loadNlContacts/loadUsers/loadMembers.
 
   // ── Email log (Per Bot 19p) ──
-  let _emailLogData = [];
-  async function loadEmailLog() {
-    document.getElementById('emailLogTable').innerHTML = '<div class="loading">Loading…</div>';
-    try {
-      const res = await fetch('/api/admin/email-log?limit=2000');
-      _emailLogData = await res.json();
-      document.getElementById('emailLogCount').textContent = ` (${_emailLogData.length})`;
-      renderEmailLog();
-    } catch(e) {
-      document.getElementById('emailLogTable').innerHTML = '<div class="empty">Could not load — try Refresh.</div>';
-    }
-  }
-  function renderEmailLog() {
-    const el = document.getElementById('emailLogTable');
-    const query = document.getElementById('emailLogSearch').value.trim().toLowerCase();
-    const dateFilter = document.getElementById('emailLogDateFilter').value;
-    const today = new Date().toISOString().slice(0,10);
-    const s = getSort('emailLog');
-    let list = _emailLogData;
-    if (dateFilter === 'today') list = list.filter(r => r.created_at.startsWith(today));
-    if (query) list = list.filter(r => r.email.toLowerCase().includes(query) || (r.subject||'').toLowerCase().includes(query));
-    if (s.col) list = [...list].sort((a,b) => { const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
-    if (!list.length) { el.innerHTML = '<div class="empty">No matching sends.</div>'; return; }
-    el.innerHTML =
-      `<div class="table-hdr">
-        <div class="table-hdr-cell col-email" onclick="emailLogSort('email')">Email ${sortIndicator('emailLog','email')}</div>
-        <div class="table-hdr-cell col-name" onclick="emailLogSort('subject')">Subject ${sortIndicator('emailLog','subject')}</div>
-        <div class="table-hdr-cell col-created" onclick="emailLogSort('created_at')">Sent at ${sortIndicator('emailLog','created_at')}</div>
-        <div class="table-hdr-cell" style="flex:0 0 90px" onclick="emailLogSort('status')">Status ${sortIndicator('emailLog','status')}</div>
-        <div class="table-hdr-cell" style="flex:0 0 56px"></div>
-      </div>` +
-      list.map(r => `
-        <div class="table-row">
-          <div class="col-email">${escHtml(r.email)}</div>
-          <div class="col-name">${escHtml(r.subject||'')}</div>
-          <div class="col-created">${r.created_at}</div>
-          <div style="flex:0 0 90px;color:${r.status==='sent'?'rgba(180,230,200,0.85)':'rgba(255,140,120,0.9)'}">${r.status}</div>
-          <div style="flex:0 0 56px;text-align:right">${r.has_body ? `<span style="cursor:pointer;color:rgba(180,230,200,0.75);text-decoration:underline;font-size:12px" onclick="viewEmailBody('${r.id}')">View</span>` : ''}</div>
-        </div>
-      `).join('');
-  }
-  function emailLogSort(col) { setSort('emailLog', col); renderEmailLog(); }
-  // Per Bot 21 — fetches and renders the stored HTML for one email log row
-  // inside a sandboxed iframe (via srcdoc), so it displays the way it
-  // actually looked in an inbox rather than as escaped/plain text.
-  // sandbox="" blocks scripts, forms, and top-level navigation from
-  // anything the stored HTML contains, while still allowing images and
-  // styling to render normally.
-  async function viewEmailBody(id) {
-    try {
-      const res = await fetch(`/api/admin/email-log/${id}/body`);
-      const data = await res.json();
-      if (!data.html) {
-        alert('No stored copy for this email — either it was sent before this feature existed, or the body was archived off.');
-        return;
-      }
-      document.getElementById('emailPreviewMeta').textContent = `${data.email}  ·  ${data.subject || ''}  ·  ${data.created_at}`;
-      document.getElementById('emailPreviewFrame').srcdoc = data.html;
-      openModal('emailPreviewModal');
-    } catch(e) {
-      alert('Could not load this email.');
-    }
-  }
+  // Per Bot 24 — Email Log (loadEmailLog/renderEmailLog/emailLogSort/
+  // viewEmailBody and its modal) moved to Comms2 — see comms2.html.
 
   async function loadUserCounts() {
     try {
@@ -2920,7 +2851,7 @@
   loadMembers();
   loadMembers();
   loadUsers();
-  loadNlContacts(); loadUserCounts(); loadEmailLog();
+  loadNlContacts(); loadUserCounts();
   loadLeads();
   loadFacilitatorRequests();
 </script>

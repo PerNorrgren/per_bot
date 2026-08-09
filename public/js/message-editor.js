@@ -804,6 +804,13 @@
 
     if (initialHtml) q.clipboard.dangerouslyPasteHTML(initialHtml);
     instances[containerId] = q;
+    // Per Bot 24 — explicit spell-check, rather than relying on browser
+    // default behaviour for a contenteditable region, which is
+    // inconsistent enough across browsers that typos were slipping
+    // through unmarked.
+    q.root.setAttribute('spellcheck', 'true');
+    q.root.setAttribute('autocorrect', 'on');
+    q.root.setAttribute('autocapitalize', 'sentences');
     return q;
   }
 
@@ -853,6 +860,15 @@
           <strong style="font-size:12px;color:rgba(255,255,255,0.7)" id="${containerId}_aiTitle">Generating</strong>
           <button type="button" onclick="MessageEditor.closeAiPreview('${containerId}')" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;line-height:1">×</button>
         </div>
+        <!-- Per Bot 24 — optional topic, so this doesn't always default
+             to the same handful of subjects (coffee pots and all). Typing
+             here and pressing Enter (or Generate) re-runs with the topic;
+             leaving it blank keeps the previous untargeted behaviour. -->
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input type="text" id="${containerId}_aiTopic" placeholder="What should this be about? (optional)" style="flex:1;font-size:12px"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();MessageEditor.retryAiGenerate('${containerId}');}"/>
+          <button type="button" class="btn sm" onclick="MessageEditor.retryAiGenerate('${containerId}')">Generate</button>
+        </div>
         <div class="me-ai-body" id="${containerId}_aiBody"></div>
         <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
           <button type="button" class="btn sm" id="${containerId}_aiRetry" style="display:none" onclick="MessageEditor.retryAiGenerate('${containerId}')">Try again</button>
@@ -885,9 +901,17 @@
     document.getElementById(`${containerId}_aiBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">Generating${type === 'sumie' ? ' — this can take up to two minutes' : ''}…</span>`;
     try {
       const body = { type };
+      // Per Bot 24 — the topic field applies to every type, not just
+      // sumie. sumie keeps its own fallback (base the image on whatever
+      // haiku/limerick/poem was last inserted) only when the topic field
+      // is left blank, preserving its previous behaviour exactly.
+      const topicEl = document.getElementById(`${containerId}_aiTopic`);
+      const topic = topicEl ? topicEl.value.trim() : '';
       if (type === 'sumie') {
         const q = instances[containerId];
-        body.context = _lastInsertedByType.haiku || _lastInsertedByType.limerick || _lastInsertedByType.poem || (q ? q.getText() : '');
+        body.context = topic || _lastInsertedByType.haiku || _lastInsertedByType.limerick || _lastInsertedByType.poem || (q ? q.getText() : '');
+      } else if (topic) {
+        body.context = topic;
       }
       const res = await fetch('/api/admin/comms-ai-generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
@@ -1086,7 +1110,7 @@
 
   const VERSION_EXTRA_FIELD_RENDERERS = {
     days: { render: (val) => `<div class="me-field-group"><label>Days threshold</label><input class="me-inline-input" type="number" min="1" max="30" id="meVeExtra_days" value="${val ?? ''}" style="width:100px"/></div>` },
-    sms_body: { render: (val) => `<div class="me-field-group"><label>SMS body</label><textarea class="me-inline-input" id="meVeExtra_sms_body" rows="2">${escVe(val ?? '')}</textarea></div>` },
+    sms_body: { render: (val) => `<div class="me-field-group"><label>SMS body</label><textarea class="me-inline-input" id="meVeExtra_sms_body" rows="2" spellcheck="true">${escVe(val ?? '')}</textarea></div>` },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {
@@ -1116,14 +1140,14 @@
         <div class="me-field-group">
           <label>Subject</label>
           <div style="display:flex;gap:6px;align-items:center">
-            <input class="me-inline-input" type="text" id="meVeSubject" style="flex:1"/>
+            <input class="me-inline-input" type="text" id="meVeSubject" spellcheck="true" style="flex:1"/>
             <span id="meVeSubjectTokenWrap"></span>
           </div>
         </div>
         <div class="me-field-group">
           <label>Body</label>
           <div id="meVeFormatToggleWrap"></div>
-          <textarea class="me-inline-input" id="meVePlainBody" rows="6" style="width:100%"></textarea>
+          <textarea class="me-inline-input" id="meVePlainBody" rows="6" style="width:100%" spellcheck="true"></textarea>
           <div id="meVeRichBody" style="display:none"></div>
           <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="meVeBodyTokenWrap"></div>
           <div id="meVeAiGenerateWrap" style="display:none"></div>

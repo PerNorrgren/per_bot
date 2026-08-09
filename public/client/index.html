@@ -854,11 +854,18 @@
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15); margin-bottom:-13px;"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
-          <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">Quick practice</div>
-          <div style="display:flex; gap:8px; justify-content:center;">
-            <button type="button" onclick="playQuickPractice('calm-body', QUICK_PRACTICE_SCRIPTS.body)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the body</button>
-            <button type="button" onclick="playQuickPractice('calm-mind', QUICK_PRACTICE_SCRIPTS.mind)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the mind</button>
-            <button type="button" onclick="playQuickPractice('calm-breath', QUICK_PRACTICE_SCRIPTS.breath)" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-align:center;">Calm the breath</button>
+          <!-- Per Bot 24 — "What's New" home promo (item 11), replacing
+               the old fixed Quick Practice buttons. Hidden by default;
+               shown and populated by renderWhatsNewPromo() below only
+               when an admin has actually enabled and written one (Sales
+               & Marketing → Home screen — What's New). Falls back to
+               nothing shown at all when disabled, rather than reviving
+               Quick Practice — Per's own call, see the conversation this
+               was built in. -->
+          <div id="whatsNewPromo" style="display:none">
+            <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">What's new</div>
+            <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:left"></div>
+            <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
         </div>
         <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer; margin-bottom:-13px;">♪ Hear Calming Sounds</button>
@@ -4978,6 +4985,52 @@
       const list = await res.json();
       if (Array.isArray(list) && list.length) document.getElementById('calmMotdText').textContent = list[0].body;
     } catch(e) {}
+    renderWhatsNewPromo();
+  }
+  // Per Bot 24 — "What's New" home promo (item 11). cfg comes from the
+  // same /api/config payload already fetched into window.brandReady
+  // elsewhere on this page (see initFacStrip) — reused here rather than
+  // a second fetch.
+  async function renderWhatsNewPromo() {
+    const wrap = document.getElementById('whatsNewPromo');
+    try {
+      const cfg = await window.brandReady;
+      if (!cfg.whatsNewEnabled || !cfg.whatsNewBody || !cfg.whatsNewBody.trim()) { wrap.style.display = 'none'; return; }
+      document.getElementById('whatsNewPromoBody').innerHTML = cfg.whatsNewBody;
+      const btn = document.getElementById('whatsNewPromoBtn');
+      if (cfg.whatsNewLinkType && cfg.whatsNewLinkId) {
+        btn.style.display = '';
+        btn.textContent = cfg.whatsNewLinkType === 'course' ? 'Open course' : 'Open';
+        btn.dataset.linkType = cfg.whatsNewLinkType;
+        btn.dataset.linkId = cfg.whatsNewLinkId;
+      } else {
+        btn.style.display = 'none';
+      }
+      wrap.style.display = '';
+    } catch(e) { wrap.style.display = 'none'; }
+  }
+  // Practice-type target: looked up from _practicesData, already loaded
+  // as part of normal app boot (see loadPractices) — no extra fetch
+  // needed. Course-type target: reuses the exact same
+  // switchTab+openCourseDetail+openLesson path the resume card
+  // (jumpToResume above) already uses for "continue where you left off".
+  function openWhatsNewLink() {
+    const btn = document.getElementById('whatsNewPromoBtn');
+    const type = btn.dataset.linkType, id = btn.dataset.linkId;
+    if (!type || !id) return;
+    if (type === 'practice') {
+      const p = _practicesData.find(x => x.id === id);
+      if (p) { openPractice(p.id, p.title, p.type, p.content, p.filename); return; }
+      // Not in the practices list (e.g. a book/poem living elsewhere in
+      // the library rather than the Practices shelf) — Library search is
+      // the safest fallback rather than doing nothing.
+      switchTab('library');
+      return;
+    }
+    if (type === 'course') {
+      switchTab('courses');
+      openCourseDetail(id);
+    }
   }
   // Per Bot 16 — replaced the old random-pick toggle with a proper popup:
   // a list of everything tagged content_type 'calming_sound' (a new, real
@@ -5107,6 +5160,12 @@
   // here rather than a scaled one. Each sentence still gets its own cached
   // clip (keyed off the script's cacheKey + its index), so this remains
   // just as cheap on repeat plays as the old single-clip version was.
+  // Per Bot 24 — no longer called from anywhere (the buttons that
+  // triggered this were replaced by the "What's New" home promo, see
+  // renderWhatsNewPromo below) — left in place rather than deleted, in
+  // case Quick Practice comes back as a feature elsewhere later; nothing
+  // about keeping this costs anything since it's just inert data/a
+  // function with no remaining call sites.
   const QUICK_PRACTICE_SCRIPTS = {
     body: "Let's settle the body for a moment. Feel your feet on the floor. Let your shoulders drop, just a little. Breathe in, and let it out slowly — longer than you took it in. Notice your hands. Let them rest, heavy and still. One more breath like that. In. And a long, slow release. That's it. You're a little steadier now.",
     mind: "If your mind's been looping, let's give it somewhere else to land for a moment. Notice three sounds around you right now, near or far. Now notice one thing you can feel — your clothes on your skin, or the chair beneath you. The loop doesn't need to stop all at once. Just for this moment, you're here, not there. That's enough.",

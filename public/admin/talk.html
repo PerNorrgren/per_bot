@@ -13,10 +13,15 @@
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
 
-    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    /* Per Bot 24 — two-row header: the logo/account row and the section
+       nav row used to share one horizontal line, cramming every nav
+       button to the far right. flex-direction:column above is the whole
+       fix — the two existing children (logo block, .topbar-right) simply
+       stack instead of sitting side by side, no markup changes needed. */
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
     @keyframes yy-spin { to { transform: rotate(360deg); } }
     .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:5px; animation:yy-spin 0.85s linear infinite; }

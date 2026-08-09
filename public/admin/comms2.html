@@ -21,9 +21,14 @@
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
 
-    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    /* Per Bot 24 — two-row header: the logo/account row and the section
+       nav row used to share one horizontal line, cramming every nav
+       button to the far right. flex-direction:column above is the whole
+       fix — the two existing children (logo block, .topbar-right) simply
+       stack instead of sitting side by side, no markup changes needed. */
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -31,6 +36,34 @@
     .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
     .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:36px; }
     .info-banner { padding:14px 18px; border-radius:10px; background:rgba(120,170,255,0.07); border:1px solid rgba(120,170,255,0.22); color:rgba(160,195,255,0.85); font-size:12px; line-height:1.6; }
+    /* Per Bot 24 — ported from index.html for the Email Log, moved here
+       (see item 12 on the running list — this page is its new home). */
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+    .card-count { font-size:12px; color:rgba(255,255,255,0.35); font-weight:normal; margin-left:6px; }
+    .card-search-wrap { padding:10px 16px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .card-search { width:100%; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.09); border-radius:8px; padding:8px 12px; font-size:13px; color:rgba(255,255,255,0.7); font-family:'Georgia',serif; outline:none; }
+    .table { width:100%; max-height:460px; overflow-y:auto; }
+    .table-hdr { display:flex; align-items:center; padding:8px 20px; gap:14px; border-bottom:1px solid rgba(255,255,255,0.06); background:#141a17; position:sticky; top:0; z-index:2; }
+    .table-hdr-cell { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); cursor:pointer; user-select:none; display:flex; align-items:center; gap:4px; }
+    .table-hdr-cell:hover { color:rgba(255,255,255,0.5); }
+    .table-row { display:flex; align-items:center; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); gap:14px; }
+    .table-row:last-child { border-bottom:none; }
+    .table-row:hover { background:rgba(255,255,255,0.03); }
+    .col-name { flex:1.2; font-size:14px; color:rgba(255,255,255,0.8); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-email { flex:1.5; font-size:12px; color:rgba(255,255,255,0.4); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .col-created { flex:0.8; font-size:12px; color:rgba(255,255,255,0.3); }
+    .empty { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .loading { padding:28px 20px; font-size:13px; color:rgba(255,255,255,0.2); font-style:italic; }
+    .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:420px; display:flex; flex-direction:column; gap:16px; }
+    .modal-wide { max-width:720px; }
+    .modal-note { font-size:12px; color:rgba(255,255,255,0.3); line-height:1.6; }
+    .modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px; }
+    .modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
   </style>
 </head>
 <body>
@@ -72,6 +105,40 @@
   <div id="sec_newsletter_welcome"></div>
   <div id="sec_trial_extended"></div>
 
+  <!-- Per Bot 24 — Email Log, moved here from the People page (item 12 on
+       the running list) — this is a communications record, not a people
+       one. Markup/behaviour ported as-is from index.html. -->
+  <div>
+    <div class="section-label">Email log</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Recent sends<span class="card-count" id="emailLogCount"></span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="emailLogDateFilter" onchange="loadEmailLog()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);border-radius:7px;padding:6px 10px;font-family:Georgia,serif;font-size:13px">
+            <option value="today">Today</option>
+            <option value="all">All (last 500)</option>
+          </select>
+          <button class="btn sm" onclick="loadEmailLog()">Refresh</button>
+        </div>
+      </div>
+      <div class="card-search-wrap"><input class="card-search" id="emailLogSearch" placeholder="Search by email or subject…" oninput="renderEmailLog()"/></div>
+      <div class="table" id="emailLogTable"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<div class="modal-overlay" id="emailPreviewModal" onclick="if(event.target===this)closeModal('emailPreviewModal')">
+  <div class="modal modal-wide">
+    <h3>Email preview</h3>
+    <div class="modal-note" id="emailPreviewMeta" style="margin-top:-10px"></div>
+    <div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.12)">
+      <iframe id="emailPreviewFrame" sandbox="" style="width:100%;height:60vh;border:0;background:#fff;display:block"></iframe>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('emailPreviewModal')">Close</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -101,6 +168,86 @@
   COMMS2_TYPES.forEach(type => {
     MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type);
   });
+
+  // Per Bot 24 — Email Log, ported as-is from index.html (item 12 on the
+  // running list). openModal/closeModal, escHtml, and the sort helpers
+  // below are all copies of the same-named functions there; this page
+  // didn't have any of them before since it had nothing needing them.
+  function openModal(id)  { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  const sortState = {};
+  function getSort(key) { return sortState[key] || { col: null, dir: 1 }; }
+  function setSort(key, col) {
+    const cur = getSort(key);
+    sortState[key] = { col, dir: cur.col === col ? -cur.dir : 1 };
+  }
+  function sortIndicator(key, col) {
+    const s = getSort(key);
+    if (s.col !== col) return '<span class="sort-ind">⇅</span>';
+    return `<span class="sort-ind active">${s.dir === 1 ? '▲' : '▼'}</span>`;
+  }
+
+  let _emailLogData = [];
+  async function loadEmailLog() {
+    document.getElementById('emailLogTable').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const res = await fetch('/api/admin/email-log?limit=2000');
+      _emailLogData = await res.json();
+      document.getElementById('emailLogCount').textContent = ` (${_emailLogData.length})`;
+      renderEmailLog();
+    } catch(e) {
+      document.getElementById('emailLogTable').innerHTML = '<div class="empty">Could not load — try Refresh.</div>';
+    }
+  }
+  function renderEmailLog() {
+    const el = document.getElementById('emailLogTable');
+    const query = document.getElementById('emailLogSearch').value.trim().toLowerCase();
+    const dateFilter = document.getElementById('emailLogDateFilter').value;
+    const today = new Date().toISOString().slice(0,10);
+    const s = getSort('emailLog');
+    let list = _emailLogData;
+    if (dateFilter === 'today') list = list.filter(r => r.created_at.startsWith(today));
+    if (query) list = list.filter(r => r.email.toLowerCase().includes(query) || (r.subject||'').toLowerCase().includes(query));
+    if (s.col) list = [...list].sort((a,b) => { const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
+    if (!list.length) { el.innerHTML = '<div class="empty">No matching sends.</div>'; return; }
+    el.innerHTML =
+      `<div class="table-hdr">
+        <div class="table-hdr-cell col-email" onclick="emailLogSort('email')">Email ${sortIndicator('emailLog','email')}</div>
+        <div class="table-hdr-cell col-name" onclick="emailLogSort('subject')">Subject ${sortIndicator('emailLog','subject')}</div>
+        <div class="table-hdr-cell col-created" onclick="emailLogSort('created_at')">Sent at ${sortIndicator('emailLog','created_at')}</div>
+        <div class="table-hdr-cell" style="flex:0 0 90px" onclick="emailLogSort('status')">Status ${sortIndicator('emailLog','status')}</div>
+        <div class="table-hdr-cell" style="flex:0 0 56px"></div>
+      </div>` +
+      list.map(r => `
+        <div class="table-row">
+          <div class="col-email">${escHtml(r.email)}</div>
+          <div class="col-name">${escHtml(r.subject||'')}</div>
+          <div class="col-created">${r.created_at}</div>
+          <div style="flex:0 0 90px;color:${r.status==='sent'?'rgba(180,230,200,0.85)':'rgba(255,140,120,0.9)'}">${r.status}</div>
+          <div style="flex:0 0 56px;text-align:right">${r.has_body ? `<span style="cursor:pointer;color:rgba(180,230,200,0.75);text-decoration:underline;font-size:12px" onclick="viewEmailBody('${r.id}')">View</span>` : ''}</div>
+        </div>
+      `).join('');
+  }
+  function emailLogSort(col) { setSort('emailLog', col); renderEmailLog(); }
+  async function viewEmailBody(id) {
+    try {
+      const res = await fetch(`/api/admin/email-log/${id}/body`);
+      const data = await res.json();
+      if (!data.html) {
+        alert('No stored copy for this email — either it was sent before this feature existed, or the body was archived off.');
+        return;
+      }
+      document.getElementById('emailPreviewMeta').textContent = `${data.email}  ·  ${data.subject || ''}  ·  ${data.created_at}`;
+      document.getElementById('emailPreviewFrame').srcdoc = data.html;
+      openModal('emailPreviewModal');
+    } catch(e) {
+      alert('Could not load this email.');
+    }
+  }
+  loadEmailLog();
 </script>
 <script>window.TOMTE_PAGE = 'Admin — Comms 2';</script>
 </body>

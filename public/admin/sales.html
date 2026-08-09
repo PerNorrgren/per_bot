@@ -34,10 +34,15 @@
     .format-toggle button.active { background:rgba(180,230,200,0.14); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
 
     /* ── Topbar ── */
-    .topbar { padding:16px 28px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:10; }
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    /* Per Bot 24 — two-row header: the logo/account row and the section
+       nav row used to share one horizontal line, cramming every nav
+       button to the far right. flex-direction:column above is the whole
+       fix — the two existing children (logo block, .topbar-right) simply
+       stack instead of sitting side by side, no markup changes needed. */
     .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
     .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
-    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
     .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; gap:5px; transition:all 0.2s; }
     .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
     .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
@@ -277,6 +282,43 @@
         <div class="modal-note" style="margin-bottom:8px">Plays on /promotions when the offer that brought someone there doesn't have its own showcase file set. Also used for anyone landing on /promotions directly, with no promo code at all.</div>
         <select id="defaultShowcaseFile" onchange="saveDefaultShowcaseFile()"><option value="">No default set</option></select>
         <div class="feedback" id="defaultShowcaseFeedback" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per Bot 24 — "What's New" home promo, replacing the old fixed
+       Quick Practice buttons on the client home screen (see item 11).
+       Admin-editable feel-good copy plus a direct link to one specific
+       practice or course, using the same rich editor (with AI Help and
+       spell-check) as everywhere else in Comms/Sales. -->
+  <div>
+    <div class="section-label">Home screen — What's New</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Replaces Quick Practice on the client home screen</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,0.5);cursor:pointer;text-transform:none;letter-spacing:normal">
+          <input type="checkbox" id="whatsNewEnabled" onchange="toggleWhatsNewEnabled(this.checked)" style="width:auto"/> Show on home screen
+        </label>
+      </div>
+      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+        <div class="modal-note">A short, feel-good line or two — promote a practice, a course, the new book, whatever's worth pointing people toward right now. Same selling-copy rules as everywhere else: no urgency, no hype words.</div>
+        <div id="whatsNewBody_rich"></div>
+        <div>
+          <label style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Opens directly to</label>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <select id="whatsNewLinkType" onchange="onWhatsNewLinkTypeChange()" style="flex:0 0 160px">
+              <option value="">No link — text only</option>
+              <option value="practice">A practice / book / poem</option>
+              <option value="course">A course</option>
+            </select>
+            <select id="whatsNewLinkPractice" style="flex:1;display:none"></select>
+            <select id="whatsNewLinkCourse" style="flex:1;display:none"></select>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <div class="feedback" id="whatsNewFeedback" style="align-self:center"></div>
+          <button class="btn sm primary" onclick="saveWhatsNew()">Save</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1041,7 +1083,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile(); initVersionSections(); loadCampaigns();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile().then(loadWhatsNew); initVersionSections(); loadCampaigns();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -1081,6 +1123,74 @@
   async function loadDefaultShowcaseFile() {
     const current = await fetch('/api/admin/settings/default-showcase-file').then(r=>r.json()).catch(()=>({}));
     await populateShowcaseFileSelect('defaultShowcaseFile', current.defaultShowcaseFileId || null);
+  }
+
+  // Per Bot 24 — "What's New" home promo (item 11 on the running list).
+  // Reuses populateShowcaseFileSelect's fetched library list where
+  // possible, but that helper filters to video/audio only for the
+  // showcase clip use case — this needs the full library instead, since
+  // a practice/book/poem could be any file type.
+  let _whatsNewCourseInstances = null;
+  async function populateWhatsNewPracticeSelect(selectedId) {
+    // _filesForShowcaseSelect is populated by populateShowcaseFileSelect
+    // above, called from loadDefaultShowcaseFile() at page load — reused
+    // here rather than a second fetch, same underlying library data.
+    const el = document.getElementById('whatsNewLinkPractice');
+    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived);
+    el.innerHTML = '<option value="">Select…</option>' + all.map(f => `<option value="${f.id}" ${f.id===selectedId?'selected':''}>${escHtml(f.title)}</option>`).join('');
+  }
+  async function populateWhatsNewCourseSelect(selectedId) {
+    if (!_whatsNewCourseInstances) {
+      try { _whatsNewCourseInstances = await (await fetch('/api/admin/course-instances')).json(); }
+      catch(e) { _whatsNewCourseInstances = []; }
+    }
+    const el = document.getElementById('whatsNewLinkCourse');
+    // Per Bot 24 — the client opens a course by *instance* id
+    // (openCourseDetail(instanceId) in client/index.html), not by course
+    // id, and only an open instance is actually enrollable — so only
+    // open instances are offered here, same real-world constraint as the
+    // "Add to Home carousel" warning built earlier this session (item 10).
+    const open = (_whatsNewCourseInstances || []).filter(i => i.status === 'open');
+    el.innerHTML = '<option value="">Select…</option>' + open.map(i => `<option value="${i.id}" ${i.id===selectedId?'selected':''}>${escHtml(i.course_title||i.title)}${i.title&&i.course_title?' — '+escHtml(i.title):''}</option>`).join('');
+  }
+  function onWhatsNewLinkTypeChange() {
+    const type = document.getElementById('whatsNewLinkType').value;
+    document.getElementById('whatsNewLinkPractice').style.display = type === 'practice' ? '' : 'none';
+    document.getElementById('whatsNewLinkCourse').style.display = type === 'course' ? '' : 'none';
+    if (type === 'practice' && !document.getElementById('whatsNewLinkPractice').options.length) populateWhatsNewPracticeSelect('');
+    if (type === 'course' && !document.getElementById('whatsNewLinkCourse').options.length) populateWhatsNewCourseSelect('');
+  }
+  function toggleWhatsNewEnabled(checked) {
+    // Visual-only — the actual enabled state only takes effect on Save,
+    // same as every other field in this card, so a person can tick the
+    // box, decide against it, and navigate away without half-saving.
+  }
+  async function loadWhatsNew() {
+    const cfg = await fetch('/api/setup/config').then(r=>r.json()).catch(()=>({}));
+    document.getElementById('whatsNewEnabled').checked = !!cfg.whats_new_enabled;
+    MessageEditor.mountRich('whatsNewBody_rich', cfg.whats_new_body || '');
+    document.getElementById('whatsNewLinkType').value = cfg.whats_new_link_type || '';
+    if (cfg.whats_new_link_type === 'practice') await populateWhatsNewPracticeSelect(cfg.whats_new_link_id || '');
+    if (cfg.whats_new_link_type === 'course') await populateWhatsNewCourseSelect(cfg.whats_new_link_id || '');
+    onWhatsNewLinkTypeChange();
+  }
+  async function saveWhatsNew() {
+    const linkType = document.getElementById('whatsNewLinkType').value;
+    const linkId = linkType === 'practice' ? document.getElementById('whatsNewLinkPractice').value
+      : linkType === 'course' ? document.getElementById('whatsNewLinkCourse').value
+      : null;
+    const payload = {
+      whatsNewEnabled: document.getElementById('whatsNewEnabled').checked ? 1 : 0,
+      whatsNewBody: MessageEditor.getInstance('whatsNewBody_rich').root.innerHTML,
+      whatsNewLinkType: linkType || null,
+      whatsNewLinkId: linkId || null,
+    };
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      showFeedback('whatsNewFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('whatsNewFeedback', 'Could not save — please try again.', 'err');
+    }
   }
   async function saveDefaultShowcaseFile() {
     const fb = document.getElementById('defaultShowcaseFeedback');
