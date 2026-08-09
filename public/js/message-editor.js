@@ -1197,6 +1197,11 @@
       body: "It's been a little while. No pressure at all — just wanted to leave the door open, in case a few minutes today would help.",
       extra: { days: 4, sms_body: "It's been a little while, {{name}}. No pressure — a few minutes today might help. {{link}}" },
     },
+    renewal: {
+      subject: 'Your membership renews soon',
+      body: "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
+      extra: { days: 5, sms_body: 'Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}' },
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {

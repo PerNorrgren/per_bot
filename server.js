@@ -1401,42 +1401,45 @@ async function sendInactivityReminders() {
 // invoice.payment_succeeded, cleared on cancellation) — see
 // getUpcomingRenewals in db.js for why only active subscriptions match
 // (lifetime members have no expiry to remind about).
-function buildRenewalReminderHtml(user, expiresAt, b) {
+function buildRenewalReminderHtml(user, expiresAt, b, override) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user, { extra: { date: dateStr } });
-  const bodyText = fillTemplate(
-    cfg.renewal_reminder_body || "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
-    tokens
-  );
+  const content = resolveMessageContent('renewal', {
+    body: "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
+  }, override);
+  const bodyText = fillTemplate(content.body, tokens);
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
-      ${renderMessageBody(bodyText, cfg.renewal_reminder_format)}
+      ${renderMessageBody(bodyText, content.format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">Manage my membership →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`;
 }
-function buildRenewalReminderSms(userName, expiresAt, b) {
+function buildRenewalReminderSms(userName, expiresAt, b, override) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  const cfg = db.getAppConfig() || {};
+  const content = resolveMessageContent('renewal', {
+    extra: { sms_body: 'Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}' },
+  }, override);
   const bodyText = fillTemplate(
-    cfg.renewal_reminder_sms_body || "Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}",
+    content.extra.sms_body,
     { name: userName, date: dateStr, link: `${APP_URL}/account` }
   );
   return `${b.name}: ${bodyText}`;
 }
 
 async function sendRenewalReminders() {
-  const cfg = db.getAppConfig() || {};
-  const days = Number.isInteger(cfg.renewal_reminder_days) ? cfg.renewal_reminder_days : parseInt(cfg.renewal_reminder_days, 10) || 5;
+  // Per Bot 24 — days threshold and subject now come from the active
+  // message_versions row too, same switch-over as Reminder.
+  const content = resolveMessageContent('renewal', { subject: 'Your membership renews soon', extra: { days: 5 } });
+  const days = Number.isInteger(content.extra.days) ? content.extra.days : parseInt(content.extra.days, 10) || 5;
   const upcoming = db.getUpcomingRenewals(days);
   const b = brand();
   let sentEmail = 0, sentSms = 0;
   for (const user of upcoming) {
     if (user.pref_email_renewal && user.email) {
-      const subject = fillTemplate(cfg.renewal_reminder_subject || 'Your membership renews soon', buildMessageTokens(user));
+      const subject = fillTemplate(content.subject, buildMessageTokens(user));
       await sendEmail(user.email, subject, buildRenewalReminderHtml(user, user.member_expires_at, b));
       sentEmail++;
     }
@@ -11283,8 +11286,8 @@ app.post('/api/admin/renewal/test', auth.requireAuthApi(['admin']), async (req, 
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to.' });
 
-    const cfg = db.getAppConfig() || {};
-    const testSubject = (subject && subject.trim()) || cfg.renewal_reminder_subject || 'Your membership renews soon';
+    // Per Bot 24 — falls back to the active message_versions row now.
+    const testSubject = (subject && subject.trim()) || resolveMessageContent('renewal', { subject: 'Your membership renews soon' }).subject;
     const b = brand();
     const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const realUser = db.getUserByEmail(toEmail.toLowerCase());
@@ -11370,12 +11373,11 @@ const TYPE_TEST_SENDERS = {
     sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildReminderSms(adminName, brand(), override)),
   },
   renewal: {
-    email: (toEmail, realUser) => {
-      const cfg = db.getAppConfig() || {};
+    email: (toEmail, realUser, override) => {
       const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      return sendEmail(toEmail, `[TEST] ${cfg.renewal_reminder_subject || 'Your membership renews soon'}`, buildRenewalReminderHtml(realUser, realUser.member_expires_at || sampleExpiry, brand()));
+      return sendEmail(toEmail, `[TEST] ${resolveMessageContent('renewal', { subject: 'Your membership renews soon' }, override).subject}`, buildRenewalReminderHtml(realUser, realUser.member_expires_at || sampleExpiry, brand(), override));
     },
-    sms: (toPhone, adminName) => sms.sendSms(toPhone, buildRenewalReminderSms(adminName, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), brand())),
+    sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildRenewalReminderSms(adminName, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), brand(), override)),
   },
   birthday: {
     email: (toEmail, realUser) => {
