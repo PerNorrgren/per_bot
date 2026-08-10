@@ -312,9 +312,6 @@
         <div class="modal-note">A short, feel-good line or two — promote a practice, a course, the new book, whatever's worth pointing people toward right now. Same selling-copy rules as everywhere else: no urgency, no hype words.</div>
         <div id="whatsNewBody_rich"></div>
         <div>
-          <button class="btn sm" onclick="suggestWhatsNewLine()" id="whatsNewSuggestBtn">✨ Suggest a line</button>
-        </div>
-        <div>
           <label style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Opens directly to</label>
           <div style="display:flex;gap:8px;margin-top:6px">
             <select id="whatsNewLinkType" onchange="onWhatsNewLinkTypeChange()" style="flex:0 0 160px">
@@ -1195,17 +1192,14 @@
     container.querySelector('.file-picker').dataset.selectedId = id;
     document.getElementById('whatsNewLinkPracticeResults').style.display = 'none';
   }
-  function getWhatsNewPracticeValue() {
-    const el = document.getElementById('whatsNewLinkPracticePicker').querySelector('.file-picker');
-    return el ? el.dataset.selectedId || '' : '';
-  }
-  // Per Bot 24 — dedicated "Suggest a line" button, using the same house
-  // selling-copy standard as course descriptions/offers, tailored to a
-  // one-line home-screen caption. Reads whatever's actually linked right
-  // now for context, so the suggestion can reference the real thing
-  // being promoted rather than staying generic.
-  async function suggestWhatsNewLine() {
-    const btn = document.getElementById('whatsNewSuggestBtn');
+  // Per Bot 24 — wired into the What's New body's own AI Help toolbar
+  // button via mountRich's opts.aiPolish, rather than a separate button
+  // — generates fresh from nothing when the field's empty, improves
+  // whatever's there otherwise. Same house selling-copy standard as
+  // course descriptions/offers, aware of whatever's actually linked
+  // right now so the line can reference the real thing being promoted.
+  async function whatsNewAiPolish(q, btn) {
+    if (!btn) return;
     const linkType = document.getElementById('whatsNewLinkType').value;
     let linkTitle = '';
     if (linkType === 'practice') {
@@ -1215,15 +1209,13 @@
       const sel = document.getElementById('whatsNewLinkCourse');
       linkTitle = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].textContent : '';
     }
-    const q = MessageEditor.getInstance('whatsNewBody_rich');
-    const currentHtml = q ? q.root.innerHTML : '';
     const orig = btn.textContent;
     btn.disabled = true;
     btn.textContent = '…';
     try {
       const res = await fetch('/api/admin/whats-new-polish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: currentHtml, linkTitle, linkType }),
+        body: JSON.stringify({ html: q.root.innerHTML, linkTitle, linkType }),
       });
       const data = await res.json();
       if (data.text) { q.root.innerHTML = `<p>${escHtml(data.text)}</p>`; }
@@ -1234,6 +1226,10 @@
       btn.disabled = false;
       btn.textContent = orig;
     }
+  }
+  function getWhatsNewPracticeValue() {
+    const el = document.getElementById('whatsNewLinkPracticePicker').querySelector('.file-picker');
+    return el ? el.dataset.selectedId || '' : '';
   }
   async function populateWhatsNewCourseSelect(selectedId) {
     if (!_whatsNewCourseInstances) {
@@ -1264,7 +1260,10 @@
   async function loadWhatsNew() {
     const cfg = await fetch('/api/setup/config').then(r=>r.json()).catch(()=>({}));
     document.getElementById('whatsNewEnabled').checked = !!cfg.whats_new_enabled;
-    MessageEditor.mountRich('whatsNewBody_rich', cfg.whats_new_body || '');
+    MessageEditor.mountRich('whatsNewBody_rich', cfg.whats_new_body || '', {
+      aiPolish: whatsNewAiPolish,
+      aiPolishTooltip: 'Suggest a line — writes one fresh if this is empty, improves what\'s here if not',
+    });
     document.getElementById('whatsNewLinkType').value = cfg.whats_new_link_type || '';
     if (cfg.whats_new_link_type === 'practice') renderWhatsNewPracticePicker(cfg.whats_new_link_id || '');
     if (cfg.whats_new_link_type === 'course') await populateWhatsNewCourseSelect(cfg.whats_new_link_id || '');

@@ -647,7 +647,14 @@
             'columns-1': () => insertColumnsBlock(q, 1),
             'columns-2': () => insertColumnsBlock(q, 2),
             'columns-3': () => insertColumnsBlock(q, 3),
-            'ai-polish': function () { runAiPolish(q, this.container.querySelector('.ql-ai-polish')); },
+            // Per Bot 24 — opts.aiPolish lets one specific mountRich
+            // instance (What's New's promo line, so far) swap in its own
+            // AI Help behaviour — different endpoint, and able to
+            // generate fresh from nothing rather than requiring existing
+            // text first — without touching the shared runAiPolish every
+            // other editor on this shared component still uses by
+            // default.
+            'ai-polish': function () { (opts.aiPolish || runAiPolish)(q, this.container.querySelector('.ql-ai-polish')); },
             // Every standard format button below has the same problem the
             // paste fix further down solves: Quill's default handlers
             // operate on ITS OWN Delta-model selection, which has no
@@ -735,7 +742,7 @@
     label('.ql-columns-1', '1 col', 'Insert a single wide column');
     label('.ql-columns-2', '2 col', 'Insert two side-by-side columns');
     label('.ql-columns-3', '3 col', 'Insert three side-by-side columns');
-    label('.ql-ai-polish', '✨ AI Help', 'Suggest an improved version of the whole message');
+    label('.ql-ai-polish', '✨ AI Help', opts.aiPolishTooltip || 'Suggest an improved version of the whole message');
 
     // Tracks the last image clicked anywhere in the editor, including
     // inside a columns-block cell — see linkSelectedImage above for why
