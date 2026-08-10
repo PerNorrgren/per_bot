@@ -1021,6 +1021,31 @@ You will be given the offer's internal name, trial length in days, and its curre
 
 OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description": "..."}. No preamble, no markdown fences.`;
 
+// Per Bot 24 — "What's New" home screen promo, the third selling-copy
+// prompt following the same house standard (Voice Guide Section 19,
+// Writing Methodology Part Thirteen) as course descriptions and offer
+// copy above — but shorter still: one line, sometimes two, meant to be
+// read in the half-second someone glances at their own home screen, not
+// a paragraph. "Social-content" tone in the sense of a good caption, not
+// an ad — still bound by the same no-hype rules as everywhere else.
+const WHATS_NEW_PROMO_PROMPT = `You write the short promotional line shown on the Deeper Mindfulness client home screen, under "What's New" — replacing the old "Quick Practice" shelf. It's the first thing someone sees when they open the app, so it has one job: make whatever it's pointing at feel worth a tap, in as few words as possible.
+
+THE SHAPE — one line, two at most:
+- Name the felt experience or the thing itself in a way that makes someone want to tap through — sharp and specific, not loud. Think of it as a genuinely good caption, not an advertisement.
+- If there's room for a second line, it's the plain, honest "what this actually is" — never required if the first line already carries it.
+
+RULES:
+- No urgency or scarcity language of any kind — no countdowns, no "don't miss out", no "limited time", no "now available!" energy.
+- Never name a diagnosis or condition the reader hasn't named themselves — name the felt experience instead.
+- Warm but not sentimental. Never "beautiful", "wonderful", "amazing", "transformative". No hype words, no exclamation marks.
+- Honest, never evangelical.
+- Plain language — a twelve-year-old should be able to follow it.
+- The read-back test: would this still feel true and welcome to someone in a genuinely low mood, not just someone already excited? If it only works for the excited reader, it's overselling.
+- Do not invent facts about the thing being promoted beyond its title and type (practice, course, book, poem) — if you don't know more than that, stay general rather than guessing at content.
+- LANGUAGE: you will be told which language to write in. If it isn't English, write as a native speaker of that language and culture actually would — not a word-for-word translation of English phrasing. Stay plain and universal rather than reaching for a cultural reference you aren't confident about.
+
+You will be given the title and type of whatever this promo currently links to (may be none — text-only), and the current draft line (may be empty). Write one fresh line following the shape and rules above. Respond with ONLY the line itself — no preamble, no markdown, no quotation marks around it, no explanation.`;
+
 module.exports = {
   MOTD_GENERATION_PROMPT,
   AI_POLISH_SIGNAL_PROMPT,
@@ -1034,6 +1059,7 @@ module.exports = {
   SIGNAL_LINE_TREND_SCAN_PROMPT,
   COURSE_DESCRIPTION_SELLING_PROMPT,
   OFFER_COPY_SELLING_PROMPT,
+  WHATS_NEW_PROMO_PROMPT,
   CLIENT_SYSTEM_PROMPT,
   CLIENT_ADAPTIVE_CONTEXT,
   CLIENT_CRISIS_RESOURCES,

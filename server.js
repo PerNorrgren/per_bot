@@ -6056,6 +6056,26 @@ app.post('/api/admin/course-description-polish', auth.requireAuthApi(['admin']),
   }
 });
 
+// Per Bot 24 — "What's New" home promo's dedicated selling-copy
+// generator, same pattern as course-description-polish above but for a
+// one-line home-screen caption. Reads whatever's linked (title/type)
+// for context, so the line can actually reference what it's pointing
+// at rather than staying generic.
+app.post('/api/admin/whats-new-polish', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { html, linkTitle, linkType } = req.body;
+    const plain = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const language = getAdminLanguage();
+    const linkDesc = linkTitle ? `${linkType === 'course' ? 'a course' : 'a practice/book/poem'} titled "${linkTitle}"` : 'nothing (text-only, no link)';
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCURRENTLY LINKS TO: ${linkDesc}\n\nCURRENT DRAFT LINE: ${plain || '(none yet — write one from the link alone)'}`;
+    const reply = await callClaudeRaw(prompts.WHATS_NEW_PROMO_PROMPT, [{ role: 'user', content: userMessage }], 300);
+    res.json({ text: reply.trim() });
+  } catch(e) {
+    console.error('whats-new-polish error:', e.message);
+    res.status(500).json({ error: 'Could not get a suggestion right now. Please try again.' });
+  }
+});
+
 // Per Bot 17 (session 3) — same idea, for Offers' headline/description.
 app.post('/api/admin/offer-copy-polish', auth.requireAuthApi(['admin']), async (req, res) => {
   try {

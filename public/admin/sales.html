@@ -312,6 +312,9 @@
         <div class="modal-note">A short, feel-good line or two — promote a practice, a course, the new book, whatever's worth pointing people toward right now. Same selling-copy rules as everywhere else: no urgency, no hype words.</div>
         <div id="whatsNewBody_rich"></div>
         <div>
+          <button class="btn sm" onclick="suggestWhatsNewLine()" id="whatsNewSuggestBtn">✨ Suggest a line</button>
+        </div>
+        <div>
           <label style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Opens directly to</label>
           <div style="display:flex;gap:8px;margin-top:6px">
             <select id="whatsNewLinkType" onchange="onWhatsNewLinkTypeChange()" style="flex:0 0 160px">
@@ -1149,7 +1152,7 @@
     const selected = selectedId ? all.find(f => f.id === selectedId) : null;
     container.innerHTML = `
       <div class="file-picker" data-selected-id="${selectedId || ''}">
-        <input type="text" class="inline-input" placeholder="Search by title…" value="${selected ? selected.title.replace(/"/g,'&quot;') : ''}"
+        <input type="text" class="inline-input" placeholder="Search by title…" style="width:100%" value="${selected ? selected.title.replace(/"/g,'&quot;') : ''}"
                oninput="_whatsNewPracticeSearch(this.value)" onfocus="_whatsNewPracticeSearch(this.value)"/>
         <div class="file-picker-results" id="whatsNewLinkPracticeResults" style="display:none"></div>
       </div>`;
@@ -1195,6 +1198,42 @@
   function getWhatsNewPracticeValue() {
     const el = document.getElementById('whatsNewLinkPracticePicker').querySelector('.file-picker');
     return el ? el.dataset.selectedId || '' : '';
+  }
+  // Per Bot 24 — dedicated "Suggest a line" button, using the same house
+  // selling-copy standard as course descriptions/offers, tailored to a
+  // one-line home-screen caption. Reads whatever's actually linked right
+  // now for context, so the suggestion can reference the real thing
+  // being promoted rather than staying generic.
+  async function suggestWhatsNewLine() {
+    const btn = document.getElementById('whatsNewSuggestBtn');
+    const linkType = document.getElementById('whatsNewLinkType').value;
+    let linkTitle = '';
+    if (linkType === 'practice') {
+      const input = document.querySelector('#whatsNewLinkPracticePicker .file-picker input');
+      linkTitle = input ? input.value.trim() : '';
+    } else if (linkType === 'course') {
+      const sel = document.getElementById('whatsNewLinkCourse');
+      linkTitle = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].textContent : '';
+    }
+    const q = MessageEditor.getInstance('whatsNewBody_rich');
+    const currentHtml = q ? q.root.innerHTML : '';
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const res = await fetch('/api/admin/whats-new-polish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: currentHtml, linkTitle, linkType }),
+      });
+      const data = await res.json();
+      if (data.text) { q.root.innerHTML = `<p>${escHtml(data.text)}</p>`; }
+      else { window.appAlert(data.error || 'Could not get a suggestion right now.'); }
+    } catch(e) {
+      window.appAlert('Something went wrong — please try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
   }
   async function populateWhatsNewCourseSelect(selectedId) {
     if (!_whatsNewCourseInstances) {
