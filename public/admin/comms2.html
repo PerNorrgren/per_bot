@@ -116,6 +116,11 @@
         <div style="display:flex;gap:8px;align-items:center">
           <select id="emailLogDateFilter" onchange="loadEmailLog()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);border-radius:7px;padding:6px 10px;font-family:Georgia,serif;font-size:13px">
             <option value="today">Today</option>
+            <!-- Per Bot 24 — middle ground between "Today" (can look
+                 nearly empty right after midnight, or across a timezone
+                 boundary) and "All (last 500)" (a lot to scroll through
+                 for a quick check). -->
+            <option value="last25">Last 25</option>
             <option value="all">All (last 500)</option>
           </select>
           <button class="btn sm" onclick="loadEmailLog()">Refresh</button>
@@ -210,6 +215,14 @@
     const s = getSort('emailLog');
     let list = _emailLogData;
     if (dateFilter === 'today') list = list.filter(r => r.created_at.startsWith(today));
+    // Per Bot 24 — "Today" is a UTC calendar-day boundary (created_at is
+    // stored/compared in UTC), so it can look nearly empty right after
+    // midnight UTC even with plenty of genuinely recent activity just
+    // before it. _emailLogData already arrives newest-first from the
+    // backend (ORDER BY created_at DESC), so this is just the first 25 —
+    // no separate date math needed, and it can't miss anything recent
+    // the way a day-boundary filter can.
+    if (dateFilter === 'last25') list = list.slice(0, 25);
     if (query) list = list.filter(r => r.email.toLowerCase().includes(query) || (r.subject||'').toLowerCase().includes(query));
     if (s.col) list = [...list].sort((a,b) => { const av=(a[s.col]||'').toLowerCase(),bv=(b[s.col]||'').toLowerCase(); return av<bv?-s.dir:av>bv?s.dir:0; });
     if (!list.length) { el.innerHTML = '<div class="empty">No matching sends.</div>'; return; }
