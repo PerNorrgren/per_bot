@@ -6157,9 +6157,38 @@
       applyA11yState(contrast, scale);
       localStorage.setItem('a11y_contrast', contrast ? '1' : '0');
       localStorage.setItem('a11y_text_scale', scale);
+      // Per Bot 24 — "Log in as" red frame. Piggybacked on this existing
+      // /api/account fetch (already happens unconditionally on every
+      // load) rather than adding a second request just for this.
+      if (data.impersonating) showImpersonationFrame(data.impersonating);
     } catch(e) {
       applyA11yState(document.body.classList.contains('a11y-contrast'), localStorage.getItem('a11y_text_scale') || 'normal');
     }
+  }
+  // Per Bot 24 — persistent, unmissable red frame the whole time an admin
+  // is genuinely driving this exact session — this is real access to a
+  // real account, not a preview, so it should never be ambiguous which
+  // session is on screen. Fixed-position border (not just an outline on
+  // some inner container) so it's visible regardless of which view/modal
+  // is showing, plus a small pill with a one-click way back to admin.
+  function showImpersonationFrame(who) {
+    if (document.getElementById('impersonationFrame')) return; // don't double-inject on a second call
+    const frame = document.createElement('div');
+    frame.id = 'impersonationFrame';
+    frame.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:99999;border:4px solid rgba(220,50,50,0.85);box-sizing:border-box;box-shadow:inset 0 0 24px rgba(220,50,50,0.25)';
+    document.body.appendChild(frame);
+    const pill = document.createElement('div');
+    pill.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:100000;background:rgba(40,10,10,0.95);border:1px solid rgba(255,120,120,0.5);color:rgba(255,200,200,0.95);font-family:Georgia,serif;font-size:12px;padding:8px 16px;border-radius:20px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 16px rgba(0,0,0,0.4)';
+    pill.innerHTML = `<span>Viewing as ${(who.name||'').replace(/</g,'&lt;')}</span><button onclick="exitImpersonation()" style="background:rgba(255,120,120,0.15);border:1px solid rgba(255,120,120,0.4);color:rgba(255,220,220,0.95);border-radius:12px;padding:4px 12px;font-family:Georgia,serif;font-size:11px;cursor:pointer">Exit</button>`;
+    document.body.appendChild(pill);
+  }
+  async function exitImpersonation() {
+    try {
+      const res = await fetch('/api/exit-impersonation', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) { window.location.href = data.redirect; }
+      else { alert(data.error || 'Could not exit — try refreshing the page.'); }
+    } catch(e) { alert('Network error — could not exit. Try refreshing the page.'); }
   }
 
   // Kick off the resume card check as soon as the page loads, independent of

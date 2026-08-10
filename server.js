@@ -9481,12 +9481,63 @@ app.get('/account/', (req, res) => res.redirect('/account'));
 
 // ── My Account — user self-service ──
 // Returns the current user's full profile including membership and preferences.
+// ── "Log in as" impersonation (Per Bot 24) ── Admin-only. Full access as
+// the target person, deliberately — this is for genuinely seeing what
+// they see, not a restricted preview mode, per Per's own call. Every
+// action taken while impersonating is indistinguishable from that
+// person's own real activity except for the audit trail below and the
+// red frame the client app renders the whole time (see /api/account's
+// `impersonating` flag).
+app.post('/api/admin/users/:id/impersonate', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const target = db.getUser(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Person not found.' });
+    const admin = db.getFacilitatorById(req.user.id);
+    const impersonatedBy = { id: req.user.id, name: (admin && admin.name) || req.user.name || 'an admin' };
+    const token = auth.createToken({ role: 'client', id: target.id, name: target.name, email: target.email, impersonatedBy });
+    res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
+    db.logLogin(target.id, 'client', 'impersonate_start', req.user.id, 'admin');
+    res.json({ ok: true, redirect: '/client/' });
+  } catch (e) {
+    console.error('impersonate error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// No role restriction here on purpose — this is how ANY impersonated
+// session ends, and by definition the current session's role is
+// whatever the target person's role is (usually 'client'), not 'admin'.
+// The only real gate is the token itself actually carrying a valid
+// impersonatedBy claim — nobody can forge that without the JWT secret.
+app.post('/api/exit-impersonation', (req, res) => {
+  try {
+    const token = req.cookies?.[auth.COOKIE_NAME];
+    const payload = token ? auth.verifyToken(token) : null;
+    if (!payload || !payload.impersonatedBy) return res.status(400).json({ error: 'Not currently impersonating anyone.' });
+    const admin = db.getFacilitatorById(payload.impersonatedBy.id);
+    if (!admin) return res.status(404).json({ error: 'Admin account not found — cannot return to it.' });
+    const newToken = auth.createToken({ role: admin.role, id: admin.id, name: admin.name, email: admin.email });
+    res.cookie(auth.COOKIE_NAME, newToken, auth.COOKIE_OPTIONS);
+    db.logLogin(payload.id, payload.role, 'impersonate_end', admin.id, admin.role);
+    res.json({ ok: true, redirect: '/admin/' });
+  } catch (e) {
+    console.error('exit-impersonation error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const user = db.getUser(req.user.id);
     if (!user) return res.status(404).json({ error: 'Not found.' });
     // Don't send password hash to the client
     const { password_hash, ...safe } = user;
+    // Per Bot 24 — impersonatedBy is a claim on the token itself, not
+    // anything stored on the user record — surfaced here so the client
+    // app knows to render the red frame + exit control the whole time
+    // an admin is genuinely looking at this exact session, not guessing
+    // from any other signal.
+    if (req.user.impersonatedBy) safe.impersonating = req.user.impersonatedBy;
     res.json(safe);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

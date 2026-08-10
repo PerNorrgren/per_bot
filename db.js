@@ -1984,6 +1984,13 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN whats_new_body TEXT",
     "ALTER TABLE app_config ADD COLUMN whats_new_link_type TEXT",
     "ALTER TABLE app_config ADD COLUMN whats_new_link_id TEXT",
+    // Per Bot 24 — "Log in as" admin impersonation. actor_id/actor_role
+    // record which admin performed an impersonate_start/impersonate_end
+    // event on whose behalf — NULL for every ordinary login/logout
+    // event, so this stays a pure audit addition with no effect on
+    // existing login_log consumers (Reports etc.) that don't look at it.
+    "ALTER TABLE login_log ADD COLUMN actor_id TEXT",
+    "ALTER TABLE login_log ADD COLUMN actor_role TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -5459,12 +5466,19 @@ function pruneCronLog() {
 }
 
 // ── Login activity log (Per Bot 20) ──
-function logLogin(userId, role, eventType) {
+// Per Bot 24 — actor (optional 4th/5th args) records which admin
+// performed this on someone else's behalf — used for
+// impersonate_start/impersonate_end events. Every existing call site
+// (plain logins/logouts) is unaffected, since actor defaults to null.
+function logLogin(userId, role, eventType, actorId, actorRole) {
   getDbSync().run(
-    `INSERT INTO login_log (id, user_id, role, event_type) VALUES (?,?,?,?)`,
-    [crypto.randomUUID(), userId || null, role || 'unknown', eventType || 'login']
+    `INSERT INTO login_log (id, user_id, role, event_type, actor_id, actor_role) VALUES (?,?,?,?,?,?)`,
+    [crypto.randomUUID(), userId || null, role || 'unknown', eventType || 'login', actorId || null, actorRole || null]
   );
   save();
+}
+function getImpersonationLog(limit) {
+  return queryAll(`SELECT * FROM login_log WHERE event_type='impersonate_start' ORDER BY logged_in_at DESC LIMIT ?`, [limit || 200]);
 }
 function pruneLoginLog() {
   getDbSync().run(`DELETE FROM login_log WHERE logged_in_at < datetime('now','-180 days')`);
@@ -6821,7 +6835,7 @@ module.exports = {
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
-  logLogin, pruneLoginLog,
+  logLogin, pruneLoginLog, getImpersonationLog,
   startTalkSession, endTalkSession,
   reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage, reportEmailLog,
   getDb, save,

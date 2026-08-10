@@ -268,6 +268,7 @@
             <button class="btn sm disabled" id="memberDelBtn" onclick="deleteSelectedMembers()">Delete</button>
             <button class="btn sm disabled" id="memberGetSubsBtn" onclick="getSelectedMemberSubscriptions()">Get Subscriptions</button>
             <button class="btn sm disabled" id="memberMessageBtn" onclick="messageSelectedMembers()" title="Compose a message to exactly the people selected, not a segment">Message</button>
+            <button class="btn sm disabled" id="memberLoginAsBtn" onclick="loginAsSelectedMember()" title="See exactly what this person sees, in their own real account">Log in as</button>
           </div>
         </div>
         <div class="card-search-wrap"><input class="card-search" id="memberSearch" placeholder="Search members… (* and ? wildcards)" oninput="renderMembers()"/></div>
@@ -287,6 +288,7 @@
             <button class="btn sm disabled" id="userResetPwBtn" onclick="resetSelectedUserPassword()">Reset password</button>
             <button class="btn sm danger disabled" id="userDelBtn" onclick="deleteSelectedUsers()">Delete</button>
             <button class="btn sm disabled" id="userGetSubsBtn" onclick="getSelectedUserSubscriptions()">Get Subscriptions</button>
+            <button class="btn sm disabled" id="userLoginAsBtn" onclick="loginAsSelectedUser()" title="See exactly what this person sees, in their own real account">Log in as</button>
           </div>
         </div>
         <div class="card-search-wrap"><input class="card-search" id="userSearch" placeholder="Search explorers… (* and ? wildcards)" oninput="renderUsers()"/></div>
@@ -1800,7 +1802,7 @@
   // ── MEMBERS ──
   // ══════════════════════════════════════════
   let _memberData = [];
-  const memberSel = makeSelection(['memberEditBtn','memberDetailsBtn','memberResetPwBtn','memberDelBtn','memberGetSubsBtn','memberMessageBtn'], 'memberEditBtn');
+  const memberSel = makeSelection(['memberEditBtn','memberDetailsBtn','memberResetPwBtn','memberDelBtn','memberGetSubsBtn','memberMessageBtn','memberLoginAsBtn'], 'memberEditBtn');
 
   async function loadMembers() {
     memberSel.clear();
@@ -2128,7 +2130,41 @@
     sessionStorage.setItem('comms_explicit_recipient_label', `${ids.length} selected member${ids.length===1?'':'s'}`);
     window.location.href = '/admin/comms?composeToSelected=1';
   }
+  // Per Bot 24 — "Log in as". Single-person only, same as Edit — the
+  // shared makeSelection helper only supports one designated single-only
+  // button per group, so this checks selection size itself rather than
+  // trying to extend that helper for a second button.
+  function loginAsSelectedMember() {
+    const ids = [...memberSel.sel];
+    if (ids.length !== 1) { appAlert('Select exactly one person to log in as.'); return; }
+    const name = _memberData.find(x => x.id === ids[0])?.name || 'this person';
+    showConfirm('Log in as',
+      `You'll see the app exactly as ${name} does, in their real account — every action while impersonating is genuinely theirs. A red frame stays on screen the whole time, with a one-click way back to admin. Continue?`,
+      async () => {
+        try {
+          const res = await fetch(`/api/admin/users/${ids[0]}/impersonate`, { method: 'POST' });
+          const data = await res.json();
+          if (data.ok) { window.location.href = data.redirect; }
+          else { appAlert(data.error || 'Could not start this.'); }
+        } catch(e) { appAlert('Network error — could not start this.'); }
+      });
+  }
   async function getSelectedUserSubscriptions() { return getSubscriptionsFor([...userSel.sel], 'userGetSubsBtn'); }
+  function loginAsSelectedUser() {
+    const ids = [...userSel.sel];
+    if (ids.length !== 1) { appAlert('Select exactly one person to log in as.'); return; }
+    const name = _userData.find(x => x.id === ids[0])?.name || 'this person';
+    showConfirm('Log in as',
+      `You'll see the app exactly as ${name} does, in their real account — every action while impersonating is genuinely theirs. A red frame stays on screen the whole time, with a one-click way back to admin. Continue?`,
+      async () => {
+        try {
+          const res = await fetch(`/api/admin/users/${ids[0]}/impersonate`, { method: 'POST' });
+          const data = await res.json();
+          if (data.ok) { window.location.href = data.redirect; }
+          else { appAlert(data.error || 'Could not start this.'); }
+        } catch(e) { appAlert('Network error — could not start this.'); }
+      });
+  }
   async function getSubscriptionsFor(ids, btnId) {
     if (!ids.length) return;
     if (ids.length > 100) { showConfirm('Too many selected', 'Please select 100 people or fewer at a time.', ()=>{}); return; }
@@ -2226,7 +2262,7 @@
   // ── REGISTERED EXPLORERS ──
   // ══════════════════════════════════════════
   let _userData = [];
-  const userSel = makeSelection(['userUpgradeBtn','userGiveTrialBtn','userResetPwBtn','userDelBtn','userGetSubsBtn'], null);
+  const userSel = makeSelection(['userUpgradeBtn','userGiveTrialBtn','userResetPwBtn','userDelBtn','userGetSubsBtn','userLoginAsBtn'], null);
 
   async function loadUsers() {
     userSel.clear();

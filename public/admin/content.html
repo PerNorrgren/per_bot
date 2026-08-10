@@ -1512,13 +1512,15 @@ function renderLibCards(files){
           ${f.category_name?`<span class="tag cat">${f.category_name}</span>`:''}
           ${f.subcategory_name?`<span class="tag cat">${f.subcategory_name}</span>`:''}
           ${kbadge(f.content_type)}${onebadge(f)}
-          <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px" onchange="updateVisibility('${f.id}',this.value)">
+          ${f.assigned_client_id
+            ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap" title="Visibility tier is ignored for one-to-one files">My</span>`
+            : `<select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px" onchange="updateVisibility('${f.id}',this.value)">
             <option value="registered" ${f.visibility==='registered'?'selected':''}>Explorer</option>
             <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
             <option value="client"     ${f.visibility==='client'    ?'selected':''}>Client</option>
             <option value="facilitator"${f.visibility==='facilitator'?'selected':''}>Facilitator</option>
             <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
-          </select>
+          </select>`}
           ${f.use_count>0?`<span class="tag uses">Used ${f.use_count}×</span>`:''}
         </div>
       </div>
@@ -1558,13 +1560,15 @@ function renderLibList(files){
       <span class="flr-meta" title="${f.created_at||''}">${(f.created_at||'').slice(0,10)} · ${fsize(f.file_size)}</span>
       <span class="flr-cat" title="${f.category_name||''} ${f.subcategory_name?'/ '+f.subcategory_name:''}">${f.category_name||'—'}${f.subcategory_name?' / '+f.subcategory_name:''}</span>
       <span class="flr-vis">
-        <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px;width:100%" onchange="updateVisibility('${f.id}',this.value)">
+        ${f.assigned_client_id
+          ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap" title="Visibility tier is ignored for one-to-one files">My</span>`
+          : `<select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px;width:100%" onchange="updateVisibility('${f.id}',this.value)">
           <option value="registered" ${f.visibility==='registered'?'selected':''}>Explorer</option>
           <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
           <option value="client"     ${f.visibility==='client'    ?'selected':''}>Client</option>
           <option value="facilitator"${f.visibility==='facilitator'?'selected':''}>Facilitator</option>
           <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
-        </select>
+        </select>`}
       </span>
       <span class="flr-vis">${kbadge(f.content_type)}${onebadge(f)}</span>
       <span class="flr-actions">
