@@ -3222,8 +3222,14 @@
     const locked = f.accessible === false;
     const icon  = isAudio(f) ? '🎵' : f.file_type?.startsWith('video') ? '🎬' : '📄';
     const heart = `<button class="heart-btn ${f.is_favourite?'active':''}" onclick="event.stopPropagation();toggleFavourite('${f.id}',this)" title="Favourite">♥</button>`;
+    // Per Bot 24 — the play icon used to route to the lightweight
+    // mini-player (mpPlayById) instead of the same full overlay the row
+    // itself opens — fine for a quick-play affordance on ordinary
+    // browsing, but a one-to-one facilitator-assigned file felt like it
+    // just started playing with no real controls or way to stop it. Now
+    // both the icon and the row open the same proper player/reader.
     const play  = isAudio(f) && !locked
-      ? `<button class="play-btn" data-file-id="${f.id}" onclick="event.stopPropagation();mpPlayById('${f.id}')" title="Play">▶</button>`
+      ? `<button class="play-btn" data-file-id="${f.id}" onclick="event.stopPropagation();openContentFileById('${f.id}')" title="Play">▶</button>`
       : '';
     const addPl = locked ? '' : `<button class="play-btn" style="font-size:9px" onclick="event.stopPropagation();openAddToPlaylist('${f.id}')" title="Add to playlist">＋</button>`;
     const onClick = locked
@@ -3658,7 +3664,27 @@
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (f && f.accessible === false) { showUpgradeNotice(f.title); return; }
-    if (isAudio(f)) { mpPlay(f); return; }
+    // Per Bot 24 — was mpPlay(f); return here, which only ever surfaced
+    // the lightweight bottom mini-player bar — no seek control, and (for
+    // a one-to-one facilitator-assigned file specifically) it read as
+    // "just started playing with no way to stop it." Opens into the same
+    // full "Now Playing" card (proper play/pause/restart/seek) that
+    // mpPlayById already uses when the overlay is open elsewhere in the
+    // app, rather than a second, different audio-in-overlay
+    // implementation — this one's already correctly cleaned up on close
+    // via _showingNowPlaying, unlike a fresh `new Audio()` instance would
+    // be.
+    if (isAudio(f)) {
+      const overlay = document.getElementById('playerOverlay');
+      pushPlayerHistoryState();
+      overlay.classList.remove('video-mode', 'reader-mode');
+      overlay.classList.add('visible');
+      document.getElementById('fullscreenBtn').style.display = 'none';
+      renderNowPlayingCard(f);
+      mpPlay(f);
+      document.getElementById('miniPlayer').classList.remove('visible');
+      return;
+    }
     _showingNowPlaying = false;
 
     const isEpub = f.file_type === 'application/epub+zip';
