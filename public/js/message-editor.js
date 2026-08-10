@@ -1260,6 +1260,48 @@ If this has found a place in your week, membership just means it stays there. No
 
 If you'd like full access back, you're welcome any time. No explanation needed, and nothing about coming back later is complicated.`,
     },
+    savers_cancel_day0: {
+      subject: 'Got it — no questions asked',
+      body: `You've let us know you're moving on, and that's completely fine — no explanation needed.
+
+Nothing changes for now. You've got full access exactly as already paid for, through {{period_end}}. We're genuinely glad you spent time here at all.`,
+    },
+    savers_cancel_grace0: {
+      subject: "We've kept the door open a little longer",
+      body: `Your paid time wrapped up — but rather than closing things off right away, we've kept full access open for another two weeks, no charge.
+
+No pressure either way. Just wanted you to have the option, in case the timing was the only thing wrong.`,
+    },
+    savers_cancel_mid: {
+      subject: 'A week left of the extra time',
+      body: `Just flagging it — there's about a week left of the extra access we set aside after your membership wrapped up.
+
+Nothing you need to do. If it's found a place in your week again, membership's there whenever suits.`,
+    },
+    savers_cancel_final: {
+      subject: "Last day, and that's alright too",
+      body: `This is the last day of the extra time we set aside. After today your account settles into the free Explorer tier — which is a real, permanent place, not a dead end.
+
+If you'd like to come back properly at some point, you're always welcome, any time.`,
+    },
+    savers_failure_day0: {
+      subject: "Your last payment didn't go through",
+      body: `Wanted to flag this from an actual person, not just the automated notice — your last payment didn't process. This happens for all sorts of ordinary reasons, most often just a card that's expired or been reissued.
+
+Your access hasn't changed. You've got two full weeks to sort it out, no rush.`,
+    },
+    savers_failure_mid: {
+      subject: 'Still showing a payment issue',
+      body: `A gentle follow-up — the payment issue from last week is still showing on our end. No drama, just didn't want it to quietly slip by.
+
+Full access is still there while this gets sorted.`,
+    },
+    savers_failure_final: {
+      subject: 'One more day before things settle',
+      body: `Last day of full access before your account moves to the free Explorer tier — if it's just a card that needs updating, this is the moment to catch it.
+
+If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`,
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {

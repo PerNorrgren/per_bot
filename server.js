@@ -1163,16 +1163,21 @@ If you'd like full access back, you're welcome any time. No explanation needed, 
 // so it's acknowledged as one, never treated as a mistake to be
 // corrected; payment failure is usually nobody's fault, so it stays
 // practical and warm rather than reading like a sales attempt.
-async function sendSaversEmail(user, cfgKeyPrefix, defaultSubject, defaultBody, extraTokens = {}) {
-  const cfg = db.getAppConfig() || {};
+async function sendSaversEmail(user, cfgKeyPrefix, defaultSubject, defaultBody, extraTokens = {}, override) {
   const b = brand();
   const tokens = buildMessageTokens(user, { extra: extraTokens });
-  const subject = fillTemplate(cfg[`${cfgKeyPrefix}_subject`] || defaultSubject, tokens);
-  const body = fillTemplate(cfg[`${cfgKeyPrefix}_body`] || defaultBody, tokens);
+  // Per Bot 24 — switched over to message_versions. cfgKeyPrefix doubles
+  // as the message_versions `type` key too — the seven Savers types were
+  // already named to match (savers_cancel_day0, savers_failure_mid, etc.)
+  // from when this wrapper was first built, so no separate mapping
+  // needed here.
+  const content = resolveMessageContent(cfgKeyPrefix, { subject: defaultSubject, body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      ${renderMessageBody(body, cfg[`${cfgKeyPrefix}_format`])}
+      ${renderMessageBody(body, content.format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1180,48 +1185,54 @@ async function sendSaversEmail(user, cfgKeyPrefix, defaultSubject, defaultBody, 
   );
 }
 
-function emailSaversCancelDay0(user, periodEndStr) {
+function emailSaversCancelDay0(user, periodEndStr, override) {
   return sendSaversEmail(user, 'savers_cancel_day0', "Got it — no questions asked",
     `You've let us know you're moving on, and that's completely fine — no explanation needed.
 
 Nothing changes for now. You've got full access exactly as already paid for, through {{period_end}}. We're genuinely glad you spent time here at all.`,
-    { period_end: periodEndStr });
+    { period_end: periodEndStr }, override);
 }
-function emailSaversCancelGrace0(user) {
+function emailSaversCancelGrace0(user, override) {
   return sendSaversEmail(user, 'savers_cancel_grace0', "We've kept the door open a little longer",
     `Your paid time wrapped up — but rather than closing things off right away, we've kept full access open for another two weeks, no charge.
 
-No pressure either way. Just wanted you to have the option, in case the timing was the only thing wrong.`);
+No pressure either way. Just wanted you to have the option, in case the timing was the only thing wrong.`,
+    {}, override);
 }
-function emailSaversCancelMid(user) {
+function emailSaversCancelMid(user, override) {
   return sendSaversEmail(user, 'savers_cancel_mid', "A week left of the extra time",
     `Just flagging it — there's about a week left of the extra access we set aside after your membership wrapped up.
 
-Nothing you need to do. If it's found a place in your week again, membership's there whenever suits.`);
+Nothing you need to do. If it's found a place in your week again, membership's there whenever suits.`,
+    {}, override);
 }
-function emailSaversCancelFinal(user) {
+function emailSaversCancelFinal(user, override) {
   return sendSaversEmail(user, 'savers_cancel_final', "Last day, and that's alright too",
     `This is the last day of the extra time we set aside. After today your account settles into the free Explorer tier — which is a real, permanent place, not a dead end.
 
-If you'd like to come back properly at some point, you're always welcome, any time.`);
+If you'd like to come back properly at some point, you're always welcome, any time.`,
+    {}, override);
 }
-function emailSaversFailureDay0(user) {
+function emailSaversFailureDay0(user, override) {
   return sendSaversEmail(user, 'savers_failure_day0', "Your last payment didn't go through",
     `Wanted to flag this from an actual person, not just the automated notice — your last payment didn't process. This happens for all sorts of ordinary reasons, most often just a card that's expired or been reissued.
 
-Your access hasn't changed. You've got two full weeks to sort it out, no rush.`);
+Your access hasn't changed. You've got two full weeks to sort it out, no rush.`,
+    {}, override);
 }
-function emailSaversFailureMid(user) {
+function emailSaversFailureMid(user, override) {
   return sendSaversEmail(user, 'savers_failure_mid', "Still showing a payment issue",
     `A gentle follow-up — the payment issue from last week is still showing on our end. No drama, just didn't want it to quietly slip by.
 
-Full access is still there while this gets sorted.`);
+Full access is still there while this gets sorted.`,
+    {}, override);
 }
-function emailSaversFailureFinal(user) {
+function emailSaversFailureFinal(user, override) {
   return sendSaversEmail(user, 'savers_failure_final', "One more day before things settle",
     `Last day of full access before your account moves to the free Explorer tier — if it's just a card that needs updating, this is the moment to catch it.
 
-If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`);
+If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`,
+    {}, override);
 }
 
 // Per Bot 18 — fires when a manually-honoured membership period (set by
@@ -10211,45 +10222,11 @@ app.get('/api/admin/settings/default-showcase-file', auth.requireAuthApi(['admin
 // one anymore, since sales.html's Trial sequence section was already
 // built on the shared comms2 editor from the start, which reads
 // message_versions directly and has its own generic Send test panel
-// (/api/admin/message-versions/:type/test). built
-// on the shared comms2 editor from the start, which now has its own
-// generic Send test panel (/api/admin/message-versions/:type/test).
+// (/api/admin/message-versions/:type/test).
 
-app.get('/api/admin/settings/savers-sequence', auth.requireAuthApi(['admin']), (req, res) => {
-  try {
-    const cfg = db.getAppConfig() || {};
-    const keys = ['savers_cancel_day0','savers_cancel_grace0','savers_cancel_mid','savers_cancel_final','savers_failure_day0','savers_failure_mid','savers_failure_final'];
-    const out = {};
-    keys.forEach(k => {
-      const camel = k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
-      out[`${camel}Subject`] = cfg[`${k}_subject`] || '';
-      out[`${camel}Body`] = cfg[`${k}_body`] || '';
-      out[`${camel}Format`] = cfg[`${k}_format`] || 'plain';
-    });
-    res.json(out);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-const SAVERS_TEST_SENDERS = {
-  cancel_day0: (u) => emailSaversCancelDay0(u, '[example date]'),
-  cancel_grace0: emailSaversCancelGrace0,
-  cancel_mid: emailSaversCancelMid,
-  cancel_final: emailSaversCancelFinal,
-  failure_day0: emailSaversFailureDay0,
-  failure_mid: emailSaversFailureMid,
-  failure_final: emailSaversFailureFinal,
-};
-app.post('/api/admin/settings/savers-sequence/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    const { step, email } = req.body;
-    const sender = SAVERS_TEST_SENDERS[step];
-    if (!sender) return res.status(400).json({ error: 'Unknown step.' });
-    const to = resolveTestEmail(email, req.user.email);
-    if (!to) return res.status(400).json({ error: 'No test email address available.' });
-    const realUser = db.getUserByEmail(to.toLowerCase());
-    await sender(realUser || { id: 'test', name: req.user.name || 'there', email: to });
-    res.json({ ok: true, sentTo: to });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+// Per Bot 24 — same for the old Savers Protocol GET/test-send endpoints
+// and SAVERS_TEST_SENDERS below — sales.html's Savers section was
+// already on the shared editor too, so nothing calls these anymore.
 
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
@@ -11383,13 +11360,13 @@ const TYPE_TEST_SENDERS = {
   trial_day7:  { email: (toEmail, realUser, override) => emailTrialDay7(realUser, override),  sms: null },
   trial_day10: { email: (toEmail, realUser, override) => emailTrialDay10(realUser, override), sms: null },
   trial_day14: { email: (toEmail, realUser, override) => emailTrialDay14(realUser, override), sms: null },
-  savers_cancel_day0:   { email: (toEmail, realUser) => emailSaversCancelDay0(realUser, '[example date]'), sms: null },
-  savers_cancel_grace0: { email: (toEmail, realUser) => emailSaversCancelGrace0(realUser), sms: null },
-  savers_cancel_mid:    { email: (toEmail, realUser) => emailSaversCancelMid(realUser),    sms: null },
-  savers_cancel_final:  { email: (toEmail, realUser) => emailSaversCancelFinal(realUser),  sms: null },
-  savers_failure_day0:  { email: (toEmail, realUser) => emailSaversFailureDay0(realUser),  sms: null },
-  savers_failure_mid:   { email: (toEmail, realUser) => emailSaversFailureMid(realUser),   sms: null },
-  savers_failure_final: { email: (toEmail, realUser) => emailSaversFailureFinal(realUser), sms: null },
+  savers_cancel_day0:   { email: (toEmail, realUser, override) => emailSaversCancelDay0(realUser, '[example date]', override), sms: null },
+  savers_cancel_grace0: { email: (toEmail, realUser, override) => emailSaversCancelGrace0(realUser, override), sms: null },
+  savers_cancel_mid:    { email: (toEmail, realUser, override) => emailSaversCancelMid(realUser, override),    sms: null },
+  savers_cancel_final:  { email: (toEmail, realUser, override) => emailSaversCancelFinal(realUser, override),  sms: null },
+  savers_failure_day0:  { email: (toEmail, realUser, override) => emailSaversFailureDay0(realUser, override),  sms: null },
+  savers_failure_mid:   { email: (toEmail, realUser, override) => emailSaversFailureMid(realUser, override),   sms: null },
+  savers_failure_final: { email: (toEmail, realUser, override) => emailSaversFailureFinal(realUser, override), sms: null },
 };
 app.post('/api/admin/message-versions/:type/test', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
