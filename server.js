@@ -4650,12 +4650,55 @@ app.patch('/api/calls/:id/end', auth.requireAuthApi(['client', 'facilitator', 'a
 // not a server-side media relay), so this is facilitator-only. Kicks off
 // transcription in the background rather than making the upload request
 // wait for it.
+// Per Bot 24 (maintenance rebuild, priority 2) — presigned direct-to-R2
+// for call recordings, flagged as genuine risk (full session audio, no
+// real size ceiling, previously browser → Node → R2 with the whole
+// buffer loaded into memory along the way).
+app.post('/api/calls/:id/recording/presign-upload', auth.requireAuthApi(['facilitator', 'admin']), async (req, res) => {
+  try {
+    const call = db.getCall(req.params.id);
+    if (!call || (req.user.role !== 'admin' && call.facilitator_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
+    if (call.recording_consent !== 'granted') return res.status(400).json({ error: 'This call was not consented to for recording.' });
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const { mimeType } = req.body;
+    const ext = mimeType && mimeType.includes('mp4') ? '.mp4' : '.webm';
+    const key = `call-recordings/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, mimeType || 'video/webm');
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('call recording presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/calls/:id/recording', auth.requireAuthApi(['facilitator', 'admin']), upload.single('file'), async (req, res) => {
   const call = db.getCall(req.params.id);
   if (!call || (req.user.role !== 'admin' && call.facilitator_id !== req.user.id)) return res.status(404).json({ error: 'Call not found.' });
-  if (!req.file) return res.status(400).json({ error: 'No recording received.' });
   if (call.recording_consent !== 'granted') return res.status(400).json({ error: 'This call was not consented to for recording.' });
   try {
+    // Per Bot 24 — Path A: already uploaded directly to R2 (see
+    // presign-upload above). Fetches the object back once here purely
+    // to hand the buffer to transcription, which needs the raw audio —
+    // still one R2 round-trip either way, but the original upload
+    // itself (the part with no real size ceiling) never touches this
+    // server at all now.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('call-recordings/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      const mimeType = req.body.mimeType || (key.endsWith('.mp4') ? 'video/mp4' : 'video/webm');
+      const durationSeconds = parseInt(req.body.durationSeconds, 10) || null;
+      db.setCallRecording(call.id, key, durationSeconds);
+      const obj = await media.getPublicObject(key);
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+      transcribeCallRecording(call.id, buffer, mimeType); // fire-and-forget
+      return res.json({ ok: true });
+    }
+
+    // Path B — legacy fallback, same as before this change.
+    if (!req.file) return res.status(400).json({ error: 'No recording received.' });
     const buffer = fs.readFileSync(req.file.path);
     const stored = await uploadCallRecordingToR2(buffer, req.file.mimetype);
     const durationSeconds = parseInt(req.body.durationSeconds, 10) || null;
@@ -5138,9 +5181,42 @@ app.post('/api/practices/text', auth.requireAuthApi(['admin','facilitator']), (r
   db.addPractice(uuidv4(), client_id, title, 'text', content, '', 'facilitator', null, null, req.user.id);
   res.json({ ok: true });
 });
+// Per Bot 24 (maintenance rebuild, priority 2) — presigned direct-to-R2
+// for practice audio, same reasoning as call recordings/newsletter
+// videos. The practice id is generated here (not by the browser) since
+// it doubles as part of the R2 key, same convention the existing
+// server-relayed path already used.
+app.post('/api/practices/audio/presign-upload', auth.requireAuthApi(['admin','facilitator']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const { filename, contentType } = req.body;
+    const id = uuidv4();
+    const ext = (filename && filename.match(/\.[a-zA-Z0-9]+$/)) ? filename.match(/\.[a-zA-Z0-9]+$/)[0] : '.mp3';
+    const key = `practices/${id}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType || 'audio/mpeg');
+    res.json({ uploadUrl, key, practiceId: id });
+  } catch (e) {
+    console.error('practice audio presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/practices/audio', auth.requireAuthApi(['admin','facilitator']), upload.single('file'), async (req, res) => {
   const { client_id, title } = req.body;
-  if (!client_id || !title || !req.file) return res.status(400).json({ error: 'Missing fields.' });
+  if (!client_id || !title) return res.status(400).json({ error: 'Missing fields.' });
+
+  // Per Bot 24 — Path A: already uploaded directly to R2 (see
+  // presign-upload above) — no file bytes touch this server at all.
+  if (req.body && req.body.r2Key && req.body.practiceId) {
+    const key = req.body.r2Key;
+    if (!key.startsWith('practices/') || !key.includes(req.body.practiceId)) return res.status(400).json({ error: 'Unexpected key.' });
+    const exists = await media.objectExists(key).catch(() => false);
+    if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+    db.addPractice(req.body.practiceId, client_id, title, 'audio', '', key, 'facilitator', null, null, req.user.id, 'r2');
+    return res.json({ id: req.body.practiceId, storageType: 'r2' });
+  }
+
+  // Path B — legacy fallback, same as before this change.
+  if (!req.file) return res.status(400).json({ error: 'Missing fields.' });
   const id = uuidv4();
   // Per Bot 15c — this used to leave the uploaded file sitting in ./uploads
   // on the container's own filesystem and store just that filename —
@@ -8214,10 +8290,46 @@ app.get('/newsletter-images/:key', async (req, res) => {
 // inline video at all, so the editor wraps this URL in a bulletproof
 // video/poster/fallback-link block rather than a bare <video> tag — but the
 // upload+storage side is identical to how images already work.
+// ── R2 upload — Step 1: get a presigned PUT URL for a newsletter video.
+// Per Bot 24 (maintenance rebuild, priority 2) — same direct-to-R2
+// pattern as /api/content/library/presign-upload above; this was
+// flagged as the single highest-risk upload in the whole app (video,
+// admin-only, no real size ceiling), previously routed browser → Node →
+// R2 (buffered into memory, then re-uploaded from the server — a full
+// double transfer, and exposed to Railway's 5-minute request limit).
+app.post('/api/admin/newsletter-videos/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    if (!contentType || !contentType.startsWith('video/')) return res.status(400).json({ error: 'Only video files are supported here.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp4'])[0];
+    const key = `newsletter-videos/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('newsletter-videos presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/newsletter-videos', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!media.isConfigured()) return res.status(400).json({ error: 'Video storage (R2) is not configured on this deployment.' });
+
+    // Per Bot 24 — Path A: the upload already happened directly to R2
+    // (see presign-upload above); this just confirms the key is real and
+    // returns the public URL, no file bytes touch this server at all.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('newsletter-videos/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      return res.json({ url: `${APP_URL}/newsletter-videos/${encodeURIComponent(key.replace('newsletter-videos/', ''))}` });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client. Same
+    // as before, just now the secondary path rather than the only one.
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.file.mimetype.startsWith('video/')) {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Only video files are supported here.' });

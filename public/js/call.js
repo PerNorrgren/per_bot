@@ -286,14 +286,38 @@
     });
   }
 
+  // Per Bot 24 (maintenance rebuild, priority 2) — presigned direct-to-R2.
+  // A live session recording is exactly the "no real size ceiling"
+  // case this was flagged for — was browser → Node → R2 (full buffer
+  // relayed through the server), now browser → R2 directly, with only a
+  // small confirm call afterward. Falls back to the old server-relayed
+  // path if presigning fails for any reason.
   async function uploadRecording(callId, blob, durationSeconds) {
+    const mimeType = blob.type || 'video/webm';
     try {
-      const fd = new FormData();
-      fd.append('file', blob, 'session.webm');
-      fd.append('durationSeconds', String(durationSeconds));
-      await fetch(`/api/calls/${callId}/recording`, { method: 'POST', body: fd });
+      const presignRes = await fetch(`/api/calls/${callId}/recording/presign-upload`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mimeType }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+      const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: blob });
+      if (!putRes.ok) throw new Error('Upload to storage failed.');
+      const confirmRes = await fetch(`/api/calls/${callId}/recording`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: presignData.key, mimeType, durationSeconds }),
+      });
+      if (!confirmRes.ok) throw new Error('Could not confirm the recording.');
     } catch (e) {
-      console.error('[call] recording upload failed:', e);
+      console.error('[call] direct-to-R2 recording upload failed, falling back to server relay:', e);
+      try {
+        const fd = new FormData();
+        fd.append('file', blob, 'session.webm');
+        fd.append('durationSeconds', String(durationSeconds));
+        await fetch(`/api/calls/${callId}/recording`, { method: 'POST', body: fd });
+      } catch (e2) {
+        console.error('[call] recording upload failed (fallback too):', e2);
+      }
     }
   }
 

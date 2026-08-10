@@ -1594,6 +1594,34 @@
       .replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
   }
 
+  // Per Bot 24 (maintenance rebuild, priority 2) — presigned direct-to-R2
+  // for practice audio. Falls back to the old server-relayed path if
+  // presigning fails for any reason, same as elsewhere in this app.
+  async function uploadPracticeAudioDirectToR2(file, clientId, title) {
+    try {
+      const presignRes = await fetch('/api/practices/audio/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+      const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'audio/mpeg' }, body: file });
+      if (!putRes.ok) throw new Error('Upload to storage failed.');
+      const confirmRes = await fetch('/api/practices/audio', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, title, r2Key: presignData.key, practiceId: presignData.practiceId }),
+      });
+      if (!confirmRes.ok) throw new Error('Could not confirm upload.');
+    } catch (e) {
+      console.error('direct-to-R2 practice upload failed, falling back to server relay:', e);
+      const fd = new FormData();
+      fd.append('client_id', clientId);
+      fd.append('title', title);
+      fd.append('file', file);
+      await fetch('/api/practices/audio', { method: 'POST', body: fd });
+    }
+  }
+
   function openAddPractice() {
     document.getElementById('addPracticeModal').classList.add('visible');
     document.getElementById('practiceTitle').value = '';
@@ -1685,11 +1713,7 @@
           if (_pendingFiles.length > 1) setBtnLoading(btn, true, `Uploading ${i + 1} of ${_pendingFiles.length}…`);
           const file = _pendingFiles[i];
           const title = (sharedTitle && _pendingFiles.length === 1) ? sharedTitle : titleFromFilename(file.name);
-          const fd = new FormData();
-          fd.append('client_id', currentClientId);
-          fd.append('title', title);
-          fd.append('file', file);
-          try { await fetch('/api/practices/audio', { method: 'POST', body: fd }); }
+          try { await uploadPracticeAudioDirectToR2(file, currentClientId, title); }
           catch(e) { console.error('practice upload failed:', file.name, e); }
         }
       } finally { setBtnLoading(btn, false); }

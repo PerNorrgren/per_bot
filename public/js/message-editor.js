@@ -477,6 +477,36 @@
       } catch (e) { reject(e); }
     });
   }
+  // Per Bot 24 (maintenance rebuild, priority 2) — direct-to-R2 for
+  // newsletter videos specifically, the highest-risk upload in the app
+  // (video, no real size ceiling). Presign → PUT straight to R2 from the
+  // browser → tiny confirm call with just the key, no file bytes ever
+  // touch this server. Falls back to the old server-relayed path
+  // (uploadFileGetUrl) if presigning fails for any reason, same
+  // "primary path, legacy fallback stays available" pattern used
+  // elsewhere in this app.
+  async function uploadVideoDirectToR2(file) {
+    try {
+      const presignRes = await fetch('/api/admin/newsletter-videos/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'video/mp4' }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+      const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'video/mp4' }, body: file });
+      if (!putRes.ok) throw new Error('Upload to storage failed.');
+      const confirmRes = await fetch('/api/admin/newsletter-videos', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: presignData.key }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok || !confirmData.url) throw new Error(confirmData.error || 'Could not confirm upload.');
+      return confirmData.url;
+    } catch (e) {
+      // Legacy fallback — routes through the server, same as before this change.
+      return uploadFileGetUrl('/api/admin/newsletter-videos', file);
+    }
+  }
   async function insertNewsletterVideo(q) {
     const target = getInsertionTarget(q);
     const videoInput = document.createElement('input');
@@ -487,7 +517,7 @@
       if (!videoFile) return;
       let videoUrl;
       try {
-        videoUrl = await uploadFileGetUrl('/api/admin/newsletter-videos', videoFile);
+        videoUrl = await uploadVideoDirectToR2(videoFile);
       } catch (e) { window.appAlert(e.message || 'Could not upload video.'); return; }
       let posterUrl = '';
       if (await window.appConfirm('Add a thumbnail image for the video? Recommended — without one, inboxes that can\'t play it inline just show a plain "Watch the video" box instead of a picture.')) {
