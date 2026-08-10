@@ -188,6 +188,14 @@
     .bnav-btn { flex:1; padding:14px 4px 12px; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:15px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
     .bnav-icon { font-size:34px; line-height:1; opacity:0.75; }
     .bnav-btn.active { color:rgba(180,230,200,0.9); }
+    /* Per Bot 24 — "What's New" home promo: quiet glow + fade-in + small
+       marker, no banner/urgency styling (matches the house "no hype"
+       rule the copy itself already follows). Padding/border-radius
+       pulled onto the card itself here — was inline before, but the
+       glow needs a real box to sit around. */
+    .whats-new-card { padding:18px 20px; border-radius:16px; border:1px solid rgba(180,230,200,0.22); box-shadow:0 0 22px rgba(180,230,200,0.08), inset 0 0 18px rgba(180,230,200,0.04); animation: whatsNewFadeIn 0.9s ease-out; }
+    @keyframes whatsNewFadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .whats-new-badge { display:inline-flex; align-items:center; font-size:9.5px; letter-spacing:0.06em; color:rgba(180,230,200,0.85); background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); border-radius:20px; padding:2px 8px; text-transform:none; }
     .bnav-btn.active .bnav-icon { opacity:1; }
 
     /* Library / You mega-views — internal sub-nav + switchable regions */
@@ -861,9 +869,16 @@
                & Marketing → Home screen — What's New). Falls back to
                nothing shown at all when disabled, rather than reviving
                Quick Practice — Per's own call, see the conversation this
-               was built in. -->
-          <div id="whatsNewPromo" style="display:none">
-            <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center;">What's new</div>
+               was built in. Per's own follow-up: a small "New" marker, a
+               soft accent glow, and a gentle one-time fade-in to make it
+               easy to notice without anything that reads as a banner or
+               urgency — deliberately quiet, matching the house style's
+               own "no hype" rule for this exact kind of copy. -->
+          <div id="whatsNewPromo" class="whats-new-card" style="display:none">
+            <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center; display:flex; align-items:center; justify-content:center; gap:7px;">
+              <span>What's new</span>
+              <span class="whats-new-badge">✦ New</span>
+            </div>
             <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:left"></div>
             <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
