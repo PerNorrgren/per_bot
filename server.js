@@ -8126,13 +8126,15 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // and already means something else in this same endpoint.
     const contentKind  = req.body.contentKind  || null;
     const externalLink = req.body.externalLink || null;
-    // As with the PATCH endpoint, an assigned client must be a real client
-    // — never trust an arbitrary id straight from the request body onto a
-    // field that grants exclusive access.
+    // As with the PATCH endpoint below — an assigned person must be a
+    // real user account, never trust an arbitrary id straight from the
+    // request body onto a field that grants exclusive access. Per Bot 24
+    // — no longer restricted to is_client specifically; any real person
+    // (Explorer/Member/Client alike) can be the one-to-one target now.
     let assignedClientId = req.body.assignedClientId || null;
     if (assignedClientId) {
       const target = db.getUser(assignedClientId);
-      if (!target || target.is_client !== 1) return res.status(400).json({ error: 'That is not a valid client.' });
+      if (!target) return res.status(400).json({ error: 'That is not a valid person.' });
     }
 
     // Path A — R2 upload already completed client-side; just save the reference.
@@ -8698,11 +8700,14 @@ app.get('/api/content/library/:id/epub-resource/*', auth.requireAuthApi(['client
 
 app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    // If set, must be a real client — never trust an arbitrary user id
-    // straight from the request body onto a field that grants access.
+    // If set, must be a real user account — never trust an arbitrary
+    // user id straight from the request body onto a field that grants
+    // access. Per Bot 24 — no longer restricted to is_client, so any
+    // real person can be the one-to-one target, not just a facilitator's
+    // Client.
     if (req.body.assigned_client_id) {
       const target = db.getUser(req.body.assigned_client_id);
-      if (!target || target.is_client !== 1) return res.status(400).json({ error: 'That is not a valid client.' });
+      if (!target) return res.status(400).json({ error: 'That is not a valid person.' });
     }
     db.updateLibraryFile(req.params.id, req.body);
     res.json({ ok: true });
