@@ -5040,16 +5040,28 @@
   // needed. Course-type target: reuses the exact same
   // switchTab+openCourseDetail+openLesson path the resume card
   // (jumpToResume above) already uses for "continue where you left off".
-  function openWhatsNewLink() {
+  async function openWhatsNewLink() {
     const btn = document.getElementById('whatsNewPromoBtn');
     const type = btn.dataset.linkType, id = btn.dataset.linkId;
     if (!type || !id) return;
     if (type === 'practice') {
+      // Per Bot 24 — despite the label ("A practice / book / poem"), the
+      // picker behind this actually draws from the general content
+      // library (books, poems, audiobooks included), not the separate
+      // Practices-tab data — so a book picked here was never going to be
+      // found in _practicesData, and always fell through to the generic
+      // Library-tab fallback below. Checks the real practices list
+      // first (still correct for an actual practice), then the general
+      // library — loading it first if Library hasn't been visited yet
+      // this session, same reason contentItemHTML's data can be empty.
       const p = _practicesData.find(x => x.id === id);
       if (p) { openPractice(p.id, p.title, p.type, p.content, p.filename); return; }
-      // Not in the practices list (e.g. a book/poem living elsewhere in
-      // the library rather than the Practices shelf) — Library search is
-      // the safest fallback rather than doing nothing.
+      let f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
+      if (!f) { await loadContent(); f = (_contentData || []).find(x => x.id === id); }
+      if (f) { openContentFile(f); return; }
+      // Genuinely not found anywhere (deleted since being linked, most
+      // likely) — Library search is the safest fallback rather than
+      // doing nothing.
       switchTab('library');
       return;
     }
