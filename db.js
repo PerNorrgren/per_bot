@@ -4223,7 +4223,19 @@ function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   const files = queryAll(`SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0
     AND id NOT IN (SELECT file_id FROM lesson_file_refs) ORDER BY title ASC`);
-  return files.map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
+  // Per Bot 24 — a one-to-one file's assigned_client_id was only ever used
+  // to decide `accessible` (locked-but-listed, same treatment as an
+  // ordinary tier-gated file) — meaning every other person's title, and
+  // even guests with no account at all (userId undefined here), could see
+  // that a specific private file exists and read its title. That's fine
+  // for tier gating (a real upsell: "upgrade to unlock this"), but wrong
+  // for a file meant for one specific person — there's no path to
+  // "unlock" someone else's private file, so it should never be listed
+  // for anyone but its recipient in the first place. Filtered out here,
+  // not just marked inaccessible.
+  return files
+    .filter(f => !f.assigned_client_id || f.assigned_client_id === userId)
+    .map(f => ({ ...f, accessible: canSeeFile(f, level, userId) }));
 }
 
 function getFacilitatorResources() {
