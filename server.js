@@ -6076,6 +6076,36 @@ app.post('/api/admin/whats-new-polish', auth.requireAuthApi(['admin']), async (r
   }
 });
 
+// Per Bot 24 — CRUD for the "What's New" rotating set (see
+// whats_new_items table comment in db.js). Straightforward and
+// admin-only throughout — no is_active-single-row complexity like
+// message_versions, since any number of items can be active at once
+// here.
+app.get('/api/admin/whats-new-items', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllWhatsNewItems()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/whats-new-items', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { body, format, linkType, linkId, linkTitle, active } = req.body;
+    const id = uuidv4();
+    db.addWhatsNewItem(id, body, format, linkType, linkId, linkTitle, active);
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/whats-new-items/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (!db.getWhatsNewItem(req.params.id)) return res.status(404).json({ error: 'Not found.' });
+    const { body, format, linkType, linkId, linkTitle, active } = req.body;
+    db.updateWhatsNewItem(req.params.id, body, format, linkType, linkId, linkTitle, active);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/whats-new-items/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteWhatsNewItem(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 17 (session 3) — same idea, for Offers' headline/description.
 app.post('/api/admin/offer-copy-polish', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
@@ -9674,6 +9704,22 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 24 (activity/engagement, group 1) — one call, both pieces:
+// this week's consistency count and any newly-crossed milestone. Marks
+// the milestone as seen the moment it's returned rather than requiring a
+// separate acknowledge call — simplest option, and the worst case if a
+// render genuinely fails is just that one milestone quietly doesn't
+// resurface, not a real problem worth the extra round-trip to guard
+// against.
+app.get('/api/my/activity-summary', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const consistency = db.getConsistencyStats(req.user.id);
+    const milestone = db.getNewMilestone(req.user.id);
+    if (milestone) db.markMilestoneSeen(req.user.id, milestone.key);
+    res.json({ ...consistency, milestone });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
   try {
@@ -10578,14 +10624,14 @@ app.get('/api/config', (req, res) => {
       talkPersonaName: cfg.talk_persona_name || 'Per',
       talkPersonaPhotoUrl: faviconUrl(cfg.talk_persona_photo_url) || '/assets/tomte.png',
       allowCustomVoice: cfg.allow_custom_voice === null || cfg.allow_custom_voice === undefined ? true : !!cfg.allow_custom_voice,
-      // Per Bot 24 — "What's New" home promo (item 11). whatsNewBody is
-      // rich HTML written by an admin, not user input — same trust level
-      // as tagline/legalEntityName above, already rendered unescaped
-      // elsewhere in this same response's consumers.
-      whatsNewEnabled: !!cfg.whats_new_enabled,
-      whatsNewBody: cfg.whats_new_body || '',
-      whatsNewLinkType: cfg.whats_new_link_type || null,
-      whatsNewLinkId: cfg.whats_new_link_id || null,
+      // Per Bot 24 — "What's New" home promo, now a rotating set (see
+      // whats_new_items table) rather than one flat value. Only active
+      // items go out, in creation order — the client just rotates
+      // through whatever array it gets, no filtering of its own needed.
+      whatsNewItems: db.getActiveWhatsNewItems().map(i => ({
+        body: i.body || '', linkType: i.link_type || null, linkId: i.link_id || null,
+      })),
+      whatsNewSecondsPerItem: cfg.whats_new_seconds_per_item || 6,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

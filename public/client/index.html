@@ -193,7 +193,10 @@
        rule the copy itself already follows). Padding/border-radius
        pulled onto the card itself here — was inline before, but the
        glow needs a real box to sit around. */
-    .whats-new-card { padding:18px 20px; border-radius:16px; border:1px solid rgba(180,230,200,0.22); box-shadow:0 0 22px rgba(180,230,200,0.08), inset 0 0 18px rgba(180,230,200,0.04); animation: whatsNewFadeIn 0.9s ease-out; }
+    .whats-new-card { padding:18px 20px; border-radius:16px; border:1px solid rgba(180,230,200,0.22); box-shadow:0 0 22px rgba(180,230,200,0.08), inset 0 0 18px rgba(180,230,200,0.04); animation: whatsNewFadeIn 0.9s ease-out; overflow:hidden; }
+    /* Per Bot 24 — clips the horizontal slide transition (rotating
+       between items) to the card's own bounds, so the outgoing/incoming
+       text doesn't visually spill past the card's edges mid-transition. */
     @keyframes whatsNewFadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
     .whats-new-badge { display:inline-flex; align-items:center; font-size:9.5px; letter-spacing:0.06em; color:rgba(180,230,200,0.85); background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); border-radius:20px; padding:2px 8px; text-transform:none; }
     .bnav-btn.active .bnav-icon { opacity:1; }
@@ -858,6 +861,13 @@
              so a margin-top approach on it would silently stop applying
              whenever it's hidden. -->
         <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase; margin-bottom:-13px;"></div>
+        <!-- Per Bot 24 (activity/engagement, group 1) — quiet consistency/
+             milestone line. Hidden entirely unless there's something
+             genuinely true and worth saying — never shows "0 times this
+             week", and a milestone (rare, only shown once ever) takes
+             priority over the plain weekly count when both would
+             otherwise apply. See loadActivitySummary below. -->
+        <div id="activitySummary" style="display:none; font-size:12px; color:rgba(180,230,200,0.6); margin-bottom:-13px; margin-top:4px;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15); margin-bottom:-13px;"></div>
@@ -4256,6 +4266,18 @@
       document.getElementById('playerText').innerHTML = content || '';
       document.getElementById('playerOverlay').classList.add('visible');
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
+      // Per Bot 24 (activity/engagement, group 1) — this whole function
+      // (the entire Practices tab: meditations, quick practices, poems)
+      // never logged into content_history at all before, only this
+      // practice-specific use-counter above (no timestamp, no per-event
+      // record — useless for "which days did this person actually show
+      // up"). Without this, consistency/milestone tracking would miss
+      // the majority of real engagement, since most everyday practice
+      // use goes through this function, not the Library/Read&Watch path
+      // that already had logHistory wired in. 'document' matches the
+      // existing contentType vocabulary used everywhere else
+      // (audio/video/document) — no need for a new 'text' category.
+      logHistory('document', id);
     } else {
       document.getElementById('playerText').textContent = 'Loading…';
       document.getElementById('playerOverlay').classList.add('visible');
@@ -4280,6 +4302,7 @@
       document.getElementById('playerText').textContent = 'Playing…';
       audio.play();
       fetch(`/api/practices/${id}/use`,{method:'PATCH'});
+      logHistory('audio', id); // Per Bot 24 — same reasoning as the text branch above.
       audio.onended = () => { document.getElementById('playerText').textContent='Done.'; };
     }
   }
@@ -5027,28 +5050,100 @@
       if (Array.isArray(list) && list.length) document.getElementById('calmMotdText').textContent = list[0].body;
     } catch(e) {}
     renderWhatsNewPromo();
+    loadActivitySummary();
   }
-  // Per Bot 24 — "What's New" home promo (item 11). cfg comes from the
-  // same /api/config payload already fetched into window.brandReady
-  // elsewhere on this page (see initFacStrip) — reused here rather than
-  // a second fetch.
+  // Per Bot 24 (activity/engagement, group 1) — quiet, factual, never
+  // guilt-shaped. Milestone (rare — shown once ever, at real spaced-out
+  // checkpoints) takes priority over the plain weekly count when both
+  // would otherwise apply; the weekly count itself only ever shows when
+  // it's genuinely > 0 — silence, not a "0 this week" callout, is the
+  // right response to an inactive week.
+  async function loadActivitySummary() {
+    const el = document.getElementById('activitySummary');
+    try {
+      const res = await fetch('/api/my/activity-summary');
+      const data = await res.json();
+      if (data.milestone) {
+        el.textContent = `You've shown up to practice on ${data.milestone.days} different days now.`;
+        el.style.display = '';
+      } else if (data.daysActiveThisWeek > 0) {
+        el.textContent = `You've been here ${data.daysActiveThisWeek} time${data.daysActiveThisWeek === 1 ? '' : 's'} this week.`;
+        el.style.display = '';
+      } else {
+        el.style.display = 'none';
+      }
+    } catch(e) { el.style.display = 'none'; }
+  }
+  // Per Bot 24 — "What's New" home promo, rewritten for a rotating set of
+  // any number of items (was a single value) — cfg.whatsNewItems is now
+  // an array, cfg.whatsNewSecondsPerItem how long each stays up. cfg
+  // comes from the same /api/config payload already fetched into
+  // window.brandReady elsewhere on this page — reused here rather than a
+  // second fetch.
+  let _whatsNewItems = [];
+  let _whatsNewIndex = 0;
+  let _whatsNewTimer = null;
   async function renderWhatsNewPromo() {
     const wrap = document.getElementById('whatsNewPromo');
     try {
       const cfg = await window.brandReady;
-      if (!cfg.whatsNewEnabled || !cfg.whatsNewBody || !cfg.whatsNewBody.trim()) { wrap.style.display = 'none'; return; }
-      document.getElementById('whatsNewPromoBody').innerHTML = cfg.whatsNewBody;
-      const btn = document.getElementById('whatsNewPromoBtn');
-      if (cfg.whatsNewLinkType && cfg.whatsNewLinkId) {
+      _whatsNewItems = (cfg.whatsNewItems || []).filter(i => i.body && i.body.trim());
+      if (!_whatsNewItems.length) { wrap.style.display = 'none'; return; }
+      _whatsNewIndex = 0;
+      showWhatsNewItem(0, false);
+      wrap.style.display = '';
+      if (_whatsNewTimer) clearInterval(_whatsNewTimer);
+      if (_whatsNewItems.length > 1) {
+        const seconds = cfg.whatsNewSecondsPerItem || 6;
+        _whatsNewTimer = setInterval(() => {
+          // Paused while the tab/app isn't actually visible — no point
+          // animating a rotation nobody's looking at, and it means
+          // whatever's showing when someone comes back is still fresh
+          // rather than several rotations stale.
+          if (document.visibilityState !== 'visible') return;
+          _whatsNewIndex = (_whatsNewIndex + 1) % _whatsNewItems.length;
+          showWhatsNewItem(_whatsNewIndex, true);
+        }, seconds * 1000);
+      }
+    } catch(e) { wrap.style.display = 'none'; }
+  }
+  // animate=false for the very first show (nothing to slide from yet);
+  // true for every rotation after that — slides the outgoing item left
+  // while the incoming one slides in from the right, pure CSS
+  // transitions, no carousel library needed for just this.
+  function showWhatsNewItem(index, animate) {
+    const item = _whatsNewItems[index];
+    if (!item) return;
+    const bodyEl = document.getElementById('whatsNewPromoBody');
+    const btn = document.getElementById('whatsNewPromoBtn');
+    const apply = () => {
+      bodyEl.innerHTML = item.body;
+      if (item.linkType && item.linkId) {
         btn.style.display = '';
-        btn.textContent = cfg.whatsNewLinkType === 'course' ? 'Open course' : 'Open';
-        btn.dataset.linkType = cfg.whatsNewLinkType;
-        btn.dataset.linkId = cfg.whatsNewLinkId;
+        btn.textContent = item.linkType === 'course' ? 'Open course' : 'Open';
+        btn.dataset.linkType = item.linkType;
+        btn.dataset.linkId = item.linkId;
       } else {
         btn.style.display = 'none';
       }
-      wrap.style.display = '';
-    } catch(e) { wrap.style.display = 'none'; }
+    };
+    if (!animate) { apply(); return; }
+    bodyEl.style.transition = 'transform 0.35s ease, opacity 0.35s ease';
+    bodyEl.style.transform = 'translateX(-16px)';
+    bodyEl.style.opacity = '0';
+    setTimeout(() => {
+      apply();
+      bodyEl.style.transition = 'none';
+      bodyEl.style.transform = 'translateX(16px)';
+      // Forces the browser to actually register the jump-to-the-right
+      // above before the slide-back-in transition starts — without this
+      // the two style changes get batched together and nothing appears
+      // to move at all.
+      void bodyEl.offsetWidth;
+      bodyEl.style.transition = 'transform 0.35s ease, opacity 0.35s ease';
+      bodyEl.style.transform = 'translateX(0)';
+      bodyEl.style.opacity = '1';
+    }, 350);
   }
   // Practice-type target: looked up from _practicesData, already loaded
   // as part of normal app boot (see loadPractices) — no extra fetch

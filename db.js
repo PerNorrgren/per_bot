@@ -868,6 +868,40 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_message_versions_type ON message_versions(type)`);
 
+  // Per Bot 24 — "What's New" home promo, rebuilt as a real rotating set
+  // rather than one single flat app_config value (see the conversation
+  // this replaced — that field had a real repeat data-loss bug and no
+  // way to hold more than one item at all). Deliberately its own small
+  // table rather than another message_versions type — message_versions
+  // enforces exactly one is_active row per type, which is the wrong
+  // shape here: Per wants any number of saved items with any number of
+  // them simultaneously ticked "active" to rotate through, not a single
+  // current version.
+  db.run(`CREATE TABLE IF NOT EXISTS whats_new_items (
+    id TEXT PRIMARY KEY,
+    body TEXT,
+    format TEXT DEFAULT 'rich',
+    link_type TEXT,
+    link_id TEXT,
+    link_title TEXT,
+    active INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
+  // Per Bot 24 (activity/engagement, group 1) — records which quiet
+  // milestones a person has already been shown, so a real-session-count
+  // threshold they've crossed doesn't get surfaced again every time they
+  // open the app. Deliberately just a marker table — the actual counts
+  // (sessions, distinct days) are computed fresh from content_history
+  // each time, never stored redundantly here.
+  db.run(`CREATE TABLE IF NOT EXISTS milestone_acknowledgments (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    milestone_key TEXT NOT NULL,
+    shown_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, milestone_key)
+  )`);
+
   // ── Email log (Per Bot 8) ──
   // Every email the app sends — welcome, password reset, reminders,
   // renewals, message alerts, newsletters, anything — logs itself here via
@@ -1991,6 +2025,10 @@ async function getDb() {
     // existing login_log consumers (Reports etc.) that don't look at it.
     "ALTER TABLE login_log ADD COLUMN actor_id TEXT",
     "ALTER TABLE login_log ADD COLUMN actor_role TEXT",
+    // Per Bot 24 — global rotation timing for the new whats_new_items
+    // table above. Per item settings (body/link/active) live on each
+    // row instead; this is the one setting that applies to all of them.
+    "ALTER TABLE app_config ADD COLUMN whats_new_seconds_per_item INTEGER DEFAULT 6",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4577,16 +4615,64 @@ function recordPlay(id, userId, userType, contentType, contentId) {
 }
 function getContentHistory(userId, limit = 100) {
   return queryAll(
+    // Per Bot 24 — practices now log into content_history too (see
+    // openPractice's fix, group 1 of the activity/engagement work) —
+    // COALESCE falls back to the practices table for title/type when a
+    // row's content_id doesn't match a library_files row, so a
+    // practice-sourced history entry displays correctly instead of
+    // blank.
     `SELECT ch.id, ch.content_type, ch.content_id, ch.played_at,
-            lf.title, lf.file_type, lf.category_id, c.name AS category_name
+            COALESCE(lf.title, p.title) as title,
+            COALESCE(lf.file_type, p.type) as file_type,
+            lf.category_id, c.name AS category_name
      FROM content_history ch
      LEFT JOIN library_files lf ON ch.content_id = lf.id
+     LEFT JOIN practices p ON ch.content_id = p.id
      LEFT JOIN categories c ON lf.category_id = c.id
      WHERE ch.user_id = ?
      ORDER BY ch.played_at DESC
      LIMIT ?`,
     [userId, limit]
   );
+}
+
+// ── Activity/engagement (Per Bot 24, group 1) ── Quiet consistency and
+// milestone acknowledgment — deliberately not streak-with-guilt framing.
+// "Distinct days practiced" rather than raw play count, since someone
+// replaying the same short practice five times in one sitting is one
+// real instance of showing up, not five — matches the house voice
+// ("you got out of the chair once") better than a click-count would.
+function getConsistencyStats(userId) {
+  const week = queryOne(
+    `SELECT COUNT(DISTINCT DATE(played_at)) as n FROM content_history WHERE user_id=? AND played_at > datetime('now','-7 days')`,
+    [userId]
+  );
+  return { daysActiveThisWeek: (week && week.n) || 0 };
+}
+
+// Meaningful, spaced-out checkpoints rather than a dense grind list —
+// each one is genuinely worth a quiet nod, not a game-style progress bar.
+const MILESTONE_THRESHOLDS = [3, 7, 14, 30, 60, 100, 200, 365];
+function getNewMilestone(userId) {
+  const row = queryOne(`SELECT COUNT(DISTINCT DATE(played_at)) as n FROM content_history WHERE user_id=?`, [userId]);
+  const totalDays = (row && row.n) || 0;
+  // Highest threshold actually reached, not the first one found — so
+  // someone who's been away and comes back well past several thresholds
+  // at once is only ever shown the one that's actually most true right
+  // now, not made to click through a backlog of old ones.
+  const reached = MILESTONE_THRESHOLDS.filter(t => totalDays >= t).pop();
+  if (!reached) return null;
+  const key = `days_${reached}`;
+  const already = queryOne(`SELECT 1 FROM milestone_acknowledgments WHERE user_id=? AND milestone_key=?`, [userId, key]);
+  if (already) return null;
+  return { key, days: reached };
+}
+function markMilestoneSeen(userId, key) {
+  try {
+    getDbSync().run(`INSERT OR IGNORE INTO milestone_acknowledgments (id, user_id, milestone_key) VALUES (?,?,?)`,
+      [crypto.randomUUID(), userId, key]);
+    save();
+  } catch(e) {}
 }
 
 // ── User favourites ──
@@ -5480,6 +5566,34 @@ function logLogin(userId, role, eventType, actorId, actorRole) {
 function getImpersonationLog(limit) {
   return queryAll(`SELECT * FROM login_log WHERE event_type='impersonate_start' ORDER BY logged_in_at DESC LIMIT ?`, [limit || 200]);
 }
+
+// Per Bot 24 — "What's New" home promo items. Any number of saved
+// items, any number of them independently ticked "active" — the client
+// rotates through whichever are active, in creation order. See the
+// whats_new_items table comment above for why this is its own table
+// rather than another message_versions type.
+function addWhatsNewItem(id, body, format, linkType, linkId, linkTitle, active) {
+  getDbSync().run(
+    `INSERT INTO whats_new_items (id, body, format, link_type, link_id, link_title, active) VALUES (?,?,?,?,?,?,?)`,
+    [id, body || '', format || 'rich', linkType || null, linkId || null, linkTitle || null, active ? 1 : 0]
+  );
+  save();
+}
+function updateWhatsNewItem(id, body, format, linkType, linkId, linkTitle, active) {
+  getDbSync().run(
+    `UPDATE whats_new_items SET body=?, format=?, link_type=?, link_id=?, link_title=?, active=? WHERE id=?`,
+    [body || '', format || 'rich', linkType || null, linkId || null, linkTitle || null, active ? 1 : 0, id]
+  );
+  save();
+}
+function deleteWhatsNewItem(id) {
+  getDbSync().run(`DELETE FROM whats_new_items WHERE id=?`, [id]);
+  save();
+}
+function getWhatsNewItem(id) { return queryOne(`SELECT * FROM whats_new_items WHERE id=?`, [id]); }
+function getAllWhatsNewItems() { return queryAll(`SELECT * FROM whats_new_items ORDER BY created_at DESC`); }
+function getActiveWhatsNewItems() { return queryAll(`SELECT * FROM whats_new_items WHERE active=1 ORDER BY created_at ASC`); }
+
 function pruneLoginLog() {
   getDbSync().run(`DELETE FROM login_log WHERE logged_in_at < datetime('now','-180 days')`);
   save();
@@ -6542,7 +6656,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -6836,6 +6950,7 @@ module.exports = {
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
   logLogin, pruneLoginLog, getImpersonationLog,
+  addWhatsNewItem, updateWhatsNewItem, deleteWhatsNewItem, getWhatsNewItem, getAllWhatsNewItems, getActiveWhatsNewItems,
   startTalkSession, endTalkSession,
   reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage, reportEmailLog,
   getDb, save,
@@ -6929,7 +7044,7 @@ module.exports = {
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History
-  recordPlay, getContentHistory,
+  recordPlay, getContentHistory, getConsistencyStats, getNewMilestone, markMilestoneSeen,
   // Content categories seed
   seedContentCategories,
   // Message versions (Per Bot 54, comms2 foundation)
