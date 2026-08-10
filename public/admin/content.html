@@ -1488,7 +1488,7 @@ let _currentLibFiltered = [];
 // respects careful session-numbered filenames too, rather than showing
 // files in upload order.
 function renderLib(files){
-  files = naturalSortFiles(files);
+  files = sortLibraryFiles(files);
   _currentLibFiltered = files;
   if (_libView === 'cards') renderLibCards(files); else renderLibList(files);
   updateBulkBar();
@@ -1543,8 +1543,8 @@ function renderLibList(files){
     <div class="file-list-header">
       <span class="flr-cb"></span>
       <span class="flr-icon"></span>
-      <span class="flr-title">Title</span>
-      <span class="flr-meta">Size</span>
+      <span class="flr-title" style="cursor:pointer" onclick="setLibSort('title')" title="Sort by title">Title${libSortIndicator('title')}</span>
+      <span class="flr-meta" style="cursor:pointer" onclick="setLibSort('created_at')" title="Sort by upload date">Uploaded${libSortIndicator('created_at')}</span>
       <span class="flr-cat">Category</span>
       <span class="flr-vis">Visibility</span>
       <span class="flr-vis">Type</span>
@@ -1555,7 +1555,7 @@ function renderLibList(files){
       <input type="checkbox" class="flr-cb" value="${f.id}" ${_libSel.has(f.id)?'checked':''} onchange="toggleFileSel('${f.id}',this.checked)"/>
       <span class="flr-icon">${ficon(f.file_type)}</span>
       <span class="flr-title" title="${f.title}">${f.title}${f.use_count>0?` <span class="tag uses" style="margin-left:4px">×${f.use_count}</span>`:''}</span>
-      <span class="flr-meta">${fsize(f.file_size)}</span>
+      <span class="flr-meta" title="${f.created_at||''}">${(f.created_at||'').slice(0,10)} · ${fsize(f.file_size)}</span>
       <span class="flr-cat" title="${f.category_name||''} ${f.subcategory_name?'/ '+f.subcategory_name:''}">${f.category_name||'—'}${f.subcategory_name?' / '+f.subcategory_name:''}</span>
       <span class="flr-vis">
         <select class="vis-sel" style="font-size:11px;padding:2px 6px;height:22px;width:100%" onchange="updateVisibility('${f.id}',this.value)">
@@ -3067,6 +3067,33 @@ async function toggleFileTalkPractice(id,talk_practice){
 // rendered allFiles in whatever order they loaded in (recent-upload-first
 // in practice), which bore no relation to careful session-numbered
 // filenames — this instead respects that naming convention directly.
+// Per Bot 24 — Library list sort, kept separate from naturalSortFiles
+// below (which the "Add files to lesson" picker also uses, and which
+// should always stay alphabetical regardless of what's chosen here —
+// sharing one function/state between the two would mean sorting the
+// main list by date silently changed the picker too). Alphabetical
+// stays the default here as well, matching how this list has always
+// worked — added a clickable "Uploaded" column so a recent batch is
+// easy to confirm without hunting for it by name.
+let _libSortKey = 'title';
+let _libSortDir = 1; // 1 = A→Z / oldest→newest, -1 = reverse
+function setLibSort(key){
+  if (_libSortKey === key) { _libSortDir = -_libSortDir; }
+  else { _libSortKey = key; _libSortDir = key === 'created_at' ? -1 : 1; } // switching to date defaults to newest-first, the useful direction
+  renderLib(_currentLibFiltered || allFiles);
+}
+function libSortIndicator(key){
+  if (_libSortKey !== key) return '';
+  return _libSortDir === 1 ? ' ▲' : ' ▼';
+}
+function sortLibraryFiles(files){
+  return [...files].sort((a,b)=>{
+    if (_libSortKey === 'created_at') {
+      return (new Date(a.created_at||0) - new Date(b.created_at||0)) * _libSortDir;
+    }
+    return (a.title||'').localeCompare(b.title||'',undefined,{numeric:true,sensitivity:'base'}) * _libSortDir;
+  });
+}
 function naturalSortFiles(files){
   return [...files].sort((a,b)=>(a.title||'').localeCompare(b.title||'',undefined,{numeric:true,sensitivity:'base'}));
 }
