@@ -1044,21 +1044,24 @@ function emailAdminPasswordReset(name, email, tempPassword, language, isFirstEve
 
 // ── Trial email sequence (Per Bot 5, item 4) ──
 // Day 3: what you've unlocked. Day 10: 4 days left. Day 14: trial ended.
-function emailTrialDay3(user) {
+function emailTrialDay3(user, override) {
   const b = brand();
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
-  const subject = fillTemplate(cfg.trial_day3_subject || "The parts of this you haven't found yet", tokens);
-  const body = fillTemplate(cfg.trial_day3_body || `A few days in is usually when people find the one thing that works and quietly stop looking any further. That's completely fine — but there's more here than the first thing you landed on.
+  const content = resolveMessageContent('trial_day3', {
+    subject: "The parts of this you haven't found yet",
+    body: `A few days in is usually when people find the one thing that works and quietly stop looking any further. That's completely fine — but there's more here than the first thing you landed on.
 
 Everything is actually open to you right now, not just what's free to try — the full library, and Talk, for the days nothing scripted quite fits what you're carrying.
 
-No pressure to go looking. Just wanted you to know it's there.`, tokens);
+No pressure to go looking. Just wanted you to know it's there.`,
+  }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderMessageBody(body, cfg.trial_day3_format)}
+      ${renderMessageBody(body, content.format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Visit your practice space →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1070,21 +1073,24 @@ No pressure to go looking. Just wanted you to know it's there.`, tokens);
 // Purpose is different from day 3 (which points at what's unopened) — this
 // one is about return frequency, since short-and-often is what actually
 // makes a practice stick, not one long session.
-function emailTrialDay7(user) {
+function emailTrialDay7(user, override) {
   const b = brand();
-  const cfg = db.getAppConfig() || {};
   const tokens = buildMessageTokens(user);
-  const subject = fillTemplate(cfg.trial_day7_subject || 'The five minutes that actually add up', tokens);
-  const body = fillTemplate(cfg.trial_day7_body || `The people who keep this going long after a trial ends aren't usually the ones who did one long session — they're the ones who came back for five minutes, a few times a week.
+  const content = resolveMessageContent('trial_day7', {
+    subject: 'The five minutes that actually add up',
+    body: `The people who keep this going long after a trial ends aren't usually the ones who did one long session — they're the ones who came back for five minutes, a few times a week.
 
 If you haven't yet, that's really all Talk or a short practice needs to be. Not a commitment. Just a few minutes, whenever the day happens to call for it.
 
-However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`, tokens);
+However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`,
+  }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderMessageBody(body, cfg.trial_day7_format)}
+      ${renderMessageBody(body, content.format)}
       <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/client/" style="color:#2d6a4f">Try a few minutes now →</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1092,23 +1098,24 @@ However you've used it so far is fine — this is just a nudge that short and of
   );
 }
 
-function emailTrialDay10(user) {
+function emailTrialDay10(user, override) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
   const tokens = buildMessageTokens(user);
-  const subject = fillTemplate(cfg.trial_day10_subject || 'Four days left, and what happens after', tokens);
   const defaultBody = paymentsOn
     ? `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, but full access doesn't.
 
 If this has found a place in your week, membership just means it stays there. Nothing else changes, and there's no pressure either way.`
     : `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, and the free content stays fully available too.`;
-  const body = fillTemplate(cfg.trial_day10_body || defaultBody, tokens);
+  const content = resolveMessageContent('trial_day10', { subject: 'Four days left, and what happens after', body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderMessageBody(body, cfg.trial_day10_format)}
+      ${renderMessageBody(body, content.format)}
       ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -1116,23 +1123,24 @@ If this has found a place in your week, membership just means it stays there. No
   );
 }
 
-function emailTrialDay14(user) {
+function emailTrialDay14(user, override) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   const paymentsOn = cfg.payments_enabled !== 0;
   const tokens = buildMessageTokens(user);
-  const subject = fillTemplate(cfg.trial_day14_subject || 'Your trial has ended — here\'s where things stand', tokens);
   const defaultBody = paymentsOn
     ? `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.
 
 If you'd like full access back, you're welcome any time. No explanation needed, and nothing about coming back later is complicated.`
     : `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.`;
-  const body = fillTemplate(cfg.trial_day14_body || defaultBody, tokens);
+  const content = resolveMessageContent('trial_day14', { subject: "Your trial has ended — here's where things stand", body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      ${renderMessageBody(body, cfg.trial_day14_format)}
+      ${renderMessageBody(body, content.format)}
       ${paymentsOn ? `<p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
@@ -10198,36 +10206,14 @@ app.get('/api/admin/settings/default-showcase-file', auth.requireAuthApi(['admin
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Per Bot 18 — trial sequence copy, GET counterpart for the admin UI, and
-// a test-send so Per can see exactly what a real trial member gets at each
-// step without waiting for cron or faking a trial account.
-app.get('/api/admin/settings/trial-sequence', auth.requireAuthApi(['admin']), (req, res) => {
-  try {
-    const cfg = db.getAppConfig() || {};
-    res.json({
-      trialDay3Subject: cfg.trial_day3_subject || '', trialDay3Body: cfg.trial_day3_body || '', trialDay3Format: cfg.trial_day3_format || 'plain',
-      trialDay7Subject: cfg.trial_day7_subject || '', trialDay7Body: cfg.trial_day7_body || '', trialDay7Format: cfg.trial_day7_format || 'plain',
-      trialDay10Subject: cfg.trial_day10_subject || '', trialDay10Body: cfg.trial_day10_body || '', trialDay10Format: cfg.trial_day10_format || 'plain',
-      trialDay14Subject: cfg.trial_day14_subject || '', trialDay14Body: cfg.trial_day14_body || '', trialDay14Format: cfg.trial_day14_format || 'plain',
-    });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-const TRIAL_TEST_SENDERS = { day3: emailTrialDay3, day7: emailTrialDay7, day10: emailTrialDay10, day14: emailTrialDay14 };
-app.post('/api/admin/settings/trial-sequence/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    const { step, email } = req.body;
-    const sender = TRIAL_TEST_SENDERS[step];
-    if (!sender) return res.status(400).json({ error: 'Unknown step.' });
-    const to = resolveTestEmail(email, req.user.email);
-    if (!to) return res.status(400).json({ error: 'No test email address available.' });
-    // Per Bot 19 — same pattern as Newsletters: if the test address is a
-    // real account, send them a genuine working message (real invite
-    // link/expiry date) rather than only ever a wording preview.
-    const realUser = db.getUserByEmail(to.toLowerCase());
-    await sender(realUser || { id: 'test', name: req.user.name || 'there', email: to });
-    res.json({ ok: true, sentTo: to });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
+// Per Bot 24 — the old trial-sequence GET/test-send endpoints (and the
+// TRIAL_TEST_SENDERS lookup) are gone — no frontend code calls either
+// one anymore, since sales.html's Trial sequence section was already
+// built on the shared comms2 editor from the start, which reads
+// message_versions directly and has its own generic Send test panel
+// (/api/admin/message-versions/:type/test). built
+// on the shared comms2 editor from the start, which now has its own
+// generic Send test panel (/api/admin/message-versions/:type/test).
 
 app.get('/api/admin/settings/savers-sequence', auth.requireAuthApi(['admin']), (req, res) => {
   try {
@@ -11393,10 +11379,10 @@ const TYPE_TEST_SENDERS = {
   },
   newsletter_welcome: { email: (toEmail, realUser, override) => emailWelcomeFromNewsletter(realUser, override), sms: null },
   trial_extended:     { email: (toEmail, realUser, override) => emailTrialUpdated(realUser, 14, 'features', false, override), sms: null },
-  trial_day3:  { email: (toEmail, realUser) => emailTrialDay3(realUser),  sms: null },
-  trial_day7:  { email: (toEmail, realUser) => emailTrialDay7(realUser),  sms: null },
-  trial_day10: { email: (toEmail, realUser) => emailTrialDay10(realUser), sms: null },
-  trial_day14: { email: (toEmail, realUser) => emailTrialDay14(realUser), sms: null },
+  trial_day3:  { email: (toEmail, realUser, override) => emailTrialDay3(realUser, override),  sms: null },
+  trial_day7:  { email: (toEmail, realUser, override) => emailTrialDay7(realUser, override),  sms: null },
+  trial_day10: { email: (toEmail, realUser, override) => emailTrialDay10(realUser, override), sms: null },
+  trial_day14: { email: (toEmail, realUser, override) => emailTrialDay14(realUser, override), sms: null },
   savers_cancel_day0:   { email: (toEmail, realUser) => emailSaversCancelDay0(realUser, '[example date]'), sms: null },
   savers_cancel_grace0: { email: (toEmail, realUser) => emailSaversCancelGrace0(realUser), sms: null },
   savers_cancel_mid:    { email: (toEmail, realUser) => emailSaversCancelMid(realUser),    sms: null },

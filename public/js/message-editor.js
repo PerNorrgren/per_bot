@@ -1232,6 +1232,34 @@ Per`,
       subject: "Your trial's been extended",
       body: "Hi {{name}},\n\nWe've been rolling out a lot of new things lately, so we've extended your trial by {{days}} days — until {{expiry_date}} — to give you a proper chance to see and try what's new.\n\nSign in at {{invite_link}} whenever you're ready.",
     },
+    trial_day3: {
+      subject: "The parts of this you haven't found yet",
+      body: `A few days in is usually when people find the one thing that works and quietly stop looking any further. That's completely fine — but there's more here than the first thing you landed on.
+
+Everything is actually open to you right now, not just what's free to try — the full library, and Talk, for the days nothing scripted quite fits what you're carrying.
+
+No pressure to go looking. Just wanted you to know it's there.`,
+    },
+    trial_day7: {
+      subject: 'The five minutes that actually add up',
+      body: `The people who keep this going long after a trial ends aren't usually the ones who did one long session — they're the ones who came back for five minutes, a few times a week.
+
+If you haven't yet, that's really all Talk or a short practice needs to be. Not a commitment. Just a few minutes, whenever the day happens to call for it.
+
+However you've used it so far is fine — this is just a nudge that short and often counts for more than it seems.`,
+    },
+    trial_day10: {
+      subject: 'Four days left, and what happens after',
+      body: `Your trial ends in four days. After that, your account moves to the free Explorer tier — your history stays, but full access doesn't.
+
+If this has found a place in your week, membership just means it stays there. Nothing else changes, and there's no pressure either way.`,
+    },
+    trial_day14: {
+      subject: "Your trial has ended — here's where things stand",
+      body: `Your 14-day trial has come to an end. Your account is now on the free Explorer tier — your history and the free content are both still there.
+
+If you'd like full access back, you're welcome any time. No explanation needed, and nothing about coming back later is complicated.`,
+    },
   };
   function escVe(s) { return (s==null?'':String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtVeDate(s) {
