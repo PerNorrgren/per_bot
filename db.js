@@ -6394,7 +6394,12 @@ function getNewsletterRecipients(segments, explicitUserIds) {
 // user gets nudged weekly, not every single day the cron job runs.
 function getInactiveUsers(days = 4) {
   return queryAll(
-    `SELECT u.id, u.name, u.email, u.phone, u.pref_email_reminders, u.pref_sms_reminders FROM users u
+    // Per Bot 24 (activity/engagement, group 1) — timezone/motd_hour
+    // added so the reminder send can match each person's own likely
+    // hour rather than firing at one fixed UTC time for everyone; see
+    // getPreferredHour below and the hourly-tick change in
+    // sendInactivityReminders (server.js).
+    `SELECT u.id, u.name, u.email, u.phone, u.pref_email_reminders, u.pref_sms_reminders, u.timezone, u.motd_hour FROM users u
      WHERE (u.pref_email_reminders=1 OR u.pref_sms_reminders=1)
        AND u.archived=0
        AND (u.last_reminder_sent_at IS NULL OR u.last_reminder_sent_at <= datetime('now', '-7 days'))
@@ -6409,6 +6414,17 @@ function getInactiveUsers(days = 4) {
 function markReminderSent(userId) {
   getDbSync().run(`UPDATE users SET last_reminder_sent_at=datetime('now') WHERE id=?`, [userId]);
   save();
+}
+
+// Per Bot 24 (activity/engagement, group 1) — raw recent play timestamps
+// for local-hour-of-day analysis (see getPreferredLocalHour in
+// server.js, which does the actual timezone conversion — that's a JS/
+// Intl concern, not a database one, same reasoning getLocalDayHourDate
+// already lives in server.js for). Capped at 50 so this stays fast
+// regardless of how long someone's been a member; a recent pattern
+// matters more than an old one anyway.
+function getRecentPlayTimestamps(userId, limit = 50) {
+  return queryAll(`SELECT played_at FROM content_history WHERE user_id=? ORDER BY played_at DESC LIMIT ?`, [userId, limit]).map(r => r.played_at);
 }
 
 // ── Renewal reminders ── Genuinely new — pref_email_renewal existed as a
@@ -7075,7 +7091,7 @@ module.exports = {
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History
-  recordPlay, getContentHistory, getConsistencyStats, getNewMilestone, markMilestoneSeen,
+  recordPlay, getContentHistory, getConsistencyStats, getNewMilestone, markMilestoneSeen, getRecentPlayTimestamps,
   // Content categories seed
   seedContentCategories,
   // Message versions (Per Bot 54, comms2 foundation)

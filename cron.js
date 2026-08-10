@@ -122,12 +122,18 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  // ── Inactivity reminders — 07:20 UTC ──
-  cron.schedule('20 7 * * *', async () => {
+  // ── Inactivity reminders — hourly, :15 past ──
+  // Per Bot 24 (activity/engagement, group 1) — was a single fixed
+  // 07:20 UTC run for everyone; now hourly (staggered 15 minutes off
+  // MOTD's own hourly :00 tick, same reasoning as the original daily
+  // stagger) so sendInactivityReminders can catch each person's own
+  // likely hour rather than firing at one arbitrary UTC time regardless
+  // of where they are or when they actually tend to show up.
+  cron.schedule('15 * * * *', async () => {
     const t0 = Date.now();
     try {
       const result = await sendInactivityReminders();
-      const detail = `sent=${result.sent} threshold=${result.thresholdDays}d`;
+      const detail = `matched=${result.matched} pool=${result.candidatePool} threshold=${result.thresholdDays}d`;
       console.log(`[cron] inactivity reminders: ${detail}`);
       record('inactivity_reminders', 'ok', detail, null, t0);
     } catch (e) {

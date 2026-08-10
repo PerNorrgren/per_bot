@@ -1410,8 +1410,25 @@ async function sendInactivityReminders() {
   const days = Number.isInteger(content.extra.days) ? content.extra.days : parseInt(content.extra.days, 10) || 4;
   const inactive = db.getInactiveUsers(days);
   const b = brand();
-  let sentEmail = 0, sentSms = 0;
+  const nowUtc = new Date();
+  let sentEmail = 0, sentSms = 0, matchedHour = 0;
+  // Per Bot 24 (activity/engagement, group 1) — this job now runs hourly
+  // (see cron.js) rather than once at a fixed daily UTC time, and only
+  // actually sends to someone when it's currently their own likely hour
+  // — their learned pattern from real engagement if there's history to
+  // learn from, else their explicit motd_hour setting, else 9am their
+  // time as a last resort. getInactiveUsers' existing 7-day cooldown
+  // (last_reminder_sent_at) already prevents this from re-firing every
+  // subsequent hour once someone's actually been sent to today — no
+  // extra "already sent today" tracking needed on top of that.
   for (const user of inactive) {
+    let local;
+    try { local = getLocalDayHourDate(user.timezone || 'Europe/London', nowUtc); }
+    catch (e) { local = getLocalDayHourDate('Europe/London', nowUtc); } // bad/missing timezone — fall back rather than skip this person entirely
+    const learnedHour = getPreferredLocalHour(user.id, user.timezone || 'Europe/London');
+    const targetHour = learnedHour !== null ? learnedHour : Number(user.motd_hour ?? 9);
+    if (local.hour !== targetHour) continue;
+    matchedHour++;
     if (user.pref_email_reminders && user.email) { await emailInactivityReminder(user); sentEmail++; }
     if (user.pref_sms_reminders && user.phone) {
       const result = await sms.sendSms(user.phone, buildReminderSms(user.name, b));
@@ -1419,7 +1436,7 @@ async function sendInactivityReminders() {
     }
     db.markReminderSent(user.id);
   }
-  return { ok: true, sent: inactive.length, sentEmail, sentSms, thresholdDays: days };
+  return { ok: true, matched: matchedHour, candidatePool: inactive.length, sentEmail, sentSms, thresholdDays: days };
 }
 
 // ── Renewal reminders ── Genuinely new (Per Bot 6) — pref_email_renewal
@@ -11316,6 +11333,33 @@ function getLocalDayHourDate(timezone, nowUtc) {
   let hour = parseInt(map.hour, 10);
   if (hour === 24) hour = 0; // some ICU builds return "24" rather than "00" at local midnight
   return { day: weekdayMap[map.weekday], hour, dateStr: `${map.year}-${map.month}-${map.day}` };
+}
+
+// Per Bot 24 (activity/engagement, group 1) — the local hour (in this
+// person's own current timezone, DST included) their recent genuine
+// engagement clusters around, computed properly per-timestamp rather
+// than matching on raw stored UTC hour. That distinction actually
+// matters here specifically: someone due a reminder has by definition
+// gone quiet, so their relevant history often spans a season — a
+// UTC-hour match would silently drift by an hour across a DST boundary,
+// while this stays correct since each historical timestamp is converted
+// into local terms using their *current* timezone rule, same as
+// getLocalDayHourDate already does for "now" above. Returns null when
+// there's no history yet, so the caller can fall back to their explicit
+// motd_hour preference instead of guessing at nothing.
+function getPreferredLocalHour(userId, timezone) {
+  const timestamps = db.getRecentPlayTimestamps(userId, 50);
+  if (!timestamps.length) return null;
+  const counts = {};
+  for (const ts of timestamps) {
+    let hour;
+    try { hour = getLocalDayHourDate(timezone, new Date(ts.replace(' ', 'T') + 'Z')).hour; } // SQLite's datetime('now') format needs the T inserted before Z will parse reliably as UTC — same conversion already used elsewhere in this file.
+    catch (e) { continue; } // bad/missing timezone on this user — skip rather than let one bad row break the whole computation
+    counts[hour] = (counts[hour] || 0) + 1;
+  }
+  let best = null, bestCount = 0;
+  for (const h in counts) { if (counts[h] > bestCount) { best = Number(h); bestCount = counts[h]; } }
+  return best;
 }
 
 // ── MOTD send — scheduled, per-user ── This is the real automatic daily
