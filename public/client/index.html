@@ -905,6 +905,19 @@
           <div class="resume-card-sub" id="resumeCardSub"></div>
         </div>
 
+        <!-- Per Bot 24 (activity/engagement, group 2) — "one obvious next
+             action". Real priority order: resume card above (unchanged,
+             still #1) → a favourite not played today → an admin-set
+             default. Only ever fetched/shown when the resume card has
+             nothing — never both at once, so there's always exactly one
+             clear thing to do, not two competing cards. Reuses the same
+             resume-card styling, just a different label, since visually
+             they're the same kind of thing: the one obvious next step. -->
+        <div class="resume-card" id="nextActionCard" style="display:none" onclick="jumpToNextAction()">
+          <div class="resume-card-label" id="nextActionLabel">Try this</div>
+          <div class="resume-card-title" id="nextActionTitle"></div>
+        </div>
+
         <!-- Curated shelves (Per Bot 28) — horizontally-scrollable rows,
              one per featured category, only ever showing what's been
              explicitly marked "Featured" in admin (Content library /
@@ -5698,15 +5711,48 @@
   async function loadResumeCard() {
     try {
       const res  = await fetch('/api/client/resume');
-      if (!res.ok) return;
+      if (!res.ok) throw new Error('no resume');
       const card = await res.json();
-      if (!card) return;
+      if (!card) throw new Error('no resume');
       document.getElementById('resumeCardTitle').textContent = `${card.course_title} — ${card.lesson_title}`;
       document.getElementById('resumeCardSub').textContent = `${card.percent_complete}% complete`;
       document.getElementById('resumeCard').style.display = 'block';
       document.getElementById('resumeCard').dataset.instanceId = card.course_instance_id;
       document.getElementById('resumeCard').dataset.lessonId = card.lesson_id;
-    } catch(e) { /* no resume card — fine, just don't show one */ }
+      document.getElementById('nextActionCard').style.display = 'none';
+    } catch(e) {
+      // Per Bot 24 (activity/engagement, group 2) — only reached when
+      // there's genuinely nothing to resume, matching the agreed
+      // priority order (resume-in-progress is still #1, unconditionally).
+      document.getElementById('resumeCard').style.display = 'none';
+      loadNextAction();
+    }
+  }
+  async function loadNextAction() {
+    const card = document.getElementById('nextActionCard');
+    try {
+      const res = await fetch('/api/client/next-action');
+      const item = await res.json();
+      if (!item) { card.style.display = 'none'; return; }
+      document.getElementById('nextActionLabel').textContent = item.reason === 'favourite' ? 'One of your favourites' : 'Try this';
+      document.getElementById('nextActionTitle').textContent = item.title;
+      card.dataset.fileId = item.id;
+      card.style.display = 'block';
+    } catch(e) { card.style.display = 'none'; }
+  }
+  async function jumpToNextAction() {
+    const card = document.getElementById('nextActionCard');
+    const id = card.dataset.fileId;
+    if (!id) return;
+    // Reuses the exact same open logic built for What's New's link
+    // earlier — practice first, then general library, loading it if
+    // Library hasn't been visited yet this session.
+    const p = _practicesData.find(x => x.id === id);
+    if (p) { openPractice(p.id, p.title, p.type, p.content, p.filename); return; }
+    let f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
+    if (!f) { await loadContent(); f = (_contentData || []).find(x => x.id === id); }
+    if (f) { openContentFile(f); return; }
+    switchTab('library');
   }
   function jumpToResume() {
     const instanceId = document.getElementById('resumeCard').dataset.instanceId;

@@ -9720,6 +9720,14 @@ app.get('/api/my/activity-summary', auth.requireAuthApi(['client']), (req, res) 
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 24 (activity/engagement, group 2) — "one obvious next action"
+// on the home screen. The client only calls this when the resume card
+// (course-in-progress) has nothing to show — see loadNextAction there.
+app.get('/api/client/next-action', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getNextActionSuggestion(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
   try {
@@ -10516,7 +10524,7 @@ app.get('/api/admin/settings/default-showcase-file', auth.requireAuthApi(['admin
 app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const fieldMap = { reminderDays: 'reminder_days', reminderSubject: 'reminder_subject', reminderBody: 'reminder_body', reminderSmsBody: 'reminder_sms_body', reminderFormat: 'reminder_format', newsletterFooter: 'newsletter_footer', renewalReminderDays: 'renewal_reminder_days', renewalReminderSubject: 'renewal_reminder_subject', renewalReminderBody: 'renewal_reminder_body', renewalReminderSmsBody: 'renewal_reminder_sms_body', renewalReminderFormat: 'renewal_reminder_format', testEmail: 'test_email', testPhone: 'test_phone', birthdayEmailSubject: 'birthday_email_subject', birthdayEmailBody: 'birthday_email_body', birthdaySmsBody: 'birthday_sms_body', birthdayEmailFormat: 'birthday_email_format', defaultShowcaseFileId: 'default_showcase_file_id', trialDay3Subject: 'trial_day3_subject', trialDay3Body: 'trial_day3_body', trialDay3Format: 'trial_day3_format', trialDay7Subject: 'trial_day7_subject', trialDay7Body: 'trial_day7_body', trialDay7Format: 'trial_day7_format', trialDay10Subject: 'trial_day10_subject', trialDay10Body: 'trial_day10_body', trialDay10Format: 'trial_day10_format', trialDay14Subject: 'trial_day14_subject', trialDay14Body: 'trial_day14_body', trialDay14Format: 'trial_day14_format', saversCancelDay0Subject: 'savers_cancel_day0_subject', saversCancelDay0Body: 'savers_cancel_day0_body', saversCancelDay0Format: 'savers_cancel_day0_format', saversCancelGrace0Subject: 'savers_cancel_grace0_subject', saversCancelGrace0Body: 'savers_cancel_grace0_body', saversCancelGrace0Format: 'savers_cancel_grace0_format', saversCancelMidSubject: 'savers_cancel_mid_subject', saversCancelMidBody: 'savers_cancel_mid_body', saversCancelMidFormat: 'savers_cancel_mid_format', saversCancelFinalSubject: 'savers_cancel_final_subject', saversCancelFinalBody: 'savers_cancel_final_body', saversCancelFinalFormat: 'savers_cancel_final_format', saversFailureDay0Subject: 'savers_failure_day0_subject', saversFailureDay0Body: 'savers_failure_day0_body', saversFailureDay0Format: 'savers_failure_day0_format', saversFailureMidSubject: 'savers_failure_mid_subject', saversFailureMidBody: 'savers_failure_mid_body', saversFailureMidFormat: 'savers_failure_mid_format', saversFailureFinalSubject: 'savers_failure_final_subject', saversFailureFinalBody: 'savers_failure_final_body', saversFailureFinalFormat: 'savers_failure_final_format', newsletterWelcomeSubject: 'newsletter_welcome_subject', newsletterWelcomeBody: 'newsletter_welcome_body', newsletterWelcomeFormat: 'newsletter_welcome_format', trialExtendedSubject: 'trial_extended_subject', trialExtendedBody: 'trial_extended_body', trialExtendedFormat: 'trial_extended_format', defaultLessonVisibility: 'default_lesson_visibility' /* Per Bot 24 */,
-  whatsNewEnabled: 'whats_new_enabled', whatsNewBody: 'whats_new_body', whatsNewLinkType: 'whats_new_link_type', whatsNewLinkId: 'whats_new_link_id' /* Per Bot 24 */ };
+  whatsNewEnabled: 'whats_new_enabled', whatsNewBody: 'whats_new_body', whatsNewLinkType: 'whats_new_link_type', whatsNewLinkId: 'whats_new_link_id', whatsNewSecondsPerItem: 'whats_new_seconds_per_item', nextActionDefaultFileId: 'next_action_default_file_id' /* Per Bot 24 */ };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     if (!Object.keys(fields).length) return res.status(400).json({ error: 'Nothing to update.' });

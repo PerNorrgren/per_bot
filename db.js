@@ -2029,6 +2029,12 @@ async function getDb() {
     // table above. Per item settings (body/link/active) live on each
     // row instead; this is the one setting that applies to all of them.
     "ALTER TABLE app_config ADD COLUMN whats_new_seconds_per_item INTEGER DEFAULT 6",
+    // Per Bot 24 (activity/engagement, group 2) — "one obvious next
+    // action" home-screen suggestion. Fallback only — the real priority
+    // is resume-in-progress (existing resume card, unchanged) then a
+    // recent favourite not yet played today; this is just what shows
+    // when someone has neither.
+    "ALTER TABLE app_config ADD COLUMN next_action_default_file_id TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4688,6 +4694,31 @@ function getFavourites(clientId) {
     WHERE uf.client_id=? ORDER BY uf.created_at DESC`, [clientId]);
 }
 
+// Per Bot 24 (activity/engagement, group 2) — "one obvious next action"
+// on the home screen. Only ever called when the existing resume card
+// (course-in-progress) has nothing to show — that's still the real #1
+// priority and is completely unchanged. Simple v1 rules, as agreed:
+// a favourite not already played today, else an admin-set default,
+// else nothing at all (the card just doesn't show — never force content).
+function getNextActionSuggestion(clientId) {
+  const favourite = queryOne(
+    `SELECT lf.* FROM library_files lf
+     JOIN user_favourites uf ON lf.id = uf.file_id
+     WHERE uf.client_id=? AND lf.id NOT IN (
+       SELECT content_id FROM content_history WHERE user_id=? AND DATE(played_at) = DATE('now')
+     )
+     ORDER BY uf.created_at DESC LIMIT 1`,
+    [clientId, clientId]
+  );
+  if (favourite) return { ...favourite, reason: 'favourite' };
+  const cfg = getAppConfig();
+  if (cfg && cfg.next_action_default_file_id) {
+    const def = getLibraryFile(cfg.next_action_default_file_id);
+    if (def) return { ...def, reason: 'default' };
+  }
+  return null;
+}
+
 // ── User playlists ──
 function createUserPlaylist(id, clientId, name) {
   getDbSync().run('INSERT INTO user_playlists (id,client_id,name) VALUES (?,?,?)', [id, clientId, name]); save();
@@ -6656,7 +6687,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -7052,7 +7083,7 @@ module.exports = {
   createMessageVersion, updateMessageVersion, activateMessageVersion, deleteMessageVersion, hasActiveMessageVersion,
   importLiveConfigIntoMessageVersions,
   // Favourites
-  addFavourite, removeFavourite, getFavourites,
+  addFavourite, removeFavourite, getFavourites, getNextActionSuggestion,
   // User playlists
   createUserPlaylist, getUserPlaylists, addToUserPlaylist, removeFromUserPlaylist, deleteUserPlaylist, renameUserPlaylist,
   // Registration

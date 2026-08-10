@@ -294,21 +294,54 @@
     </div>
   </div>
 
-  <!-- Per Bot 24 — "What's New" home promo, replacing the old fixed
-       Quick Practice buttons on the client home screen (see item 11).
-       Admin-editable feel-good copy plus a direct link to one specific
-       practice or course, using the same rich editor (with AI Help and
-       spell-check) as everywhere else in Comms/Sales. -->
+  <!-- Per Bot 24 — "What's New" home promo, rebuilt as a rotating set of
+       any number of items (item 11, then again per Per's follow-up
+       request) rather than a single flat value — that field had a real
+       repeat data-loss bug and no way to hold more than one item.
+       "Show on home screen" is now per-item (the active checkbox in
+       each row) rather than one global toggle. -->
   <div>
     <div class="section-label">Home screen — What's New</div>
     <div class="card">
       <div class="card-header">
-        <div class="card-title">Replaces Quick Practice on the client home screen</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,0.5);cursor:pointer;text-transform:none;letter-spacing:normal">
-          <input type="checkbox" id="whatsNewEnabled" onchange="toggleWhatsNewEnabled(this.checked)" style="width:auto"/> Show on home screen
-        </label>
+        <div class="card-title">Rotates on the client home screen, replacing the old Quick Practice buttons</div>
+        <button class="btn sm primary" onclick="openWhatsNewItemModal()">+ Add item</button>
       </div>
-      <div style="padding:16px 20px;display:flex;flex-direction:column;gap:14px">
+      <div style="padding:12px 20px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <label style="font-size:12px;color:rgba(255,255,255,0.5)">Seconds per item</label>
+        <input type="number" min="2" max="60" class="inline-input" id="whatsNewSecondsPerItem" style="width:60px" onchange="saveWhatsNewSeconds()"/>
+        <div class="feedback" id="whatsNewSecondsFeedback"></div>
+      </div>
+      <div id="whatsNewItemsList" style="padding:0 0 4px"><div class="modal-note" style="padding:14px 20px">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- Per Bot 24 (activity/engagement, group 2) — "one obvious next
+       action" home-screen suggestion. Real priority is resume-in-progress
+       (existing resume card, unaffected by any of this) then a person's
+       own favourite not yet played today — this setting is only the
+       fallback for when someone has neither. -->
+  <div>
+    <div class="section-label">Home screen — Next action default</div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Shown when someone has nothing in progress and no favourites yet</div></div>
+      <div style="padding:16px 20px">
+        <div class="modal-note" style="margin-bottom:8px">A safe, gentle starting point — a short grounding or breathing practice works well. Left blank, nothing is suggested rather than forcing something arbitrary.</div>
+        <div id="nextActionDefaultPicker"></div>
+        <div class="feedback" id="nextActionDefaultFeedback" style="margin-top:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per Bot 24 — one shared modal for adding/editing a single item,
+       same "one shared modal reused for each add/edit" pattern used
+       throughout comms2/sales.html elsewhere. Reuses the exact rich
+       editor + link picker + AI Help work already built for the old
+       single-value version, just wired to CRUD a specific item now. -->
+  <div class="modal-overlay" id="whatsNewItemModal">
+    <div class="modal" style="max-width:640px">
+      <h3 id="whatsNewItemModalTitle">New item</h3>
+      <div style="display:flex;flex-direction:column;gap:14px">
         <div class="modal-note">A short, feel-good line or two — promote a practice, a course, the new book, whatever's worth pointing people toward right now. Same selling-copy rules as everywhere else: no urgency, no hype words.</div>
         <div id="whatsNewBody_rich"></div>
         <div>
@@ -323,10 +356,15 @@
             <select id="whatsNewLinkCourse" style="flex:1;display:none"></select>
           </div>
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px">
-          <div class="feedback" id="whatsNewFeedback" style="align-self:center"></div>
-          <button class="btn sm primary" onclick="saveWhatsNew()">Save</button>
-        </div>
+        <label class="me-checkbox-row" style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.7)">
+          <input type="checkbox" id="whatsNewItemActive" style="width:auto"/>
+          Show on home screen
+        </label>
+      </div>
+      <div class="modal-err" id="whatsNewItemErr"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('whatsNewItemModal')">Cancel</button>
+        <button class="modal-ok" onclick="saveWhatsNewItem()">Save</button>
       </div>
     </div>
   </div>
@@ -1091,7 +1129,7 @@
   }
 
   checkAuth().then(async () => {
-    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile().then(loadWhatsNew); initVersionSections(); loadCampaigns();
+    loadPlans(); loadOffers(); loadLines(); loadDefaultShowcaseFile().then(() => { loadWhatsNewItems(); loadNextActionDefault(); }); initVersionSections(); loadCampaigns();
     try { _skinsForOfferSelect = await (await fetch('/api/admin/skins')).json(); } catch(e) { _skinsForOfferSelect = []; }
     loadFunnel();
   });
@@ -1252,39 +1290,163 @@
     if (type === 'practice' && !document.getElementById('whatsNewLinkPracticePicker').innerHTML) renderWhatsNewPracticePicker('');
     if (type === 'course' && !document.getElementById('whatsNewLinkCourse').options.length) populateWhatsNewCourseSelect('');
   }
-  function toggleWhatsNewEnabled(checked) {
-    // Visual-only — the actual enabled state only takes effect on Save,
-    // same as every other field in this card, so a person can tick the
-    // box, decide against it, and navigate away without half-saving.
-  }
-  async function loadWhatsNew() {
+  // Per Bot 24 — list + modal CRUD, replacing the old single-value
+  // load/save. _whatsNewEditId tracks which item is being edited (null
+  // = adding a new one) — same pattern as every other "one shared modal"
+  // elsewhere in this app.
+  let _whatsNewEditId = null;
+  // Per Bot 24 (activity/engagement, group 2) — "next action" default
+  // file picker. Same search-as-you-type-sorted-newest pattern as
+  // What's New's picker above, duplicated with its own container/function
+  // names rather than generalizing that one — this is the only other
+  // place that needs it, and refactoring a working, already-tested
+  // picker into something more generic wasn't worth the risk for one
+  // more use.
+  async function loadNextActionDefault() {
     const cfg = await fetch('/api/setup/config').then(r=>r.json()).catch(()=>({}));
-    document.getElementById('whatsNewEnabled').checked = !!cfg.whats_new_enabled;
-    MessageEditor.mountRich('whatsNewBody_rich', cfg.whats_new_body || '', {
+    // _filesForShowcaseSelect is populated by loadDefaultShowcaseFile()
+    // at page boot, which runs before this in the init chain — but
+    // populated directly here too as a safety net, in case load order
+    // ever changes or this gets called on its own.
+    if (!_filesForShowcaseSelect) {
+      try { _filesForShowcaseSelect = await (await fetch('/api/content/library')).json(); }
+      catch(e) { _filesForShowcaseSelect = []; }
+    }
+    renderNextActionPicker(cfg.next_action_default_file_id || '');
+  }
+  function renderNextActionPicker(selectedId) {
+    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived)
+      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    const container = document.getElementById('nextActionDefaultPicker');
+    const selected = selectedId ? all.find(f => f.id === selectedId) : null;
+    container.innerHTML = `
+      <div class="file-picker" data-selected-id="${selectedId || ''}">
+        <input type="text" class="inline-input" placeholder="Search by title… (leave blank for none)" style="width:100%" value="${selected ? selected.title.replace(/"/g,'&quot;') : ''}"
+               oninput="_nextActionPracticeSearch(this.value)" onfocus="_nextActionPracticeSearch(this.value)"/>
+        <div class="file-picker-results" id="nextActionDefaultResults" style="display:none"></div>
+      </div>`;
+    document.addEventListener('click', (e) => {
+      if (!container.contains(e.target)) {
+        const results = document.getElementById('nextActionDefaultResults');
+        if (results) results.style.display = 'none';
+      }
+    });
+  }
+  function _nextActionPracticeSearch(query) {
+    const container = document.getElementById('nextActionDefaultPicker');
+    const results = document.getElementById('nextActionDefaultResults');
+    const q = query.trim().toLowerCase();
+    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived)
+      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    const pool = q ? all.filter(f => (f.title||'').toLowerCase().includes(q)) : all.slice(0, 25);
+    results.style.display = pool.length ? 'block' : 'none';
+    results.innerHTML = pool.slice(0, 25).map(f => `
+      <div class="file-picker-row" onclick="_nextActionPracticePick('${f.id}','${(f.title||'').replace(/'/g,"\\'")}')">
+        <span>${escHtml(f.title)}</span>
+        <span style="color:rgba(255,255,255,0.35);font-size:11px">${(f.created_at||'').slice(0,10)}</span>
+      </div>`).join('');
+  }
+  async function _nextActionPracticePick(id, title) {
+    const container = document.getElementById('nextActionDefaultPicker');
+    container.querySelector('.file-picker input').value = title;
+    container.querySelector('.file-picker').dataset.selectedId = id;
+    document.getElementById('nextActionDefaultResults').style.display = 'none';
+    await saveNextActionDefault(id);
+  }
+  async function saveNextActionDefault(fileId) {
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ nextActionDefaultFileId: fileId || null }) });
+      showFeedback('nextActionDefaultFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('nextActionDefaultFeedback', 'Could not save.', 'err');
+    }
+  }
+  async function loadWhatsNewItems() {
+    const cfg = await fetch('/api/setup/config').then(r=>r.json()).catch(()=>({}));
+    document.getElementById('whatsNewSecondsPerItem').value = cfg.whats_new_seconds_per_item || 6;
+    const items = await fetch('/api/admin/whats-new-items').then(r=>r.json()).catch(()=>[]);
+    renderWhatsNewItemsList(items);
+  }
+  function renderWhatsNewItemsList(items) {
+    const el = document.getElementById('whatsNewItemsList');
+    if (!items.length) { el.innerHTML = '<div class="modal-note" style="padding:14px 20px">No items yet — "+ Add item" to write the first one.</div>'; return; }
+    el.innerHTML = items.map(it => {
+      const plain = (it.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      return `
+      <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:12px">
+        <label style="display:flex;align-items:center;cursor:pointer" title="Show on home screen">
+          <input type="checkbox" ${it.active ? 'checked' : ''} onchange="toggleWhatsNewItemActive('${it.id}', this.checked)"/>
+        </label>
+        <div style="flex:1;min-width:0;font-size:13px;color:rgba(255,255,255,0.8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(plain) || '<span style="color:rgba(255,255,255,0.3)">(empty)</span>'}</div>
+        ${it.link_title ? `<span style="font-size:11px;color:rgba(180,230,200,0.6);white-space:nowrap">→ ${escHtml(it.link_title)}</span>` : ''}
+        <button class="btn sm" onclick="openWhatsNewItemModal('${it.id}')">Edit</button>
+        <button class="btn sm danger" onclick="deleteWhatsNewItemRow('${it.id}')">Delete</button>
+      </div>`;
+    }).join('');
+  }
+  async function toggleWhatsNewItemActive(id, active) {
+    const item = await fetch(`/api/admin/whats-new-items`).then(r=>r.json()).then(list => list.find(x => x.id === id));
+    if (!item) return;
+    await fetch(`/api/admin/whats-new-items/${id}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ body: item.body, format: item.format, linkType: item.link_type, linkId: item.link_id, linkTitle: item.link_title, active }),
+    });
+  }
+  async function deleteWhatsNewItemRow(id) {
+    if (!confirm('Delete this item? This can\'t be undone.')) return;
+    await fetch(`/api/admin/whats-new-items/${id}`, { method: 'DELETE' });
+    loadWhatsNewItems();
+  }
+  async function openWhatsNewItemModal(id) {
+    _whatsNewEditId = id || null;
+    document.getElementById('whatsNewItemModalTitle').textContent = id ? 'Edit item' : 'New item';
+    document.getElementById('whatsNewItemErr').textContent = '';
+    let item = null;
+    if (id) item = await fetch('/api/admin/whats-new-items').then(r=>r.json()).then(list => list.find(x => x.id === id));
+    document.getElementById('whatsNewItemActive').checked = item ? !!item.active : true;
+    MessageEditor.mountRich('whatsNewBody_rich', (item && item.body) || '', {
       aiPolish: whatsNewAiPolish,
       aiPolishTooltip: 'Suggest a line — writes one fresh if this is empty, improves what\'s here if not',
     });
-    document.getElementById('whatsNewLinkType').value = cfg.whats_new_link_type || '';
-    if (cfg.whats_new_link_type === 'practice') renderWhatsNewPracticePicker(cfg.whats_new_link_id || '');
-    if (cfg.whats_new_link_type === 'course') await populateWhatsNewCourseSelect(cfg.whats_new_link_id || '');
+    document.getElementById('whatsNewLinkType').value = (item && item.link_type) || '';
+    if (item && item.link_type === 'practice') renderWhatsNewPracticePicker(item.link_id || '');
+    if (item && item.link_type === 'course') await populateWhatsNewCourseSelect(item.link_id || '');
     onWhatsNewLinkTypeChange();
+    openModal('whatsNewItemModal');
   }
-  async function saveWhatsNew() {
+  async function saveWhatsNewItem() {
     const linkType = document.getElementById('whatsNewLinkType').value;
     const linkId = linkType === 'practice' ? getWhatsNewPracticeValue()
       : linkType === 'course' ? document.getElementById('whatsNewLinkCourse').value
       : null;
-    const payload = {
-      whatsNewEnabled: document.getElementById('whatsNewEnabled').checked ? 1 : 0,
-      whatsNewBody: MessageEditor.getInstance('whatsNewBody_rich').root.innerHTML,
-      whatsNewLinkType: linkType || null,
-      whatsNewLinkId: linkId || null,
-    };
+    let linkTitle = null;
+    if (linkType === 'practice') {
+      const input = document.querySelector('#whatsNewLinkPracticePicker .file-picker input');
+      linkTitle = input ? input.value.trim() : null;
+    } else if (linkType === 'course') {
+      const sel = document.getElementById('whatsNewLinkCourse');
+      linkTitle = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].textContent : null;
+    }
+    const body = MessageEditor.getInstance('whatsNewBody_rich').root.innerHTML;
+    const plain = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!plain) { document.getElementById('whatsNewItemErr').textContent = 'Write something first.'; return; }
+    const payload = { body, format: 'rich', linkType: linkType || null, linkId: linkId || null, linkTitle, active: document.getElementById('whatsNewItemActive').checked };
     try {
-      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      showFeedback('whatsNewFeedback', 'Saved.', 'ok');
+      if (_whatsNewEditId) await fetch(`/api/admin/whats-new-items/${_whatsNewEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      else await fetch('/api/admin/whats-new-items', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      closeModal('whatsNewItemModal');
+      loadWhatsNewItems();
     } catch(e) {
-      showFeedback('whatsNewFeedback', 'Could not save — please try again.', 'err');
+      document.getElementById('whatsNewItemErr').textContent = 'Could not save — please try again.';
+    }
+  }
+  async function saveWhatsNewSeconds() {
+    const val = parseInt(document.getElementById('whatsNewSecondsPerItem').value, 10) || 6;
+    try {
+      await fetch('/api/admin/settings', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ whatsNewSecondsPerItem: val }) });
+      showFeedback('whatsNewSecondsFeedback', 'Saved.', 'ok');
+    } catch(e) {
+      showFeedback('whatsNewSecondsFeedback', 'Could not save.', 'err');
     }
   }
   async function saveDefaultShowcaseFile() {
