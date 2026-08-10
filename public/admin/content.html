@@ -106,6 +106,12 @@
     .drop-zone { border:2px dashed rgba(255,255,255,0.12); border-radius:12px; padding:36px; text-align:center; cursor:pointer; transition:all 0.25s; margin-bottom:16px; }
     .drop-zone:hover, .drop-zone.dragover { border-color:rgba(180,230,200,0.4); background:rgba(180,230,200,0.04); }
     .upload-queue { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; max-height:240px; overflow-y:auto; }
+    /* Per Bot 24 — search-as-you-type person picker (one-to-one file
+       assignment), replacing the old client-only <select>. */
+    .person-picker { position:relative; }
+    .person-picker-results { position:absolute; top:100%; left:0; right:0; z-index:20; background:#1a2420; border:1px solid rgba(255,255,255,0.12); border-radius:0 0 8px 8px; max-height:220px; overflow-y:auto; }
+    .person-picker-row { display:flex; justify-content:space-between; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; color:rgba(255,255,255,0.8); }
+    .person-picker-row:hover { background:rgba(255,255,255,0.06); }
     .upload-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:8px; padding:9px 12px; display:flex; align-items:center; gap:10px; }
     .upload-item-name { flex:1; font-size:12px; color:rgba(255,255,255,0.65); }
     .vis-sel { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:4px 8px; font-size:11px; color:rgba(255,255,255,0.55); font-family:'Georgia',serif; outline:none; }
@@ -424,10 +430,10 @@
     <div style="margin:4px 0 14px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
         <input type="checkbox" id="upOneToOne" onchange="toggleUpOneToOne(this.checked)"/>
-        One-to-one — this batch is for a single client only, not by visibility tier
+        One-to-one — this batch is for a single person only, not by visibility tier
       </label>
       <div id="upOneToOneRow" style="display:none;margin-top:8px">
-        <select id="upAssignedClient" oninput="applyBatchAssignedClient(this.value)"><option value="">Select a client…</option></select>
+        <div id="upAssignedClientPicker"></div>
       </div>
     </div>
     <!-- Per Bot 24 — auto-organize into a course, grouped by a "SessionN"
@@ -601,11 +607,15 @@
     <div>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="efOneToOne" onchange="toggleOneToOne(this.checked)"/>
-        One-to-one — share with a single client only, instead of by visibility tier
+        One-to-one — share with a single person only, instead of by visibility tier
       </label>
       <div id="efOneToOneRow" style="display:none;margin-top:8px">
-        <select id="efAssignedClient"><option value="">Select a client…</option></select>
-        <div style="color:rgba(255,255,255,0.25);font-size:11px;margin-top:4px">Overrides Visibility above entirely — only this client (and facilitators/admins) will ever see it.</div>
+        <!-- Per Bot 24 — was a client-only <select>; now a search-as-you-type
+             picker across everyone (any tier — Explorer/Member/Client alike),
+             not just people flagged as a facilitator's Client. See
+             renderPersonPicker in the script below. -->
+        <div id="efAssignedClientPicker"></div>
+        <div style="color:rgba(255,255,255,0.25);font-size:11px;margin-top:4px">Overrides Visibility above entirely — only this person (and facilitators/admins) will ever see it.</div>
       </div>
     </div>
     <div>
@@ -1300,7 +1310,7 @@ async function updateVisibility(fileId, vis) {
 
 function vbadge(v){const m={registered:'Explorer',member:'Member',client:'Client',facilitator:'Facilitator',admin:'Admin'};return`<span class="vis-badge vis-${v}">${m[v]||v}</span>`;}
 function kbadge(k){if(!k)return'';const m=Object.fromEntries(CONTENT_KINDS.map(c=>[c.value,c.label]));return`<span class="vis-badge" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.75)">${m[k]||k}</span>`;}
-function onebadge(f){if(!f.assigned_client_id)return'';return`<span class="vis-badge" style="background:rgba(255,180,120,0.15);color:rgba(255,180,120,0.85)" title="Only ${f.assigned_client_name||'this client'} can see this">1:1 — ${f.assigned_client_name||'client'}</span>`;}
+function onebadge(f){if(!f.assigned_client_id)return'';return`<span class="vis-badge" style="background:rgba(255,180,120,0.15);color:rgba(255,180,120,0.85)" title="Only ${f.assigned_client_name||'this person'} can see this">1:1 — ${f.assigned_client_name||'assigned'}</span>`;}
 
 function populateCatSels(...ids){
   const tops=allCats.filter(c=>!c.parent_id);
@@ -1727,7 +1737,7 @@ function openUpload(){
   document.getElementById('upKindDefault').value='';
   document.getElementById('upOneToOne').checked=false;
   document.getElementById('upOneToOneRow').style.display='none';
-  document.getElementById('upAssignedClient').innerHTML='<option value="">Select a client…</option>';
+  document.getElementById('upAssignedClientPicker').innerHTML='';
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
@@ -2150,28 +2160,96 @@ function autofillAppFilesIfTimerKind(kind, catSelId, subSelId) {
   populateSub(catSelId, subSelId, APP_FILES_SUB_ID);
 }
 
-// One-to-one client picker (Per Bot 7) — cached after first fetch since the
-// client list doesn't change fast enough to warrant refetching every time
-// the Edit File modal opens. Reuses the same admin/clients endpoint the
-// Clients tab already uses, filtered to is_client the same way that tab is.
+// One-to-one person picker. Cached after first fetch since the full
+// people list doesn't change fast enough to warrant refetching every
+// time a picker opens. Reuses the same /api/admin/clients endpoint the
+// People/Clients tab uses — despite the name, it already returns every
+// user, not just facilitator-assigned Clients (see getAllUsersAdmin).
+// Per Bot 24 — search-as-you-type person picker, replacing the old
+// client-only <select> in two places (single-file "one-to-one" edit,
+// bulk upload). Was filtered to is_client only; now searches everyone
+// (any tier), since Per's ask was "one upload interface, select client
+// or user" — no separate mode needed, just an unrestricted person search.
 let _clientPickerCache = null;
-async function loadClientPickerOptions(selected, selectId) {
-  if (!_clientPickerCache) {
-    try {
-      const res = await fetch('/api/admin/clients');
-      _clientPickerCache = (await res.json()).filter(u => !!u.is_client);
-    } catch(e) { _clientPickerCache = []; }
-  }
-  const sel = document.getElementById(selectId || 'efAssignedClient');
-  sel.innerHTML = '<option value="">Select a client…</option>' +
-    _clientPickerCache.map(c => `<option value="${c.id}"${selected===c.id?' selected':''}>${c.name}</option>`).join('');
+async function ensurePersonPickerCache() {
+  if (_clientPickerCache) return _clientPickerCache;
+  try {
+    const res = await fetch('/api/admin/clients');
+    _clientPickerCache = await res.json();
+  } catch(e) { _clientPickerCache = []; }
+  return _clientPickerCache;
 }
+// containerId: where to render. selectedId/selectedName: pre-fill (edit
+// flow). onSelect(id, name): called whenever the picked person changes,
+// including being cleared back to none.
+async function renderPersonPicker(containerId, selectedId, selectedName, onSelect) {
+  const people = await ensurePersonPickerCache();
+  const container = document.getElementById(containerId);
+  const initialName = selectedId ? (selectedName || (people.find(p => p.id === selectedId) || {}).name || '') : '';
+  container.innerHTML = `
+    <div class="person-picker" data-selected-id="${selectedId || ''}">
+      <input type="text" class="inline-input" placeholder="Search by name or email…" value="${initialName.replace(/"/g,'&quot;')}"
+             oninput="_personPickerSearch('${containerId}', this.value)"
+             onfocus="_personPickerSearch('${containerId}', this.value)"/>
+      <div class="person-picker-results" id="${containerId}_results" style="display:none;position:relative"></div>
+    </div>`;
+  container._onSelect = onSelect;
+  container._people = people;
+  // Clicking anywhere outside closes the results dropdown — attached once
+  // per container rather than globally, so multiple pickers on the same
+  // page (there's currently only ever one visible at a time, but this is
+  // safe either way) don't interfere with each other.
+  document.addEventListener('click', (e) => {
+    if (!container.contains(e.target)) {
+      const results = document.getElementById(containerId + '_results');
+      if (results) results.style.display = 'none';
+    }
+  });
+}
+function _personPickerSearch(containerId, query) {
+  const container = document.getElementById(containerId);
+  const results = document.getElementById(containerId + '_results');
+  const q = query.trim().toLowerCase();
+  const people = container._people || [];
+  if (!q) {
+    // Empty box also clears the selection — typing over a previously
+    // selected name and leaving it blank shouldn't silently keep the
+    // old person assigned underneath.
+    container.querySelector('.person-picker').dataset.selectedId = '';
+    if (container._onSelect) container._onSelect('', '');
+    results.style.display = 'none';
+    return;
+  }
+  const matches = people.filter(p =>
+    (p.name || '').toLowerCase().includes(q) || (p.email || '').toLowerCase().includes(q)
+  ).slice(0, 20);
+  results.style.display = matches.length ? 'block' : 'none';
+  results.innerHTML = matches.map(p => `
+    <div class="person-picker-row" onclick="_personPickerPick('${containerId}', '${p.id}', '${(p.name||'').replace(/'/g,"\\'")}')">
+      <span>${escHtml(p.name || '(no name)')}</span>
+      <span style="color:rgba(255,255,255,0.35);font-size:11px">${escHtml(p.email || '')}</span>
+    </div>
+  `).join('');
+}
+function _personPickerPick(containerId, id, name) {
+  const container = document.getElementById(containerId);
+  container.querySelector('.person-picker input').value = name;
+  container.querySelector('.person-picker').dataset.selectedId = id;
+  document.getElementById(containerId + '_results').style.display = 'none';
+  if (container._onSelect) container._onSelect(id, name);
+}
+function getPersonPickerValue(containerId) {
+  const el = document.getElementById(containerId);
+  const inner = el && el.querySelector('.person-picker');
+  return inner ? inner.dataset.selectedId || '' : '';
+}
+
 function toggleOneToOne(checked) {
   document.getElementById('efOneToOneRow').style.display = checked ? 'block' : 'none';
 }
 function toggleUpOneToOne(checked) {
   document.getElementById('upOneToOneRow').style.display = checked ? 'block' : 'none';
-  if (checked) loadClientPickerOptions('', 'upAssignedClient');
+  if (checked) renderPersonPicker('upAssignedClientPicker', '', '', (id) => { applyBatchAssignedClient(id); });
 }
 function applyBatchAssignedClient(clientId) {
   upQueue.forEach(it => { it.assignedClientId = clientId; });
@@ -2211,7 +2289,7 @@ function addToQ(files){
   const facResourceMode = document.getElementById('upFacResource').checked;
   const headerVis  = document.getElementById('upVisDefault').value;
   const headerKind = document.getElementById('upKindDefault').value;
-  const headerAssignedClient = document.getElementById('upOneToOne').checked ? document.getElementById('upAssignedClient').value : '';
+  const headerAssignedClient = document.getElementById('upOneToOne').checked ? getPersonPickerValue('upAssignedClientPicker') : '';
   Array.from(files).forEach(f=>{
     const inferred = inferFromFilename(f.name);
     // If Facilitator-resource mode is on, every file — including ones added after the
@@ -2850,7 +2928,7 @@ function openEditFile(id){
   populateEfFullVersionOptions(f.id, f.full_version_id || '');
   document.getElementById('efOneToOne').checked = !!f.assigned_client_id;
   toggleOneToOne(!!f.assigned_client_id);
-  loadClientPickerOptions(f.assigned_client_id || '');
+  renderPersonPicker('efAssignedClientPicker', f.assigned_client_id || '', f.assigned_client_name || '', () => {});
   document.getElementById('efErr').textContent='';
   // Show filename without extension and uuid prefix
   const rawName = f.filename || '';
@@ -2910,8 +2988,8 @@ async function saveFileEdit(){
   const newFilename=document.getElementById('efFilename').value.trim();
   if(!title){document.getElementById('efErr').textContent='Title required.';return;}
   const oneToOne = document.getElementById('efOneToOne').checked;
-  const assignedClientId = document.getElementById('efAssignedClient').value;
-  if (oneToOne && !assignedClientId) { document.getElementById('efErr').textContent = 'Select which client this is for, or untick one-to-one.'; return; }
+  const assignedClientId = getPersonPickerValue('efAssignedClientPicker');
+  if (oneToOne && !assignedClientId) { document.getElementById('efErr').textContent = 'Select who this is for, or untick one-to-one.'; return; }
   // Update metadata
   await fetch(`/api/content/library/${id}`,{
     method:'PATCH',headers:{'Content-Type':'application/json'},

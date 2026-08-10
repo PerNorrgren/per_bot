@@ -5265,12 +5265,38 @@ app.post('/api/clients/:id/messages', auth.requireAuthApi(['admin','facilitator'
   notifyClientOfMessage(req.messageClient, msg);
   res.json(msg);
 });
+// Per Bot 24 (maintenance rebuild, priority 1) — message attachments
+// (voice/video/file) previously never left the container's local disk at
+// all, which has no persistent volume — every attachment silently
+// vanished on the next deploy or restart while the message referencing
+// it lived on forever, permanently broken. Relayed to R2 now, same as
+// call recordings and practice audio. Flat key (no folder prefix) is
+// deliberate — /uploads/:filename below only matches a single path
+// segment, and keeping the existing URL shape everywhere it's already
+// embedded (client + facilitator message rendering, both hardcode
+// /uploads/${filename}) meant nothing on the frontend needed to change.
+async function uploadMessageAttachmentToR2(buffer, mimeType, originalName) {
+  if (!media.isConfigured()) throw new Error('R2 is not configured.');
+  const ext = (originalName && originalName.match(/\.[a-zA-Z0-9]+$/)) ? originalName.match(/\.[a-zA-Z0-9]+$/)[0] : '';
+  const key = `message-${uuidv4()}${ext}`;
+  await media.putObject(key, buffer, mimeType || 'application/octet-stream');
+  return key;
+}
+
 app.post('/api/clients/:id/messages/upload', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
   const facilitatorId = req.messageClient.facilitator_id || req.user.id;
+  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+    fs.unlink(req.file.path, () => {});
+  } catch (e) {
+    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+  }
   const msg = db.addMessage(uuidv4(), req.params.id, facilitatorId, session_id || null, 'facilitator', req.user.id,
-    content_type || 'attachment', content || '', req.file.filename, req.file.originalname);
+    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
   notifyClientOfMessage(req.messageClient, msg);
   res.json(msg);
 });
@@ -5377,14 +5403,22 @@ app.post('/api/my/messages', auth.requireAuthApi(['client']), (req, res) => {
   const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id, 'text', content.trim(), '', '');
   res.json(msg);
 });
-app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.single('file'), (req, res) => {
+app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.single('file'), async (req, res) => {
   const me = db.getUser(req.user.id);
   const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
   if (!facilitatorId) return res.status(400).json({ error: 'No facilitator assigned yet.' });
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
+  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+    fs.unlink(req.file.path, () => {});
+  } catch (e) {
+    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+  }
   const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id,
-    content_type || 'attachment', content || '', req.file.filename, req.file.originalname);
+    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
   res.json(msg);
 });
 app.patch('/api/my/messages/read', auth.requireAuthApi(['client']), (req, res) => {
@@ -9401,11 +9435,28 @@ app.post('/api/content/playlist-track-refs', auth.requireAuthApi(['admin']), (re
 });
 app.delete('/api/content/playlist-track-refs/:id', auth.requireAuthApi(['admin']), (req, res) => { db.removePlaylistTrackRef(req.params.id); res.json({ ok: true }); });
 
-app.get('/uploads/:filename', (req, res) => {
+app.get('/uploads/:filename', async (req, res) => {
   const token = req.cookies?.[auth.COOKIE_NAME];
   const user  = token ? auth.verifyToken(token) : null;
   if (!user) return res.redirect('/login');
-  res.sendFile(path.join(__dirname, 'uploads', req.params.filename));
+  const localPath = path.join(__dirname, 'uploads', req.params.filename);
+  // Per Bot 24 (maintenance rebuild) — local disk has no persistent
+  // volume, so anything actually relayed to R2 (message attachments,
+  // and any future addition following the same flat-key convention)
+  // won't be sitting here after a deploy. Falls back to a short-lived
+  // presigned R2 URL for the same key before giving up — existing local
+  // files (and any R2 setup that's genuinely unconfigured) still work
+  // exactly as before via the fs.existsSync fast path.
+  if (fs.existsSync(localPath)) return res.sendFile(localPath);
+  if (media.isConfigured()) {
+    try {
+      if (await media.objectExists(req.params.filename)) {
+        const url = await media.getPlaybackUrl(req.params.filename);
+        return res.redirect(url);
+      }
+    } catch (e) { console.error('/uploads R2 fallback error:', e.message); }
+  }
+  res.status(404).json({ error: 'File not found.' });
 });
 
 // ── Guest routes ──
