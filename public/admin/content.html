@@ -2250,6 +2250,7 @@ function toggleOneToOne(checked) {
 function toggleUpOneToOne(checked) {
   document.getElementById('upOneToOneRow').style.display = checked ? 'block' : 'none';
   if (checked) renderPersonPicker('upAssignedClientPicker', '', '', (id) => { applyBatchAssignedClient(id); });
+  renderQ(); // Per Bot 24 — the queue's per-file visibility control swaps immediately, not just on the next add/edit.
 }
 function applyBatchAssignedClient(clientId) {
   upQueue.forEach(it => { it.assignedClientId = clientId; });
@@ -2305,6 +2306,14 @@ function addToQ(files){
 function getCatName(id){return allCats.find(c=>c.id===id)?.name||'';}
 
 function renderQ(){
+  // Per Bot 24 — visibility tier is completely ignored for one-to-one
+  // files (see canSeeFile in db.js — assigned_client_id overrides the
+  // tier ladder entirely), but the per-file dropdown kept showing
+  // anyway, which understandably read as "this still matters, what
+  // happens if they change tier?" It doesn't — swapped for a plain note
+  // instead whenever One-to-one is checked, so there's nothing left to
+  // wonder about.
+  const oneToOneActive = document.getElementById('upOneToOne').checked;
   document.getElementById('upQueue').innerHTML=upQueue.map((it,i)=>{
     const inferredLabel = it.inferred && (it.catId||it.subId||it.vis!=='client')
       ? `<span style="font-size:10px;color:rgba(180,230,200,0.5);margin-left:4px">↳ ${getCatName(it.catId)||'?'} ${getCatName(it.subId)?'/ '+getCatName(it.subId):''} · ${it.vis}</span>` : '';
@@ -2312,6 +2321,15 @@ function renderQ(){
       ? `<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${it.progress}%;background:rgba(180,230,200,0.5);transition:width 0.15s"></div></div>`
       : it.progress === 100
       ? `<div style="font-size:10px;color:rgba(180,230,200,0.6);margin-top:2px">✓ Uploaded</div>` : '';
+    const visControl = oneToOneActive
+      ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap;padding:0 6px" title="Visibility tier is ignored for one-to-one files — only the assigned person can see it, regardless of their tier">1:1 — tier n/a</span>`
+      : `<select class="vis-sel" onchange="upQueue[${i}].vis=this.value;upQueue[${i}].inferred=false">
+        <option value="registered"${it.vis==='registered'?' selected':''}>Explorer</option>
+        <option value="member"${it.vis==='member'?' selected':''}>Member</option>
+        <option value="client"${it.vis==='client'?' selected':''}>Client</option>
+        <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
+        <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
+      </select>`;
     return `
     <div class="upload-item" style="flex-wrap:wrap;gap:6px">
       <span style="font-size:16px">${ficon(it.file.type)}</span>
@@ -2321,13 +2339,7 @@ function renderQ(){
         <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:2px">${fsize(it.file.size)}${inferredLabel}</div>
         ${progressBar}
       </div>
-      <select class="vis-sel" onchange="upQueue[${i}].vis=this.value;upQueue[${i}].inferred=false">
-        <option value="registered"${it.vis==='registered'?' selected':''}>Explorer</option>
-        <option value="member"${it.vis==='member'?' selected':''}>Member</option>
-        <option value="client"${it.vis==='client'?' selected':''}>Client</option>
-        <option value="facilitator"${it.vis==='facilitator'?' selected':''}>Facilitator</option>
-        <option value="admin"${it.vis==='admin'?' selected':''}>Admin</option>
-      </select>
+      ${visControl}
       <select class="vis-sel" onchange="upQueue[${i}].contentKind=this.value;autofillAppFilesIfTimerKind(this.value,'upCat','upSub')">${contentKindOptions(it.contentKind||'')}</select>
       <button onclick="upQueue.splice(${i},1);renderQ()" style="background:none;border:none;color:rgba(255,100,80,0.5);cursor:pointer;font-size:18px">×</button>
     </div>`;
