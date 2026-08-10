@@ -221,6 +221,14 @@
        admin pages (see setBtnLoading in the script below). */
     @keyframes yy-spin { to { transform: rotate(360deg); } }
     .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:2px; animation:yy-spin 0.85s linear infinite; }
+    /* Per Bot 24 — search-as-you-type file picker for What's New's "opens
+       directly to a practice" field, same pattern as content.html's
+       person picker — a plain <select> with hundreds of files in it
+       (unsorted, unsearchable) wasn't usable. */
+    .file-picker { position:relative; }
+    .file-picker-results { position:absolute; top:100%; left:0; right:0; z-index:20; background:#1a2420; border:1px solid rgba(255,255,255,0.12); border-radius:0 0 8px 8px; max-height:260px; overflow-y:auto; }
+    .file-picker-row { display:flex; justify-content:space-between; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; color:rgba(255,255,255,0.8); }
+    .file-picker-row:hover { background:rgba(255,255,255,0.06); }
   </style>
 </head>
 <body>
@@ -311,7 +319,7 @@
               <option value="practice">A practice / book / poem</option>
               <option value="course">A course</option>
             </select>
-            <select id="whatsNewLinkPractice" style="flex:1;display:none"></select>
+            <div id="whatsNewLinkPracticePicker" style="flex:1;display:none"></div>
             <select id="whatsNewLinkCourse" style="flex:1;display:none"></select>
           </div>
         </div>
@@ -1131,13 +1139,62 @@
   // showcase clip use case — this needs the full library instead, since
   // a practice/book/poem could be any file type.
   let _whatsNewCourseInstances = null;
-  async function populateWhatsNewPracticeSelect(selectedId) {
-    // _filesForShowcaseSelect is populated by populateShowcaseFileSelect
-    // above, called from loadDefaultShowcaseFile() at page load — reused
-    // here rather than a second fetch, same underlying library data.
-    const el = document.getElementById('whatsNewLinkPractice');
-    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived);
-    el.innerHTML = '<option value="">Select…</option>' + all.map(f => `<option value="${f.id}" ${f.id===selectedId?'selected':''}>${escHtml(f.title)}</option>`).join('');
+  // Per Bot 24 — search-as-you-type, sorted newest-first (there are
+  // hundreds of files — a plain <select> with no sort or search wasn't
+  // usable). Same pattern as content.html's person picker.
+  function renderWhatsNewPracticePicker(selectedId) {
+    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived)
+      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    const container = document.getElementById('whatsNewLinkPracticePicker');
+    const selected = selectedId ? all.find(f => f.id === selectedId) : null;
+    container.innerHTML = `
+      <div class="file-picker" data-selected-id="${selectedId || ''}">
+        <input type="text" class="inline-input" placeholder="Search by title…" value="${selected ? selected.title.replace(/"/g,'&quot;') : ''}"
+               oninput="_whatsNewPracticeSearch(this.value)" onfocus="_whatsNewPracticeSearch(this.value)"/>
+        <div class="file-picker-results" id="whatsNewLinkPracticeResults" style="display:none"></div>
+      </div>`;
+    document.addEventListener('click', (e) => {
+      if (!container.contains(e.target)) {
+        const results = document.getElementById('whatsNewLinkPracticeResults');
+        if (results) results.style.display = 'none';
+      }
+    });
+  }
+  function _whatsNewPracticeSearch(query) {
+    const container = document.getElementById('whatsNewLinkPracticePicker');
+    const results = document.getElementById('whatsNewLinkPracticeResults');
+    const q = query.trim().toLowerCase();
+    const all = (_filesForShowcaseSelect || []).filter(f => !f.archived)
+      .sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
+    if (!q) {
+      container.querySelector('.file-picker').dataset.selectedId = '';
+      // Newest-first, unfiltered — shown as soon as the field is focused, not just once something's typed.
+      const shown = all.slice(0, 25);
+      results.style.display = shown.length ? 'block' : 'none';
+      results.innerHTML = shown.map(f => `
+        <div class="file-picker-row" onclick="_whatsNewPracticePick('${f.id}','${(f.title||'').replace(/'/g,"\\'")}')">
+          <span>${escHtml(f.title)}</span>
+          <span style="color:rgba(255,255,255,0.35);font-size:11px">${(f.created_at||'').slice(0,10)}</span>
+        </div>`).join('');
+      return;
+    }
+    const matches = all.filter(f => (f.title||'').toLowerCase().includes(q)).slice(0, 25);
+    results.style.display = matches.length ? 'block' : 'none';
+    results.innerHTML = matches.map(f => `
+      <div class="file-picker-row" onclick="_whatsNewPracticePick('${f.id}','${(f.title||'').replace(/'/g,"\\'")}')">
+        <span>${escHtml(f.title)}</span>
+        <span style="color:rgba(255,255,255,0.35);font-size:11px">${(f.created_at||'').slice(0,10)}</span>
+      </div>`).join('');
+  }
+  function _whatsNewPracticePick(id, title) {
+    const container = document.getElementById('whatsNewLinkPracticePicker');
+    container.querySelector('.file-picker input').value = title;
+    container.querySelector('.file-picker').dataset.selectedId = id;
+    document.getElementById('whatsNewLinkPracticeResults').style.display = 'none';
+  }
+  function getWhatsNewPracticeValue() {
+    const el = document.getElementById('whatsNewLinkPracticePicker').querySelector('.file-picker');
+    return el ? el.dataset.selectedId || '' : '';
   }
   async function populateWhatsNewCourseSelect(selectedId) {
     if (!_whatsNewCourseInstances) {
@@ -1155,9 +1212,9 @@
   }
   function onWhatsNewLinkTypeChange() {
     const type = document.getElementById('whatsNewLinkType').value;
-    document.getElementById('whatsNewLinkPractice').style.display = type === 'practice' ? '' : 'none';
+    document.getElementById('whatsNewLinkPracticePicker').style.display = type === 'practice' ? '' : 'none';
     document.getElementById('whatsNewLinkCourse').style.display = type === 'course' ? '' : 'none';
-    if (type === 'practice' && !document.getElementById('whatsNewLinkPractice').options.length) populateWhatsNewPracticeSelect('');
+    if (type === 'practice' && !document.getElementById('whatsNewLinkPracticePicker').innerHTML) renderWhatsNewPracticePicker('');
     if (type === 'course' && !document.getElementById('whatsNewLinkCourse').options.length) populateWhatsNewCourseSelect('');
   }
   function toggleWhatsNewEnabled(checked) {
@@ -1170,13 +1227,13 @@
     document.getElementById('whatsNewEnabled').checked = !!cfg.whats_new_enabled;
     MessageEditor.mountRich('whatsNewBody_rich', cfg.whats_new_body || '');
     document.getElementById('whatsNewLinkType').value = cfg.whats_new_link_type || '';
-    if (cfg.whats_new_link_type === 'practice') await populateWhatsNewPracticeSelect(cfg.whats_new_link_id || '');
+    if (cfg.whats_new_link_type === 'practice') renderWhatsNewPracticePicker(cfg.whats_new_link_id || '');
     if (cfg.whats_new_link_type === 'course') await populateWhatsNewCourseSelect(cfg.whats_new_link_id || '');
     onWhatsNewLinkTypeChange();
   }
   async function saveWhatsNew() {
     const linkType = document.getElementById('whatsNewLinkType').value;
-    const linkId = linkType === 'practice' ? document.getElementById('whatsNewLinkPractice').value
+    const linkId = linkType === 'practice' ? getWhatsNewPracticeValue()
       : linkType === 'course' ? document.getElementById('whatsNewLinkCourse').value
       : null;
     const payload = {
