@@ -2035,6 +2035,11 @@ async function getDb() {
     // recent favourite not yet played today; this is just what shows
     // when someone has neither.
     "ALTER TABLE app_config ADD COLUMN next_action_default_file_id TEXT",
+    // Per Bot 24 (activity/engagement, group 3 — quick capture) — voice
+    // journal entries get an audio_key alongside their transcript in
+    // content, so the original recording stays playable, not just its
+    // transcribed text. NULL for every existing written/upload entry.
+    "ALTER TABLE client_journal_entries ADD COLUMN audio_key TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4435,11 +4440,11 @@ function getUnreadMessageCountForClient(clientId) {
 }
 
 // ── Client journal entries ──
-function addJournalEntry(id, clientId, title, content, sourceType, originalFilename, shareWithBot, shareWithFacilitator) {
+function addJournalEntry(id, clientId, title, content, sourceType, originalFilename, shareWithBot, shareWithFacilitator, audioKey) {
   getDbSync().run(
-    `INSERT INTO client_journal_entries (id,client_id,title,content,source_type,original_filename,share_with_bot,share_with_facilitator)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    [id, clientId, title, content, sourceType || 'written', originalFilename || null, shareWithBot ? 1 : 0, shareWithFacilitator ? 1 : 0]
+    `INSERT INTO client_journal_entries (id,client_id,title,content,source_type,original_filename,share_with_bot,share_with_facilitator,audio_key)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [id, clientId, title, content, sourceType || 'written', originalFilename || null, shareWithBot ? 1 : 0, shareWithFacilitator ? 1 : 0, audioKey || null]
   );
   save();
 }
@@ -4463,6 +4468,7 @@ function deleteJournalEntry(id, clientId) {
   getDbSync().run('DELETE FROM client_journal_entries WHERE id=? AND client_id=?', [id, clientId]);
   save();
 }
+function getJournalEntryById(id) { return queryOne('SELECT * FROM client_journal_entries WHERE id=?', [id]); }
 
 // ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
 function getSessionById(id) {
@@ -7082,7 +7088,7 @@ module.exports = {
   // Sessions
   addSession, getSessionsForClient, getClientSessionsForClient, hasEverUsedTalk,
   hasSeenTomteTip, markTomteTipSeen,
-  addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry,
+  addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry, getJournalEntryById,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,

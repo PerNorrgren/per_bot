@@ -1117,7 +1117,21 @@
           <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
             <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
             <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
-            <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label></div>
+            <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label>
+              <!-- Per Bot 24 (activity/engagement, group 3 — quick
+                   capture) — record a voice note instead of typing.
+                   toggleJournalVoiceRecording() handles the actual
+                   MediaRecorder start/stop; saveJournalEntry() below
+                   picks up journalVoiceBlob the same way it already
+                   picks up journalUploadedFile for the .txt path. -->
+              or <a href="#" onclick="toggleJournalVoiceRecording();return false" id="journalVoiceLink" style="color:rgba(180,230,200,0.7); text-decoration:underline;">record a voice note</a>
+            </div>
+            <div id="journalVoiceRecorder" style="display:none; align-items:center; gap:10px; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.2); border-radius:10px; padding:10px 14px;">
+              <span id="journalVoiceStatus" style="font-size:13px; color:rgba(255,255,255,0.7); flex:1;">Recording… <span id="journalVoiceTimer">0:00</span></span>
+              <audio id="journalVoicePreview" controls style="display:none; height:32px; max-width:180px;"></audio>
+              <button type="button" class="btn sm" id="journalVoiceStopBtn" onclick="toggleJournalVoiceRecording()">⏹ Stop</button>
+              <button type="button" class="btn sm" id="journalVoiceDiscardBtn" onclick="discardJournalVoiceRecording()" style="display:none">Discard</button>
+            </div>
             <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let the companion use this</label>
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
@@ -2224,6 +2238,13 @@
       const badges = [];
       if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with companion</span>');
       if (e.share_with_facilitator) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with facilitator</span>');
+      // Per Bot 24 (activity/engagement, group 3) — voice entries show a
+      // small play control that fetches a fresh signed playback URL only
+      // when actually tapped, rather than resolving one for every entry
+      // in the list up front — most entries in a long journal are never
+      // played back in a given visit, so this keeps loading the list cheap.
+      const voicePlayer = e.source_type === 'voice'
+        ? `<div style="margin-top:8px"><button class="btn sm" onclick="playJournalVoice('${e.id}', this)">▶ Play recording</button></div>` : '';
       return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
           <div>
@@ -2232,10 +2253,28 @@
           </div>
           <button class="btn sm" onclick="deleteJournalEntryUI('${e.id}')">Delete</button>
         </div>
-        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);line-height:1.6${e.source_type==='upload'?';white-space:pre-wrap':''}">${e.source_type==='upload' ? escHtmlJournal(e.content) : (e.content||'')}</div>
+        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);line-height:1.6${e.source_type==='upload'||e.source_type==='voice'?';white-space:pre-wrap':''}">${e.source_type==='upload'||e.source_type==='voice' ? escHtmlJournal(e.content) : (e.content||'')}</div>
+        ${voicePlayer}
         ${badges.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
       </div>`;
     }).join('');
+  }
+  async function playJournalVoice(id, btn) {
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = 'Loading…';
+    try {
+      const res = await fetch(`/api/journal/${id}/audio-url`);
+      const data = await res.json();
+      if (!data.url) throw new Error(data.error || 'Could not load recording.');
+      const audio = new Audio(data.url);
+      audio.play();
+      btn.textContent = orig;
+      btn.disabled = false;
+    } catch(e) {
+      btn.textContent = 'Could not play';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+    }
   }
 
   function openJournalForm() {
@@ -2247,10 +2286,13 @@
     document.getElementById('journalShareFacilitator').checked = false;
     document.getElementById('journalFormMsg').textContent = '';
     journalUploadedFile = null;
+    discardJournalVoiceRecording();
   }
   function closeJournalForm() {
     document.getElementById('journalForm').style.display = 'none';
     journalUploadedFile = null;
+    if (journalVoiceRecorder && journalVoiceRecorder.state === 'recording') journalVoiceRecorder.stop();
+    discardJournalVoiceRecording();
   }
 
   function handleJournalFileSelect() {
@@ -2259,6 +2301,68 @@
     if (!file) return;
     journalUploadedFile = file;
     document.getElementById('journalFormMsg').textContent = `File selected: ${file.name} — click Save entry to upload it.`;
+  }
+
+  // Per Bot 24 (activity/engagement, group 3 — quick capture) — voice
+  // journal recording. journalVoiceBlob holds the finished recording
+  // until Save entry is clicked, same pattern as journalUploadedFile for
+  // the .txt path just above — one Save button handles all three input
+  // methods (typed/uploaded/recorded), branching only inside
+  // saveJournalEntry() itself.
+  let journalVoiceRecorder = null;
+  let journalVoiceChunks = [];
+  let journalVoiceBlob = null;
+  let journalVoiceStream = null;
+  let journalVoiceStartedAt = null;
+  let journalVoiceTimerHandle = null;
+
+  async function toggleJournalVoiceRecording() {
+    const status = document.getElementById('journalVoiceStatus');
+    const stopBtn = document.getElementById('journalVoiceStopBtn');
+    if (journalVoiceRecorder && journalVoiceRecorder.state === 'recording') {
+      journalVoiceRecorder.stop();
+      return;
+    }
+    // Starting fresh — clear anything left over from a previous take.
+    journalVoiceBlob = null;
+    journalVoiceChunks = [];
+    document.getElementById('journalVoicePreview').style.display = 'none';
+    document.getElementById('journalVoiceDiscardBtn').style.display = 'none';
+    try {
+      journalVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(e) {
+      document.getElementById('journalFormMsg').textContent = 'Could not access your microphone — check your browser/device permissions.';
+      return;
+    }
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    journalVoiceRecorder = new MediaRecorder(journalVoiceStream, { mimeType });
+    journalVoiceRecorder.ondataavailable = (e) => { if (e.data.size > 0) journalVoiceChunks.push(e.data); };
+    journalVoiceRecorder.onstop = () => {
+      journalVoiceStream.getTracks().forEach(t => t.stop());
+      clearInterval(journalVoiceTimerHandle);
+      journalVoiceBlob = new Blob(journalVoiceChunks, { type: mimeType });
+      const preview = document.getElementById('journalVoicePreview');
+      preview.src = URL.createObjectURL(journalVoiceBlob);
+      preview.style.display = '';
+      status.textContent = 'Recording ready — click Save entry, or discard to try again.';
+      stopBtn.style.display = 'none';
+      document.getElementById('journalVoiceDiscardBtn').style.display = '';
+    };
+    journalVoiceRecorder.start();
+    journalVoiceStartedAt = Date.now();
+    stopBtn.textContent = '⏹ Stop';
+    stopBtn.style.display = '';
+    document.getElementById('journalVoiceRecorder').style.display = 'flex';
+    journalVoiceTimerHandle = setInterval(() => {
+      const secs = Math.floor((Date.now() - journalVoiceStartedAt) / 1000);
+      document.getElementById('journalVoiceTimer').textContent = `${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;
+    }, 500);
+  }
+  function discardJournalVoiceRecording() {
+    journalVoiceBlob = null;
+    journalVoiceChunks = [];
+    document.getElementById('journalVoiceRecorder').style.display = 'none';
+    document.getElementById('journalVoicePreview').style.display = 'none';
   }
 
   async function saveJournalEntry() {
@@ -2271,7 +2375,30 @@
     setBtnLoading(btn, true, 'Saving…');
     try {
       let res;
-      if (journalUploadedFile) {
+      if (journalVoiceBlob) {
+        // Per Bot 24 — presigned direct-to-R2, same pattern as call
+        // recordings/practice audio: presign → PUT straight to R2 → tiny
+        // confirm call. Falls back to nothing gracefully with a clear
+        // message rather than a silent failure if presigning doesn't work.
+        try {
+          const presignRes = await fetch('/api/journal/voice/presign-upload', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mimeType: journalVoiceBlob.type }),
+          });
+          const presignData = await presignRes.json();
+          if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+          const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': journalVoiceBlob.type }, body: journalVoiceBlob });
+          if (!putRes.ok) throw new Error('Upload to storage failed.');
+          res = await fetch('/api/journal/voice', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ r2Key: presignData.key, mimeType: journalVoiceBlob.type, title, shareWithBot, shareWithFacilitator }),
+          });
+        } catch(e) {
+          msg.textContent = e.message || 'Could not save your recording — please try again.';
+          setBtnLoading(btn, false);
+          return;
+        }
+      } else if (journalUploadedFile) {
         const formData = new FormData();
         formData.append('file', journalUploadedFile);
         formData.append('title', title);
@@ -2280,7 +2407,7 @@
         res = await fetch('/api/journal/upload', { method: 'POST', body: formData });
       } else {
         const content = document.getElementById('journalContent').value.trim();
-        if (!content) { msg.textContent = 'Write something, or choose a file to upload.'; setBtnLoading(btn, false); return; }
+        if (!content) { msg.textContent = 'Write something, choose a file, or record a voice note.'; setBtnLoading(btn, false); return; }
         res = await fetch('/api/journal', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title, content, shareWithBot, shareWithFacilitator })

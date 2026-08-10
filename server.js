@@ -3328,22 +3328,35 @@ async function uploadCallRecordingToR2(buffer, mimeType) {
 async function transcribeCallRecording(callId, buffer, mimeType) {
   try {
     if (!DEEPGRAM_API_KEY) { db.setCallTranscript(callId, null, 'failed'); return; }
-    const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&punctuate=true', {
-      method: 'POST',
-      headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, 'Content-Type': mimeType || 'video/webm' },
-      body: buffer,
-    });
-    const data = await res.json();
-    const transcript = data && data.results && data.results.channels && data.results.channels[0]
-      && data.results.channels[0].alternatives && data.results.channels[0].alternatives[0]
-      ? data.results.channels[0].alternatives[0].transcript
-      : '';
+    const transcript = await transcribeAudioBuffer(buffer, mimeType);
     db.setCallTranscript(callId, transcript || null, transcript ? 'done' : 'failed');
     console.log(`[calls] transcription ${transcript ? 'done' : 'came back empty'} for call ${callId}`);
   } catch(e) {
     console.error(`[calls] transcription error for ${callId}:`, e.message);
     db.setCallTranscript(callId, null, 'failed');
   }
+}
+// Per Bot 24 (activity/engagement, group 3 — quick capture) — extracted
+// from transcribeCallRecording above so voice journal entries can use
+// the exact same Deepgram call without duplicating it. Returns the raw
+// transcript string, or null if Deepgram isn't configured or the call
+// fails — callers decide what "no transcript" should mean for their
+// own use case (calls mark themselves 'failed'; a voice journal entry
+// falls back to a plain placeholder instead, since a failed transcript
+// there shouldn't look like an error to the person, just "we couldn't
+// transcribe it, but your recording is still safe").
+async function transcribeAudioBuffer(buffer, mimeType) {
+  if (!DEEPGRAM_API_KEY) return null;
+  const res = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&punctuate=true', {
+    method: 'POST',
+    headers: { Authorization: `Token ${DEEPGRAM_API_KEY}`, 'Content-Type': mimeType || 'video/webm' },
+    body: buffer,
+  });
+  const data = await res.json();
+  return data && data.results && data.results.channels && data.results.channels[0]
+    && data.results.channels[0].alternatives && data.results.channels[0].alternatives[0]
+    ? data.results.channels[0].alternatives[0].transcript
+    : '';
 }
 // Uploads req.file (multer's local temp copy) to R2 and returns the stored
 // key to save in the DB, or null with the local filename as a fallback if
@@ -9901,6 +9914,68 @@ app.post('/api/journal/upload', auth.requireAuthApi(['client']), upload.single('
     if (req.file) fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: e.message });
   }
+});
+
+// Per Bot 24 (activity/engagement, group 3 — quick capture) — voice
+// journal entries. Presign → PUT direct to R2 → confirm, same
+// direct-upload pattern as call recordings/practice audio (see the
+// maintenance rebuild this session started with) — no reason a quick
+// voice note should be any less careful about upload size/timeout risk
+// than those were. Transcribed via the same Deepgram call call
+// recordings already use (see transcribeAudioBuffer above); a failed or
+// empty transcript still saves the entry (the audio itself is never
+// lost), just with a plain placeholder instead of transcribed text.
+app.post('/api/journal/voice/presign-upload', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Voice notes need media storage configured on this deployment — write it instead for now, or ask your admin to set up R2.' });
+    const { mimeType } = req.body;
+    const ext = mimeType && mimeType.includes('mp4') ? '.mp4' : '.webm';
+    const key = `journal-voice/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, mimeType || 'audio/webm');
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('journal voice presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post('/api/journal/voice', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const { r2Key, mimeType, title, shareWithBot, shareWithFacilitator } = req.body;
+    if (!r2Key || !r2Key.startsWith('journal-voice/')) return res.status(400).json({ error: 'Unexpected key.' });
+    const exists = await media.objectExists(r2Key).catch(() => false);
+    if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+
+    let transcript = '';
+    try {
+      const obj = await media.getPublicObject(r2Key);
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      transcript = await transcribeAudioBuffer(Buffer.concat(chunks), mimeType || 'audio/webm');
+    } catch(e) { console.error('journal voice transcription error:', e.message); }
+
+    const entryTitle = (title && title.trim()) || `Voice note from ${new Date().toLocaleDateString()}`;
+    const content = (transcript && transcript.trim()) || '(Voice note — no transcript available. Your recording is still saved below.)';
+    const id = uuidv4();
+    db.addJournalEntry(id, req.user.id, entryTitle, content, 'voice', null, !!shareWithBot, !!shareWithFacilitator, r2Key);
+    res.json({ id });
+  } catch(e) {
+    console.error('journal voice save error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// Scoped to the entry's own owner only — a facilitator seeing a shared
+// entry's transcript is fine (that's the whole point of sharing), but
+// the raw audio itself stays private to the person who recorded it,
+// same boundary the message-attachment privacy fix earlier this
+// session established for one-to-one content generally.
+app.get('/api/journal/:id/audio-url', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const entry = db.getJournalEntryById(req.params.id);
+    if (!entry || entry.client_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    if (!entry.audio_key) return res.status(400).json({ error: 'This entry has no recording.' });
+    const url = await media.getPlaybackUrl(entry.audio_key);
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/journal/:id', auth.requireAuthApi(['client']), (req, res) => {
