@@ -2871,7 +2871,19 @@ async function doUpload(){
   const cat=document.getElementById('upCat').value;
   const sub=document.getElementById('upSub').value;
   const err=document.getElementById('upErr');
-  if(!cat){err.textContent='Select a category.';return;}
+  if(!cat){
+    // Per Bot 24 — this was easy to miss: a static line of red text below
+    // a file list, while the actual field it's talking about (Category,
+    // top of the form) could be scrolled well out of view by then.
+    // Scrolls it into view and focuses it directly instead.
+    err.textContent='Select a category — see the field highlighted above.';
+    const catEl = document.getElementById('upCat');
+    catEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    catEl.focus();
+    catEl.style.outline = '2px solid rgba(255,140,120,0.6)';
+    setTimeout(() => { catEl.style.outline = ''; }, 2000);
+    return;
+  }
   if(!upQueue.length){err.textContent='No files selected.';return;}
   err.textContent='';
   const btn=document.getElementById('upBtn');
