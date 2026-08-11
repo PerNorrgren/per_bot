@@ -1159,15 +1159,11 @@
           <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
             <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
             <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
-            <!-- Per Bot 24 — dictate into journalContent above, same
-                 /api/journal/dictate endpoint and mechanics as the quick-
-                 capture modal's own dictate button, just targeting this
-                 form's rich editor instead of a plain textarea (appends
-                 into Quill's HTML rather than a .value). -->
-            <div style="display:flex;align-items:center;gap:10px">
-              <button type="button" class="btn sm" id="journalDictateBtn" onclick="toggleJournalDictation()">🎙 Dictate</button>
-              <span id="journalDictateStatus" style="font-size:12px;color:rgba(255,255,255,0.5)"></span>
-            </div>
+            <!-- Per Bot 25 — Dictate moved into the rich editor's own
+                 toolbar (the 🎙️ button, wired via mountRichEditor's
+                 onDictate callback below) — no longer a separate button
+                 here. Still the same /api/journal/dictate endpoint and
+                 mechanics, just triggered from the toolbar instead. -->
             <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label>
               <!-- Per Bot 24 (activity/engagement, group 3 — quick
                    capture) — record a voice note instead of typing.
@@ -1580,7 +1576,7 @@
   // site in this file is journalContent (see grep at your leisure), so
   // every mount through here is genuinely a Journal field.
   function mountRichEditor(textareaId, force) {
-    return MessageEditor.mountOnTextarea(textareaId, { toolbar: 'simple', force, privateMedia: true });
+    return MessageEditor.mountOnTextarea(textareaId, { toolbar: 'simple', force, privateMedia: true, onDictate: toggleJournalDictation });
   }
   function setRichEditorContent(textareaId, html) {
     MessageEditor.setTextareaContent(textareaId, html);
@@ -2260,43 +2256,46 @@
   // Same pattern as the quick-capture modal's dictateRecorder (fully
   // separate state again, same reasoning — this one targets Quill's
   // HTML content specifically rather than a plain textarea's .value).
+  //
+  // Per Bot 25 — moved from a standalone button below the editor into
+  // the toolbar itself (Per's request), called via mountRichEditor's
+  // onDictate callback with (quill, btnEl) — btnEl is the actual
+  // toolbar button MessageEditor built, used here for state (icon/
+  // disabled) instead of a separate element. Also: every failure path
+  // now logs to console AND calls appAlert() — a guaranteed-visible
+  // modal, not just inline text that's easy to miss or could be
+  // rendered somewhere off-screen/behind something. If this still
+  // produces no visible reaction at all after this change, the button's
+  // onclick itself isn't firing (a JS error earlier in the page, or a
+  // stale cached copy of this file) rather than anything inside this
+  // function — the console will show something either way.
   let journalDictateRecorder = null;
   let journalDictateChunks = [];
   let journalDictateStream = null;
-  async function toggleJournalDictation() {
-    const btn = document.getElementById('journalDictateBtn');
-    const status = document.getElementById('journalDictateStatus');
+  async function toggleJournalDictation(quill, btn) {
+    console.log('[journal dictate] button pressed, recorder state:', journalDictateRecorder?.state);
     if (journalDictateRecorder && journalDictateRecorder.state === 'recording') {
       journalDictateRecorder.stop();
       return;
     }
     journalDictateChunks = [];
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
     try {
       journalDictateStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch(e) {
-      status.textContent = 'Could not access your microphone.';
+      console.error('[journal dictate] getUserMedia failed:', e);
+      if (btn) { btn.disabled = false; btn.textContent = '🎙️'; }
+      appAlert('Could not access your microphone — check your browser/device permissions and try again.');
       return;
     }
-    // Per Bot 25 — everything from here down (MediaRecorder construction
-    // and start) had no error handling at all: if MediaRecorder throws —
-    // an unsupported mimeType/codec on a given browser, or the API being
-    // unavailable in some embedded/webview context — that failure sat
-    // completely outside any try/catch, in an async function called from
-    // a bare onclick with nothing to catch its rejection. The mic
-    // permission prompt would already have fired and been granted by
-    // this point, so nothing looked obviously wrong on screen; the
-    // button just never changed and nothing happened next — exactly
-    // "does nothing." Wrapping this means a real failure here now shows
-    // up as a status message instead of vanishing silently.
     try {
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
       journalDictateRecorder = new MediaRecorder(journalDictateStream, { mimeType });
       journalDictateRecorder.ondataavailable = (e) => { if (e.data.size > 0) journalDictateChunks.push(e.data); };
       journalDictateRecorder.onstop = async () => {
+        console.log('[journal dictate] recording stopped, chunks:', journalDictateChunks.length);
         journalDictateStream.getTracks().forEach(t => t.stop());
-        btn.textContent = '🎙 Dictate';
-        btn.disabled = true;
-        status.textContent = 'Transcribing…';
+        if (btn) { btn.textContent = '…'; btn.disabled = true; }
         const blob = new Blob(journalDictateChunks, { type: mimeType });
         try {
           const fd = new FormData();
@@ -2304,27 +2303,27 @@
           const res = await fetch('/api/journal/dictate', { method: 'POST', body: fd });
           const data = await res.json();
           if (data.transcript) {
-            const quill = mountRichEditor('journalContent');
             const existing = quill.getText().trim();
             quill.root.innerHTML = (existing ? quill.root.innerHTML : '') + `<p>${escHtmlJournal(data.transcript)}</p>`;
             document.getElementById('journalContent').value = quill.root.innerHTML;
-            status.textContent = '';
           } else {
-            status.textContent = data.error || "Didn't catch that — try again.";
+            console.error('[journal dictate] transcribe response had no transcript:', data);
+            appAlert(data.error || "Didn't catch that — try again.");
           }
         } catch(e) {
-          status.textContent = 'Could not transcribe that — please try again.';
+          console.error('[journal dictate] transcribe request failed:', e);
+          appAlert('Could not transcribe that — please try again.');
         } finally {
-          btn.disabled = false;
+          if (btn) { btn.textContent = '🎙️'; btn.disabled = false; }
         }
       };
       journalDictateRecorder.start();
-      btn.textContent = '⏹ Stop';
-      status.textContent = 'Listening…';
+      if (btn) { btn.textContent = '⏹️'; btn.disabled = false; btn.title = 'Tap to stop and transcribe'; }
     } catch (e) {
       console.error('[journal dictate] recorder setup failed:', e);
       journalDictateStream.getTracks().forEach(t => t.stop());
-      status.textContent = "Recording isn't supported in this browser — try Chrome or Safari.";
+      if (btn) { btn.textContent = '🎙️'; btn.disabled = false; }
+      appAlert("Recording isn't supported in this browser — try Chrome or Safari.");
     }
   }
   function handleJournalFileSelect() {

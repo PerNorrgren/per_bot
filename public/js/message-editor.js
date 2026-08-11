@@ -107,14 +107,33 @@
       .me-ql-wrap .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
       .me-ql-wrap .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
       .me-ql-wrap .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
-      /* Text-content buttons (1 col/2 col/3 col, AI Help), not the
+      /* Text-content buttons (1 col/2 col/3 col, AI Help, and the emoji-
+         glyph media buttons: audio/p-image/p-video/p-audio), not the
          SVG-icon ones above (B/I/U/alignment/lists/link/image), which get
-         their colour from .ql-stroke/.ql-fill instead. */
+         their colour from .ql-stroke/.ql-fill instead. Per Bot 25 — the
+         emoji buttons were added without ever being added to this list,
+         so they fell back to the browser's unstyled default button text
+         colour (dark) instead of matching everything else, and rendered
+         at the browser default font-size (small) rather than large
+         enough to actually read as a photo/clapperboard/note glyph —
+         reported as "so dark and small so I did not see them". The
+         explicit font-size here is the fix for size; color is the fix
+         for contrast. */
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-audio,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-image,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-video,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-audio,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-dictate,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.75); }
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-audio,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-image,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-video,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-audio,
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-dictate { font-size:16px; line-height:1; }
       /* Per Bot 25 — 'simple' preset (Journal, course/lesson descriptions,
          facilitator notes) needs no size change from the default above.
          'compact' preset (inline message composers) needs the smaller
@@ -148,6 +167,10 @@
         .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
         .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
         .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-audio,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-image,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-video,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-p-audio,
         .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:ButtonText; }
         .me-ql-wrap .ql-picker-item.ql-selected, .me-ql-wrap .ql-toolbar .ql-active { color:Highlight; }
       }
@@ -866,7 +889,11 @@
       // of field. opts.privateMedia (Journal only, for now — see the
       // privateMediaBlock comment above) adds a private image/video/audio
       // group; other 'simple' fields get none of that until their own
-      // privacy model is decided.
+      // privacy model is decided. opts.onDictate (Journal only) adds a
+      // mic button that calls back into the caller's own recording
+      // logic — kept as a callback rather than baking dictation itself
+      // in here, since recording/transcribing is Journal-specific
+      // business logic, not something every 'simple' field needs.
       simple: [
         [{ header: [2, 3, false] }],
         ['bold', 'italic', 'underline'],
@@ -874,6 +901,7 @@
         [{ list: 'ordered' }, { list: 'bullet' }],
         ['link'],
         ...(opts.privateMedia ? [['p-image', 'p-video', 'p-audio']] : []),
+        ...(opts.onDictate ? [['dictate']] : []),
         ['ai-polish'], ['clean'],
       ],
       // The small inline message composers (client↔facilitator direct
@@ -898,6 +926,12 @@
             'p-image': () => uploadPrivateMediaIntoEditor(q, 'image'),
             'p-video': () => uploadPrivateMediaIntoEditor(q, 'video'),
             'p-audio': () => uploadPrivateMediaIntoEditor(q, 'audio'),
+            // Per Bot 25 — thin passthrough. this.container is Quill's
+            // own toolbar-module container (see the labelling code
+            // below), not our outer wrapper element — used here so the
+            // caller's onDictate can update the button's own label/state
+            // directly without a separate query.
+            dictate: function () { opts.onDictate(q, this.container.querySelector('.ql-dictate')); },
             'image-link': () => linkSelectedImage(q),
             'image-copy': () => copySelectedImage(q),
             'image-resize': () => shrinkSelectedImage(q),
@@ -1004,6 +1038,7 @@
     label('.ql-p-image', '📷', 'Add a photo');
     label('.ql-p-video', '🎬', 'Add a video');
     label('.ql-p-audio', '🎵', 'Add an audio recording');
+    label('.ql-dictate', '🎙️', 'Dictate — tap to start, tap again to stop and transcribe');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
     label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
     label('.ql-image-resize', '🗜️', "Click an image first, resize it with its own handles to the size you want it shown at, then click here — shrinks the actual file to match, keeping the email lighter");
