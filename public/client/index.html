@@ -1137,7 +1137,14 @@
              untouched, per Per's explicit call to keep them exactly as
              they were — this is purely additive. -->
         <button class="lib-subnav-btn active" id="youSubHome" onclick="switchYouSub('home')">Home</button>
-        <button class="lib-subnav-btn" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
+        <!-- Per Bot 24 — was switchYouSub('account'), showing a summary
+             panel (name/email + referral card + a link to the real
+             account page) that's now fully redundant: account.html
+             shows the exact same referral card at its own top (see
+             that page's own recent changes), so this intermediate stop
+             served no purpose anymore. Direct link now — a real page
+             navigation, same as every other link out to /account. -->
+        <a class="lib-subnav-btn" id="youSubAccount" href="/account" style="text-decoration:none;display:inline-block">Account</a>
         <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
         <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
         <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
@@ -1152,11 +1159,6 @@
            just needs to exist and be the default-visible panel. -->
       <div class="lib-sub-panel visible" id="youHomePanel">
         <div class="practices-scroll" id="activityHomeList" style="display:flex; flex-direction:column; gap:10px;"><div class="no-practices">Loading…</div></div>
-      </div>
-
-      <!-- Account region -->
-      <div class="lib-sub-panel" id="youAccountPanel">
-        <div class="practices-scroll" id="youAccountSummary"><div class="no-practices">Loading…</div></div>
       </div>
 
       <!-- Journal region -->
@@ -1809,20 +1811,23 @@
   }
 
   // ── You sub-nav ──
+  // Per Bot 24 — 'account' sanitized out here since youAccountPanel no
+  // longer exists (Account is a direct link to /account now) — without
+  // this, anyone whose sessionStorage still held 'account' from before
+  // this change would hit a null-element error on next load.
   let _currentYouSub = sessionStorage.getItem('youSub') || 'home';
+  if (_currentYouSub === 'account') _currentYouSub = 'home';
   function switchYouSub(sub) {
     _currentYouSub = sub;
     sessionStorage.setItem('youSub', sub); // survives a real page reload, not just in-memory state — see the "back button loses Home tab" fix
-    ['home','account','journal','poems','history'].forEach(s => {
+    ['home','journal','poems','history'].forEach(s => {
       document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
     });
     document.getElementById('youHomePanel').classList.toggle('visible', sub === 'home');
-    document.getElementById('youAccountPanel').classList.toggle('visible', sub === 'account');
     document.getElementById('youJournalPanel').classList.toggle('visible', sub === 'journal');
     document.getElementById('youPoemsPanel').classList.toggle('visible', sub === 'poems');
     document.getElementById('youHistoryPanel').classList.toggle('visible', sub === 'history');
     if (sub === 'home')     loadActivityHome();
-    if (sub === 'account')  loadYouAccountSummary();
     if (sub === 'journal') loadJournal();
     if (sub === 'poems')   loadPoems();
     if (sub === 'history') loadHistory();
@@ -1836,23 +1841,6 @@
   // Small summary card in the You > Account region — full settings stay
   // on the mature standalone /account page rather than re-embedding
   // 1000+ lines of settings UI inline here.
-  async function loadYouAccountSummary() {
-    const el = document.getElementById('youAccountSummary');
-    try {
-      const a = await getFullAccount();
-      el.innerHTML = `
-        <div style="padding:6px 4px 18px">
-          <div style="font-size:16px;color:rgba(255,255,255,0.85);margin-bottom:4px">${a.name || 'Your account'}</div>
-          <div style="font-size:12px;color:rgba(255,255,255,0.35)">${a.email || ''}</div>
-        </div>
-        <div id="referralCard"></div>
-        <a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>`;
-      loadReferralCard();
-    } catch(e) {
-      el.innerHTML = '<a href="/account" style="display:block;text-align:center;padding:12px;border-radius:10px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.1);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">Manage account settings &rarr;</a>';
-    }
-  }
-
   // ── Referrals (Per Bot 22) ──
   // Give a friend their first month; once they've actually paid for it
   // (not just signed up), you get a free month too — no cap, stacks with
