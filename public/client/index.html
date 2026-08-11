@@ -917,7 +917,7 @@
                those choices stay in Journal's fuller form for anyone
                who wants them). Available to every tier, same as
                Journal itself — nothing here checks member level. -->
-          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Add to journal</button>
+          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Make a note</button>
         </div>
 
         <!-- Per Bot 21 — moved here from the Talk page per Per's request;
@@ -1014,7 +1014,7 @@
                which meant it was effectively invisible for most of the
                time actually spent in Talk. Same button, same modal,
                just also available here mid-conversation. -->
-          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📓 Add to journal</button>
+          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📓 Make a note</button>
         </div>
         <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
           <div class="practices-scroll" id="talkSummariesList"></div>
@@ -1168,6 +1168,15 @@
           <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
             <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
             <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
+            <!-- Per Bot 24 — dictate into journalContent above, same
+                 /api/journal/dictate endpoint and mechanics as the quick-
+                 capture modal's own dictate button, just targeting this
+                 form's rich editor instead of a plain textarea (appends
+                 into Quill's HTML rather than a .value). -->
+            <div style="display:flex;align-items:center;gap:10px">
+              <button type="button" class="btn sm" id="journalDictateBtn" onclick="toggleJournalDictation()">🎙 Dictate</button>
+              <span id="journalDictateStatus" style="font-size:12px;color:rgba(255,255,255,0.5)"></span>
+            </div>
             <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label>
               <!-- Per Bot 24 (activity/engagement, group 3 — quick
                    capture) — record a voice note instead of typing.
@@ -1450,10 +1459,10 @@
      Journal form already uses. -->
 <div class="pw-overlay" id="quickVoiceModal">
   <div class="pw-modal" style="max-width:380px">
-    <h3>Add to journal</h3>
+    <h3>Make a note</h3>
     <div id="quickJournalChoose" style="display:flex;gap:10px;justify-content:center;margin-bottom:6px">
-      <button type="button" class="btn" onclick="setQuickJournalMode('voice')">🎙 Talk</button>
-      <button type="button" class="btn" onclick="setQuickJournalMode('write')">✏️ Write</button>
+      <button type="button" class="btn" onclick="setQuickJournalMode('voice')">🎙 Voice memo</button>
+      <button type="button" class="btn" onclick="setQuickJournalMode('write')">✏️ Write memo</button>
     </div>
     <div id="quickVoiceStatus" style="display:none;font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px"></div>
     <div id="quickVoiceRecordWrap" style="display:none;align-items:center;gap:12px;justify-content:center;margin-bottom:14px">
@@ -1462,6 +1471,17 @@
     </div>
     <audio id="quickVoicePreview" controls style="display:none;width:100%;margin-bottom:14px"></audio>
     <textarea id="quickJournalText" placeholder="Whatever's on your mind…" style="display:none;width:100%;min-height:120px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:14px;margin-bottom:14px;resize:vertical"></textarea>
+    <!-- Per Bot 24 — dictate into the textarea above, rather than typing.
+         Separate recording state from Voice Memo's own (dictateRecorder
+         etc, not quickVoiceRecorder) even though the underlying
+         mechanics are similar — this one's ephemeral (transcribe and
+         discard the audio), that one keeps the recording; keeping them
+         fully separate avoids any risk of the two interfering with each
+         other. -->
+    <div id="dictateWrap" style="display:none;align-items:center;gap:10px;margin-bottom:14px">
+      <button type="button" class="btn sm" id="dictateBtn" onclick="toggleDictation()">🎙 Dictate</button>
+      <span id="dictateStatus" style="font-size:12px;color:rgba(255,255,255,0.5)"></span>
+    </div>
     <div class="pw-btns">
       <button class="pw-cancel" onclick="closeQuickVoiceNote()">Cancel</button>
       <button class="pw-ok" id="quickVoiceSaveBtn" onclick="saveQuickJournalEntry()" style="display:none">Save</button>
@@ -2253,9 +2273,64 @@
     document.getElementById('journalForm').style.display = 'none';
     journalUploadedFile = null;
     if (journalVoiceRecorder && journalVoiceRecorder.state === 'recording') journalVoiceRecorder.stop();
+    if (journalDictateRecorder && journalDictateRecorder.state === 'recording') journalDictateRecorder.stop();
     discardJournalVoiceRecording();
   }
 
+  // Per Bot 24 — dictation for the main Journal form's rich editor.
+  // Same pattern as the quick-capture modal's dictateRecorder (fully
+  // separate state again, same reasoning — this one targets Quill's
+  // HTML content specifically rather than a plain textarea's .value).
+  let journalDictateRecorder = null;
+  let journalDictateChunks = [];
+  let journalDictateStream = null;
+  async function toggleJournalDictation() {
+    const btn = document.getElementById('journalDictateBtn');
+    const status = document.getElementById('journalDictateStatus');
+    if (journalDictateRecorder && journalDictateRecorder.state === 'recording') {
+      journalDictateRecorder.stop();
+      return;
+    }
+    journalDictateChunks = [];
+    try {
+      journalDictateStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(e) {
+      status.textContent = 'Could not access your microphone.';
+      return;
+    }
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    journalDictateRecorder = new MediaRecorder(journalDictateStream, { mimeType });
+    journalDictateRecorder.ondataavailable = (e) => { if (e.data.size > 0) journalDictateChunks.push(e.data); };
+    journalDictateRecorder.onstop = async () => {
+      journalDictateStream.getTracks().forEach(t => t.stop());
+      btn.textContent = '🎙 Dictate';
+      btn.disabled = true;
+      status.textContent = 'Transcribing…';
+      const blob = new Blob(journalDictateChunks, { type: mimeType });
+      try {
+        const fd = new FormData();
+        fd.append('file', blob, 'dictate.webm');
+        const res = await fetch('/api/journal/dictate', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.transcript) {
+          const quill = mountRichEditor('journalContent');
+          const existing = quill.getText().trim();
+          quill.root.innerHTML = (existing ? quill.root.innerHTML : '') + `<p>${escHtmlJournal(data.transcript)}</p>`;
+          document.getElementById('journalContent').value = quill.root.innerHTML;
+          status.textContent = '';
+        } else {
+          status.textContent = data.error || "Didn't catch that — try again.";
+        }
+      } catch(e) {
+        status.textContent = 'Could not transcribe that — please try again.';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    journalDictateRecorder.start();
+    btn.textContent = '⏹ Stop';
+    status.textContent = 'Listening…';
+  }
   function handleJournalFileSelect() {
     const input = document.getElementById('journalFileInput');
     const file = input.files[0];
@@ -5481,12 +5556,16 @@
     document.getElementById('quickVoicePreview').style.display = 'none';
     document.getElementById('quickJournalText').style.display = mode === 'write' ? '' : 'none';
     document.getElementById('quickJournalText').value = '';
+    document.getElementById('dictateWrap').style.display = mode === 'write' ? 'flex' : 'none';
+    document.getElementById('dictateStatus').textContent = '';
+    document.getElementById('dictateBtn').textContent = '🎙 Dictate';
     document.getElementById('quickVoiceSaveBtn').style.display = mode === 'write' ? '' : 'none';
     quickVoiceBlob = null;
     if (mode === 'write') setTimeout(() => document.getElementById('quickJournalText').focus(), 50);
   }
   function closeQuickVoiceNote() {
     if (quickVoiceRecorder && quickVoiceRecorder.state === 'recording') quickVoiceRecorder.stop();
+    if (dictateRecorder && dictateRecorder.state === 'recording') dictateRecorder.stop();
     document.getElementById('quickVoiceModal').classList.remove('visible');
   }
   async function toggleQuickVoiceRecording() {
@@ -5535,6 +5614,62 @@
   // endpoint the fuller Journal form already uses — same "no
   // title/sharing options here, kept minimal" reasoning as the voice
   // path, auto-titled the same way.
+  // Per Bot 24 — dictation for Write Memo. Fully separate recording
+  // state from Voice Memo's own (quickVoiceRecorder etc) even though
+  // the mechanics are near-identical — this one transcribes-and-
+  // discards via /api/journal/dictate rather than keeping the audio, and
+  // appends into whatever's already in the textarea rather than
+  // replacing it, so dictating twice (or dictating after typing some of
+  // it by hand) doesn't lose anything already there.
+  let dictateRecorder = null;
+  let dictateChunks = [];
+  let dictateStream = null;
+  async function toggleDictation() {
+    const btn = document.getElementById('dictateBtn');
+    const status = document.getElementById('dictateStatus');
+    if (dictateRecorder && dictateRecorder.state === 'recording') {
+      dictateRecorder.stop();
+      return;
+    }
+    dictateChunks = [];
+    try {
+      dictateStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(e) {
+      status.textContent = 'Could not access your microphone.';
+      return;
+    }
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    dictateRecorder = new MediaRecorder(dictateStream, { mimeType });
+    dictateRecorder.ondataavailable = (e) => { if (e.data.size > 0) dictateChunks.push(e.data); };
+    dictateRecorder.onstop = async () => {
+      dictateStream.getTracks().forEach(t => t.stop());
+      btn.textContent = '🎙 Dictate';
+      btn.disabled = true;
+      status.textContent = 'Transcribing…';
+      const blob = new Blob(dictateChunks, { type: mimeType });
+      try {
+        const fd = new FormData();
+        fd.append('file', blob, 'dictate.webm');
+        const res = await fetch('/api/journal/dictate', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.transcript) {
+          const ta = document.getElementById('quickJournalText');
+          ta.value = (ta.value.trim() ? ta.value.trim() + ' ' : '') + data.transcript;
+          status.textContent = '';
+        } else {
+          status.textContent = data.error || "Didn't catch that — try again.";
+        }
+      } catch(e) {
+        status.textContent = 'Could not transcribe that — please try again.';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    dictateRecorder.start();
+    btn.textContent = '⏹ Stop';
+    status.textContent = 'Listening…';
+  }
+
   async function saveQuickJournalEntry() {
     if (quickJournalMode === 'write') {
       const text = document.getElementById('quickJournalText').value.trim();

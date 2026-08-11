@@ -9939,6 +9939,26 @@ app.post('/api/journal/upload', auth.requireAuthApi(['client']), upload.single('
 // recordings already use (see transcribeAudioBuffer above); a failed or
 // empty transcript still saves the entry (the audio itself is never
 // lost), just with a plain placeholder instead of transcribed text.
+// Per Bot 24 — dictation for the Write Memo path. Genuinely different
+// from the Voice Memo path above: that one keeps the recording
+// (uploaded to R2, playable later); this one is purely ephemeral — just
+// converts a short spoken clip into text for the textarea, nothing is
+// stored, so this goes straight through the server (multer) rather than
+// the presign-to-R2 dance, which would be pointless overhead for
+// something never kept.
+app.post('/api/journal/dictate', auth.requireAuthApi(['client']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No audio received.' });
+    const buffer = fs.readFileSync(req.file.path);
+    fs.unlink(req.file.path, () => {});
+    const transcript = await transcribeAudioBuffer(buffer, req.file.mimetype);
+    res.json({ transcript: transcript || '' });
+  } catch(e) {
+    console.error('journal dictate error:', e.message);
+    res.status(500).json({ error: 'Could not transcribe that — please try again.' });
+  }
+});
+
 app.post('/api/journal/voice/presign-upload', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     if (!media.isConfigured()) return res.status(503).json({ error: 'Voice notes need media storage configured on this deployment — write it instead for now, or ask your admin to set up R2.' });

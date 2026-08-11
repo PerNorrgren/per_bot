@@ -191,6 +191,15 @@
     .field select:focus { border-color:rgba(180,230,200,0.4); }
     .field select option { background:#1a2420; color:rgba(255,255,255,0.8); }
 
+    /* Per Bot 24 — most apps hide this by default for the same reason
+       browsers mask password fields at all (shoulder-surfing risk in a
+       public/shared space) — but that's a choice for the person typing
+       to make in the moment, not something to force on them
+       permanently. A tap-to-reveal eye is the standard, well-understood
+       way to offer both. */
+    .pw-eye-btn { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; font-size:16px; opacity:0.45; padding:6px; line-height:1; }
+    .pw-eye-btn:hover { opacity:0.75; }
+
     /* Divider */
     .divider { height:1px; background:rgba(255,255,255,0.05); }
 
@@ -226,9 +235,9 @@
 <div class="panel">
 
   <div style="display:flex;align-items:center;justify-content:space-between">
-    <a class="back-link" href="/client/" style="margin-bottom:0">
+    <a class="back-link" href="/client/" onclick="return goBackOneStep(event)" style="margin-bottom:0">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-      Back to practice
+      Back
     </a>
     <button onclick="logout()" class="back-link" style="background:none;border:none;cursor:pointer;margin-bottom:0">Sign out</button>
   </div>
@@ -482,7 +491,7 @@
 
   <!-- ── Keep History ── -->
   <div class="card">
-    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">My conversations with the companion</div><span class="card-chevron">▾</span></div>
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">My conversations with Talk</div><span class="card-chevron">▾</span></div>
     <div class="card-body" style="display:none">
       <div class="pref-row">
         <div class="pref-label">
@@ -506,15 +515,24 @@
     <div class="card-body" style="display:none">
       <div class="field">
         <label>Current password</label>
-        <input type="password" id="pwCurrent" placeholder="••••••••"/>
+        <div style="position:relative">
+          <input type="password" id="pwCurrent" placeholder="••••••••" style="padding-right:44px"/>
+          <button type="button" class="pw-eye-btn" onclick="togglePasswordVisibility('pwCurrent', this)" title="Show password" aria-label="Show password">👁</button>
+        </div>
       </div>
       <div class="field">
         <label>New password</label>
-        <input type="password" id="pwNew" placeholder="At least 8 characters"/>
+        <div style="position:relative">
+          <input type="password" id="pwNew" placeholder="At least 8 characters" style="padding-right:44px"/>
+          <button type="button" class="pw-eye-btn" onclick="togglePasswordVisibility('pwNew', this)" title="Show password" aria-label="Show password">👁</button>
+        </div>
       </div>
       <div class="field">
         <label>Confirm new password</label>
-        <input type="password" id="pwConfirm" placeholder="Same again"/>
+        <div style="position:relative">
+          <input type="password" id="pwConfirm" placeholder="Same again" style="padding-right:44px"/>
+          <button type="button" class="pw-eye-btn" onclick="togglePasswordVisibility('pwConfirm', this)" title="Show password" aria-label="Show password">👁</button>
+        </div>
       </div>
       <div class="msg" id="pwMsg"></div>
       <button class="btn-primary" onclick="changePassword()">Update password</button>
@@ -1263,6 +1281,29 @@
   // inline style (some bodies also carry gap/padding overrides inline) —
   // '' falls back to the CSS class's own display:flex rather than
   // hardcoding 'flex' here, so nothing gets clobbered either way.
+  // Per Bot 24 — was a plain link to /client/, which always landed on
+  // the home splash screen regardless of where someone actually came
+  // from (e.g. mid-conversation on Talk, or deep in Library) — "Back to
+  // practice" implied returning to whatever you were doing, not
+  // starting over. Steps back one real browser entry when it's safe to
+  // (came from within this same site this session), falling back to
+  // /client/ only when there's nothing sensible to go back to — opened
+  // this page directly via a bookmark or deep link, say.
+  function togglePasswordVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    btn.textContent = showing ? '👁' : '🙈';
+    btn.title = showing ? 'Show password' : 'Hide password';
+  }
+  function goBackOneStep(e) {
+    if (document.referrer && document.referrer.includes(location.host) && history.length > 1) {
+      e.preventDefault();
+      history.back();
+      return false;
+    }
+    return true; // let the plain href="/client/" handle it
+  }
   function toggleCard(headerEl) {
     const body    = headerEl.nextElementSibling;
     const chevron = headerEl.querySelector('.card-chevron');
