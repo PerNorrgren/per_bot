@@ -244,6 +244,18 @@
     </div>
   </div>
 
+  <!-- Per Bot 25 — Maintenance. Per asked where the code/DB actually
+       live and wanted a way to pull a full copy of the database
+       himself — this is that. Streams the live SQLite file straight
+       from Railway's persistent volume, no CLI/dashboard access needed. -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Maintenance</div></div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:16px">A full copy of the live database, exactly as it stands right now. Safe to download any time — this only reads the data, nothing here can change or affect the live app.</div>
+      <a href="/api/admin/backup/download" class="btn-primary" style="display:inline-block; padding:9px 18px; font-size:12px; text-decoration:none;">Download database backup</a>
+    </div>
+  </div>
+
   <!-- Skin editor — appears when a skin from the list above is opened.
        Kept as one panel that swaps its target skin, rather than a modal,
        since editing here is meant to feel like part of the same settings

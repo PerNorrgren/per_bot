@@ -1553,6 +1553,33 @@ async function getDb() {
     // the stepper by the time of a later restart — a fixed date only ever
     // matches people who existed before this feature shipped, once.
     "UPDATE users SET onboarding_completed=1 WHERE onboarding_completed=0 AND created_at < '2026-07-06'",
+    // Per Bot 25 — second grandfather cutoff, same reasoning, needed
+    // because of a real bug: PATCH /api/account was silently stripping
+    // onboarding_completed (among other fields) before it ever reached
+    // the database, so the UPDATE above never actually fired for anyone
+    // — every account created since 2026-07-06 has been stuck at
+    // onboarding_completed=0 and seeing the stepper on every login,
+    // regardless of what they actually chose or skipped. Now that the
+    // save path itself is fixed (see the allowlist fix in server.js),
+    // this closes it out for everyone caught in that window the same
+    // way the original migration did for pre-launch users — a fixed
+    // date, not 'now', for the identical reason given above: this
+    // migration re-runs on every restart, and 'now' would incorrectly
+    // sweep up a genuinely brand-new signup who registered moments ago
+    // and hasn't seen the stepper yet.
+    //
+    // What this does and doesn't fix for people caught in the bug: their
+    // reminder/MOTD choices were NEVER actually broken — those two
+    // fields were already in the allowlist before this fix, so anyone
+    // who chose something during onboarding had it saved correctly the
+    // whole time. Only their birthday (dob_month/dob_day) and this
+    // completed flag failed to save. This migration stops the repeat
+    // popup; their birthday gap is picked up separately, for free, by
+    // the new birthday re-offer (getBirthdayPromptTrigger) — it already
+    // checks exactly this combination (onboarding done, dob still null),
+    // so as soon as this migration sets onboarding_completed=1 for them,
+    // they naturally become eligible to be asked again, properly, once.
+    "UPDATE users SET onboarding_completed=1 WHERE onboarding_completed=0 AND created_at < '2026-08-11'",
     // Keep History gets asked in-context, in Talk, after a person's first
     // real exchange — not blind in the onboarding stepper, since the whole
     // point is they've now felt what the conversation is like. This flag
@@ -2011,6 +2038,35 @@ async function getDb() {
     // a11y_text_scale: 'normal' | 'large' | 'larger'.
     "ALTER TABLE users ADD COLUMN a11y_contrast INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN a11y_text_scale TEXT DEFAULT 'normal'",
+    // Per Bot 25 — referral prompt ("would you recommend us"), flagged
+    // back in Per Bot 24 as needing a real design decision on trigger
+    // conditions before any code. Two guardrail columns rather than a
+    // separate table, since this is genuinely 1:1 with a user, same as
+    // the a11y prefs just above. last_shown_at alone provides the
+    // frequency cap (a soft "not now" just relies on the cooldown
+    // naturally re-earning eligibility later); responded_at is the hard
+    // stop — set the moment someone gives a real answer, share or
+    // decline, and never asked again after that regardless of new
+    // milestones. See getReferralPromptTrigger in db.js for the actual
+    // trigger logic and its reasoning.
+    "ALTER TABLE users ADD COLUMN referral_prompt_last_shown_at TEXT",
+    "ALTER TABLE users ADD COLUMN referral_prompt_responded_at TEXT",
+    // Per Bot 25 — birthday re-offer, same shape as the referral prompt
+    // just above (last_shown_at for the cooldown, responded_at as the
+    // permanent stop). Only birthday, not reminders/MOTD too, despite
+    // being asked about all three together — dob_month/dob_day have no
+    // default (NULL genuinely means never set), but pref_email_reminders
+    // and pref_email_motd both default to 1 (on), and the onboarding
+    // stepper's Skip buttons set onboarding_completed regardless of
+    // whether anyone actually answered those two questions — so for most
+    // people who skipped, reminders/MOTD are already on by default, not
+    // missing. Re-offering something someone's already receiving reads
+    // as confusing rather than helpful, so this only covers the one gap
+    // that's real and unambiguous.
+    "ALTER TABLE users ADD COLUMN birthday_prompt_last_shown_at TEXT",
+    "ALTER TABLE users ADD COLUMN birthday_prompt_responded_at TEXT",
+
+
     // Per Bot 27 — length of a signal script in minutes, for the admin
     // list's sortable Length column and so Talk's 1-min/5-min choice
     // (Writing Methodology v11 Rule 18) can filter by it directly rather
@@ -2466,6 +2522,17 @@ function save() {
   if (!db) return;
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+}
+
+// Per Bot 25 — for the admin "Download database backup" feature. Same
+// underlying db.export() save() already uses, just handed straight back
+// as bytes instead of written to disk — the live in-memory state at the
+// moment this is called, not whatever was last saved (those are usually
+// the same thing in practice, since save() runs after every write, but
+// this is the more current of the two either way).
+function exportDbBytes() {
+  if (!db) throw new Error('DB not initialised');
+  return Buffer.from(db.export());
 }
 
 function getDbSync() {
@@ -4851,6 +4918,100 @@ function markMilestoneSeen(userId, key) {
   } catch(e) {}
 }
 
+// ── Referral prompt (Per Bot 25) ── Trigger conditions agreed after a
+// real discussion (Per Bot 24 flagged this as needing one before any
+// code): ask at a genuine "moment of delight" — a just-crossed
+// consistency milestone, or a just-finished course — never for a brand
+// new account, never more than once per real cooldown window, and never
+// again at all once someone's given a real answer either way.
+//
+// Deliberately does NOT reuse getNewMilestone/markMilestoneSeen above —
+// those exist for the quiet home-screen "you've shown up N times" text
+// line, a different feature with its own once-ever-shown semantics, and
+// entangling the two would make each depend on which one happens to be
+// checked first on a given page load. This recomputes the same
+// "distinct days practiced" figure independently and just checks whether
+// today's count lands exactly on a threshold — true only on the real
+// day it's crossed, naturally self-resetting with no shared state.
+const REFERRAL_MILESTONE_THRESHOLDS = [7, 30, 60, 100, 200, 365];
+const REFERRAL_MIN_ACCOUNT_AGE_DAYS = 30;
+const REFERRAL_COOLDOWN_DAYS = 90;
+const REFERRAL_COURSE_COMPLETION_WINDOW_DAYS = 3;
+
+function getReferralPromptTrigger(userId) {
+  const user = queryOne('SELECT registered_at, referral_prompt_last_shown_at, referral_prompt_responded_at FROM users WHERE id=?', [userId]);
+  if (!user) return null;
+  if (user.referral_prompt_responded_at) return null; // gave a real answer once — never asked again
+  const ageDays = (Date.now() - new Date(user.registered_at).getTime()) / 86400000;
+  if (ageDays < REFERRAL_MIN_ACCOUNT_AGE_DAYS) return null; // too new to have a real opinion yet
+  if (user.referral_prompt_last_shown_at) {
+    const sinceShown = (Date.now() - new Date(user.referral_prompt_last_shown_at).getTime()) / 86400000;
+    if (sinceShown < REFERRAL_COOLDOWN_DAYS) return null; // still cooling down, including from a "not now"
+  }
+
+  // Trigger 1 — just crossed a consistency milestone.
+  const daysRow = queryOne(`SELECT COUNT(DISTINCT DATE(played_at)) as n FROM content_history WHERE user_id=?`, [userId]);
+  const totalDays = (daysRow && daysRow.n) || 0;
+  if (REFERRAL_MILESTONE_THRESHOLDS.includes(totalDays)) {
+    return { reason: 'milestone', message: `You've shown up to practice on ${totalDays} different days now.` };
+  }
+
+  // Trigger 2 — just finished a course (100% complete, most recent
+  // lesson completed within the last few days — "just" rather than
+  // "at some point").
+  const finished = queryOne(
+    `SELECT c.title, MAX(lp.completed_at) as last_completed_at
+     FROM enrolments e
+     JOIN course_instances ci ON e.course_instance_id = ci.id
+     JOIN courses c ON ci.course_id = c.id
+     JOIN lesson_progress lp ON lp.enrolment_id = e.id
+     WHERE e.user_id = ? AND lp.status='completed'
+     GROUP BY e.id
+     HAVING COUNT(*) = (SELECT COUNT(*) FROM lessons WHERE course_id = ci.course_id)
+     ORDER BY last_completed_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (finished && finished.last_completed_at) {
+    const sinceFinished = (Date.now() - new Date(finished.last_completed_at).getTime()) / 86400000;
+    if (sinceFinished >= 0 && sinceFinished <= REFERRAL_COURSE_COMPLETION_WINDOW_DAYS) {
+      return { reason: 'course_complete', message: `You just completed "${finished.title}".` };
+    }
+  }
+
+  return null;
+}
+function markReferralPromptShown(userId) {
+  getDbSync().run('UPDATE users SET referral_prompt_last_shown_at=? WHERE id=?', [new Date().toISOString(), userId]);
+}
+function markReferralPromptResponded(userId) {
+  getDbSync().run('UPDATE users SET referral_prompt_responded_at=? WHERE id=?', [new Date().toISOString(), userId]);
+}
+
+// ── Birthday re-offer (Per Bot 25) ── see the schema comment above for
+// why this covers only birthday and not reminders/MOTD too. Only
+// eligible once onboarding is actually done (no point competing with
+// the stepper itself for someone still mid-first-login), and only for
+// someone whose birthday is genuinely still unset.
+const BIRTHDAY_PROMPT_COOLDOWN_DAYS = 60;
+function getBirthdayPromptTrigger(userId) {
+  const user = queryOne('SELECT onboarding_completed, dob_month, birthday_prompt_last_shown_at, birthday_prompt_responded_at FROM users WHERE id=?', [userId]);
+  if (!user) return null;
+  if (!user.onboarding_completed) return null;
+  if (user.dob_month) return null; // already set — nothing to offer
+  if (user.birthday_prompt_responded_at) return null;
+  if (user.birthday_prompt_last_shown_at) {
+    const sinceShown = (Date.now() - new Date(user.birthday_prompt_last_shown_at).getTime()) / 86400000;
+    if (sinceShown < BIRTHDAY_PROMPT_COOLDOWN_DAYS) return null;
+  }
+  return { show: true };
+}
+function markBirthdayPromptShown(userId) {
+  getDbSync().run('UPDATE users SET birthday_prompt_last_shown_at=? WHERE id=?', [new Date().toISOString(), userId]);
+}
+function markBirthdayPromptResponded(userId) {
+  getDbSync().run('UPDATE users SET birthday_prompt_responded_at=? WHERE id=?', [new Date().toISOString(), userId]);
+}
+
 // ── User favourites ──
 function addFavourite(id, clientId, fileId) {
   try { getDbSync().run('INSERT OR IGNORE INTO user_favourites (id,client_id,file_id) VALUES (?,?,?)', [id, clientId, fileId]); save(); } catch(e) {}
@@ -7169,6 +7330,7 @@ function getUserConsentHistory(userId) {
 }
 
 module.exports = {
+  exportDbBytes,
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
@@ -7278,6 +7440,8 @@ module.exports = {
   importLiveConfigIntoMessageVersions,
   // Favourites
   addFavourite, removeFavourite, getFavourites, getNextActionSuggestion,
+  getReferralPromptTrigger, markReferralPromptShown, markReferralPromptResponded,
+  getBirthdayPromptTrigger, markBirthdayPromptShown, markBirthdayPromptResponded,
   // User playlists
   createUserPlaylist, getUserPlaylists, addToUserPlaylist, removeFromUserPlaylist, deleteUserPlaylist, renameUserPlaylist,
   // Registration

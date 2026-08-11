@@ -3766,6 +3766,26 @@ app.delete('/api/admin/tomte-skin-defaults/:skinId/:language/:action', auth.requ
 app.get('/api/admin/signal-scripts', auth.requireAuthApi(['admin']), (req, res) => {
   res.json({ rows: db.getAllSignalScripts(), skins: db.getAllSkins().map(s => ({ id: s.id, name: s.name })) });
 });
+// ── Full database backup (Per Bot 25) ── Streams the live SQLite file as
+// a direct download — Per asked where the code/DB actually live and
+// wanted a way to pull a full copy himself, since Railway's persistent
+// volume (where the real file lives) was never reachable any other way
+// short of the Railway CLI. Same db.export() the app's own periodic
+// save() already uses internally, just handed back as bytes instead of
+// written to disk.
+app.get('/api/admin/backup/download', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const bytes = db.exportDbBytes();
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="perbot-backup-${stamp}.db"`);
+    res.send(bytes);
+  } catch (e) {
+    console.error('db backup download error:', e.message);
+    res.status(500).json({ error: 'Could not export the database right now.' });
+  }
+});
+
 // Export everything as one CSV — for backup, or editing offline before a
 // re-import. Audio-kind rows show the referenced library file's title in
 // the Script column (there's no text to export for those), with Type
@@ -6464,11 +6484,14 @@ app.get('/api/client/poems/:id/audio-url', auth.requireAuthApi(['client', 'facil
       ? !file.archived
       : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
     if (!allowed) return res.status(403).json({ error: 'Access denied.' });
-    // Cache hit — same rule as signal scripts: only the deployment's
-    // current default voice is ever cached, so a stale cache from a
-    // since-changed VOICE_ID re-synthesizes rather than serving the
-    // wrong voice.
-    if (file.audio_key && file.audio_voice_id === VOICE_ID) {
+    // Cache hit — either an ElevenLabs synthesis under the deployment's
+    // current default voice, or a real recording an admin uploaded
+    // manually (audio_voice_id==='manual', see /api/admin/poems/:id/audio
+    // below — a manual upload has no voice-staleness concept, it's just
+    // always the right audio until someone replaces it). A synthesis
+    // under a since-changed VOICE_ID is the one case that's stale and
+    // gets regenerated below.
+    if (file.audio_key && (file.audio_voice_id === VOICE_ID || file.audio_voice_id === 'manual')) {
       const url = await media.getPlaybackUrl(file.audio_key, {});
       return res.json({ url, cached: true });
     }
@@ -6478,6 +6501,58 @@ app.get('/api/client/poems/:id/audio-url', auth.requireAuthApi(['client', 'facil
   } catch (e) {
     console.error('poem audio-url error:', e.message);
     res.status(500).json({ error: 'Could not prepare audio for this poem right now.' });
+  }
+});
+
+// ── Poem audio admin management (Per Bot 25) ── the retrofit list: every
+// poem, audio or not, searchable/sortable, with a manual upload/replace/
+// remove/generate/preview per row — same makeSmartList component the
+// signal-scripts admin table already uses.
+app.get('/api/admin/poems', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json({ rows: db.getPoemsForAdmin() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/poems/:id/audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!(req.file.mimetype || '').startsWith('audio/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only audio files are supported here.' });
+    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const key = `poem-audio/${file.id}-${uuidv4()}${ext}`;
+    await media.putObject(key, buffer, req.file.mimetype);
+    // 'manual' — see the cache-check comment above for why this sentinel
+    // exists rather than reusing VOICE_ID here.
+    db.setPoemAudio(file.id, key, 'manual');
+    fs.unlink(req.file.path, () => {});
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('poem audio upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload: ' + e.message });
+  }
+});
+app.delete('/api/admin/poems/:id/audio', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    db.setPoemAudio(file.id, null, null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/poems/:id/generate-audio', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    await synthesizeAndCachePoemAudio(file);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('poem generate-audio error:', e.message);
+    res.status(500).json({ error: 'Could not generate audio: ' + e.message });
   }
 });
 
@@ -9898,6 +9973,48 @@ app.get('/api/my/activity-summary', auth.requireAuthApi(['client']), (req, res) 
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Referral prompt (Per Bot 25) ── see getReferralPromptTrigger in
+// db.js for the actual trigger logic/reasoning. 'shown' marks the
+// cooldown the moment it renders (not on some later action), so even if
+// someone navigates away without tapping anything it won't immediately
+// re-show on the next page load. 'respond' is the permanent stop —
+// called for either a real "yes" or an explicit "no thanks", never for
+// a soft "not now" (which just relies on the cooldown re-earning
+// eligibility later on its own).
+app.get('/api/my/referral-prompt', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const trigger = db.getReferralPromptTrigger(req.user.id);
+    res.json(trigger ? { show: true, ...trigger } : { show: false });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/referral-prompt/shown', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.markReferralPromptShown(req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/referral-prompt/respond', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.markReferralPromptResponded(req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Birthday re-offer (Per Bot 25) ── same shape as the referral prompt
+// just above. Saving an actual birthday goes through the existing
+// PATCH /api/account (dob_month/dob_day are already in its allowed-
+// fields list — see updateAccount's allowed array), not a new endpoint.
+app.get('/api/my/birthday-prompt', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const trigger = db.getBirthdayPromptTrigger(req.user.id);
+    res.json(trigger || { show: false });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/birthday-prompt/shown', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.markBirthdayPromptShown(req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/birthday-prompt/respond', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.markBirthdayPromptResponded(req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 24 (activity/engagement, group 2) — "one obvious next action"
 // on the home screen. The client only calls this when the resume card
 // (course-in-progress) has nothing to show — see loadNextAction there.
@@ -9909,7 +10026,29 @@ app.get('/api/client/next-action', auth.requireAuthApi(['client']), (req, res) =
 // Update communication preferences and profile fields
 app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
   try {
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale'];
+    // Per Bot 25 — dob_month/dob_day/onboarding_completed/
+    // keep_history_prompted were all missing from this list: this route
+    // builds `prefs` ONLY from keys present here, so these were being
+    // silently stripped from every request before ever reaching
+    // updateUserPreferences (whose own, separate allowlist in db.js
+    // already correctly includes all of them — that one was never the
+    // problem). Two confirmed-live consequences: onboarding_completed
+    // never actually reached the database via this endpoint (the only
+    // place that ever sets it, other than the one-time grandfather
+    // migration for accounts that existed before this feature — see the
+    // migration comment in db.js), so every account created since —
+    // over a month of signups — has been seeing the onboarding stepper
+    // on every single login, forever. Same root cause, same effect on
+    // keep_history_prompted: answerKeepHistory()'s "Not now" was meant
+    // to mean "don't ask again this session or later", but the flag
+    // saying so never actually saved, so maybeShowKeepHistoryPrompt()
+    // would keep re-asking indefinitely. voice_hint_shown/tomte_name
+    // added too for consistency with db.js's own allowlist, even though
+    // neither currently has a live client-side writer to have been
+    // affected by this. Found while building the birthday re-offer,
+    // which reads this same onboarding_completed field as its own
+    // eligibility gate.
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     if (prefs.a11y_contrast !== undefined) {
@@ -10201,34 +10340,80 @@ async function compressVideoForJournal(inputPath, originalMimeType) {
   }
 }
 
+app.post('/api/journal/media-upload/presign-upload', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const { filename, contentType } = req.body;
+    if (!contentType || !contentType.startsWith('video/')) return res.status(400).json({ error: 'This upload path is for video only.' });
+    const ext = (filename && filename.match(/\.[a-zA-Z0-9]+$/)) ? filename.match(/\.[a-zA-Z0-9]+$/)[0] : '.mp4';
+    // Raw, pre-compression upload — a distinct prefix from the final
+    // journal-media/ key it becomes after compressVideoForJournal runs,
+    // so the two are never confused with each other in R2.
+    const key = `journal-media-raw/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('journal media presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/journal/media-upload', auth.requireAuthApi(['client']), upload.single('file'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    // Per Bot 25 — Path A: video already uploaded directly to R2 (see
+    // presign-upload above) — the original file, the one with no real
+    // size ceiling, never touches this server. What DOES happen here is
+    // downloading it back once (one R2 round-trip, same trade-off the
+    // call-recording transcription path already makes) purely to hand
+    // the raw bytes to ffmpeg for compression — unavoidable, since
+    // compression has to happen somewhere, but the risky part (the
+    // browser-to-server transfer of a large, uncompressed phone video)
+    // is what this eliminates. Images/audio don't go through this path
+    // at all — images are already compressed client-side before upload
+    // (see Path B below, unchanged), and audio files are small enough
+    // that the original single-request upload was never actually a risk.
+    if (req.body && req.body.r2Key) {
+      const rawKey = req.body.r2Key;
+      if (!rawKey.startsWith('journal-media-raw/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(rawKey).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'journal-video-raw-'));
+      try {
+        const obj = await media.getPublicObject(rawKey);
+        const rawPath = path.join(tmpDir, 'raw' + (rawKey.match(/\.[a-zA-Z0-9]+$/) || ['.mp4'])[0]);
+        await new Promise((resolve, reject) => {
+          const ws = fs.createWriteStream(rawPath);
+          obj.Body.pipe(ws);
+          obj.Body.on('error', reject);
+          ws.on('finish', resolve);
+          ws.on('error', reject);
+        });
+        const compressed = await compressVideoForJournal(rawPath, req.body.mimeType || 'video/mp4');
+        const key = `journal-media/${uuidv4()}${compressed.ext}`;
+        await media.putObject(key, compressed.buffer, compressed.mimeType);
+        db.recordPrivateMediaUpload(key, req.user.id, 'journal', compressed.mimeType);
+        await media.deleteObject(rawKey).catch(() => {}); // best-effort — the raw pre-compression copy has no further use
+        return res.json({ key, mimeType: compressed.mimeType });
+      } finally {
+        await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    // Path B — image/audio, unchanged: small enough that a single
+    // multipart request through this server was never a real risk.
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     const mimetype = req.file.mimetype || '';
-    if (!mimetype.startsWith('image/') && !mimetype.startsWith('video/') && !mimetype.startsWith('audio/')) {
+    if (!mimetype.startsWith('image/') && !mimetype.startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: 'Only image, video, or audio files are supported here.' });
+      return res.status(400).json({ error: 'Only image or audio files are supported on this path — video goes through presign-upload.' });
     }
-    // Per Bot 25 — images are resized/compressed client-side before they
-    // even reach this endpoint (see uploadPrivateMediaIntoEditor in
-    // message-editor.js), so by the time a photo lands here it's
-    // already small. Video can't reasonably be compressed in-browser
-    // without a heavy dependency, so that step happens here instead.
-    let buffer, finalMimeType, ext;
-    if (mimetype.startsWith('video/')) {
-      const compressed = await compressVideoForJournal(req.file.path, mimetype);
-      buffer = compressed.buffer; finalMimeType = compressed.mimeType; ext = compressed.ext;
-    } else {
-      buffer = fs.readFileSync(req.file.path);
-      finalMimeType = mimetype;
-      ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
-    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
     const key = `journal-media/${uuidv4()}${ext}`;
-    await media.putObject(key, buffer, finalMimeType);
-    db.recordPrivateMediaUpload(key, req.user.id, 'journal', finalMimeType);
+    await media.putObject(key, buffer, mimetype);
+    db.recordPrivateMediaUpload(key, req.user.id, 'journal', mimetype);
     fs.unlink(req.file.path, () => {});
-    res.json({ key, mimeType: finalMimeType });
+    res.json({ key, mimeType: mimetype });
   } catch (e) {
     console.error('journal media upload error:', e.message);
     if (req.file) fs.unlink(req.file.path, () => {});

@@ -894,6 +894,45 @@
             <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:left"></div>
             <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
+          <!-- Per Bot 25 — referral prompt. Same quiet card language as
+               What's New just above (not a blocking modal — a real ask
+               shouldn't feel like an interruption). Hidden by default;
+               shown only when checkReferralPrompt() below finds a real
+               trigger (a just-crossed consistency milestone or a
+               just-finished course), never for a brand-new account,
+               never more than once per real cooldown window. -->
+          <div id="referralPromptCard" class="whats-new-card" style="display:none; margin-top:14px;">
+            <div id="referralPromptBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:center"></div>
+            <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+              <button type="button" onclick="respondReferralPrompt('share')" style="background:rgba(180,230,200,0.14); border:1px solid rgba(180,230,200,0.4); border-radius:12px; padding:10px 16px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Yes, share</button>
+              <button type="button" onclick="respondReferralPrompt('not_now')" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px 16px; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Not now</button>
+              <button type="button" onclick="respondReferralPrompt('no_thanks')" style="background:none; border:none; color:rgba(255,255,255,0.35); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-decoration:underline;">Don't ask again</button>
+            </div>
+          </div>
+          <!-- Per Bot 25 — birthday re-offer. Same quiet card language,
+               same three-way response shape as the referral card just
+               above. Self-contained month/day picker right here (no
+               dedicated My Account section exists to send someone to —
+               the only other place this was ever askable was the
+               one-time onboarding stepper). -->
+          <div id="birthdayPromptCard" class="whats-new-card" style="display:none; margin-top:14px;">
+            <div style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:10px; text-align:center">We never got your birthday — just the day, so we can say happy birthday. No year, ever.</div>
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <select id="birthdayPromptMonth" style="flex:1">
+                <option value="">Month</option>
+                <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+                <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+                <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+                <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+              </select>
+              <select id="birthdayPromptDay" style="flex:1"><option value="">Day</option></select>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+              <button type="button" onclick="respondBirthdayPrompt('save')" style="background:rgba(180,230,200,0.14); border:1px solid rgba(180,230,200,0.4); border-radius:12px; padding:10px 16px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Save</button>
+              <button type="button" onclick="respondBirthdayPrompt('not_now')" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px 16px; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Not now</button>
+              <button type="button" onclick="respondBirthdayPrompt('no_thanks')" style="background:none; border:none; color:rgba(255,255,255,0.35); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-decoration:underline;">Don't ask again</button>
+            </div>
+          </div>
         </div>
         <div style="display:flex; align-items:center; gap:16px; margin-bottom:-13px;">
           <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
@@ -5390,6 +5429,7 @@
     } catch(e) {}
     renderWhatsNewPromo();
     loadActivitySummary();
+    checkReferralAndBirthdayPrompts();
   }
   // Per Bot 24 (activity/engagement, group 1) — quiet, factual, never
   // guilt-shaped. Milestone (rare — shown once ever, at real spaced-out
@@ -5413,6 +5453,80 @@
       }
     } catch(e) { el.style.display = 'none'; }
   }
+
+  // Per Bot 25 — referral prompt. See getReferralPromptTrigger in db.js
+  // for the actual trigger logic/reasoning (a real discussion happened
+  // on this before any code, per Per's own request). 'shown' is marked
+  // the moment this actually renders, not on a later click — so
+  // navigating away without answering still starts the cooldown, rather
+  // than showing again on every single Home visit until someone reacts.
+  // Returns whether it actually showed, so checkReferralAndBirthdayPrompts
+  // below can keep these mutually exclusive — one gentle ask at a time,
+  // never both competing for attention on the same visit.
+  async function checkReferralPrompt() {
+    try {
+      const res = await fetch('/api/my/referral-prompt');
+      const data = await res.json();
+      if (!data.show) return false;
+      const cfg = await window.brandReady.catch(() => ({}));
+      document.getElementById('referralPromptBody').textContent = `${data.message} If ${cfg.appName || 'this'} has been good for you, would you share it with someone who might feel the same?`;
+      document.getElementById('referralPromptCard').style.display = '';
+      fetch('/api/my/referral-prompt/shown', { method: 'POST' }).catch(() => {});
+      return true;
+    } catch (e) { return false; /* silent — a missed prompt isn't worth surfacing an error for */ }
+  }
+  async function respondReferralPrompt(action) {
+    document.getElementById('referralPromptCard').style.display = 'none';
+    if (action === 'not_now') return; // cooldown from the 'shown' call above already covers this
+    fetch('/api/my/referral-prompt/respond', { method: 'POST' }).catch(() => {});
+    if (action === 'share') {
+      const cfg = await window.brandReady.catch(() => ({}));
+      shareMoment(`I've been using ${cfg.appName || 'this'} and thought of you.`);
+    }
+  }
+
+  // Per Bot 25 — birthday re-offer. Same reasoning/shape as the referral
+  // prompt just above; see getBirthdayPromptTrigger in db.js.
+  async function checkBirthdayPrompt() {
+    try {
+      const res = await fetch('/api/my/birthday-prompt');
+      const data = await res.json();
+      if (!data.show) return;
+      const daySel = document.getElementById('birthdayPromptDay');
+      if (daySel.options.length <= 1) {
+        for (let d = 1; d <= 31; d++) daySel.innerHTML += `<option value="${d}">${d}</option>`;
+      }
+      document.getElementById('birthdayPromptCard').style.display = '';
+      fetch('/api/my/birthday-prompt/shown', { method: 'POST' }).catch(() => {});
+    } catch (e) { /* silent — a missed prompt isn't worth surfacing an error for */ }
+  }
+  async function respondBirthdayPrompt(action) {
+    document.getElementById('birthdayPromptCard').style.display = 'none';
+    if (action === 'not_now') return; // cooldown from the 'shown' call above already covers this
+    if (action === 'no_thanks') { fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {}); return; }
+    if (action === 'save') {
+      const m = document.getElementById('birthdayPromptMonth').value;
+      const d = document.getElementById('birthdayPromptDay').value;
+      if (!m || !d) { appAlert('Pick both a month and a day, or tap "Not now".'); document.getElementById('birthdayPromptCard').style.display = ''; return; }
+      try {
+        await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dob_month: m, dob_day: d }) });
+        fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {});
+        if (fullAccount) Object.assign(fullAccount, { dob_month: m, dob_day: d });
+      } catch (e) { appAlert('Could not save that — please try again.'); }
+    }
+  }
+
+  // Per Bot 25 — one gentle ask per Home visit, never both at once.
+  // Referral takes priority when both happen to be eligible on the same
+  // visit (rare — different cooldowns, different trigger conditions) —
+  // arbitrary but needs *some* fixed order, and referral's trigger is
+  // tied to a specific moment (a milestone/course, not just "still
+  // missing"), so it's the more time-sensitive of the two to honour.
+  async function checkReferralAndBirthdayPrompts() {
+    const referralShown = await checkReferralPrompt();
+    if (!referralShown) checkBirthdayPrompt();
+  }
+
   // Per Bot 24 — "What's New" home promo, rewritten for a rotating set of
   // any number of items (was a single value) — cfg.whatsNewItems is now
   // an array, cfg.whatsNewSecondsPerItem how long each stays up. cfg

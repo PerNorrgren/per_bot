@@ -1061,36 +1061,19 @@
   // for direct social posting yet (closest matches were analytics tools
   // like Meltwater/Supermetrics, not publishing ones). This only ever
   // produces text for Per to copy and paste by hand.
+  //
+  // Per Bot 25 — was the last editor in the app still on a raw local
+  // `new Quill(...)` (plus its own local MbAudioBlot and a raw
+  // prompt()-for-a-URL "upload" for both image and audio) instead of the
+  // shared message-editor.js module everything else now uses. Migrated
+  // onto MessageEditor.mountRich with the new 'social' toolbar preset —
+  // see mbRenderResults below. Image and audio now get real uploads
+  // (message-editor.js's existing upload flow) instead of pasting a URL
+  // in by hand; video is untouched, Quill's own built-in format, same as
+  // it always was here.
   const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
   const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
   const mbQuillInstances = {}; // platform -> Quill instance, rebuilt every generate/duplicate
-
-  // ── Custom audio embed for the per-platform rich editors (Per Bot 17
-  // phase 4) — Quill has no audio blot built in (only its 'video' format,
-  // which is iframe-embed-only). Registered once, same BlockEmbed pattern
-  // as VideoBlot above. Per's own final copy/paste text is always plain
-  // (see mbCopy below) — this is for attaching/previewing a reference
-  // clip alongside the caption while assembling a post, not something
-  // that travels with the pasted text itself.
-  (function() {
-    if (Quill.imports['formats/mbAudioBlock']) return; // already registered
-    const BlockEmbed = Quill.import('blots/block/embed');
-    class MbAudioBlot extends BlockEmbed {
-      static create(url) {
-        const node = super.create();
-        node.setAttribute('contenteditable', 'false');
-        node.style.cssText = 'margin:8px 0';
-        node.innerHTML = `<audio controls style="width:100%" src="${url}"></audio>`;
-        node.dataset.src = url;
-        return node;
-      }
-      static value(node) { return node.dataset.src; }
-    }
-    MbAudioBlot.blotName = 'mbAudioBlock';
-    MbAudioBlot.tagName = 'DIV';
-    MbAudioBlot.className = 'ql-mb-audio-block';
-    Quill.register(MbAudioBlot);
-  })();
 
   function mbCheckboxId(p) { return 'mbPlatform' + p[0].toUpperCase() + p.slice(1); }
 
@@ -1168,18 +1151,6 @@
     }
   }
 
-  // Shared toolbar for every platform editor — bold/italic/underline and
-  // link cover ordinary emphasis and the signup link itself; image/video/
-  // mb-audio cover Per's ask for attaching media alongside a caption while
-  // assembling a post. Deliberately no headers/lists/columns — none of
-  // that means anything on Facebook/LinkedIn/Instagram/Threads.
-  function mbToolbarConfig() {
-    return [
-      ['bold', 'italic', 'underline'],
-      ['link', 'image', 'video', 'mb-audio'],
-    ];
-  }
-
   function mbRenderResults(results, platforms) {
     // Tear down any previous instances — the container gets fully
     // rebuilt below, so stale Quill objects would otherwise leak and
@@ -1202,29 +1173,15 @@
     `).join('');
     container.style.display = 'block';
 
+    // Per Bot 25 — mountRich('social') replaces the old raw new Quill(...)
+    // + local toolbar config + manual audio-button labelling/handler
+    // (that DOM traversal via q.container.previousSibling was working
+    // around the exact toolbar-placement issue that's now fixed properly
+    // inside mountRich itself — see its own comment). setText(...) below
+    // still works exactly as before; mountRich returns a real Quill
+    // instance, same as `new Quill(...)` did.
     platforms.forEach(p => {
-      const q = new Quill(`#mbEditorWrap_${p}`, {
-        theme: 'snow',
-        modules: { toolbar: mbToolbarConfig() },
-      });
-      // Per Bot 24 — explicit spell-check, same as message-editor.js's
-      // shared mountRich (this is comms.html's own separate, older Quill
-      // instance for the plain "MOTD"-style editor, not yet migrated to
-      // the shared component).
-      q.root.setAttribute('spellcheck', 'true');
-      q.root.setAttribute('autocorrect', 'on');
-      // Custom toolbar icon/handler for the audio button — Quill's toolbar
-      // module only auto-wires formats it already knows about; a genuinely
-      // new one needs its handler set explicitly.
-      const toolbar = q.getModule('toolbar');
-      const audioBtn = q.container.previousSibling?.querySelector('.ql-mb-audio');
-      if (audioBtn) audioBtn.innerHTML = '♪';
-      toolbar.addHandler('mb-audio', () => {
-        const url = prompt('Audio file URL (e.g. from the library):');
-        if (!url) return;
-        const range = q.getSelection(true);
-        q.insertEmbed(range ? range.index : q.getLength(), 'mbAudioBlock', url, 'user');
-      });
+      const q = MessageEditor.mountRich(`mbEditorWrap_${p}`, '', { toolbar: 'social' });
       q.setText(results[p] || '');
       mbQuillInstances[p] = q;
     });
