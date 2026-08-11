@@ -8385,6 +8385,50 @@ app.get('/newsletter-images/:key', async (req, res) => {
   }
 });
 
+// ── Newsletter audio (Per Bot 25) — same public R2 storage/serving pattern
+// as newsletter-images above, for the shared editor's new audio button
+// (message-editor.js's uploadAudioIntoEditor / audioBlock). Admin-only
+// upload, same as images — this is for admin-authored broadcast content
+// (Newsletter, MOTD, comms2/sales message types) where public, unauthenticated
+// access is the correct model, same reasoning as newsletter-images. NOT
+// used by Journal or any other client-facing field — those need a
+// private, ownership-checked storage model instead (see
+// /api/journal/:id/audio-url for that existing pattern), which is a
+// separate decision Per hasn't made yet for embedded media specifically.
+app.post('/api/admin/newsletter-audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Audio storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('audio/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only audio files are supported here.' });
+    }
+
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    const key = `newsletter-audio/${uuidv4()}${ext}`;
+
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+
+    res.json({ url: `${APP_URL}/newsletter-audio/${encodeURIComponent(key.replace('newsletter-audio/', ''))}` });
+  } catch (e) {
+    console.error('newsletter audio upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload audio: ' + e.message });
+  }
+});
+app.get('/newsletter-audio/:key', async (req, res) => {
+  try {
+    const obj = await media.getPublicObject(`newsletter-audio/${req.params.key}`);
+    res.setHeader('Content-Type', obj.ContentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    obj.Body.pipe(res);
+  } catch (e) {
+    res.status(404).send('Not found');
+  }
+});
+
 // ── Newsletter videos (Per Bot 8) — same public R2 storage/serving pattern
 // as newsletter-images above, just a parallel key prefix and a video/ mimetype
 // check instead of image/. Most inboxes (Gmail, most Outlook) can't play

@@ -1184,8 +1184,8 @@
               <button type="button" class="btn sm" id="journalVoiceDiscardBtn" onclick="discardJournalVoiceRecording()" style="display:none">Discard</button>
             </div>
             <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
-              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let the companion use this</label>
-              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let Talk use this</label>
+              <label id="journalShareFacilitatorLabel" style="display:none; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
             </div>
             <div style="display:flex; gap:8px; justify-content:flex-end;">
               <button class="btn sm" onclick="closeJournalForm()">Cancel</button>
@@ -2179,7 +2179,7 @@
     if (!entries.length) { el.innerHTML = '<div class="no-poems">No entries yet — write your first whenever you\'re ready.</div>'; return; }
     el.innerHTML = entries.map(e => {
       const badges = [];
-      if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with companion</span>');
+      if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with Talk</span>');
       if (e.share_with_facilitator) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with facilitator</span>');
       // Per Bot 24 (activity/engagement, group 3) — voice entries show a
       // small play control that fetches a fresh signed playback URL only
@@ -2227,6 +2227,14 @@
     setRichEditorContent('journalContent', '');
     document.getElementById('journalShareBot').checked = false;
     document.getElementById('journalShareFacilitator').checked = false;
+    // Per Bot 25 — only show "Share with my facilitator" if this person
+    // actually has one. _facList always carries a first "Talk" entry
+    // (see its declaration above) plus, once /api/client/facilitators
+    // has resolved, any real facilitators — so length > 1 is genuinely
+    // "has at least one real facilitator", not just "Talk is available".
+    // Someone with no real facilitator has nobody for this to reach.
+    const facLabel = document.getElementById('journalShareFacilitatorLabel');
+    facLabel.style.display = (_facList.length > 1) ? 'flex' : 'none';
     document.getElementById('journalFormMsg').textContent = '';
     journalUploadedFile = null;
     discardJournalVoiceRecording();

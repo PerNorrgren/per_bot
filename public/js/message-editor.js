@@ -247,6 +247,27 @@
     VideoBlot.tagName = 'DIV';
     VideoBlot.className = 'ql-video-block';
     Quill.register(VideoBlot);
+
+    // Per Bot 25 — audio block, same atomic-embed pattern as VideoBlot.
+    // Quill has no built-in audio format (only 'video', which is
+    // iframe-embed-only) — this is a plain <audio controls> pointing at
+    // a real uploaded file (see uploadAudioIntoEditor below), reused
+    // everywhere the shared editor mounts, not just one context.
+    class AudioBlot extends BlockEmbed {
+      static create(url) {
+        const node = super.create();
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:10px 0;';
+        node.innerHTML = `<audio controls style="width:100%" src="${url}"></audio>`;
+        node.dataset.src = url;
+        return node;
+      }
+      static value(node) { return node.dataset.src; }
+    }
+    AudioBlot.blotName = 'audioBlock';
+    AudioBlot.tagName = 'DIV';
+    AudioBlot.className = 'ql-audio-block';
+    Quill.register(AudioBlot);
   }
 
   let lastClickedImage = null;
@@ -627,6 +648,40 @@
     input.click();
   }
 
+  // Per Bot 25 — audio upload, same shape as uploadImageIntoEditor above:
+  // atomic embed rather than something editable inline, so a plain
+  // insertEmbed at the cursor (no in-cell/columns handling — an audio
+  // player inside a two-column layout isn't a real use case here).
+  async function uploadAudioIntoEditor(q) {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'audio/*';
+    const range = q.getSelection(true) || { index: q.getLength() };
+    q.insertText(range.index, 'Uploading audio…');
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) { q.deleteText(range.index, 'Uploading audio…'.length); return; }
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/admin/newsletter-audio', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.url) {
+          q.deleteText(range.index, 'Uploading audio…'.length);
+          window.appAlert(data.error || 'Could not upload audio.');
+          return;
+        }
+        q.deleteText(range.index, 'Uploading audio…'.length);
+        q.insertEmbed(range.index, 'audioBlock', data.url);
+        if (range.index + 1 >= q.getLength() - 1) q.insertText(range.index + 1, ' ');
+        q.setSelection(range.index + 1);
+      } catch (e) {
+        q.deleteText(range.index, 'Uploading audio…'.length);
+        window.appAlert('Network error — could not upload audio.');
+      }
+    };
+    input.click();
+  }
+
   // AI Help — reads the whole editor, sends it for a full rewrite,
   // replaces the editor's content outright on success. No accept/discard
   // step by design — easy to amend anything afterward, and a review
@@ -708,6 +763,7 @@
         [{ list: 'ordered' }, { list: 'bullet' }],
         ['link', 'image', 'image-link', 'image-copy', 'image-resize', 'video-link'],
         ['nl-video'],
+        ['audio'],
         ['nl-button'],
         ['columns-1', 'columns-2', 'columns-3'],
         ['ai-polish'],
@@ -743,6 +799,7 @@
             image: () => uploadImageIntoEditor(q),
             'video-link': () => insertVideoLink(q),
             'nl-video': () => insertNewsletterVideo(q),
+            audio: () => uploadAudioIntoEditor(q),
             'image-link': () => linkSelectedImage(q),
             'image-copy': () => copySelectedImage(q),
             'image-resize': () => shrinkSelectedImage(q),
@@ -845,6 +902,7 @@
     };
     label('.ql-video-link', '▶', 'Insert a video link');
     label('.ql-nl-video', '🎬', 'Upload a video and insert an inline player');
+    label('.ql-audio', '🎵', 'Upload an audio file and insert a player');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
     label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
     label('.ql-image-resize', '🗜️', "Click an image first, resize it with its own handles to the size you want it shown at, then click here — shrinks the actual file to match, keeping the email lighter");
