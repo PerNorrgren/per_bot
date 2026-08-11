@@ -1197,12 +1197,14 @@
 
       <!-- Poems region — the daily message archive -->
       <div class="lib-sub-panel" id="youPoemsPanel">
-        <!-- Per Bot 24 — this is the message-of-the-day archive, but had
-             no heading at all explaining that, easy to mistake for
-             something else entirely (a personal poem collection, a
-             favourites list). Just a plain explanatory line, matching
-             the small-caps section-label style used elsewhere in You. -->
-        <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Message of the day — archive</div>
+        <!-- Per Bot 24 — redesigned per Per's own follow-up: this used to
+             be the message-of-the-day archive (mislabelled "Poems" the
+             whole time, with no heading explaining what it actually
+             was). Now genuinely "My Poems" — whichever poems you've
+             hearted, anywhere in the app — with the heart shown right
+             here too, so un-hearting one clears it straight off this
+             list. -->
+        <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">My poems</div>
         <div class="poems-scroll" id="poemsScroll">
           <div class="no-poems">Loading…</div>
         </div>
@@ -2134,184 +2136,55 @@
 
   // ── Poems — the daily message archive, read aloud on demand ──
   let poemsData = [];
-  let poemPlayingId = null;
-  let poemCancelled = false;
 
   function escHtmlPoem(s) {
     return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
-  function fmtPoemDate(s) {
-    if (!s) return '';
-    try { return new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'}); }
-    catch { return s.slice(0,10); }
-  }
-
+  // Per Bot 24 — "My Poems" redesign. Used to fetch/render the
+  // message-of-the-day archive (see the git history for the old
+  // month-grouped version this replaced) — now genuinely your own
+  // hearted poems, wherever in the app you hearted them.
   async function loadPoems() {
     const scroll = document.getElementById('poemsScroll');
     try {
-      const res = await fetch('/api/motd/archive');
-      poemsData = await res.json();
+      const res = await fetch('/api/client/favourites');
+      const all = await res.json();
+      poemsData = all.filter(f => f.content_type === 'poem');
       renderPoems();
     } catch(e) {
-      scroll.innerHTML = '<div class="no-poems">Could not load the archive. Please try again.</div>';
+      scroll.innerHTML = '<div class="no-poems">Could not load your poems. Please try again.</div>';
     }
-  }
-
-  function fmtMonthYear(s) {
-    if (!s) return 'Undated';
-    try { return new Date(s.replace(' ','T')+'Z').toLocaleDateString(undefined,{month:'long',year:'numeric'}); }
-    catch { return 'Undated'; }
-  }
-
-  // Which month folders are open. The most recent month starts open;
-  // everything older starts folded — reopened per-folder, not all at once,
-  // since the archive is only going to keep growing.
-  let openPoemMonths = new Set();
-
-  function togglePoemMonth(key) {
-    if (openPoemMonths.has(key)) openPoemMonths.delete(key);
-    else openPoemMonths.add(key);
-    renderPoems();
   }
 
   function renderPoems() {
     const scroll = document.getElementById('poemsScroll');
     if (!poemsData.length) {
-      scroll.innerHTML = '<div class="no-poems">Nothing here yet — the first daily message will appear once it\'s sent.</div>';
+      scroll.innerHTML = '<div class="no-poems">No poems hearted yet — find one in Read & Watch and tap the heart to save it here.</div>';
       return;
     }
-
-    // Group into month folders, newest first. poemsData already arrives
-    // newest-first from the API, so within each group the order is
-    // preserved as-is — no re-sorting needed.
-    const groups = [];
-    const groupByKey = {};
-    poemsData.forEach(p => {
-      const key = fmtMonthYear(p.sent_at);
-      if (!groupByKey[key]) { groupByKey[key] = { key, items: [] }; groups.push(groupByKey[key]); }
-      groupByKey[key].items.push(p);
-    });
-
-    // Default state: only the very first render opens the newest folder —
-    // once the person has opened/closed folders themselves, respect that
-    // instead of resetting it back open every re-render.
-    if (openPoemMonths.size === 0 && groups.length) openPoemMonths.add(groups[0].key);
-
-    scroll.innerHTML = groups.map(g => {
-      const isOpen = openPoemMonths.has(g.key);
-      return `
-        <button type="button" class="poem-month-hdr" onclick="togglePoemMonth('${escHtmlPoem(g.key)}')">
-          <span>${escHtmlPoem(g.key)}</span>
-          <span class="poem-month-count">${g.items.length}${isOpen ? ' \u2212' : ' +'}</span>
-        </button>
-        ${isOpen ? g.items.map(p => `
-          <div class="poem-card">
-            <div>
-              <div class="poem-lines">${escHtmlPoem(p.body)}</div>
-              <div class="poem-date">${fmtPoemDate(p.sent_at)}</div>
-            </div>
-            <button class="poem-play-btn" id="poemBtn-${p.id}" onclick="playPoem('${p.id}')">▶</button>
-            <button class="poem-play-btn" onclick="sharePoemById('${p.id}')" title="Share">↗</button>
-          </div>
-        `).join('') : ''}
-      `;
-    }).join('');
+    scroll.innerHTML = poemsData.map(p => `
+      <div class="poem-card">
+        <div style="flex:1;min-width:0;cursor:pointer" onclick="openMyPoem('${p.id}')">
+          <div class="poem-lines" style="font-size:15px">${escHtmlPoem(p.title)}</div>
+        </div>
+        <button class="heart-btn active" onclick="unfavouritePoem('${p.id}')" title="Remove from My Poems">♥</button>
+      </div>
+    `).join('');
   }
-
-  function sharePoemById(id) {
-    const poem = poemsData.find(p => p.id === id);
-    if (poem) shareMoment(poem.body);
+  async function unfavouritePoem(id) {
+    try { await fetch(`/api/client/favourites/${id}`, { method: 'DELETE' }); } catch(e) {}
+    poemsData = poemsData.filter(p => p.id !== id);
+    const f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
+    if (f) f.is_favourite = false;
+    renderPoems();
   }
-  async function playPoem(id) {
-    const poem = poemsData.find(p => p.id === id);
-    if (!poem) return;
-    const btn = document.getElementById(`poemBtn-${id}`);
-
-    // Tapping the currently-playing poem again stops it
-    if (poemPlayingId === id) {
-      poemCancelled = true;
-      document.getElementById('ttsPlayer').pause();
-      poemPlayingId = null;
-      btn.textContent = '▶';
-      btn.classList.remove('playing');
-      return;
-    }
-
-    // Stop whatever else was playing first — one poem at a time
-    if (poemPlayingId) {
-      poemCancelled = true;
-      document.getElementById('ttsPlayer').pause();
-      const prevBtn = document.getElementById(`poemBtn-${poemPlayingId}`);
-      if (prevBtn) { prevBtn.textContent = '▶'; prevBtn.classList.remove('playing'); }
-      poemPlayingId = null;
-    }
-
-    // This tap is a real, direct gesture — worth unlocking here too, since
-    // someone could open Poems first without ever having visited Talk.
-    unlockAudioPlayback();
-    poemCancelled = false;
-    poemPlayingId = id;
-    btn.textContent = '…';
-    btn.classList.add('loading');
-
-    // Poems are pre-written, already-structured five-line stanzas — their
-    // own line breaks ARE the pacing, unlike live chat replies which need
-    // Claude to mark pacing intent with [[PAUSE]]/[[BREATH]]. The gap here
-    // is shorter than a guided practice's 3-5s — a poem needs room for
-    // words to land, not time to physically do something, so ~1.5-2.5s
-    // reads as an unhurried reading pace rather than dead air.
-    const lines = poem.body.split('\n').map(l => l.trim()).filter(Boolean);
-
-    try {
-      for (let i = 0; i < lines.length; i++) {
-        if (poemCancelled) return;
-        await playOnePoemLine(lines[i], btn);
-        if (poemCancelled) return;
-        if (i < lines.length - 1) {
-          await new Promise(r => setTimeout(r, randomPause(1500, 2500)));
-        }
-      }
-    } catch(e) {
-      console.error('poem playback error', e);
-    }
-
-    if (!poemCancelled) {
-      poemPlayingId = null;
-      btn.textContent = '▶';
-      btn.classList.remove('playing');
-    }
-  }
-
-  // One line of a poem, through the same shared/unlocked element the Talk
-  // interface uses — reusing it here too rather than a fresh Audio(url)
-  // each time, for the same iOS-reliability reason described up in
-  // unlockAudioPlayback().
-  function playOnePoemLine(text, btn) {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const r = await fetch('/api/speak', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ text })
-        });
-        if (!r.ok) throw new Error('speak failed');
-
-        const buffer = await r.arrayBuffer();
-        const blob   = new Blob([buffer], { type: 'audio/mpeg' });
-        const url    = URL.createObjectURL(blob);
-
-        const player = document.getElementById('ttsPlayer');
-        player.pause();
-        player.src = url;
-        btn.classList.remove('loading');
-        btn.classList.add('playing');
-        btn.textContent = '⏸';
-
-        player.onended = () => { URL.revokeObjectURL(url); resolve(); };
-        player.onerror = () => { URL.revokeObjectURL(url); reject(new Error('audio playback error')); };
-        await player.play();
-      } catch(e) { reject(e); }
-    });
+  async function openMyPoem(id) {
+    let f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
+    if (!f) { await loadContent(); f = (_contentData || []).find(x => x.id === id); }
+    if (f) { openContentFile(f); return; }
+    f = poemsData.find(p => p.id === id);
+    if (f) openContentFile(f); // the favourites row itself is a full library_files record too — good enough to open directly if the two caches above somehow missed it
   }
 
   // ── Journal — client's own written entries ──

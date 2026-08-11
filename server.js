@@ -6936,6 +6936,14 @@ app.post('/api/admin/library-files/share', auth.requireAuthApi(['admin']), (req,
 });
 
 // Favourites
+// Per Bot 24 — was only ever used internally to tag other lists with
+// is_favourite, never exposed as its own list. Now backs the "My
+// Poems" redesign of the You→Poems tab (was showing the MOTD archive,
+// mislabelled as Poems the whole time).
+app.get('/api/client/favourites', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getFavourites(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/client/favourites/:fileId', auth.requireAuthApi(['client']), (req, res) => {
   db.addFavourite(uuidv4(), req.user.id, req.params.fileId);
   res.json({ ok: true });
