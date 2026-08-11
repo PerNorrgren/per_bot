@@ -1007,7 +1007,15 @@
              below it) to the bottom of talkChatContent's flex column
              whenever there's spare height, and simply falls in as the
              last item otherwise (long conversation, small screen). -->
-        <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer; margin-top:auto;">📄 Past summaries</button>
+        <div style="display:flex; gap:10px; align-items:center; margin-top:auto;">
+          <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📄 Past summaries</button>
+          <!-- Per Bot 24 — Quick voice note was only ever reachable from
+               the calm landing screen (before a conversation starts),
+               which meant it was effectively invisible for most of the
+               time actually spent in Talk. Same button, same modal,
+               just also available here mid-conversation. -->
+          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">🎙 Quick voice note</button>
+        </div>
         <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
           <div class="practices-scroll" id="talkSummariesList"></div>
         </div>
@@ -1663,11 +1671,18 @@
     closeFacMenu();
     closeTimersMenu();
     if (tab !== 'talk') {
-      sendFinalizeBeacon();
-      // The finalize beacon above only tells the server the conversation
-      // turn is done — it never touched client-side playback or the open
-      // mic itself, so both kept running right through a tab switch.
-      // Stopping both here (Per Bot 33c).
+      // Per Bot 24 — this used to also call sendFinalizeBeacon() here,
+      // which tells the server the conversation is genuinely over and
+      // deletes its in-memory session entirely. That's correct for
+      // pagehide/visibilitychange-hidden below (actually leaving the
+      // app), but firing it on every simple within-app tab switch was
+      // much too aggressive — glancing at Library or You mid-response
+      // would tear the session down server-side while the client was
+      // still waiting on that in-flight reply, leaving Talk stuck on
+      // "Thinking…" forever, and silently starting a brand new session
+      // (with no memory of the old one) the next time the mic was
+      // tapped. Switching tabs within the app is not the same as
+      // leaving it — the session should survive a glance elsewhere.
       const tts = document.getElementById('ttsPlayer');
       if (tts) tts.pause();
       stopMic();
