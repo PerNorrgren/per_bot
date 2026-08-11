@@ -239,6 +239,13 @@
     <div class="page-sub" id="pageSubName">Loading…</div>
   </div>
 
+  <!-- Per Bot 24 — referral/sharing card, ported over from the SPA's
+       You→Account summary (the "intermediate page" it originally only
+       ever lived on) rather than the standalone page trying to send
+       someone there for it. Same markup, same endpoints
+       (/api/my/referrals), just rendered here directly. -->
+  <div id="referralCard"></div>
+
   <!-- ── Membership ── -->
   <div class="card">
     <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Membership</div><span class="card-chevron open">▾</span></div>
@@ -1273,8 +1280,62 @@
     el._t = setTimeout(() => { el.classList.add('fade'); }, 3000);
   }
 
+  // Per Bot 24 — referral/sharing card, ported from the SPA's
+  // You→Account summary. Identical markup/logic to that version —
+  // kept as a straight copy rather than trying to share code between
+  // this standalone page and the SPA, which don't share a module
+  // system to make that clean.
+  let _referralData = null;
+  async function loadReferralCard() {
+    const el = document.getElementById('referralCard');
+    if (!el) return;
+    try {
+      const res = await fetch('/api/my/referrals');
+      _referralData = await res.json();
+      renderReferralCard();
+    } catch(e) { el.innerHTML = ''; }
+  }
+  function renderReferralCard() {
+    const el = document.getElementById('referralCard');
+    if (!el || !_referralData) return;
+    const d = _referralData;
+    const badge = d.unseenCount > 0 ? `<span style="display:inline-block;min-width:16px;padding:0 5px;margin-left:6px;border-radius:8px;background:rgba(255,140,120,0.85);color:#1a1a1a;font-size:10.5px;line-height:16px;text-align:center;vertical-align:middle">${d.unseenCount}</span>` : '';
+    el.innerHTML = `
+      <div style="border:1px solid rgba(180,230,200,0.25); background:rgba(180,230,200,0.06); border-radius:12px; padding:16px; margin-bottom:14px">
+        <div style="font-size:13.5px; color:rgba(200,235,215,0.95); margin-bottom:4px">Give a friend their first month ${badge}</div>
+        <div style="font-size:12px; color:rgba(255,255,255,0.5); line-height:1.6; margin-bottom:12px">Share your link. When a friend you invited becomes a paying member, you get a free month too — no limit on how many.</div>
+        <div style="display:flex; gap:8px; margin-bottom:${d.events.length ? '12px' : '0'}">
+          <input type="text" readonly value="${d.referralLink}" onclick="this.select()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.7); font-size:11.5px; font-family:Georgia,serif"/>
+          <button class="btn sm" onclick="sendReferralLink()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:12.5px;padding:8px 14px;cursor:pointer">Send</button>
+        </div>
+        ${d.events.length ? `
+          <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-bottom:6px">${d.monthsEarned} free month${d.monthsEarned === 1 ? '' : 's'} earned so far</div>
+          <div style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto">
+            ${d.events.map(e => `
+              <div style="font-size:12px; color:${e.seen ? 'rgba(255,255,255,0.45)' : 'rgba(200,235,215,0.9)'}; display:flex; justify-content:space-between; gap:8px">
+                <span>${e.seen ? '' : '🎉 '}${(e.referredName || 'A friend').split(' ')[0]} joined — +${e.daysCredited} days</span>
+                <span style="color:rgba(255,255,255,0.3); flex-shrink:0">${(e.createdAt||'').slice(0,10)}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>`;
+    if (d.unseenCount > 0) {
+      fetch('/api/my/referrals/seen', { method: 'PATCH' }).then(() => {
+        if (_referralData) { _referralData.unseenCount = 0; _referralData.events.forEach(e => e.seen = true); }
+      }).catch(() => {});
+    }
+  }
+  async function sendReferralLink() {
+    if (!_referralData) return;
+    const brandName = document.querySelector('[data-brand="name"]')?.textContent || 'Deeper Mindfulness';
+    const text = `I've been using ${brandName} and thought of you — here's your first month, on me: ${_referralData.referralLink}`;
+    appShareSheet(text, _referralData.referralLink, brandName);
+  }
+
   // ── Boot ──
   loadAccount();
+  loadReferralCard();
 </script>
 
 <!-- Per Bot 24 — matching the SPA's bottom nav, added to this page for
