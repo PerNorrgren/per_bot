@@ -9,6 +9,10 @@
   <link rel="manifest" href="/site.webmanifest"/>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
+  <!-- Per Bot 25 — shared rich-editor implementation, same one used for
+       Journal (client), course descriptions (admin), and every message
+       composer (comms2/sales/comms). -->
+  <script src="/js/message-editor.js"></script>
   <script src="/brand-inject.js"></script>
   <script src="/js/dialogs.js"></script>
   <script src="/js/call.js"></script>
@@ -357,26 +361,12 @@
     .msg-send-btn { height:34px; display:flex; align-items:center; }
     .msg-recording-preview { display:flex; align-items:center; gap:8px; padding:8px; margin-bottom:8px; background:rgba(255,255,255,0.04); border-radius:8px; }
 
-    /* ── Rich editor (Per Bot 8) ── */
-    .rich-editor-container { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; margin-bottom:8px; }
-    .rich-editor-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.1); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); }
-    .rich-editor-container .ql-container.ql-snow { border:none; font-family:'Georgia',serif; font-size:13px; color:rgba(255,255,255,0.85); min-height:80px; }
-    .rich-editor-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
-    .rich-editor-container .ql-stroke { stroke:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-fill { fill:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-picker-label { color:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-picker-options { background:#1a201d; }
-    .rich-editor-container .ql-toolbar.ql-snow button.ql-ai-polish { width:auto; padding:0 8px; font-size:12px; color:rgba(180,230,200,0.8); }
-
-    .msg-rich-container { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; box-sizing:border-box; }
-    .msg-rich-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.1); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); padding:3px 5px; }
-    .msg-rich-container .ql-toolbar.ql-snow button { width:22px; height:22px; }
-    .msg-rich-container .ql-container.ql-snow { border:none; font-family:inherit; font-size:12.5px; color:rgba(255,255,255,0.85); }
-    .msg-rich-container .ql-editor { padding:6px 9px; min-height:18px; max-height:90px; overflow-y:auto; }
-    .msg-rich-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
-    .msg-rich-container .ql-stroke { stroke:rgba(255,255,255,0.5); }
-    .msg-rich-container .ql-picker-options { background:#1a201d; }
-    .msg-rich-container .ql-toolbar.ql-snow button.ql-ai-polish { width:auto; padding:0 6px; font-size:12px; color:rgba(180,230,200,0.8); }
+    /* ── Rich editor (Per Bot 25) — styling now lives in the shared
+       message-editor.js module (.me-ql-wrap/.me-ql-simple/.me-ql-compact),
+       the same one Journal, course descriptions, and every message
+       composer use. Both local copies previously here (one for session
+       notes, one for the message composer, each separately drifted) are
+       removed — see mountRichEditor()/ensureMsgEditor() below. */
 
     .wave-small { display:none; gap:3px; align-items:flex-end; height:16px; }
     .wave-small.on { display:flex; }
@@ -505,9 +495,7 @@
               <span id="msgRecordStatusText">Loading…</span>
             </div>
             <div class="msg-composer">
-              <div id="msgInput_rich" class="msg-rich-container">
-                <div id="msgEditor_rich"></div>
-              </div>
+              <div id="msgInput_rich"></div>
               <div class="msg-composer-actions">
                 <button class="msg-icon-btn" id="msgAttachBtn" title="Attach file">📎</button>
                 <button class="msg-icon-btn" id="msgVoiceBtn" title="Record voice note">🎙️</button>
@@ -628,71 +616,17 @@
     }
   }
 
-  // ── Rich editor (Per Bot 8) — same pattern used in client/index.html and
-  // admin/content.html: mounts Quill over a <textarea>, textarea stays the
-  // real source of truth so existing save code needed no changes.
-  const _richEditors = {};
+  // ── Rich editor (Per Bot 25) — thin shim over the shared MessageEditor
+  // module (message-editor.js), which is also what Journal, course
+  // descriptions, and every message composer use. Per: "we should only
+  // ever now have one single text editor, used for all." Keeping these
+  // two names/signatures means none of the existing save/open code below
+  // needed rewriting.
   function mountRichEditor(textareaId, force) {
-    const ta = document.getElementById(textareaId);
-    if (!ta) return null;
-    if (_richEditors[textareaId] && !force) return _richEditors[textareaId];
-    ta.style.display = 'none';
-    let container = document.getElementById(textareaId + '_rich');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = textareaId + '_rich';
-      container.className = 'rich-editor-container';
-      ta.parentNode.insertBefore(container, ta.nextSibling);
-    } else {
-      container.innerHTML = '';
-    }
-    const quill = new Quill(container, {
-      theme: 'snow',
-      placeholder: ta.placeholder || '',
-      modules: { toolbar: {
-        container: [
-          ['bold', 'italic', 'underline'],
-          [{ align: [] }],
-          [{ list: 'ordered' }, { list: 'bullet' }],
-          ['link'], ['ai-polish'], ['clean'],
-        ],
-        handlers: {
-          'ai-polish': function() { runAiPolish(this.quill, this.container.querySelector('.ql-ai-polish')); },
-        },
-      } },
-    });
-    const aiBtn = container.querySelector('.ql-ai-polish');
-    if (aiBtn) { aiBtn.textContent = '✨ AI Help'; aiBtn.title = 'Suggest an improved version of the whole text'; }
-    if (ta.value) quill.root.innerHTML = ta.value;
-    quill.on('text-change', () => { ta.value = quill.root.innerHTML; });
-    _richEditors[textareaId] = quill;
-    return quill;
+    return MessageEditor.mountOnTextarea(textareaId, { toolbar: 'simple', force });
   }
   function setRichEditorContent(textareaId, html) {
-    const ta = document.getElementById(textareaId);
-    if (ta) ta.value = html || '';
-    const quill = _richEditors[textareaId];
-    if (quill) quill.root.innerHTML = html || '';
-  }
-
-  // ── AI Help (Per Bot 8) — same shared endpoint as every other editor.
-  async function runAiPolish(quill, btn) {
-    if (!btn) return;
-    if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
-    setBtnLoading(btn, true, 'Polishing…');
-    try {
-      const res  = await fetch('/api/ai-polish', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: quill.root.innerHTML })
-      });
-      const data = await res.json();
-      if (data.html) quill.root.innerHTML = data.html;
-      else appAlert(data.error || 'Could not get a suggestion right now.');
-    } catch(e) {
-      appAlert('Something went wrong — please try again.');
-    } finally {
-      setBtnLoading(btn, false);
-    }
+    MessageEditor.setTextareaContent(textareaId, html);
   }
 
   let currentClientId = null;
@@ -1028,28 +962,19 @@
   }
 
   // ── Send text ──
-  let _msgQuill = null;
+  // Per Bot 25 — same shared MessageEditor.mountRich every other editor
+  // in the app now uses, with the 'compact' preset. The old nested
+  // #msgInput_rich > #msgEditor_rich structure was a manual workaround
+  // for Quill inserting its toolbar as a sibling one level up — mountRich
+  // now does that nesting internally for every caller, so this mounts
+  // directly on the single msgInput_rich div, same as client/index.html's
+  // cmsgInput_rich composer.
   function ensureMsgEditor() {
-    if (_msgQuill) return _msgQuill;
-    // Mounted on the nested #msgEditor_rich div (not #msgInput_rich itself) —
-    // Quill inserts its auto-generated toolbar as a sibling of whatever
-    // element it's given, one level up. Nesting the mount point one level
-    // deeper means that "one level up" is .msg-rich-container, so the
-    // toolbar actually lands inside the bordered box the CSS above targets,
-    // instead of escaping into the flex row next to it (Per Bot 9 fix —
-    // that escape was what caused the composer to collapse to near-zero
-    // width and become unusable).
-    _msgQuill = new Quill(document.getElementById('msgEditor_rich'), {
-      theme: 'snow',
-      placeholder: 'Type a message…',
-      modules: { toolbar: {
-        container: [['bold', 'italic'], ['link'], ['ai-polish']],
-        handlers: { 'ai-polish': function() { runAiPolish(this.quill, this.container.querySelector('.ql-ai-polish')); } },
-      } },
-    });
+    if (MessageEditor.isMounted('msgInput_rich')) return MessageEditor.getInstance('msgInput_rich');
+    const q = MessageEditor.mountRich('msgInput_rich', '', { toolbar: 'compact', placeholder: 'Type a message…' });
     const aiBtn = document.getElementById('msgInput_rich').querySelector('.ql-ai-polish');
     if (aiBtn) { aiBtn.textContent = '✨'; aiBtn.title = 'Suggest an improved version of this message'; }
-    return _msgQuill;
+    return q;
   }
   document.getElementById('msgSendBtn').addEventListener('click', sendMsgText);
   async function sendMsgText() {

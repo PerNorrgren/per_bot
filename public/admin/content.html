@@ -11,6 +11,9 @@
   <script src="/js/dialogs.js"></script>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
+  <!-- Per Bot 25 — shared rich-editor implementation, same one used for
+       Journal (client) and every message composer (comms2/sales/comms). -->
+  <script src="/js/message-editor.js"></script>
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow:hidden; }
@@ -135,17 +138,11 @@
     .modal select option { background:#1a2420; }
     .modal textarea { resize:vertical; min-height:60px; }
 
-    /* ── Rich editor (Per Bot 8) — Quill dark-theme override to match this
-       page's palette, same approach as the newsletter editor in comms.html ── */
-    .rich-editor-container { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; margin-bottom:10px; }
-    .rich-editor-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.1); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); }
-    .rich-editor-container .ql-container.ql-snow { border:none; font-family:'Georgia',serif; font-size:14px; color:rgba(255,255,255,0.82); min-height:80px; }
-    .rich-editor-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
-    .rich-editor-container .ql-stroke { stroke:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-fill { fill:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-picker-label { color:rgba(255,255,255,0.55); }
-    .rich-editor-container .ql-picker-options { background:#1a201d; }
-    .rich-editor-container .ql-toolbar.ql-snow button.ql-ai-polish { width:auto; padding:0 8px; font-size:12px; color:rgba(180,230,200,0.8); }
+    /* ── Rich editor (Per Bot 25) — styling now lives in the shared
+       message-editor.js module (.me-ql-wrap/.me-ql-simple), the same one
+       Journal and every message composer use. This local copy — with its
+       own separately-drifted contrast values — is removed. */
+
     .modal input:focus,.modal textarea:focus,.modal select:focus { border-color:rgba(180,230,200,0.3); }
     .modal-row { display:flex; gap:12px; }
     .modal-row > div { flex:1; }
@@ -1123,63 +1120,24 @@ function setBtnLoading(btn, loading, workingLabel) {
   }
 }
 
-// ── Rich editor (Per Bot 8) — shared helper: mounts Quill on top of an
-// existing <textarea>, keeping the textarea itself as the real source of
-// truth (hidden, but still updated on every Quill change) so none of the
-// existing save/open code below needed rewriting — it already just reads
-// and sets .value on these fields. setRichEditorContent() is the one
-// change needed at call sites that populate a field programmatically
-// (opening an edit modal, resetting a form) — plain textarea.value=x
-// wouldn't reach the visible Quill instance sitting on top of it.
-// force:true re-mounts fresh even if already mounted — needed for fields
-// that get recreated on every render (the per-lesson handout/notes below).
-const _richEditors = {};
+// ── Rich editor (Per Bot 25) — thin shim over the shared MessageEditor
+// module (message-editor.js), which is also what every message-composer
+// field in the app already uses. Per: "we should only ever now have one
+// single text editor, used for all." Keeping these two names/signatures
+// means none of the existing save/open code below needed rewriting — it
+// already just calls mountRichEditor()/setRichEditorContent() exactly as
+// before. force:true still re-mounts fresh even if already mounted —
+// needed for fields that get recreated on every render (the per-lesson
+// handout/notes below).
 function mountRichEditor(textareaId, force) {
-  const ta = document.getElementById(textareaId);
-  if (!ta) return null;
-  if (_richEditors[textareaId] && !force) return _richEditors[textareaId];
-  ta.style.display = 'none';
-  let container = document.getElementById(textareaId + '_rich');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = textareaId + '_rich';
-    container.className = 'rich-editor-container';
-    ta.parentNode.insertBefore(container, ta.nextSibling);
-  } else {
-    container.innerHTML = ''; // re-mount case — clear the old Quill DOM first
-  }
-  const quill = new Quill(container, {
-    theme: 'snow',
-    placeholder: ta.placeholder || '',
-    modules: { toolbar: {
-      container: [
-        [{ header: [2, 3, false] }],
-        ['bold', 'italic', 'underline'],
-        [{ align: [] }],
-        [{ list: 'ordered' }, { list: 'bullet' }],
-        ['link'], ['ai-polish'], ['clean'],
-      ],
-      handlers: {
-        'ai-polish': function() { runAiPolish(this.quill, this.container.querySelector('.ql-ai-polish')); },
-      },
-    } },
-  });
-  const aiBtn = container.querySelector('.ql-ai-polish');
-  if (aiBtn) { aiBtn.textContent = '✨ AI Help'; aiBtn.title = 'Suggest an improved version of the whole text'; }
-  if (ta.value) quill.root.innerHTML = ta.value;
-  quill.on('text-change', () => { ta.value = quill.root.innerHTML; });
-  _richEditors[textareaId] = quill;
-  return quill;
+  return MessageEditor.mountOnTextarea(textareaId, { toolbar: 'simple', force });
 }
 function setRichEditorContent(textareaId, html) {
-  const ta = document.getElementById(textareaId);
-  if (ta) ta.value = html || '';
-  const quill = _richEditors[textareaId];
-  if (quill) quill.root.innerHTML = html || '';
+  MessageEditor.setTextareaContent(textareaId, html);
 }
 
-// ── AI Help (Per Bot 8) — same shared endpoint as every other editor in
-// the app; full rewrite applied directly, no accept/discard step, easy to
+// ── AI Help — same shared endpoint as every other editor in the app;
+// full rewrite applied directly, no accept/discard step, easy to
 // amend afterward if it's not quite right.
 // Per Bot 17 (session 2) — "Rewrite for selling", using the house
 // standard written this session (Voice Guide Section 19 / Writing
@@ -1202,25 +1160,6 @@ async function rewriteCourseDescForSelling() {
     if (data.error) { appAlert(data.error); return; }
     const paras = data.text.split(/\n{2,}/).map(p => `<p>${escHtml(p.trim())}</p>`).join('');
     setRichEditorContent('cDesc', paras);
-  } catch(e) {
-    appAlert('Something went wrong — please try again.');
-  } finally {
-    setBtnLoading(btn, false);
-  }
-}
-
-async function runAiPolish(quill, btn) {
-  if (!btn) return;
-  if (!quill.getText().trim()) { appAlert('Write something first.'); return; }
-  setBtnLoading(btn, true, 'Polishing…');
-  try {
-    const res  = await fetch('/api/ai-polish', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: quill.root.innerHTML })
-    });
-    const data = await res.json();
-    if (data.html) quill.root.innerHTML = data.html;
-    else appAlert(data.error || 'Could not get a suggestion right now.');
   } catch(e) {
     appAlert('Something went wrong — please try again.');
   } finally {

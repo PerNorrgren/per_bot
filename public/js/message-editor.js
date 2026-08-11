@@ -84,29 +84,73 @@
       .me-ql-wrap .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; font-family:'Georgia',serif; font-size:14px; border-radius:0 0 8px 8px; }
       .me-ql-wrap .ql-editor { color:rgba(255,255,255,0.85); min-height:140px; }
       .me-ql-wrap .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
-      .me-ql-wrap .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5); }
-      .me-ql-wrap .ql-snow .ql-fill { fill:rgba(255,255,255,0.5); }
-      .me-ql-wrap .ql-snow .ql-picker { color:rgba(255,255,255,0.5); }
+      /* Per Bot 25 — contrast fix. Every editor instance in the app had
+         this same problem: toolbar icons and picker labels were set to
+         rgba(255,255,255,0.5) — barely half-opacity white — which reads
+         as too dark/faint against this dark toolbar background, and, on
+         top of that, this whole stylesheet is written assuming a dark
+         background unconditionally. Any place these white-on-transparent
+         icons end up rendered against a LIGHT background instead (a
+         browser/OS forced-colour or high-contrast display mode, which is
+         what "reverse contrast" showing everything washed-out light
+         actually is) makes them functionally invisible — white-ish icons
+         at low opacity on a light background. Two changes: raise the
+         normal-mode opacity so it's clearly readable on the intended dark
+         background, and add an explicit forced-colors block below so
+         when the OS/browser IS rendering in a forced light/high-contrast
+         theme, the icons switch to system colours instead of staying on
+         these now-wrong hardcoded whites. */
+      .me-ql-wrap .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.75); }
+      .me-ql-wrap .ql-snow .ql-fill { fill:rgba(255,255,255,0.75); }
+      .me-ql-wrap .ql-snow .ql-picker { color:rgba(255,255,255,0.75); }
       .me-ql-wrap .ql-snow .ql-picker-options { background:#1a221e; border-color:rgba(255,255,255,0.12) !important; }
       .me-ql-wrap .ql-snow .ql-tooltip { background:#1a221e; border-color:rgba(255,255,255,0.12); color:rgba(255,255,255,0.8); box-shadow:none; }
       .me-ql-wrap .ql-snow .ql-tooltip input[type=text] { background:rgba(255,255,255,0.06); border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.85); }
       .me-ql-wrap .ql-toolbar.ql-snow .ql-picker-label { border-color:transparent; }
-      /* Per Bot 24 — text-content buttons (1 col/2 col/3 col, AI Help),
-         not the SVG-icon ones above (B/I/U/alignment/lists/link/image),
-         which already get their colour from .ql-stroke/.ql-fill. These
-         never had an equivalent override, so they sat at the browser's
-         plain default black button text — invisible on this dark
-         toolbar. (Fixed once already, but in ensureVersionStyles() below
-         — the modal's OWN styling, not this function, which is the one
-         mountRich actually uses for the real editor toolbar. That
-         earlier fix never did anything; this is the one that matters.) */
+      /* Text-content buttons (1 col/2 col/3 col, AI Help), not the
+         SVG-icon ones above (B/I/U/alignment/lists/link/image), which get
+         their colour from .ql-stroke/.ql-fill instead. */
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
       .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
-      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.5); }
+      .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:rgba(255,255,255,0.75); }
+      /* Per Bot 25 — 'simple' preset (Journal, course/lesson descriptions,
+         facilitator notes) needs no size change from the default above.
+         'compact' preset (inline message composers) needs the smaller
+         footprint the old per-file .cmsg-rich-container/.msg-rich-
+         container CSS used to give it — same numbers, now in one place. */
+      .me-ql-wrap.me-ql-compact .ql-container.ql-snow { font-size:13.5px; min-height:20px; }
+      .me-ql-wrap.me-ql-compact .ql-editor { padding:8px 10px; min-height:20px; max-height:100px; overflow-y:auto; }
+      .me-ql-wrap.me-ql-compact .ql-toolbar.ql-snow button { width:22px; height:22px; }
       .me-ai-panel { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:14px; margin-top:8px; }
       .me-ai-body { font-size:13px; line-height:1.6; color:rgba(255,255,255,0.8); max-height:240px; overflow-y:auto; }
+      /* Per Bot 25 — forced-colors (Windows High Contrast and similar OS/
+         browser accessibility modes) overrides most author colours with
+         a small system palette and renders the page's own background as
+         a system colour (often light), regardless of what this stylesheet
+         says. Left alone, the rgba(255,255,255,...) icon colours above
+         are exactly the kind of author colour that mode is inconsistent
+         about honouring — sometimes ignored, sometimes kept, neither
+         case giving a reliably visible result against whatever background
+         actually renders. Explicit system colour keywords here (ButtonText,
+         Canvas, CanvasText, Highlight) are the standard, supported way to
+         stay legible under forced-colors — the browser resolves them to
+         whatever the person's actual OS contrast theme uses. */
+      @media (forced-colors: active) {
+        .me-ql-wrap .ql-toolbar.ql-snow { forced-color-adjust: none; background:Canvas; border-color:ButtonText !important; }
+        .me-ql-wrap .ql-container.ql-snow { forced-color-adjust: none; background:Canvas; border-color:ButtonText !important; }
+        .me-ql-wrap .ql-editor { forced-color-adjust: none; color:CanvasText; background:Canvas; }
+        .me-ql-wrap .ql-snow .ql-stroke { stroke:ButtonText; }
+        .me-ql-wrap .ql-snow .ql-fill { fill:ButtonText; }
+        .me-ql-wrap .ql-snow .ql-picker { color:ButtonText; }
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-nl-button,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-1,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-2,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-columns-3,
+        .me-ql-wrap .ql-toolbar.ql-snow .ql-formats button.ql-ai-polish { color:ButtonText; }
+        .me-ql-wrap .ql-picker-item.ql-selected, .me-ql-wrap .ql-toolbar .ql-active { color:Highlight; }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -615,27 +659,86 @@
     ensureBlotsRegistered();
     if (instances[containerId]) { destroy(containerId); }
     const container = document.getElementById(containerId);
-    if (container) container.classList.add('me-ql-wrap');
+    // Per Bot 25 — Quill inserts its auto-built toolbar as a DOM SIBLING
+    // immediately before whatever element it's mounted on (confirmed
+    // directly against Quill 1.3.7's source — Toolbar.js does
+    // `quill.container.parentNode.insertBefore(toolbarEl, quill.container)`),
+    // not inside it. Every editor in this app used to mount Quill
+    // directly on the div carrying the `.me-ql-wrap` class, which meant
+    // the toolbar came out as .me-ql-wrap's sibling, not its descendant —
+    // every `.me-ql-wrap .ql-toolbar...` CSS rule (background, border,
+    // and critically every icon colour) silently never matched anything,
+    // for every editor in the app, the whole time. The editor's own
+    // typing area still looked right (Quill nests .ql-editor as a real
+    // child of its mount point, so that half of the CSS did reach it) —
+    // which is exactly why this read as "the toolbar icons are too dark/
+    // wrong contrast" rather than "the editor is completely unstyled":
+    // only the toolbar chrome was silently falling back to Quill's own
+    // bundled default (mid-grey #444 strokes, no background), invisible
+    // against this app's near-black page background. Fix: mount Quill on
+    // a fresh INNER div nested inside the original containerId element,
+    // so the toolbar — inserted as that inner div's sibling — lands
+    // inside the outer element instead, which is the one actually
+    // carrying .me-ql-wrap. instances[] and every public method below
+    // still key off the original containerId, so no caller anywhere
+    // needed to change.
+    if (container) {
+      container.innerHTML = '';
+      container.classList.add('me-ql-wrap');
+    }
+    const mountEl = document.createElement('div');
+    if (container) container.appendChild(mountEl);
     if (window.ImageResize && Quill.imports['modules/imageResize'] === undefined) {
       Quill.register('modules/imageResize', window.ImageResize.default || window.ImageResize);
     }
-    const q = new Quill('#' + containerId, {
+    // Per Bot 25 — opts.toolbar selects which button set mounts, but
+    // it's still the exact same Quill instance, same handlers, same
+    // paste/link/image behaviour, same styling underneath either way.
+    // Per: "we should only ever now have one single text editor, used
+    // for all" — this is that: one real implementation, three presets,
+    // rather than a separate copy-pasted mountRichEditor per file (which
+    // is what caused the contrast fix in ensureStyles() below to have
+    // been applied inconsistently — three near-identical but separately
+    // drifted CSS blocks existed before this).
+    const toolbarPresets = {
+      full: [
+        [{ header: [2, 3, false] }],
+        ['bold', 'italic', 'underline'],
+        [{ align: [] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link', 'image', 'image-link', 'image-copy', 'image-resize', 'video-link'],
+        ['nl-video'],
+        ['nl-button'],
+        ['columns-1', 'columns-2', 'columns-3'],
+        ['ai-polish'],
+        ['clean'],
+      ],
+      // Every plain content field that isn't a marketing email — Journal
+      // entries, course/lesson descriptions, facilitator session notes.
+      // Same formatting and AI Help as 'full', without the email-specific
+      // building blocks (images/video/columns/buttons) that don't belong
+      // in this kind of field.
+      simple: [
+        [{ header: [2, 3, false] }],
+        ['bold', 'italic', 'underline'],
+        [{ align: [] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link'], ['ai-polish'], ['clean'],
+      ],
+      // The small inline message composers (client↔facilitator direct
+      // messages). No headers/lists/clean — there's no room for a second
+      // toolbar row in this UI, and a short message rarely needs them.
+      compact: [['bold', 'italic'], ['link'], ['ai-polish']],
+    };
+    const toolbarContainer = toolbarPresets[opts.toolbar] || toolbarPresets.full;
+    if (container && (opts.toolbar === 'compact' || opts.toolbar === 'simple')) container.classList.add('me-ql-' + opts.toolbar);
+
+    const q = new Quill(mountEl, {
       theme: 'snow',
       placeholder: opts.placeholder || '',
-      modules: {
+      modules: Object.assign({
         toolbar: {
-          container: [
-            [{ header: [2, 3, false] }],
-            ['bold', 'italic', 'underline'],
-            [{ align: [] }],
-            [{ list: 'ordered' }, { list: 'bullet' }],
-            ['link', 'image', 'image-link', 'image-copy', 'image-resize', 'video-link'],
-            ['nl-video'],
-            ['nl-button'],
-            ['columns-1', 'columns-2', 'columns-3'],
-            ['ai-polish'],
-            ['clean'],
-          ],
+          container: toolbarContainer,
           handlers: {
             image: () => uploadImageIntoEditor(q),
             'video-link': () => insertVideoLink(q),
@@ -718,8 +821,15 @@
             },
           },
         },
-        imageResize: { modules: ['Resize', 'DisplaySize', 'Toolbar'] },
-      },
+        // Per Bot 25 — only requested when window.ImageResize is actually
+        // registered. client/index.html, admin/content.html, and
+        // facilitator/index.html (the 'simple'/'compact' presets) never
+        // load that CDN plugin — asking Quill to instantiate a module
+        // that was never registered throws and aborts mounting entirely,
+        // which is exactly what broke in testing this against a page
+        // without it. The 'full' preset's image-resize toolbar button is
+        // still only meaningful where the plugin is loaded anyway.
+      }, (window.ImageResize ? { imageResize: { modules: ['Resize', 'DisplaySize', 'Toolbar'] } } : {})),
     });
     // Quill has no built-in icons/labels for any of these custom buttons —
     // the toolbar array above just references format names that don't
@@ -866,16 +976,16 @@
   }
 
   function destroy(containerId) {
-    // Per Bot 24 — this used to only drop the JS reference and rely on
-    // "the container's innerHTML gets replaced by the caller" — but
-    // Quill's auto-generated toolbar (the array-config form used here)
-    // is inserted as a DOM sibling BEFORE the container element, not
-    // inside it, so clearing the container's own innerHTML was never
-    // enough to remove it. Re-mounting the same containerId (e.g.
-    // re-opening "Edit version" on a different row) left every previous
-    // toolbar still sitting in the DOM, stacking up visually one per
-    // re-mount — that's the actual toolbar element removed here now,
-    // not just the reference to it.
+    // Per Bot 25 — since mountRich now mounts Quill on an inner div
+    // nested inside the containerId element (see the mount-point comment
+    // in mountRich above), the toolbar it builds lands inside containerId
+    // too, so container.innerHTML = '' below removes it along with
+    // everything else on its own. This explicit toolbar removal predates
+    // that fix (Per Bot 24 — back when the toolbar really was an
+    // external sibling, and re-mounting the same containerId left old
+    // toolbars stacking up outside the container) and is redundant now,
+    // but harmless to leave as a defensive no-op rather than something to
+    // risk getting wrong by removing.
     const q = instances[containerId];
     if (q) {
       try {
@@ -896,6 +1006,44 @@
   }
 
   function isMounted(containerId) { return !!instances[containerId]; }
+
+  // ── Textarea-backed mounting (Per Bot 25) ── mountRich above binds
+  // straight onto a container div someone else already created and
+  // reads/writes purely through the Quill instance — that's right for
+  // comms2/sales/Newsletter/MOTD, which never had a plain-text field to
+  // begin with. Every OTHER field this app has (Journal entries,
+  // course/lesson descriptions, facilitator session notes) grew up as a
+  // plain <textarea>, with save code that reads ta.value — this wraps
+  // mountRich so that pattern keeps working unchanged: mounts Quill into
+  // a sibling div, keeps the textarea as the real source of truth via a
+  // text-change listener, hides the textarea itself. This is the one
+  // implementation every "simple"/"compact" field in the app now shares
+  // — see mountRichEditor() in client/index.html, admin/content.html,
+  // and facilitator/index.html, each now a two-line shim over this.
+  function mountOnTextarea(textareaId, opts) {
+    opts = opts || {};
+    const ta = document.getElementById(textareaId);
+    if (!ta) return null;
+    const containerId = textareaId + '_rich';
+    if (instances[containerId] && !opts.force) return instances[containerId];
+    ta.style.display = 'none';
+    let container = document.getElementById(containerId);
+    if (!container) {
+      container = document.createElement('div');
+      container.id = containerId;
+      ta.parentNode.insertBefore(container, ta.nextSibling);
+    }
+    const q = mountRich(containerId, ta.value || '', Object.assign({ placeholder: ta.placeholder || '' }, opts));
+    q.on('text-change', () => { ta.value = q.root.innerHTML; });
+    return q;
+  }
+
+  function setTextareaContent(textareaId, html) {
+    const ta = document.getElementById(textareaId);
+    if (ta) ta.value = html || '';
+    const q = instances[textareaId + '_rich'];
+    if (q) q.root.innerHTML = html || '';
+  }
 
   // ── AI generate & insert (Per Bot 54) — a simplified, portable version
   // of comms.html's Newsletter-only "Generate & insert" feature. Same
@@ -1096,6 +1244,7 @@
   window.MessageEditor = {
     insertTokenAtField, insertTokenAtRich, standardTokens, tokenSelectHtml,
     formatToggleHtml, mountRich, destroy, getHtml, isMounted, getInstance,
+    mountOnTextarea, setTextareaContent,
     aiGenerateHtml, runAiGenerate, retryAiGenerate, closeAiPreview, insertAiResult,
     renderVersionSection, refreshVersionSection,
   };
