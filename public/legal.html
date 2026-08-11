@@ -310,6 +310,15 @@
         userConsents[slug + '@' + version] = true;
         document.getElementById('consentBox').innerHTML =
           '<div class="consent-done">✓ Recorded — thank you.</div>';
+        // Per Bot 24 — auto-close if this page was opened as a popup
+        // (from the app's own consent gate, or anywhere else that opens
+        // it via window.open). window.close() only actually works when
+        // window.opener is set — browsers silently refuse to close a
+        // window/tab that wasn't opened by script, so this is safe to
+        // always attempt: it does nothing if someone reached this page
+        // directly (a bookmark, a normal link, typing the URL). Brief
+        // delay so the "Recorded" confirmation is actually seen first.
+        if (window.opener) setTimeout(() => window.close(), 1200);
       } else {
         btn.disabled = false; btn.textContent = 'I agree';
       }

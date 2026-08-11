@@ -6897,16 +6897,48 @@
       if (!res.ok) return; // not authenticated as a client yet, or a genuine network hiccup — nothing to gate
       const data = await res.json();
       _pendingConsentDocs = data.pending || [];
-      if (!_pendingConsentDocs.length) return;
+      if (!_pendingConsentDocs.length) {
+        // Per Bot 24 — if the gate is currently showing (someone
+        // individually agreed to every listed document via its own
+        // popup, without also ticking this gate's own checkbox), close
+        // it now that there's genuinely nothing left outstanding rather
+        // than leaving it sitting open waiting for a redundant tick.
+        document.getElementById('consentGateOverlay').classList.remove('visible');
+        return;
+      }
       const list = document.getElementById('consentGateList');
       list.innerHTML = _pendingConsentDocs.map(doc => `
-        <a href="/legal/${doc.slug}" target="_blank" style="display:block;padding:10px 12px;border:1px solid rgba(180,230,200,0.25);background:rgba(180,230,200,0.06);border-radius:8px;color:rgba(200,235,215,0.9);text-decoration:none;font-size:13.5px">${escHtmlJournal(doc.title)} →</a>
+        <a href="/legal/${doc.slug}" onclick="openConsentDocPopup(event,'${doc.slug}')" style="display:block;padding:10px 12px;border:1px solid rgba(180,230,200,0.25);background:rgba(180,230,200,0.06);border-radius:8px;color:rgba(200,235,215,0.9);text-decoration:none;font-size:13.5px">${escHtmlJournal(doc.title)} →</a>
       `).join('');
       document.getElementById('consentGateCheckbox').checked = false;
       document.getElementById('consentGateBtn').disabled = true;
       document.getElementById('consentGateErr').textContent = '';
       document.getElementById('consentGateOverlay').classList.add('visible');
     } catch(e) { /* if this genuinely fails, better to let someone in than lock them out on a network blip */ }
+  }
+  // Per Bot 24 — opens a legal document as a real popup window rather
+  // than a plain new tab, since a new tab just leaves someone stranded
+  // there with no way back to the app (legal.html has no "back" of its
+  // own — it's meant to be readable as a standalone page too, e.g. from
+  // a footer link, so it can't assume it was opened from here). The
+  // popup auto-closes itself once "I agree" is pressed (see legal.html's
+  // recordConsent). While it's open, poll for it closing and re-check
+  // pending consents — this is what lets the gate notice someone
+  // individually agreed via the popup, without needing them to also
+  // separately tick this gate's own checkbox for the same document.
+  let _consentPopup = null;
+  let _consentPopupPoll = null;
+  function openConsentDocPopup(e, slug) {
+    e.preventDefault();
+    if (_consentPopup && !_consentPopup.closed) _consentPopup.focus();
+    else _consentPopup = window.open(`/legal/${slug}`, 'legalDoc', 'width=600,height=720,menubar=no,toolbar=no,location=no,status=no');
+    clearInterval(_consentPopupPoll);
+    _consentPopupPoll = setInterval(() => {
+      if (_consentPopup && _consentPopup.closed) {
+        clearInterval(_consentPopupPoll);
+        checkPendingConsents();
+      }
+    }, 500);
   }
   async function submitConsentGate() {
     const btn = document.getElementById('consentGateBtn');

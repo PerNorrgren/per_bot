@@ -106,9 +106,18 @@
         </select>
       </div>
 
+      <!-- Per Bot 24 — was a single hardcoded line about name/email
+           storage only, with no link to the actual Privacy Policy,
+           Terms of Service, etc. Now built from whatever's currently
+           marked mandatory in the legal documents system (see
+           loadMandatoryDocs below) — covers what's actually being
+           collected (journal entries, Talk conversations, developmental
+           profile data, not just name/email), and picks up any new
+           mandatory document automatically without needing this page
+           touched again. -->
       <label class="consent">
         <input type="checkbox" id="consent"/>
-        <span class="consent-text">I agree to my name and email being stored by <span data-brand="name">Deeper Mindfulness</span>. Required to create an account.</span>
+        <span class="consent-text" id="consentText">Loading…</span>
       </label>
 
       <label class="consent">
@@ -179,6 +188,32 @@
       }, 9000);
     });
 
+    // Per Bot 24 — mandatory documents fetched fresh from the legal
+    // documents system rather than hardcoded, so a newly-added mandatory
+    // document (or a version bump) shows up here automatically. Kept in
+    // this module-level variable so register() can record consent for
+    // exactly what was actually shown and agreed to, not re-fetch and
+    // risk a race if something changed between page load and submit.
+    let mandatoryDocs = [];
+    async function loadMandatoryDocs() {
+      const textEl = document.getElementById('consentText');
+      try {
+        const res = await fetch('/api/legal' + (window.__skinSlug ? `?skin=${window.__skinSlug}` : ''));
+        const all = await res.json();
+        mandatoryDocs = all.filter(d => d.requires_consent);
+        if (!mandatoryDocs.length) {
+          textEl.textContent = 'I agree to my information being stored and processed to create an account.';
+          return;
+        }
+        const links = mandatoryDocs.map(d => `<a href="/legal/${d.slug}" target="_blank" style="color:rgba(180,230,200,0.7);text-decoration:underline">${d.title}</a>`);
+        const last = links.pop();
+        textEl.innerHTML = `I have read and agree to the ${links.length ? links.join(', ') + ', and ' : ''}${last}.`;
+      } catch(e) {
+        textEl.textContent = 'I agree to my information being stored and processed to create an account.';
+      }
+    }
+    loadMandatoryDocs();
+
     function togglePw() {
       const input = document.getElementById('password');
       const open  = document.getElementById('eyeOpen');
@@ -225,6 +260,24 @@
       const data = await res.json();
 
       if (data.redirect) {
+        // Per Bot 24 — record consent for exactly the documents that
+        // were actually shown and agreed to above, now that
+        // /api/register has set the auth cookie (confirmed server-side —
+        // the cookie is set before this response goes out). Doing this
+        // here, before navigating away, means the mandatory first-login
+        // consent gate in the app itself finds nothing outstanding and
+        // doesn't immediately re-prompt for the same thing seconds
+        // later. Best-effort — a failure here shouldn't block getting
+        // into the account they just created; the gate is the real
+        // backstop if this doesn't go through for some reason.
+        try {
+          await Promise.all(mandatoryDocs.map(d =>
+            fetch('/api/my/consents', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ documentId: d.id, slug: d.slug, version: d.version }),
+            })
+          ));
+        } catch(e) {}
         window.location.href = data.redirect;
       } else {
         err.textContent = data.error || 'Something went wrong.';
