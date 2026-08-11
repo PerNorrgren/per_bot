@@ -6931,7 +6931,19 @@
   function openConsentDocPopup(e, slug) {
     e.preventDefault();
     if (_consentPopup && !_consentPopup.closed) _consentPopup.focus();
-    else _consentPopup = window.open(`/legal/${slug}`, 'legalDoc', 'width=600,height=720,menubar=no,toolbar=no,location=no,status=no');
+    else {
+      // Per Bot 25 — centre the popup on screen instead of letting the
+      // browser default it to the top-left corner. Uses screen dimensions
+      // (falling back to window dimensions for browsers/environments that
+      // don't expose screen.width/height reliably).
+      const popupWidth = 600;
+      const popupHeight = 720;
+      const screenW = window.screen.width || window.innerWidth;
+      const screenH = window.screen.height || window.innerHeight;
+      const left = Math.max(0, Math.round((screenW - popupWidth) / 2));
+      const top = Math.max(0, Math.round((screenH - popupHeight) / 2));
+      _consentPopup = window.open(`/legal/${slug}`, 'legalDoc', `width=${popupWidth},height=${popupHeight},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no`);
+    }
     clearInterval(_consentPopupPoll);
     _consentPopupPoll = setInterval(() => {
       if (_consentPopup && _consentPopup.closed) {
