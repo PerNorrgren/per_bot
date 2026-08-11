@@ -10082,6 +10082,42 @@ app.get('/api/journal/:id/audio-url', auth.requireAuthApi(['client']), async (re
 // resolution to a client's own facilitator when an entry is actually
 // shared is a reasonable next step, but a separate decision — not done
 // here.)
+// ── Journal video compression (Per Bot 25) ── Mobile phones record video
+// at resolutions/bitrates meant for a big screen or professional editing,
+// not a quick note attached to a journal entry — a few seconds can
+// easily run into tens of MB. Transcodes down to a small, low-quality
+// mp4 (480px on the long edge, a high CRF, a modest audio bitrate)
+// before it ever reaches R2, using the same execFileAsync('ffmpeg', ...)
+// pattern as the audiobook/signal-audio pipelines elsewhere in this
+// file. Falls back to storing the original untouched if ffmpeg fails
+// for any reason (corrupt upload, unsupported codec) — a big file is
+// still better than a failed save.
+async function compressVideoForJournal(inputPath, originalMimeType) {
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'journal-video-'));
+  try {
+    const outPath = path.join(tmpDir, 'compressed.mp4');
+    await execFileAsync('ffmpeg', [
+      '-y', '-i', inputPath,
+      // Long edge capped at 480px, even dimensions required by most
+      // encoders (-2 keeps the other edge even while preserving aspect
+      // ratio) — plenty for a phone-sized preview, nowhere near what a
+      // raw phone recording actually captures.
+      '-vf', "scale='if(gt(iw,ih),480,-2)':'if(gt(iw,ih),-2,480)'",
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '32',
+      '-c:a', 'aac', '-b:a', '64k',
+      '-movflags', '+faststart',
+      outPath,
+    ], { timeout: 120000 });
+    const buffer = await fsp.readFile(outPath);
+    return { buffer, mimeType: 'video/mp4', ext: '.mp4' };
+  } catch (e) {
+    console.error('[journal video] compression failed, storing original:', e.message);
+    return { buffer: await fsp.readFile(inputPath), mimeType: originalMimeType, ext: (inputPath.match(/\.[a-zA-Z0-9]+$/) || [''])[0] };
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 app.post('/api/journal/media-upload', auth.requireAuthApi(['client']), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
@@ -10091,13 +10127,25 @@ app.post('/api/journal/media-upload', auth.requireAuthApi(['client']), upload.si
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Only image, video, or audio files are supported here.' });
     }
-    const buffer = fs.readFileSync(req.file.path);
-    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    // Per Bot 25 — images are resized/compressed client-side before they
+    // even reach this endpoint (see uploadPrivateMediaIntoEditor in
+    // message-editor.js), so by the time a photo lands here it's
+    // already small. Video can't reasonably be compressed in-browser
+    // without a heavy dependency, so that step happens here instead.
+    let buffer, finalMimeType, ext;
+    if (mimetype.startsWith('video/')) {
+      const compressed = await compressVideoForJournal(req.file.path, mimetype);
+      buffer = compressed.buffer; finalMimeType = compressed.mimeType; ext = compressed.ext;
+    } else {
+      buffer = fs.readFileSync(req.file.path);
+      finalMimeType = mimetype;
+      ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    }
     const key = `journal-media/${uuidv4()}${ext}`;
-    await media.putObject(key, buffer, mimetype);
-    db.recordPrivateMediaUpload(key, req.user.id, 'journal', mimetype);
+    await media.putObject(key, buffer, finalMimeType);
+    db.recordPrivateMediaUpload(key, req.user.id, 'journal', finalMimeType);
     fs.unlink(req.file.path, () => {});
-    res.json({ key, mimeType: mimetype });
+    res.json({ key, mimeType: finalMimeType });
   } catch (e) {
     console.error('journal media upload error:', e.message);
     if (req.file) fs.unlink(req.file.path, () => {});

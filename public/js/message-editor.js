@@ -763,6 +763,48 @@
   // URL — see the private_media schema comment in server.js), embed the
   // key, then resolve it to a real signed URL via resolvePrivateMedia
   // once the embed actually exists in the DOM.
+  // Per Bot 25 — client-side image resize/compress, before the file ever
+  // leaves the browser. Mobile phone photos routinely run 3000-4000px on
+  // the long edge at several MB each — nothing in this app displays a
+  // journal photo anywhere near that size, so shrinking it here saves
+  // the upload itself, R2 storage, and every future load. Caps the long
+  // edge at 1280px (comfortably sharp on any phone or desktop screen at
+  // normal viewing size) and re-encodes as JPEG at a moderate quality —
+  // typically brings a 4-8MB phone photo down to a few hundred KB.
+  // createImageBitmap's imageOrientation:'from-image' bakes in EXIF
+  // rotation (phones store many photos "sideways" with a rotation flag
+  // rather than physically rotated pixels) so the compressed copy
+  // doesn't come out sideways; falls back to a plain <img> decode (which
+  // browsers also generally orient correctly for display, just via a
+  // different code path) if createImageBitmap itself isn't available.
+  const JOURNAL_IMAGE_MAX_DIMENSION = 1280;
+  const JOURNAL_IMAGE_QUALITY = 0.82;
+  async function compressImageFile(file) {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch (e) {
+      bitmap = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = URL.createObjectURL(file);
+      });
+    }
+    const srcW = bitmap.width, srcH = bitmap.height;
+    const scale = Math.min(1, JOURNAL_IMAGE_MAX_DIMENSION / Math.max(srcW, srcH));
+    const w = Math.round(srcW * scale), h = Math.round(srcH * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JOURNAL_IMAGE_QUALITY));
+    // A tiny/simple source image (a screenshot, a graphic) can sometimes
+    // come back larger as re-encoded JPEG than the original — if
+    // compression didn't actually help, just use the original file
+    // rather than uploading something bigger than what we started with.
+    return (blob && blob.size < file.size) ? blob : file;
+  }
+
   async function uploadPrivateMediaIntoEditor(q, kind) {
     const accept = kind === 'image' ? 'image/*' : kind === 'video' ? 'video/*' : 'audio/*';
     const label = kind === 'image' ? 'photo' : kind;
@@ -771,10 +813,14 @@
     const range = q.getSelection(true) || { index: q.getLength() };
     q.insertText(range.index, `Uploading ${label}…`);
     input.onchange = async () => {
-      const file = input.files[0];
+      let file = input.files[0];
       if (!file) { q.deleteText(range.index, `Uploading ${label}…`.length); return; }
+      if (kind === 'image') {
+        try { file = await compressImageFile(file); }
+        catch (e) { console.error('[journal image] client-side compression failed, uploading original:', e); }
+      }
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', file, file.name || 'upload.jpg');
       try {
         const res = await fetch('/api/journal/media-upload', { method: 'POST', body: formData });
         const data = await res.json();
