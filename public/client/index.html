@@ -917,7 +917,7 @@
                those choices stay in Journal's fuller form for anyone
                who wants them). Available to every tier, same as
                Journal itself — nothing here checks member level. -->
-          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">🎙 Quick voice note</button>
+          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Add to journal</button>
         </div>
 
         <!-- Per Bot 21 — moved here from the Talk page per Per's request;
@@ -1014,7 +1014,7 @@
                which meant it was effectively invisible for most of the
                time actually spent in Talk. Same button, same modal,
                just also available here mid-conversation. -->
-          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">🎙 Quick voice note</button>
+          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📓 Add to journal</button>
         </div>
         <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
           <div class="practices-scroll" id="talkSummariesList"></div>
@@ -1197,6 +1197,12 @@
 
       <!-- Poems region — the daily message archive -->
       <div class="lib-sub-panel" id="youPoemsPanel">
+        <!-- Per Bot 24 — this is the message-of-the-day archive, but had
+             no heading at all explaining that, easy to mistake for
+             something else entirely (a personal poem collection, a
+             favourites list). Just a plain explanatory line, matching
+             the small-caps section-label style used elsewhere in You. -->
+        <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Message of the day — archive</div>
         <div class="poems-scroll" id="poemsScroll">
           <div class="no-poems">Loading…</div>
         </div>
@@ -1430,18 +1436,31 @@
      no sharing checkboxes) — genuinely one tap to start, one to stop,
      one to save; anyone wanting the fuller options (title, share with
      companion/facilitator) already has that in You → Journal. -->
+<!-- Per Bot 24 — was voice-only ("Quick voice note"); redesigned into a
+     talk-or-write chooser per Per's request, so a quick journal entry
+     never means leaving Talk regardless of which way someone wants to
+     do it. Three states shown/hidden via quickJournalMode:
+     'choose' (the two buttons) → 'voice' (existing recording UI,
+     unchanged) or 'write' (a plain textarea) → Save, using the exact
+     same /api/journal and /api/journal/voice endpoints the fuller
+     Journal form already uses. -->
 <div class="pw-overlay" id="quickVoiceModal">
   <div class="pw-modal" style="max-width:380px">
-    <h3>Quick voice note</h3>
-    <div id="quickVoiceStatus" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px">Tap record whenever you're ready.</div>
-    <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:14px">
+    <h3>Add to journal</h3>
+    <div id="quickJournalChoose" style="display:flex;gap:10px;justify-content:center;margin-bottom:6px">
+      <button type="button" class="btn" onclick="setQuickJournalMode('voice')">🎙 Talk</button>
+      <button type="button" class="btn" onclick="setQuickJournalMode('write')">✏️ Write</button>
+    </div>
+    <div id="quickVoiceStatus" style="display:none;font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px"></div>
+    <div id="quickVoiceRecordWrap" style="display:none;align-items:center;gap:12px;justify-content:center;margin-bottom:14px">
       <button type="button" class="btn" id="quickVoiceRecordBtn" onclick="toggleQuickVoiceRecording()">● Record</button>
       <span id="quickVoiceTimer" style="font-size:13px;color:rgba(255,255,255,0.5);display:none">0:00</span>
     </div>
     <audio id="quickVoicePreview" controls style="display:none;width:100%;margin-bottom:14px"></audio>
+    <textarea id="quickJournalText" placeholder="Whatever's on your mind…" style="display:none;width:100%;min-height:120px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:14px;margin-bottom:14px;resize:vertical"></textarea>
     <div class="pw-btns">
       <button class="pw-cancel" onclick="closeQuickVoiceNote()">Cancel</button>
-      <button class="pw-ok" id="quickVoiceSaveBtn" onclick="saveQuickVoiceNote()" style="display:none">Save</button>
+      <button class="pw-ok" id="quickVoiceSaveBtn" onclick="saveQuickJournalEntry()" style="display:none">Save</button>
     </div>
   </div>
 </div>
@@ -4084,7 +4103,16 @@
     if (f.content_type === 'poem' || f.content_type === 'blog') {
       const label = f.content_type === 'poem' ? 'More poems →' : 'More posts →';
       const group = f.content_type === 'poem' ? 'poems' : 'posts';
-      mediaEl.insertAdjacentHTML('beforeend', `<button class="doc-link" style="display:block;width:100%;margin-top:16px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="openThemeDetail('${group}',0)">${label}</button>`);
+      // Per Bot 24 — the heart to favourite something already existed on
+      // every card/list view, but not on the reading view itself, which
+      // is exactly the moment someone's most likely to want it — right
+      // after actually reading the thing, not before. Same
+      // toggleFavourite() every other heart in the app already uses.
+      mediaEl.insertAdjacentHTML('beforeend', `
+        <div style="display:flex;justify-content:center;margin-top:16px">
+          <button class="heart-btn ${f.is_favourite?'active':''}" onclick="toggleFavourite('${f.id}',this)" title="Favourite" style="font-size:22px">♥</button>
+        </div>
+        <button class="doc-link" style="display:block;width:100%;margin-top:12px;background:rgba(180,230,200,0.12);border-color:rgba(180,230,200,0.3)" onclick="openThemeDetail('${group}',0)">${label}</button>`);
     }
   }
 
@@ -4961,9 +4989,19 @@
     document.getElementById('breathingPauseBtn').textContent = 'Pause';
   }
 
+  // Per Bot 24 — closeBreathingView used to always return to Library
+  // regardless of where the breathing view was actually opened from,
+  // which was correct for its original entry point (Timer, reached via
+  // Library's own subnav) but silently wrong for the newer one below
+  // (Talk suggesting a pattern) — the X looked like it wasn't doing
+  // anything useful, since it dropped you somewhere you didn't come
+  // from rather than actually back. Defaults to 'library', same as
+  // before, unless something explicitly opened it from elsewhere.
+  let _breathingReturnTab = 'library';
   function closeBreathingView() {
     stopBreathingTimer();
-    switchTab('library');
+    switchTab(_breathingReturnTab);
+    _breathingReturnTab = 'library';
   }
 
   // Talk suggested a pattern this turn (see sendToBot's handling of
@@ -4978,6 +5016,7 @@
     const p = pendingBreathingPattern;
     pendingBreathingPattern = null;
     document.getElementById('talkBreathingPromptBtn').style.display = 'none';
+    _breathingReturnTab = 'talk';
     switchTab('breathing');
     loadBreathingPatterns().then(() => {
       if (!breathingPatterns.some(bp => bp.id === p.id)) breathingPatterns = [...breathingPatterns, p];
@@ -5557,15 +5596,28 @@
   let quickVoiceStartedAt = null;
   let quickVoiceTimerHandle = null;
 
+  // Per Bot 24 — 'choose' | 'voice' | 'write'. Chosen once per open;
+  // Cancel/close always resets back to 'choose' for next time, same as
+  // the recording state itself already gets cleared.
+  let quickJournalMode = 'choose';
   function openQuickVoiceNote() {
     document.getElementById('quickVoiceModal').classList.add('visible');
+    setQuickJournalMode('choose');
+  }
+  function setQuickJournalMode(mode) {
+    quickJournalMode = mode;
+    document.getElementById('quickJournalChoose').style.display = mode === 'choose' ? 'flex' : 'none';
+    document.getElementById('quickVoiceStatus').style.display = mode === 'voice' ? '' : 'none';
     document.getElementById('quickVoiceStatus').textContent = "Tap record whenever you're ready.";
+    document.getElementById('quickVoiceRecordWrap').style.display = mode === 'voice' ? 'flex' : 'none';
     document.getElementById('quickVoiceRecordBtn').textContent = '● Record';
-    document.getElementById('quickVoiceRecordBtn').style.display = '';
     document.getElementById('quickVoiceTimer').style.display = 'none';
     document.getElementById('quickVoicePreview').style.display = 'none';
-    document.getElementById('quickVoiceSaveBtn').style.display = 'none';
+    document.getElementById('quickJournalText').style.display = mode === 'write' ? '' : 'none';
+    document.getElementById('quickJournalText').value = '';
+    document.getElementById('quickVoiceSaveBtn').style.display = mode === 'write' ? '' : 'none';
     quickVoiceBlob = null;
+    if (mode === 'write') setTimeout(() => document.getElementById('quickJournalText').focus(), 50);
   }
   function closeQuickVoiceNote() {
     if (quickVoiceRecorder && quickVoiceRecorder.state === 'recording') quickVoiceRecorder.stop();
@@ -5612,7 +5664,32 @@
       document.getElementById('quickVoiceTimer').textContent = `${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;
     }, 500);
   }
-  async function saveQuickVoiceNote() {
+  // Per Bot 24 — renamed from saveQuickVoiceNote, now branches on
+  // quickJournalMode. The write path reuses the plain /api/journal
+  // endpoint the fuller Journal form already uses — same "no
+  // title/sharing options here, kept minimal" reasoning as the voice
+  // path, auto-titled the same way.
+  async function saveQuickJournalEntry() {
+    if (quickJournalMode === 'write') {
+      const text = document.getElementById('quickJournalText').value.trim();
+      if (!text) return;
+      const saveBtn = document.getElementById('quickVoiceSaveBtn');
+      setBtnLoading(saveBtn, true, 'Saving…');
+      try {
+        const res = await fetch('/api/journal', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: `Note from ${new Date().toLocaleDateString()}`, content: text }),
+        });
+        const data = await res.json();
+        if (!data.id) throw new Error(data.error || 'Could not save.');
+        closeQuickVoiceNote();
+      } catch(e) {
+        document.getElementById('quickJournalText').insertAdjacentHTML('afterend', `<div style="color:rgba(255,140,120,0.8);font-size:12px;margin-top:6px">${e.message || 'Could not save — please try again.'}</div>`);
+      } finally {
+        setBtnLoading(saveBtn, false);
+      }
+      return;
+    }
     if (!quickVoiceBlob) return;
     const saveBtn = document.getElementById('quickVoiceSaveBtn');
     const status = document.getElementById('quickVoiceStatus');
