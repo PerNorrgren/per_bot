@@ -3555,6 +3555,27 @@ function getActivityHome(userId) {
     });
   }
 
+  // ── Talk sessions — Per Bot 24 follow-up. These are self-guided
+  // conversation summaries, stored in the practices table with
+  // source_type='session' and no facilitator_id (see renderPractices'
+  // own talkSessions filter in client/index.html, which this mirrors
+  // exactly). Shown by creation date regardless of content_history,
+  // unlike the practices/meditations/readwatch buckets above — a Talk
+  // session is real activity the moment it happens, whether or not the
+  // person ever reopens the summary afterward; gating it on a replay
+  // would hide genuinely recent sessions nobody's revisited yet.
+  const talkSessions = queryAll(
+    `SELECT id, title, created_at FROM practices WHERE client_id=? AND source_type='session' AND facilitator_id IS NULL ORDER BY created_at DESC LIMIT 10`,
+    [userId]
+  );
+  if (talkSessions.length) {
+    sections.push({
+      key: 'talksessions', label: 'Sessions with Talk',
+      items: talkSessions.map(s => ({ id: s.id, title: s.title, activityTime: s.created_at })),
+      lastActivity: talkSessions[0].created_at,
+    });
+  }
+
   sections.sort((a,b) => new Date(b.lastActivity) - new Date(a.lastActivity));
   return sections;
 }

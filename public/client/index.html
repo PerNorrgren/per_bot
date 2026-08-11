@@ -50,6 +50,17 @@
         this line and keep the vh value above. */
     }
 
+    /* Per Bot 24 — .header only ever had padding declared (see the two
+       media-query overrides below), never an actual layout — its two
+       children (the 🏠/wordmark group, and Display) were just stacking
+       as separate block rows rather than sitting side by side, which is
+       why Display looked like it was floating disconnected below the
+       wordmark instead of aligned with it. */
+    .header { display:flex; align-items:center; justify-content:space-between; }
+    /* Home icon bumped up — was 17px, genuinely hard to tap accurately
+       on a real phone screen at that size. */
+    .header .home-icon-btn { font-size:25px !important; }
+
     /* ── Accessibility: reversed-colour contrast mode (Per Bot 24, fixed
        Per Bot 25) ──
        Colours throughout this file are hardcoded individually rather
@@ -822,7 +833,7 @@
 
     <div class="header">
       <div style="display:flex;align-items:center;gap:10px">
-        <button onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.4);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
+        <button class="home-icon-btn" onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.4);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
         <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
       </div>
       <div style="position:relative">
@@ -1762,9 +1773,10 @@
   }
 
   // ── You sub-nav ──
-  let _currentYouSub = 'home';
+  let _currentYouSub = sessionStorage.getItem('youSub') || 'home';
   function switchYouSub(sub) {
     _currentYouSub = sub;
+    sessionStorage.setItem('youSub', sub); // survives a real page reload, not just in-memory state — see the "back button loses Home tab" fix
     ['home','account','journal','poems','history'].forEach(s => {
       document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
     });
@@ -2891,8 +2903,26 @@
         // it's stuck or just waiting.
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
+          // Per Bot 24 — sawAudioSignal false after a full 3s means
+          // genuinely nothing came through, not even quiet room tone —
+          // stopMic() used to revert silently to idle either way, so
+          // this looked identical to a normal self-initiated tap-to-stop.
+          // The real cause is very often another app (Zoom's background
+          // notetaking helper is a known culprit) having claimed the
+          // microphone at the OS level — getUserMedia() still succeeds
+          // in that case (permission granted, a stream object comes
+          // back), but the actual audio data is silent. Telling the
+          // person this directly, rather than a silent revert, turns
+          // "the mic just doesn't work, requiring several tries" into
+          // something they can actually act on the first time.
           if (!sawAudioSignal) {
             console.warn('[listen] mic produced no audible signal for 3s straight — likely a muted mic, wrong input device, or blocked mic permission at the OS level, not just silence.');
+            setState('idle');
+            tapHintEl.textContent = "Didn't pick up any sound — check no other app (like Zoom) has your microphone, then try again";
+            tapHintEl.classList.add('visible');
+            setTimeout(() => {
+              if (!micActive) tapHintEl.textContent = 'Tap to Talk'; // restore the normal hint once it's had a moment to be read, so it doesn't stay stuck showing the error forever
+            }, 6000);
           }
           stopMic();
         }, 3000);
@@ -5023,9 +5053,10 @@
   async function openActivityHomeItem(sectionKey, id) {
     if (sectionKey === 'courses') { switchTab('courses'); openCourseDetail(id); return; }
     if (sectionKey === 'journal') { switchYouSub('journal'); return; }
-    // practices / meditations / readwatch — practice first, then
-    // general library, loading it if Library hasn't been visited yet
-    // this session.
+    // practices / meditations / readwatch / talksessions — practice
+    // first (this covers Talk session summaries too, since they're
+    // practices-table rows), then general library, loading it if
+    // Library hasn't been visited yet this session.
     const p = _practicesData.find(x => x.id === id);
     if (p) { openPractice(p.id, p.title, p.type, p.content, p.filename); return; }
     let f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
