@@ -6398,6 +6398,89 @@ function resolveBreathingMarker(text) {
   };
 }
 
+// ── Poem audio (Per Bot 25) ── "A listen option for poems that have
+// linked audio [...] for poems without linked audio: [generate], and
+// that generated audio is saved as the linked audio for future reuse
+// (for this person and others)." Same cache-or-synthesize shape as
+// synthesizeAndCacheSignalAudio above — a poem's audio_key/audio_voice_id
+// on library_files plays the role signal_scripts.cached_audio_key/
+// cached_audio_voice_id already do there. Poems are stored as real
+// text/html files (see the file_type==='text/html' branch in the
+// client's playback-url reader), not a short DB column — the text has
+// to be fetched and stripped down to plain words before it can go to
+// ElevenLabs at all.
+async function getPoemPlainText(file) {
+  const url = file.storage_type === 'r2' ? await media.getPlaybackUrl(file.filename, { noCache: true, forceUtf8: true }) : `${APP_URL}/uploads/${file.filename}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not fetch poem content (${res.status}).`);
+  const html = await res.text();
+  // Prefer the <article> body if there is one (matches the client's own
+  // reader, which does the same) — falls back to the whole document
+  // otherwise. Strips tags crudely rather than pulling in a full HTML
+  // parser just for this; good enough for the simple generated markup
+  // these files actually contain (headings/paragraphs/line breaks).
+  const articleMatch = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+  const body = articleMatch ? articleMatch[1] : html;
+  return body
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function synthesizeAndCachePoemAudio(file) {
+  const text = await getPoemPlainText(file);
+  if (!text) throw new Error('This poem has no readable text.');
+  const buffer = await synthesizeSignalSegment(text);
+  const key = `poem-audio/${file.id}-${uuidv4()}.mp3`;
+  // Per Bot 25 — putObject, not uploadPublicObject: this is served back
+  // out through the same signed/tier-checked getPlaybackUrl path every
+  // other library file (meditations, audiobooks) already uses, not the
+  // unauthenticated public route newsletter media uses. (The two upload
+  // functions are actually identical PutObjectCommand calls underneath —
+  // media.js has no real public/private storage distinction, R2 access
+  // is uniformly private either way — but putObject is the one that
+  // documents itself as backing this exact access pattern, so it's the
+  // one that says what's actually true here.)
+  await media.putObject(key, buffer, 'audio/mpeg');
+  db.setPoemAudio(file.id, key, VOICE_ID);
+  return key;
+}
+
+app.get('/api/client/poems/:id/audio-url', auth.requireAuthApi(['client', 'facilitator', 'admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    // Per Bot 25 — same access rule as playback-url itself: a client
+    // below the tier this poem requires can't hear its narration either,
+    // even though the audio_key/synthesis machinery has no tier concept
+    // of its own — the poem's own text-access rule is what actually
+    // governs this, not anything about the audio file.
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    // Cache hit — same rule as signal scripts: only the deployment's
+    // current default voice is ever cached, so a stale cache from a
+    // since-changed VOICE_ID re-synthesizes rather than serving the
+    // wrong voice.
+    if (file.audio_key && file.audio_voice_id === VOICE_ID) {
+      const url = await media.getPlaybackUrl(file.audio_key, {});
+      return res.json({ url, cached: true });
+    }
+    const key = await synthesizeAndCachePoemAudio(file);
+    const url = await media.getPlaybackUrl(key, {});
+    res.json({ url, cached: false });
+  } catch (e) {
+    console.error('poem audio-url error:', e.message);
+    res.status(500).json({ error: 'Could not prepare audio for this poem right now.' });
+  }
+});
+
 app.post('/api/chat', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { message, sessionId, clientId } = req.body;

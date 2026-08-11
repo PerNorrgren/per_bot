@@ -1774,6 +1774,15 @@ async function getDb() {
     // version is already inaccessible via the normal visibility gate, so
     // they only ever see the preview, same as before this feature existed.
     "ALTER TABLE library_files ADD COLUMN full_version_id TEXT",
+    // Per Bot 25 — poem audio ("linked audio"). Nullable — most poems
+    // start with none. audio_voice_id mirrors signal_scripts'
+    // cached_audio_voice_id pattern: if the deployment's default
+    // narrator voice (VOICE_ID) ever changes, a cached audio_key
+    // generated under the old voice is no longer treated as a valid
+    // cache hit, so the next Listen re-synthesizes under the current
+    // voice rather than silently playing a stale one.
+    "ALTER TABLE library_files ADD COLUMN audio_key TEXT",
+    "ALTER TABLE library_files ADD COLUMN audio_voice_id TEXT",
     // Per Bot 15c — practices.filename used to always mean a path on local
     // disk (multer diskStorage, ./uploads/), which is NOT the persistent
     // volume — only the sql.js DB file has one of those. Any audio
@@ -2592,6 +2601,20 @@ function addLibraryFile(id, title, description, filename, originalName, fileType
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
+
+// ── Poem audio (Per Bot 25) ── setPoemAudio is called after a fresh
+// synthesis (or an admin's manual upload/replace) to record the new
+// audio_key and which voice it was generated under. getPoemsMissingAudio
+// backs the admin retrofit list — every poem (content_type='poem'),
+// audio or not, so admin can see what's covered at a glance and search/
+// sort the rest, not just the gaps.
+function setPoemAudio(fileId, audioKey, voiceId) {
+  getDbSync().run('UPDATE library_files SET audio_key=?, audio_voice_id=? WHERE id=?', [audioKey, voiceId, fileId]);
+}
+function getPoemsForAdmin() {
+  return queryAll(`SELECT id, title, audio_key, audio_voice_id, created_at FROM library_files
+    WHERE content_type='poem' AND archived=0 ORDER BY created_at DESC`);
+}
 // Per Bot 16 — every text/html file (blog posts, poems, whitepapers —
 // anything whose actual content lives in a real HTML file rather than a
 // PDF/docx/audio blob), for the mojibake scan/fix tool. Includes
@@ -7172,6 +7195,7 @@ module.exports = {
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
+  setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,

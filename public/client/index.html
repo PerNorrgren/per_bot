@@ -3865,6 +3865,35 @@
     const el = document.getElementById('textDocReaderBody');
     if (el) el.style.fontSize = _textReaderFontPct + '%';
   }
+  // Per Bot 25 — Listen for poems. First tap for a given poem
+  // synthesizes and caches server-side (a few seconds); every tap after
+  // that, by anyone, gets the cached file straight back. No separate
+  // audio player UI beyond the button itself — reuses the same plain
+  // Audio() + play() pattern as the signal-script/breathing-timer audio
+  // elsewhere in this file, since a poem is a single short continuous
+  // clip with nothing else going on around it.
+  let _poemAudioPlayer = null;
+  async function listenToPoem(fileId, btn) {
+    if (_poemAudioPlayer && !_poemAudioPlayer.paused) { _poemAudioPlayer.pause(); btn.textContent = '🔊 Listen'; return; }
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Preparing…';
+    try {
+      const res = await fetch(`/api/client/poems/${fileId}/audio-url`);
+      const data = await res.json();
+      if (!data.url) throw new Error(data.error || 'Could not prepare audio for this poem.');
+      _poemAudioPlayer = new Audio(data.url);
+      _poemAudioPlayer.play();
+      btn.textContent = '⏸ Playing…';
+      btn.disabled = false;
+      _poemAudioPlayer.onended = () => { btn.textContent = orig; };
+      _poemAudioPlayer.onerror = () => { btn.textContent = orig; };
+    } catch (e) {
+      appAlert(e.message || 'Could not play this poem right now — please try again.');
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
+  }
   function epubNextPage() { if (_currentEpubRendition) _currentEpubRendition.next(); }
   function epubPrevPage() { if (_currentEpubRendition) _currentEpubRendition.prev(); }
   function epubFontSize(delta) {
@@ -4034,10 +4063,18 @@
         const parsed = new DOMParser().parseFromString(htmlText, 'text/html');
         const article = parsed.querySelector('article') || parsed.body;
         _textReaderFontPct = 100;
+        // Per Bot 25 — Listen, poems only. Same shared-cache idea as
+        // Talk's own signal-script audio: the first tap (by anyone)
+        // synthesizes and permanently caches it server-side, so every
+        // tap after that — by this person or anyone else — is instant.
+        const listenBtn = f.content_type === 'poem'
+          ? `<button class="reader-font-btn" id="poemListenBtn" onclick="listenToPoem('${f.id}', this)" title="Listen to this poem read aloud">🔊 Listen</button>`
+          : '';
         mediaEl.innerHTML = `
           <div class="text-reader-controls">
             <button class="reader-font-btn" onclick="textReaderFontSize(-1)" title="Smaller text">A-</button>
             <button class="reader-font-btn" onclick="textReaderFontSize(1)" title="Larger text">A+</button>
+            ${listenBtn}
           </div>
           <div class="text-doc-reader" id="textDocReaderBody" style="font-size:100%">${article.innerHTML}</div>
         `;
