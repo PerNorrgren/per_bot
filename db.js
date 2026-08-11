@@ -533,6 +533,27 @@ async function getDb() {
     FOREIGN KEY (client_id) REFERENCES users(id)
   )`);
 
+  // ── Private media (Per Bot 25) ── Backs image/video/audio embedded
+  // directly inside private rich-text fields — currently just Journal
+  // entries. Deliberately separate from the public newsletter-images/
+  // newsletter-videos/newsletter-audio R2 objects (public.uploadPublicObject,
+  // no auth needed to view): those are correct for admin-authored broadcast
+  // content, but wrong for a client's own journal photo. Ownership is
+  // rooted in whoever uploaded it (uploaded_by) — the resolve endpoint
+  // (see /api/journal/media-url) only ever hands out a signed URL to that
+  // same person. The r2_key itself is what gets stored inside the saved
+  // rich-text HTML (as a stable data-media-key attribute) — never a
+  // signed URL, since those expire; the editor/viewer re-resolves a
+  // fresh one every time the content is actually displayed.
+  db.run(`CREATE TABLE IF NOT EXISTS private_media (
+    r2_key TEXT PRIMARY KEY,
+    uploaded_by TEXT NOT NULL,
+    context TEXT DEFAULT 'journal',
+    mime_type TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (uploaded_by) REFERENCES users(id)
+  )`);
+
   // ── Client practices ──
   db.run(`CREATE TABLE IF NOT EXISTS practices (
     id TEXT PRIMARY KEY,
@@ -4575,6 +4596,21 @@ function deleteJournalEntry(id, clientId) {
 }
 function getJournalEntryById(id) { return queryOne('SELECT * FROM client_journal_entries WHERE id=?', [id]); }
 
+// ── Private media (Per Bot 25) ── see the private_media schema comment
+// above for the ownership model. recordPrivateMediaUpload runs right
+// after a successful R2 upload; getPrivateMediaOwner is the single check
+// the resolve endpoint relies on before ever handing out a signed URL.
+function recordPrivateMediaUpload(r2Key, uploadedBy, context, mimeType) {
+  getDbSync().run(
+    'INSERT INTO private_media (r2_key, uploaded_by, context, mime_type) VALUES (?,?,?,?)',
+    [r2Key, uploadedBy, context || 'journal', mimeType || null]
+  );
+}
+function getPrivateMediaOwner(r2Key) {
+  const row = queryOne('SELECT uploaded_by FROM private_media WHERE r2_key=?', [r2Key]);
+  return row ? row.uploaded_by : null;
+}
+
 // ── Facilitator WebSocket Stage 2 — review / edit / regenerate / release ──
 function getSessionById(id) {
   return queryOne(
@@ -7200,6 +7236,7 @@ module.exports = {
   addSession, getSessionsForClient, getClientSessionsForClient, hasEverUsedTalk,
   hasSeenTomteTip, markTomteTipSeen,
   addJournalEntry, getJournalEntriesForClient, getSharedJournalEntriesForFacilitator, getJournalEntriesForBot, deleteJournalEntry, getJournalEntryById,
+  recordPrivateMediaUpload, getPrivateMediaOwner,
   getSessionById, getSessionsForFacilitatorReview, updateSessionDraft, releaseSession, unreleaseSession,
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
