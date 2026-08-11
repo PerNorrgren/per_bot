@@ -3475,6 +3475,90 @@ function getDashboardResumeCard(userId) {
   return best;
 }
 
+// Per Bot 24 (activity/engagement, group 4 — the "You" page rebuild) —
+// one call, five possible sections (Courses, Practices, Meditations,
+// Read & Watch, Journal), each only included if the person has actually
+// done something in it, sorted by whichever they touched most recently.
+// Deliberately built from real usage data already flowing in
+// (content_history, lesson_progress, client_journal_entries) rather than
+// new tracking — the same principle group 1 already established.
+function getActivityHome(userId) {
+  const sections = [];
+
+  // ── Courses — every enrolment's most recent lesson activity, not just
+  // in-progress ones (unlike getDashboardResumeCard above, which is
+  // specifically "what to resume" and rightly excludes anything already
+  // finished — here a completed course is still real, recent activity
+  // worth showing, just not something to "continue").
+  const enrolments = getEnrolmentsForUser(userId);
+  const courseActivity = enrolments.map(e => {
+    const row = queryOne('SELECT MAX(started_at) as t FROM lesson_progress WHERE enrolment_id=?', [e.id]);
+    const activityTime = (row && row.t) || e.enrolled_at;
+    return { enrolment: e, activityTime };
+  }).filter(c => c.activityTime).sort((a,b) => new Date(b.activityTime) - new Date(a.activityTime));
+  if (courseActivity.length) {
+    const items = courseActivity.slice(0, 10).map(c => ({
+      id: c.enrolment.course_instance_id, title: c.enrolment.course_title,
+      subtitle: `${c.enrolment.percent_complete}% complete`, activityTime: c.activityTime,
+    }));
+    sections.push({ key: 'courses', label: 'Courses', items, lastActivity: courseActivity[0].activityTime });
+  }
+
+  // ── Practices / Meditations / Read & Watch — all draw from the same
+  // content_history rows, bucketed exactly the way the client's own
+  // tabs already define these categories (see renderPractices,
+  // loadLibraryMeditations, renderContentScroll in client/index.html):
+  // Practices = personal practices-table entries + one-to-one assigned
+  // files; Meditations = library_files where content_type='meditation';
+  // Read & Watch = everything else in the library. Capped at the last
+  // 300 plays so this stays fast regardless of how long someone's used
+  // the app — recent activity is what this page is about anyway.
+  const history = queryAll(
+    `SELECT ch.content_id, ch.played_at,
+            p.id as practice_id, p.title as practice_title,
+            lf.id as file_id, lf.title as file_title, lf.content_type as file_content_type, lf.assigned_client_id
+     FROM content_history ch
+     LEFT JOIN practices p ON ch.content_id = p.id
+     LEFT JOIN library_files lf ON ch.content_id = lf.id
+     WHERE ch.user_id = ?
+     ORDER BY ch.played_at DESC
+     LIMIT 300`,
+    [userId]
+  );
+  const buckets = { practices: new Map(), meditations: new Map(), readwatch: new Map() };
+  for (const row of history) {
+    let bucket, id, title;
+    if (row.practice_id) { bucket = 'practices'; id = row.practice_id; title = row.practice_title; }
+    else if (row.file_id && row.assigned_client_id === userId) { bucket = 'practices'; id = row.file_id; title = row.file_title; }
+    else if (row.file_id && row.file_content_type === 'meditation') { bucket = 'meditations'; id = row.file_id; title = row.file_title; }
+    else if (row.file_id) { bucket = 'readwatch'; id = row.file_id; title = row.file_title; }
+    else continue; // content since deleted — nothing sensible to show
+    // First occurrence per id wins, since history is already newest-first
+    // — that's this item's most recent play, everything after it for the
+    // same id is an older repeat.
+    if (!buckets[bucket].has(id)) buckets[bucket].set(id, { id, title, activityTime: row.played_at });
+  }
+  const bucketMeta = { practices: 'Practices', meditations: 'Meditations', readwatch: 'Read & Watch' };
+  for (const key of ['practices', 'meditations', 'readwatch']) {
+    const items = [...buckets[key].values()];
+    if (!items.length) continue;
+    sections.push({ key, label: bucketMeta[key], items: items.slice(0, 10), lastActivity: items[0].activityTime });
+  }
+
+  // ── Journal
+  const journalEntries = queryAll('SELECT id, title, created_at FROM client_journal_entries WHERE client_id=? ORDER BY created_at DESC LIMIT 10', [userId]);
+  if (journalEntries.length) {
+    sections.push({
+      key: 'journal', label: 'Journal',
+      items: journalEntries.map(j => ({ id: j.id, title: j.title, activityTime: j.created_at })),
+      lastActivity: journalEntries[0].created_at,
+    });
+  }
+
+  sections.sort((a,b) => new Date(b.lastActivity) - new Date(a.lastActivity));
+  return sections;
+}
+
 // ── Cohort live sessions ──
 function addInstanceSession(id, courseInstanceId, sessionNumber, title, scheduledAt, facilitatorNotes, handout) {
   getDbSync().run(
@@ -7057,7 +7141,7 @@ module.exports = {
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
-  upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard,
+  upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
   addInstanceSession, getSessionsForInstance, updateInstanceSession, deleteInstanceSession,
   // Student notes

@@ -893,7 +893,21 @@
             <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
         </div>
-        <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer; margin-bottom:-13px;">♪ Hear Calming Sounds</button>
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:-13px;">
+          <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
+          <!-- Per Bot 24 (activity/engagement, group 3 — quick capture,
+               follow-up) — one-tap voice note right from Talk itself,
+               the natural place for it since Talk is already voice-first.
+               Self-contained (own modal, own recording state) rather
+               than reusing the You→Journal form's DOM, which lives in a
+               different view — avoids any cross-view id conflicts.
+               Saves through the exact same backend as a Journal voice
+               entry (auto-titled, not shared with anyone by default —
+               those choices stay in Journal's fuller form for anyone
+               who wants them). Available to every tier, same as
+               Journal itself — nothing here checks member level. -->
+          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">🎙 Quick voice note</button>
+        </div>
 
         <!-- Per Bot 21 — moved here from the Talk page per Per's request;
              loadResumeCard() already runs on general app boot regardless
@@ -1098,15 +1112,31 @@
          and Account settings into one destination -->
     <div class="library-view" id="youView">
       <div class="lib-subnav">
-        <button class="lib-subnav-btn active" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
+        <!-- Per Bot 24 (activity/engagement, group 4) — new default
+             landing for You: a real personal activity home rather than
+             starting on Account settings. The other four tabs are
+             untouched, per Per's explicit call to keep them exactly as
+             they were — this is purely additive. -->
+        <button class="lib-subnav-btn active" id="youSubHome" onclick="switchYouSub('home')">Home</button>
+        <button class="lib-subnav-btn" id="youSubAccount" onclick="switchYouSub('account')">Account</button>
         <button class="lib-subnav-btn" id="youSubJournal" onclick="switchYouSub('journal')">Journal</button>
         <button class="lib-subnav-btn" id="youSubPoems" onclick="switchYouSub('poems')">Poems</button>
         <button class="lib-subnav-btn" id="youSubHistory" onclick="switchYouSub('history')">History</button>
         <button class="lib-subnav-btn lib-subnav-btn-danger" id="youLogoutBtn" onclick="logoutUser()">Log Out</button>
       </div>
 
+      <!-- Per Bot 24 (activity/engagement, group 4) — the You page
+           rebuild: Home. Collapsed sections (Courses/Practices/
+           Meditations/Read & Watch/Journal), one per content type
+           actually used, sorted by whichever was touched most recently.
+           Only ever populated by renderActivityHome() below — this div
+           just needs to exist and be the default-visible panel. -->
+      <div class="lib-sub-panel visible" id="youHomePanel">
+        <div class="practices-scroll" id="activityHomeList" style="display:flex; flex-direction:column; gap:10px;"><div class="no-practices">Loading…</div></div>
+      </div>
+
       <!-- Account region -->
-      <div class="lib-sub-panel visible" id="youAccountPanel">
+      <div class="lib-sub-panel" id="youAccountPanel">
         <div class="practices-scroll" id="youAccountSummary"><div class="no-practices">Loading…</div></div>
       </div>
 
@@ -1371,6 +1401,28 @@
     <audio id="calmingSoundsPlayer" style="display:none"></audio>
     <div class="pw-btns">
       <button class="pw-cancel" onclick="closeCalmingSoundsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per Bot 24 (activity/engagement, group 3 — quick capture, follow-up)
+     — quick voice note from Talk. Same pw-overlay/pw-modal pattern as
+     Calming Sounds just above. Kept minimal on purpose (no title field,
+     no sharing checkboxes) — genuinely one tap to start, one to stop,
+     one to save; anyone wanting the fuller options (title, share with
+     companion/facilitator) already has that in You → Journal. -->
+<div class="pw-overlay" id="quickVoiceModal">
+  <div class="pw-modal" style="max-width:380px">
+    <h3>Quick voice note</h3>
+    <div id="quickVoiceStatus" style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px">Tap record whenever you're ready.</div>
+    <div style="display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:14px">
+      <button type="button" class="btn" id="quickVoiceRecordBtn" onclick="toggleQuickVoiceRecording()">● Record</button>
+      <span id="quickVoiceTimer" style="font-size:13px;color:rgba(255,255,255,0.5);display:none">0:00</span>
+    </div>
+    <audio id="quickVoicePreview" controls style="display:none;width:100%;margin-bottom:14px"></audio>
+    <div class="pw-btns">
+      <button class="pw-cancel" onclick="closeQuickVoiceNote()">Cancel</button>
+      <button class="pw-ok" id="quickVoiceSaveBtn" onclick="saveQuickVoiceNote()" style="display:none">Save</button>
     </div>
   </div>
 </div>
@@ -1710,16 +1762,18 @@
   }
 
   // ── You sub-nav ──
-  let _currentYouSub = 'account';
+  let _currentYouSub = 'home';
   function switchYouSub(sub) {
     _currentYouSub = sub;
-    ['account','journal','poems','history'].forEach(s => {
+    ['home','account','journal','poems','history'].forEach(s => {
       document.getElementById('youSub' + s.charAt(0).toUpperCase() + s.slice(1)).classList.toggle('active', s === sub);
     });
+    document.getElementById('youHomePanel').classList.toggle('visible', sub === 'home');
     document.getElementById('youAccountPanel').classList.toggle('visible', sub === 'account');
     document.getElementById('youJournalPanel').classList.toggle('visible', sub === 'journal');
     document.getElementById('youPoemsPanel').classList.toggle('visible', sub === 'poems');
     document.getElementById('youHistoryPanel').classList.toggle('visible', sub === 'history');
+    if (sub === 'home')     loadActivityHome();
     if (sub === 'account')  loadYouAccountSummary();
     if (sub === 'journal') loadJournal();
     if (sub === 'poems')   loadPoems();
@@ -4911,6 +4965,75 @@
   // session now surfaces via getPracticesForClient's union, tagged
   // source_type='session'. Nothing left to load here separately.
 
+  // Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
+  // _activityHomeExpanded tracks which section keys are currently
+  // expanded (collapsed by default, per Per's spec) — a plain Set kept
+  // across re-renders so re-loading the data doesn't collapse something
+  // the person just opened.
+  let _activityHomeExpanded = new Set();
+  let _activityHomeData = [];
+  async function loadActivityHome() {
+    const el = document.getElementById('activityHomeList');
+    try {
+      const res = await fetch('/api/client/activity-home');
+      _activityHomeData = await res.json();
+      renderActivityHome();
+    } catch(e) {
+      el.innerHTML = '<div class="no-practices">Could not load your activity right now.</div>';
+    }
+  }
+  function renderActivityHome() {
+    const el = document.getElementById('activityHomeList');
+    if (!_activityHomeData.length) {
+      el.innerHTML = '<div class="no-practices">Nothing yet — once you\'ve tried a practice, started a course, or written a journal entry, it\'ll show up here.</div>';
+      return;
+    }
+    el.innerHTML = _activityHomeData.map(section => {
+      const expanded = _activityHomeExpanded.has(section.key);
+      const top = section.items[0];
+      const rest = section.items.slice(1);
+      return `
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer" onclick="toggleActivityHomeSection('${section.key}')">
+          <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">${escHtmlJournal(section.label)}</span>
+          <span style="font-size:12px;color:rgba(255,255,255,0.3)">${expanded ? '▲' : '▼'}</span>
+        </div>
+        <div style="padding:0 14px 12px;cursor:pointer" onclick="event.stopPropagation();openActivityHomeItem('${section.key}','${top.id}')">
+          <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtmlJournal(top.title || '(untitled)')}</div>
+        </div>
+        ${expanded && rest.length ? `
+        <div style="border-top:1px solid rgba(255,255,255,0.06);max-height:280px;overflow-y:auto">
+          ${rest.map(item => `
+            <div style="padding:10px 14px;font-size:13px;color:rgba(255,255,255,0.65);cursor:pointer;border-top:1px solid rgba(255,255,255,0.04)" onclick="openActivityHomeItem('${section.key}','${item.id}')">
+              ${escHtmlJournal(item.title || '(untitled)')}
+            </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  function toggleActivityHomeSection(key) {
+    if (_activityHomeExpanded.has(key)) _activityHomeExpanded.delete(key);
+    else _activityHomeExpanded.add(key);
+    renderActivityHome();
+  }
+  // Per Bot 24 — one dispatcher per section type, reusing exactly the
+  // same "how do I open this" logic already built elsewhere this
+  // session (What's New's link, the next-action card) rather than a
+  // fourth slightly-different copy of it.
+  async function openActivityHomeItem(sectionKey, id) {
+    if (sectionKey === 'courses') { switchTab('courses'); openCourseDetail(id); return; }
+    if (sectionKey === 'journal') { switchYouSub('journal'); return; }
+    // practices / meditations / readwatch — practice first, then
+    // general library, loading it if Library hasn't been visited yet
+    // this session.
+    const p = _practicesData.find(x => x.id === id);
+    if (p) { openPractice(p.id, p.title, p.type, p.content, p.filename); return; }
+    let f = (_contentData || []).find(x => x.id === id) || (_featuredContentData || []).find(x => x.id === id);
+    if (!f) { await loadContent(); f = (_contentData || []).find(x => x.id === id); }
+    if (f) { switchTab('library'); openContentFile(f); return; }
+    switchTab('library');
+  }
+
   async function loadHistory() {
     if ((await getUserTier()) < 1) { renderUpgradePrompt('historyList', 'History'); return; }
     const res  = await fetch('/api/client/history');
@@ -5374,6 +5497,104 @@
   function closeCalmingSoundsModal() {
     document.getElementById('calmingSoundsModal').classList.remove('visible');
     stopCalmingSoundsIfPlaying();
+  }
+  // Per Bot 24 (activity/engagement, group 3 — quick capture, follow-up)
+  // — quick voice note from Talk. Deliberately its own small, self-
+  // contained recording state (not shared with the fuller Journal form's
+  // journalVoice* variables) since this can be opened from a completely
+  // different view — keeping them separate avoids any risk of one
+  // stepping on the other's state if a person somehow had both open.
+  let quickVoiceRecorder = null;
+  let quickVoiceChunks = [];
+  let quickVoiceBlob = null;
+  let quickVoiceStream = null;
+  let quickVoiceStartedAt = null;
+  let quickVoiceTimerHandle = null;
+
+  function openQuickVoiceNote() {
+    document.getElementById('quickVoiceModal').classList.add('visible');
+    document.getElementById('quickVoiceStatus').textContent = "Tap record whenever you're ready.";
+    document.getElementById('quickVoiceRecordBtn').textContent = '● Record';
+    document.getElementById('quickVoiceRecordBtn').style.display = '';
+    document.getElementById('quickVoiceTimer').style.display = 'none';
+    document.getElementById('quickVoicePreview').style.display = 'none';
+    document.getElementById('quickVoiceSaveBtn').style.display = 'none';
+    quickVoiceBlob = null;
+  }
+  function closeQuickVoiceNote() {
+    if (quickVoiceRecorder && quickVoiceRecorder.state === 'recording') quickVoiceRecorder.stop();
+    document.getElementById('quickVoiceModal').classList.remove('visible');
+  }
+  async function toggleQuickVoiceRecording() {
+    const btn = document.getElementById('quickVoiceRecordBtn');
+    const status = document.getElementById('quickVoiceStatus');
+    if (quickVoiceRecorder && quickVoiceRecorder.state === 'recording') {
+      quickVoiceRecorder.stop();
+      return;
+    }
+    quickVoiceBlob = null;
+    quickVoiceChunks = [];
+    try {
+      quickVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch(e) {
+      status.textContent = 'Could not access your microphone — check your browser/device permissions.';
+      return;
+    }
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+    quickVoiceRecorder = new MediaRecorder(quickVoiceStream, { mimeType });
+    quickVoiceRecorder.ondataavailable = (e) => { if (e.data.size > 0) quickVoiceChunks.push(e.data); };
+    quickVoiceRecorder.onstop = () => {
+      quickVoiceStream.getTracks().forEach(t => t.stop());
+      clearInterval(quickVoiceTimerHandle);
+      quickVoiceBlob = new Blob(quickVoiceChunks, { type: mimeType });
+      const preview = document.getElementById('quickVoicePreview');
+      preview.src = URL.createObjectURL(quickVoiceBlob);
+      preview.style.display = '';
+      status.textContent = 'Ready — tap Save, or record again to redo it.';
+      btn.textContent = '● Record again';
+      document.getElementById('quickVoiceSaveBtn').style.display = '';
+    };
+    quickVoiceRecorder.start();
+    quickVoiceStartedAt = Date.now();
+    btn.textContent = '⏹ Stop';
+    status.textContent = 'Recording…';
+    document.getElementById('quickVoiceTimer').style.display = '';
+    document.getElementById('quickVoiceSaveBtn').style.display = 'none';
+    document.getElementById('quickVoicePreview').style.display = 'none';
+    quickVoiceTimerHandle = setInterval(() => {
+      const secs = Math.floor((Date.now() - quickVoiceStartedAt) / 1000);
+      document.getElementById('quickVoiceTimer').textContent = `${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;
+    }, 500);
+  }
+  async function saveQuickVoiceNote() {
+    if (!quickVoiceBlob) return;
+    const saveBtn = document.getElementById('quickVoiceSaveBtn');
+    const status = document.getElementById('quickVoiceStatus');
+    setBtnLoading(saveBtn, true, 'Saving…');
+    try {
+      const presignRes = await fetch('/api/journal/voice/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mimeType: quickVoiceBlob.type }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+      const putRes = await fetch(presignData.uploadUrl, { method: 'PUT', headers: { 'Content-Type': quickVoiceBlob.type }, body: quickVoiceBlob });
+      if (!putRes.ok) throw new Error('Upload to storage failed.');
+      // No title/sharing here on purpose — kept minimal; those live in
+      // the fuller Journal form for anyone who wants them, this stays
+      // true to "one tap, done".
+      const confirmRes = await fetch('/api/journal/voice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: presignData.key, mimeType: quickVoiceBlob.type }),
+      });
+      const data = await confirmRes.json();
+      if (!data.id) throw new Error(data.error || 'Could not save.');
+      closeQuickVoiceNote();
+    } catch(e) {
+      status.textContent = e.message || 'Could not save — please try again.';
+    } finally {
+      setBtnLoading(saveBtn, false);
+    }
   }
   function stopCalmingSoundsIfPlaying() {
     if (!_currentCalmingSoundId) return;

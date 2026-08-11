@@ -2930,6 +2930,12 @@ app.get('/api/client/resume', auth.requireAuthApi(['client']), (req, res) => {
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
+app.get('/api/client/activity-home', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getActivityHome(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 21 — an admin or facilitator's own linked client identity
 // (the "choose role" duality — same person, two separate account rows,
 // matched by email) previewing course content shouldn't need a real
