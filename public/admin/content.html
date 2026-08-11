@@ -860,14 +860,21 @@
   <div class="modal" style="max-width:660px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
       <h3 id="cdTitle" style="margin:0"></h3>
-      <button class="btn sm" onclick="closeModal('courseDetailModal')" title="Close">✕ Close</button>
+      <button class="btn sm" onclick="cancelCourseDetail()" title="Cancel">✕ Cancel</button>
     </div>
+    <!-- Per Bot 24 — these four fields used to save themselves
+         immediately on every change, with the only way out being a
+         plain "Close" that gave no sense of whether anything had
+         actually been saved or not. Now staged locally (no onchange
+         handler at all) until Save is explicitly pressed — see
+         saveCourseDetailChanges()/cancelCourseDetail() below, and the
+         snapshot taken in openCourseDetail(). -->
     <div id="cdSequenceRow" style="display:flex;gap:18px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="cdEnforceLessonSeq" onchange="saveCourseSequence()"/> Enforce lesson sequence
+        <input type="checkbox" id="cdEnforceLessonSeq"/> Enforce lesson sequence
       </label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="cdEnforceFileSeq" onchange="saveCourseSequence()"/> Enforce file sequence (default)
+        <input type="checkbox" id="cdEnforceFileSeq"/> Enforce file sequence (default)
       </label>
       <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
         Mandatory (whole course):
@@ -881,7 +888,7 @@
          chosen tier, and whether it shows locked or disappears entirely. -->
     <div id="cdTierRow" style="display:flex;gap:12px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
       <span>Required tier:</span>
-      <select id="cdRequiredTier" onchange="saveCourseTierGating()" style="font-size:12px">
+      <select id="cdRequiredTier" style="font-size:12px">
         <option value="">No requirement — open to everyone</option>
         <option value="0">Explorer</option>
         <option value="1">Member 1</option>
@@ -889,13 +896,19 @@
         <option value="3">Member 3</option>
       </select>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="cdHideWhenLocked" onchange="saveCourseTierGating()"/> Hide entirely below that tier (instead of showing locked)
+        <input type="checkbox" id="cdHideWhenLocked"/> Hide entirely below that tier (instead of showing locked)
       </label>
     </div>
     <div id="cdBody"></div>
+    <!-- Per Bot 24 — 2-second confirmation toast, shown in place while
+         the modal is still open (rather than after closing, where it
+         could be missed) — fixed height reserved via min-height so
+         nothing shifts when it appears/disappears. -->
+    <div id="cdSaveToast" style="min-height:20px;text-align:center;font-size:12.5px;color:rgba(180,230,200,0.85)"></div>
     <div class="modal-btns">
-      <button class="modal-cancel" onclick="closeModal('courseDetailModal')">Close</button>
-      <button class="modal-ok" onclick="openAddLesson()">+ Add lesson</button>
+      <button class="modal-cancel" onclick="cancelCourseDetail()">Cancel</button>
+      <button class="modal-ok" onclick="saveCourseDetailChanges()">Save</button>
+      <button class="btn sm" onclick="openAddLesson()">+ Add lesson</button>
     </div>
   </div>
 </div>
@@ -3473,6 +3486,18 @@ async function openCourseDetail(courseId){
   document.getElementById('cdEnforceFileSeq').checked=!!c.enforce_file_sequence;
   document.getElementById('cdRequiredTier').value = (c.required_tier===null||c.required_tier===undefined) ? '' : String(c.required_tier);
   document.getElementById('cdHideWhenLocked').checked=!!c.hide_when_locked;
+  // Per Bot 24 — snapshot of what's actually saved right now, so Cancel
+  // can revert the fields above without needing a full re-fetch. Retaken
+  // on every call to this function, including the internal ones after a
+  // bulk mandatory-all action — correct either way, since those actions
+  // are already-immediate commands, not part of what Save/Cancel govern.
+  _cdOriginal = {
+    enforceLessonSeq: !!c.enforce_lesson_sequence,
+    enforceFileSeq: !!c.enforce_file_sequence,
+    requiredTier: document.getElementById('cdRequiredTier').value,
+    hideWhenLocked: !!c.hide_when_locked,
+  };
+  document.getElementById('cdSaveToast').textContent = '';
   document.getElementById('alCourseId').value=courseId;
   const lessons=await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json());
   const el=document.getElementById('cdBody');
@@ -3640,6 +3665,36 @@ async function saveCourseTierGating(){
     body:JSON.stringify({requiredTier,hideWhenLocked})});
   const c=allCourses.find(x=>x.id===curCourseId);
   if(c){c.required_tier=requiredTier;c.hide_when_locked=hideWhenLocked?1:0;}
+}
+
+// Per Bot 24 — the actual Save/Cancel pair for the four settings fields
+// above (sequence + tier gating), which used to fire saveCourseSequence/
+// saveCourseTierGating individually on every single change with no
+// explicit confirmation at all. Save now calls both together (harmless
+// to call one even if only the other's fields changed — cheap, and far
+// simpler than tracking which of the two groups is actually dirty),
+// shows a 2s toast, then closes. Cancel just restores the snapshot
+// taken when the modal opened and closes — nothing needs undoing
+// server-side, since nothing was sent until Save was pressed.
+let _cdOriginal = null;
+function _cdShowToast(msg) {
+  const el = document.getElementById('cdSaveToast');
+  el.textContent = msg;
+  setTimeout(() => { closeModal('courseDetailModal'); }, 2000);
+}
+async function saveCourseDetailChanges() {
+  await saveCourseSequence();
+  await saveCourseTierGating();
+  _cdShowToast('Saved ok');
+}
+function cancelCourseDetail() {
+  if (_cdOriginal) {
+    document.getElementById('cdEnforceLessonSeq').checked = _cdOriginal.enforceLessonSeq;
+    document.getElementById('cdEnforceFileSeq').checked = _cdOriginal.enforceFileSeq;
+    document.getElementById('cdRequiredTier').value = _cdOriginal.requiredTier;
+    document.getElementById('cdHideWhenLocked').checked = _cdOriginal.hideWhenLocked;
+  }
+  _cdShowToast('Cancelled ok');
 }
 
 async function setLessonFileSequence(lessonId,value){

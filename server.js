@@ -2414,7 +2414,14 @@ app.post('/api/admin/users/create', auth.requireAuthApi(['admin']), async (req, 
     const passwordHash = await auth.hashPassword(tempPassword);
 
     db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
-      consentGiven: true, consentVersion: 'admin-added-v1', lawfulBasis: 'consent'
+      // Per Bot 24 — was hardcoded consentGiven:true, recording that
+      // this person had agreed to something they were never actually
+      // shown — an admin ticking a box on their behalf isn't their own
+      // consent. Left unset here; the mandatory first-login consent
+      // gate (client/index.html) now catches this correctly the first
+      // time they actually log in themselves, and records their real
+      // agreement then, same as every other account-creation path.
+      lawfulBasis: 'consent'
     });
     if (validSkinId) db.setUserSkin(id, validSkinId);
     if (offerTrialDays !== null) db.setSignupOfferId(id, offerId);
@@ -2459,8 +2466,8 @@ app.post('/api/admin/members', auth.requireAuthApi(['admin']), async (req, res) 
     const passwordHash = await auth.hashPassword(tempPassword);
 
     db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
-      consentGiven:    true,
-      consentVersion:  'admin-added-v1',
+      // Per Bot 24 — see the identical comment on /api/admin/members
+      // above for why consentGiven is no longer hardcoded true here.
       lawfulBasis:     'consent'
     });
     db.upgradeToMember(id, 'member');
@@ -2491,8 +2498,7 @@ app.post('/api/admin/explorers', auth.requireAuthApi(['admin']), async (req, res
     const passwordHash = await auth.hashPassword(tempPassword);
 
     db.createUser(id, name.trim(), null, emailLower, passwordHash, null, null, {
-      consentGiven:    true,
-      consentVersion:  'admin-added-v1',
+      // Per Bot 24 — see the identical comment on /api/admin/members above.
       lawfulBasis:     'consent'
     });
     if (skinId && db.getSkin(skinId)) db.setUserSkin(id, skinId);
@@ -2701,7 +2707,8 @@ app.post('/api/admin/members/bulk-import', auth.requireAuthApi(['admin']), uploa
       const passwordHash = await auth.hashPassword(tempPassword);
 
       db.createUser(id, name, null, email, passwordHash, null, null, {
-        consentGiven: true, consentVersion: 'admin-bulk-import-v1', lawfulBasis: 'consent'
+        // Per Bot 24 — see the identical comment on /api/admin/members above.
+        lawfulBasis: 'consent'
       });
       if (skinId) db.setUserSkin(id, skinId);
       if (offerTrialDays !== null) db.setSignupOfferId(id, batchOfferId);

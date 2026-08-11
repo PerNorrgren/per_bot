@@ -78,6 +78,23 @@
       transition:border-color 0.2s;
     }
     .field input:focus { border-color:rgba(180,230,200,0.4); }
+    /* Per Bot 24 — browsers force their own text/background colour on
+       autofilled fields via -webkit-text-fill-color, which normal color
+       CSS can't override — invisible black-on-dark-background text,
+       even though the field genuinely has content (autofilled or typed
+       after an autofill). "Current password" was the one this actually
+       got reported on, being the field a saved credential is most
+       likely to autofill into, but applied to every input here since
+       any of them could hit the same thing. The huge transition-delay
+       is the standard trick for neutralising the forced background
+       colour too, not just the text. */
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus {
+      -webkit-text-fill-color: rgba(255,255,255,0.9) !important;
+      -webkit-box-shadow: 0 0 0px 1000px rgba(255,255,255,0.06) inset !important;
+      transition: background-color 5000s ease-in-out 0s;
+    }
     .field input:disabled { opacity:0.4; cursor:not-allowed; }
     .field select {
       background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1);
@@ -551,6 +568,16 @@
       <div class="gdpr-row">
         <div class="gdpr-label">Lawful basis</div>
         <div class="gdpr-value" id="gdprBasis">—</div>
+      </div>
+      <!-- Per Bot 24 — the two fields above are the old, single-flag
+           summary; this is the real, per-document audit trail
+           (getUserConsentHistory), showing exactly which document,
+           which version, and when — the two above can't distinguish
+           "agreed to the Privacy Policy" from "agreed to the Clinical
+           Disclaimer", this can. -->
+      <div class="gdpr-row" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div class="gdpr-label">Documents you've agreed to</div>
+        <div id="gdprConsentHistory" style="font-size:12.5px;color:rgba(255,255,255,0.5);line-height:1.8">Loading…</div>
       </div>
       <div class="gdpr-row" style="border-bottom:none;padding-top:14px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.05)">
         <button class="gdpr-link" onclick="requestData()">Download my data</button>
@@ -1377,6 +1404,28 @@
   // ── Boot ──
   loadAccount();
   loadReferralCard();
+  loadConsentHistory();
+
+  // Per Bot 24 — real per-document consent history, replacing the old
+  // single flag as the actual source of truth for "what has this person
+  // agreed to". Uses the same /api/my/consents the mandatory first-login
+  // gate does.
+  async function loadConsentHistory() {
+    const el = document.getElementById('gdprConsentHistory');
+    try {
+      const res = await fetch('/api/my/consents');
+      const data = await res.json();
+      const history = data.history || [];
+      if (!history.length) { el.textContent = 'No records yet.'; return; }
+      el.innerHTML = history.map(h => `
+        <div style="display:flex;justify-content:space-between;gap:10px">
+          <span>${(h.title || h.slug)} (v${h.version})</span>
+          <span style="color:rgba(255,255,255,0.3);flex-shrink:0">${(h.accepted_at||'').slice(0,10)}</span>
+        </div>`).join('');
+    } catch(e) {
+      el.textContent = 'Could not load.';
+    }
+  }
 </script>
 
 <!-- Per Bot 24 — matching the SPA's bottom nav, added to this page for

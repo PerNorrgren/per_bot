@@ -7083,7 +7083,13 @@ function hasUserAcceptedDocument(userId, slug) {
 }
 
 function getPendingConsentsForUser(userId) {
-  const docs = getAllCurrentLegalDocuments();
+  // Per Bot 24 — was ignoring the user's own skin entirely, always
+  // checking against the global document set even for someone on a
+  // skin with its own overridden version — could show them the wrong
+  // document, or wrongly mark a global-only document as satisfied by a
+  // skin-specific consent that doesn't actually match what they'd see.
+  const user = queryOne('SELECT skin_id FROM users WHERE id=?', [userId]);
+  const docs = getAllCurrentLegalDocuments(user && user.skin_id);
   return docs.filter(doc => {
     if (!doc.requires_consent) return false;
     const consent = queryOne(

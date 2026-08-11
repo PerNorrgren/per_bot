@@ -1414,6 +1414,34 @@
 </div>
 
 <!-- Quiz-taking overlay -->
+<!-- Per Bot 24 — mandatory consent gate. Checked once on every app boot
+     via checkPendingConsents() (see the script below); shown whenever
+     someone has an outstanding un-agreed mandatory document, regardless
+     of how their account came to exist — this one gate correctly covers
+     self-registration (if it somehow slipped through), guest→registered
+     conversion, and admin/facilitator-created accounts alike, since it
+     just asks "does this specific person have unresolved consent right
+     now", not "how did this account get created". Deliberately no
+     close/cancel/skip — the whole point is that these are the documents
+     that have to be agreed before using the app, so nothing else here
+     is reachable until they are. z-index above every other overlay for
+     the same reason. -->
+<div class="pw-overlay" id="consentGateOverlay" style="z-index:500">
+  <div class="pw-modal" style="max-width:480px">
+    <h3>Before you continue</h3>
+    <div style="font-size:12px;color:rgba(255,255,255,0.45);line-height:1.6;margin-bottom:14px">Please read and agree to continue.</div>
+    <div id="consentGateList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+    <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px">
+      <input type="checkbox" id="consentGateCheckbox" onchange="document.getElementById('consentGateBtn').disabled = !this.checked" style="margin-top:3px"/>
+      <span style="font-size:13px;color:rgba(255,255,255,0.7)">I have read and agree to the above.</span>
+    </label>
+    <div class="pw-err" id="consentGateErr"></div>
+    <div class="pw-btns">
+      <button class="pw-ok" id="consentGateBtn" onclick="submitConsentGate()" disabled>Continue</button>
+    </div>
+  </div>
+</div>
+
 <div class="pw-overlay" id="quizOverlay">
   <div class="pw-modal" style="max-width:440px">
     <h3 id="quizOverlayTitle">Quiz</h3>
@@ -6857,11 +6885,55 @@
     } catch(e) { alert('Network error — could not exit. Try refreshing the page.'); }
   }
 
+  // Per Bot 24 — mandatory legal consent gate. Deliberately checks fresh
+  // on every load rather than caching "already agreed" client-side —
+  // cheap enough, and means a newly-published mandatory document (or a
+  // version bump on an existing one) gets picked up the very next time
+  // anyone opens the app, not just for brand-new accounts.
+  let _pendingConsentDocs = [];
+  async function checkPendingConsents() {
+    try {
+      const res = await fetch('/api/my/consents');
+      if (!res.ok) return; // not authenticated as a client yet, or a genuine network hiccup — nothing to gate
+      const data = await res.json();
+      _pendingConsentDocs = data.pending || [];
+      if (!_pendingConsentDocs.length) return;
+      const list = document.getElementById('consentGateList');
+      list.innerHTML = _pendingConsentDocs.map(doc => `
+        <a href="/legal/${doc.slug}" target="_blank" style="display:block;padding:10px 12px;border:1px solid rgba(180,230,200,0.25);background:rgba(180,230,200,0.06);border-radius:8px;color:rgba(200,235,215,0.9);text-decoration:none;font-size:13.5px">${escHtmlJournal(doc.title)} →</a>
+      `).join('');
+      document.getElementById('consentGateCheckbox').checked = false;
+      document.getElementById('consentGateBtn').disabled = true;
+      document.getElementById('consentGateErr').textContent = '';
+      document.getElementById('consentGateOverlay').classList.add('visible');
+    } catch(e) { /* if this genuinely fails, better to let someone in than lock them out on a network blip */ }
+  }
+  async function submitConsentGate() {
+    const btn = document.getElementById('consentGateBtn');
+    const err = document.getElementById('consentGateErr');
+    setBtnLoading(btn, true, 'Saving…');
+    try {
+      for (const doc of _pendingConsentDocs) {
+        const res = await fetch('/api/my/consents', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentId: doc.id, slug: doc.slug, version: doc.version }),
+        });
+        if (!res.ok) throw new Error('save failed');
+      }
+      document.getElementById('consentGateOverlay').classList.remove('visible');
+    } catch(e) {
+      err.textContent = 'Could not save — please check your connection and try again.';
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  }
+
   // Kick off the resume card check as soon as the page loads, independent of
   // whichever tab happens to be active first.
   loadResumeCard();
   loadA11yPrefsFromServer();
   checkOnboarding();
+  checkPendingConsents(); // Per Bot 24 — see the function itself for why this one gate covers every account-creation path at once.
   // Per Bot 12: quietly watches for an incoming video/audio call from this
   // client's facilitator, independent of whichever tab is active — same
   // "run once, regardless of tab" reasoning as the two calls above.
