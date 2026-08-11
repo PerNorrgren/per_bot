@@ -268,6 +268,59 @@
     AudioBlot.tagName = 'DIV';
     AudioBlot.className = 'ql-audio-block';
     Quill.register(AudioBlot);
+
+    // Per Bot 25 — private media block. Used only where opts.privateMedia
+    // is set (currently Journal). Unlike VideoBlot/AudioBlot above, this
+    // NEVER stores a usable URL — value(node) returns the stable R2 key
+    // only, since a signed URL would go stale before the entry is next
+    // opened. The actual <img>/<video>/<audio> starts with no src at
+    // all; resolvePrivateMedia() (exported below) fills it in with a
+    // freshly-signed URL every time this content is actually displayed,
+    // whether that's this Quill instance mounting existing content, or a
+    // read-only render of a saved entry elsewhere in the app.
+    class PrivateMediaBlot extends BlockEmbed {
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('contenteditable', 'false');
+        node.style.cssText = 'margin:10px 0;';
+        node.dataset.mediaKey = value.key;
+        node.dataset.mediaKind = value.kind;
+        const tag = value.kind === 'image' ? 'img' : value.kind;
+        const attrs = value.kind === 'image' ? 'style="max-width:100%;display:block;border-radius:8px;"' : 'controls style="width:100%"';
+        node.innerHTML = `<${tag} class="ql-private-media" data-media-key="${value.key}" data-media-kind="${value.kind}" ${attrs}></${tag}>`;
+        return node;
+      }
+      static value(node) { return { key: node.dataset.mediaKey, kind: node.dataset.mediaKind }; }
+    }
+    PrivateMediaBlot.blotName = 'privateMediaBlock';
+    PrivateMediaBlot.tagName = 'DIV';
+    PrivateMediaBlot.className = 'ql-private-media-block';
+    Quill.register(PrivateMediaBlot);
+  }
+
+  // Per Bot 25 — resolves every not-yet-resolved private-media element
+  // under rootEl to a real, currently-valid signed URL. Call this after
+  // mounting/populating any content that might contain privateMediaBlock
+  // embeds — both the live editor (mountRich does this automatically
+  // when opts.privateMedia is set) and any read-only display of saved
+  // content elsewhere in the app (e.g. the Journal list view), which
+  // this module has no visibility into on its own. Safe to call
+  // repeatedly — already-resolved elements are skipped via the
+  // data-resolved marker, and a stale signed URL simply won't be
+  // refreshed by a second call; re-render the content itself to force
+  // a fresh resolve if content has been sitting open long enough for the
+  // 10-minute signed URL to expire.
+  async function resolvePrivateMedia(rootEl) {
+    if (!rootEl) return;
+    const els = Array.from(rootEl.querySelectorAll('.ql-private-media[data-media-key]:not([data-resolved])'));
+    await Promise.all(els.map(async (el) => {
+      const key = el.getAttribute('data-media-key');
+      try {
+        const res = await fetch('/api/journal/media-url?key=' + encodeURIComponent(key));
+        const data = await res.json();
+        if (data.url) { el.src = data.url; el.setAttribute('data-resolved', '1'); }
+      } catch (e) { /* leave unresolved — a broken embed is better than a crash */ }
+    }));
   }
 
   let lastClickedImage = null;
@@ -682,7 +735,44 @@
     input.click();
   }
 
-  // AI Help — reads the whole editor, sends it for a full rewrite,
+  // Per Bot 25 — private-media upload (Journal). Same two-step shape as
+  // everywhere else: upload the file, get back a stable key (never a
+  // URL — see the private_media schema comment in server.js), embed the
+  // key, then resolve it to a real signed URL via resolvePrivateMedia
+  // once the embed actually exists in the DOM.
+  async function uploadPrivateMediaIntoEditor(q, kind) {
+    const accept = kind === 'image' ? 'image/*' : kind === 'video' ? 'video/*' : 'audio/*';
+    const label = kind === 'image' ? 'photo' : kind;
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = accept;
+    const range = q.getSelection(true) || { index: q.getLength() };
+    q.insertText(range.index, `Uploading ${label}…`);
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) { q.deleteText(range.index, `Uploading ${label}…`.length); return; }
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/journal/media-upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.key) {
+          q.deleteText(range.index, `Uploading ${label}…`.length);
+          window.appAlert(data.error || `Could not upload ${label}.`);
+          return;
+        }
+        q.deleteText(range.index, `Uploading ${label}…`.length);
+        q.insertEmbed(range.index, 'privateMediaBlock', { key: data.key, kind });
+        if (range.index + 1 >= q.getLength() - 1) q.insertText(range.index + 1, ' ');
+        q.setSelection(range.index + 1);
+        resolvePrivateMedia(q.root);
+      } catch (e) {
+        q.deleteText(range.index, `Uploading ${label}…`.length);
+        window.appAlert(`Network error — could not upload ${label}.`);
+      }
+    };
+    input.click();
+  }
+
   // replaces the editor's content outright on success. No accept/discard
   // step by design — easy to amend anything afterward, and a review
   // modal would just add friction for something meant to be a quick
@@ -772,14 +862,19 @@
       // Every plain content field that isn't a marketing email — Journal
       // entries, course/lesson descriptions, facilitator session notes.
       // Same formatting and AI Help as 'full', without the email-specific
-      // building blocks (images/video/columns/buttons) that don't belong
-      // in this kind of field.
+      // building blocks (columns/buttons) that don't belong in this kind
+      // of field. opts.privateMedia (Journal only, for now — see the
+      // privateMediaBlock comment above) adds a private image/video/audio
+      // group; other 'simple' fields get none of that until their own
+      // privacy model is decided.
       simple: [
         [{ header: [2, 3, false] }],
         ['bold', 'italic', 'underline'],
         [{ align: [] }],
         [{ list: 'ordered' }, { list: 'bullet' }],
-        ['link'], ['ai-polish'], ['clean'],
+        ['link'],
+        ...(opts.privateMedia ? [['p-image', 'p-video', 'p-audio']] : []),
+        ['ai-polish'], ['clean'],
       ],
       // The small inline message composers (client↔facilitator direct
       // messages). No headers/lists/clean — there's no room for a second
@@ -800,6 +895,9 @@
             'video-link': () => insertVideoLink(q),
             'nl-video': () => insertNewsletterVideo(q),
             audio: () => uploadAudioIntoEditor(q),
+            'p-image': () => uploadPrivateMediaIntoEditor(q, 'image'),
+            'p-video': () => uploadPrivateMediaIntoEditor(q, 'video'),
+            'p-audio': () => uploadPrivateMediaIntoEditor(q, 'audio'),
             'image-link': () => linkSelectedImage(q),
             'image-copy': () => copySelectedImage(q),
             'image-resize': () => shrinkSelectedImage(q),
@@ -903,6 +1001,9 @@
     label('.ql-video-link', '▶', 'Insert a video link');
     label('.ql-nl-video', '🎬', 'Upload a video and insert an inline player');
     label('.ql-audio', '🎵', 'Upload an audio file and insert a player');
+    label('.ql-p-image', '📷', 'Add a photo');
+    label('.ql-p-video', '🎬', 'Add a video');
+    label('.ql-p-audio', '🎵', 'Add an audio recording');
     label('.ql-image-link', '🔗', 'Click an image first to select it, then click here to link it');
     label('.ql-image-copy', '📋', 'Click an image first to select it, then click here to copy it to your clipboard — paste it anywhere, including elsewhere in this message, as a way to move it');
     label('.ql-image-resize', '🗜️', "Click an image first, resize it with its own handles to the size you want it shown at, then click here — shrinks the actual file to match, keeping the email lighter");
@@ -1022,6 +1123,7 @@
     }, true);
 
     if (initialHtml) q.clipboard.dangerouslyPasteHTML(initialHtml);
+    if (opts.privateMedia) resolvePrivateMedia(q.root);
     instances[containerId] = q;
     // Per Bot 24 — explicit spell-check, rather than relying on browser
     // default behaviour for a contenteditable region, which is
@@ -1100,7 +1202,13 @@
     const ta = document.getElementById(textareaId);
     if (ta) ta.value = html || '';
     const q = instances[textareaId + '_rich'];
-    if (q) q.root.innerHTML = html || '';
+    if (q) {
+      q.root.innerHTML = html || '';
+      // Defensive — no current call site loads existing private-media
+      // content this way (Journal only ever resets to blank here), but
+      // costs nothing to keep correct if that changes later.
+      resolvePrivateMedia(q.root);
+    }
   }
 
   // ── AI generate & insert (Per Bot 54) — a simplified, portable version
@@ -1302,7 +1410,7 @@
   window.MessageEditor = {
     insertTokenAtField, insertTokenAtRich, standardTokens, tokenSelectHtml,
     formatToggleHtml, mountRich, destroy, getHtml, isMounted, getInstance,
-    mountOnTextarea, setTextareaContent,
+    mountOnTextarea, setTextareaContent, resolvePrivateMedia,
     aiGenerateHtml, runAiGenerate, retryAiGenerate, closeAiPreview, insertAiResult,
     renderVersionSection, refreshVersionSection,
   };

@@ -10063,6 +10063,58 @@ app.get('/api/journal/:id/audio-url', auth.requireAuthApi(['client']), async (re
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Private media for embedded Journal images/video/audio (Per Bot 25) ──
+// Distinct from the newsletter-images/videos/audio endpoints above (those
+// are permanently, unauthenticated-ly public by design — correct for
+// broadcast content, wrong for a client's own journal photo). Two-step,
+// same shape as the rest of this app's R2 flows: upload once, store only
+// the stable r2_key inside the saved rich-text HTML (see message-editor.js's
+// privateImageBlock/privateVideoBlock/privateAudioBlock — those blots
+// deliberately serialize the key, never a resolved URL, since signed URLs
+// expire), then resolve a fresh signed URL every time the content is
+// actually displayed. Ownership is rooted in whoever uploaded it
+// (private_media.uploaded_by) — the resolve endpoint below is the one
+// and only gate; nobody else, including another client or a facilitator,
+// can ever resolve a URL for someone else's embedded media through this
+// path. (Sharing a journal entry with a facilitator today only shares
+// the entry's *text* — embedded media inside a shared entry will show as
+// a broken/unresolvable placeholder for the facilitator. Extending
+// resolution to a client's own facilitator when an entry is actually
+// shared is a reasonable next step, but a separate decision — not done
+// here.)
+app.post('/api/journal/media-upload', auth.requireAuthApi(['client']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    const mimetype = req.file.mimetype || '';
+    if (!mimetype.startsWith('image/') && !mimetype.startsWith('video/') && !mimetype.startsWith('audio/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only image, video, or audio files are supported here.' });
+    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = (req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    const key = `journal-media/${uuidv4()}${ext}`;
+    await media.putObject(key, buffer, mimetype);
+    db.recordPrivateMediaUpload(key, req.user.id, 'journal', mimetype);
+    fs.unlink(req.file.path, () => {});
+    res.json({ key, mimeType: mimetype });
+  } catch (e) {
+    console.error('journal media upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload: ' + e.message });
+  }
+});
+app.get('/api/journal/media-url', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const key = req.query.key;
+    if (!key || !key.startsWith('journal-media/')) return res.status(400).json({ error: 'Invalid key.' });
+    const owner = db.getPrivateMediaOwner(key);
+    if (!owner || owner !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    const url = await media.getPlaybackUrl(key);
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/api/journal/:id', auth.requireAuthApi(['client']), (req, res) => {
   try {
     db.deleteJournalEntry(req.params.id, req.user.id); // scoped to req.user.id — can't delete someone else's entry
