@@ -2747,7 +2747,12 @@
             document.getElementById('saveTalkBtn').style.display = '';
             document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
           }
-          document.getElementById('shareTalkBtn').style.display = '';
+          // Per Bot 24 — Share removed per Per's own call (wasn't being
+          // used, and the email it generated wasn't useful — just a dump
+          // of the on-screen text plus a registration link). Left the
+          // button itself in the DOM, and every "hide" call to it below
+          // untouched, so nothing else in this fairly fragile flow needed
+          // touching — just stopped making it visible again here.
         }
         // The opening greeting ('[[START]]') is the first thing anyone
         // actually hears spoken aloud — the earliest moment choosing a
@@ -5653,7 +5658,7 @@
     lastBotReply = transcriptEl.textContent;
     document.getElementById('saveTalkBtn').style.display = '';
     document.getElementById('saveTalkBtn').textContent = 'Save this to my practices';
-    document.getElementById('shareTalkBtn').style.display = '';
+    // Per Bot 24 — Share removed here too, same reasoning as above.
   }
 
   // Per Bot 16 — these used to play as one flat, unpaced clip ("Deliberately

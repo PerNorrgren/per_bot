@@ -193,9 +193,19 @@
 
     /* Divider */
     .divider { height:1px; background:rgba(255,255,255,0.05); }
+
+    /* Per Bot 24 — matching the SPA's bottom nav exactly, so this page
+       stops being the one place in the app without it. Buttons link
+       straight to /client/ (a real page navigation, not a smooth SPA
+       tab switch — this page sits outside the SPA entirely) rather than
+       trying to land on a specific tab; simplest option that actually
+       gets someone back into the app from wherever they are. */
+    .bottom-nav { display:flex; border-top:1px solid rgba(255,255,255,0.08); flex-shrink:0; background:rgba(0,0,0,0.12); position:fixed; left:0; right:0; bottom:0; max-width:480px; margin:0 auto; }
+    .bnav-btn { flex:1; padding:14px 4px 12px; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:15px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; text-decoration:none; }
+    .bnav-icon { font-size:22px; opacity:0.55; }
   </style>
 </head>
-<body>
+<body style="padding-bottom:76px">
 <script>
   // Per Bot 25 — applied before anything else renders, using whatever
   // was cached locally last time, so there's no flash before this page's
@@ -1266,6 +1276,16 @@
   // ── Boot ──
   loadAccount();
 </script>
+
+<!-- Per Bot 24 — matching the SPA's bottom nav, added to this page for
+     the first time (see the CSS comment above for why plain links to
+     /client/ rather than tab-specific ones). -->
+<div class="bottom-nav">
+  <a class="bnav-btn" href="/client/"><span class="bnav-icon">💬</span>Talk</a>
+  <a class="bnav-btn" href="/client/"><span class="bnav-icon">📚</span>Library</a>
+  <a class="bnav-btn" href="/client/"><span class="bnav-icon">🎓</span>Courses</a>
+  <a class="bnav-btn" href="/client/"><span class="bnav-icon">🧘</span>You</a>
+</div>
 
 <script>window.TOMTE_PAGE = 'My Account';</script>
 <script src="/tomte-widget.js" defer></script>
