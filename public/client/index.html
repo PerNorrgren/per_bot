@@ -241,7 +241,22 @@
     .rich-editor-container { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; margin-bottom:10px; }
     .rich-editor-container .ql-toolbar.ql-snow { border:none; border-bottom:1px solid rgba(255,255,255,0.12); border-radius:8px 8px 0 0; background:rgba(255,255,255,0.03); }
     .rich-editor-container .ql-container.ql-snow { border:none; font-family:'Georgia',serif; font-size:14px; color:rgba(255,255,255,0.9); min-height:120px; }
-    .rich-editor-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); font-style:normal; }
+    /* Per Bot 25 — the rule above only set color on .ql-container and
+       relied on inheritance down to the actual typed text. Reported as
+       "blacked out" text in the Journal field: typing produced nothing
+       visible. Most likely cause is iOS/mobile Safari's contenteditable
+       quirk where -webkit-text-fill-color renders the glyph
+       independently of the inherited `color` — so color can be correct
+       while the visible text still paints black on this dark background.
+       Setting color AND -webkit-text-fill-color explicitly on .ql-editor
+       itself (not just its ancestor) and on the actual <p> text nodes,
+       with !important, closes both that path and any other inherited/
+       forced-style override that could be reaching the same result. */
+    .rich-editor-container .ql-editor,
+    .rich-editor-container .ql-editor p,
+    .rich-editor-container .ql-editor li,
+    .rich-editor-container .ql-editor span { color:rgba(255,255,255,0.9) !important; -webkit-text-fill-color:rgba(255,255,255,0.9) !important; }
+    .rich-editor-container .ql-editor.ql-blank::before { color:rgba(255,255,255,0.3); -webkit-text-fill-color:rgba(255,255,255,0.3); font-style:normal; }
     .rich-editor-container .ql-stroke { stroke:rgba(255,255,255,0.55); }
     .rich-editor-container .ql-fill { fill:rgba(255,255,255,0.55); }
     .rich-editor-container .ql-picker-label { color:rgba(255,255,255,0.55); }
@@ -2856,13 +2871,31 @@
         // prompting people to try other voices after the default plays).
         else maybeShowKeepHistoryPrompt();
       } else {
+        // Per Bot 25 — the server responded but with no reply text (an
+        // error path in /api/chat that returns {error:...} rather than
+        // {reply:...}, e.g. a Claude API hiccup). This used to call
+        // setState('') — a value none of setState's branches actually
+        // handle — which left the mic button, status text, and "Tap to
+        // Talk" hint all hidden with no way back in. The transcript still
+        // showed what the person just said, so it looked like Talk had
+        // simply gone silent and stopped responding. Falling back to
+        // 'idle' restores the tap hint so the conversation can continue,
+        // with an explicit note that this turn didn't go through.
         busy = false;
-        setState('');
+        setState('idle');
+        tapHintEl.textContent = "That didn't come through — tap to try again";
+        tapHintEl.classList.add('visible');
+        setTimeout(() => { if (!micActive) tapHintEl.textContent = 'Tap to Talk'; }, 6000);
       }
     } catch(e) {
       console.error('chat error', e);
+      // Per Bot 25 — same dead-end fix as above, for genuine network/
+      // fetch failures (not just a server-side error response).
       busy = false;
-      setState('');
+      setState('idle');
+      tapHintEl.textContent = "That didn't come through — tap to try again";
+      tapHintEl.classList.add('visible');
+      setTimeout(() => { if (!micActive) tapHintEl.textContent = 'Tap to Talk'; }, 6000);
     }
   }
 
