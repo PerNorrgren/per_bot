@@ -2874,6 +2874,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
       recentPoems: db.getRecentStandaloneFiles('poem', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentBooks: db.getRecentStandaloneFiles('book', null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
+      liveMeetings: db.getLiveMeetings(true), // Per Bot 38 — its own shelf, Books then Live Meetings
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2890,6 +2891,30 @@ app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res)
     const files = db.getRecentStandaloneFiles(req.params.type, null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) }));
     res.json(files);
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Live meetings admin CRUD (Per Bot 38) ── Recurring group calls
+// (Zoom etc.) shown as their own carousel under Books on the splash
+// screen. Simple list — no separate detail page, matching how small the
+// feature actually is right now (one meeting, maybe a few more later).
+app.get('/api/admin/live-meetings', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
+  try { res.json(db.getLiveMeetings(false)); } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/live-meetings', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
+  try {
+    const { title, schedule_text, meeting_url, sort_order, active } = req.body || {};
+    if (!title || !schedule_text || !meeting_url) return res.status(400).json({ error: 'Title, schedule text, and meeting URL are all required.' });
+    const id = db.createLiveMeeting({ title, schedule_text, meeting_url, sort_order: sort_order || 0, active: active !== false });
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/live-meetings/:id', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
+  try { db.updateLiveMeeting(req.params.id, req.body || {}); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/live-meetings/:id', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
+  try { db.deleteLiveMeeting(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {

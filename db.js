@@ -37,6 +37,23 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Live meetings (Per Bot 38) ── Recurring group calls (Zoom etc.),
+  // shown as their own carousel on the splash screen (Books, then Live
+  // Meetings). Deliberately its own small table rather than a JSON blob
+  // on app_config — Per's asked for "another carousel" here, implying
+  // more than the one Thursday meeting eventually, and a real table
+  // gives ordering/active-toggle/multiple-rows for free the way a
+  // single config field wouldn't.
+  db.run(`CREATE TABLE IF NOT EXISTS live_meetings (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    schedule_text TEXT NOT NULL,
+    meeting_url TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── 1:1 video/audio calls (Per Bot 12) ──
   // One row per call attempt between a facilitator and a client. Recording
   // is genuinely optional per call (consent asked fresh each time, not a
@@ -2835,6 +2852,38 @@ function archiveLibraryFile(id, archived) {
 // ── Library file tags (Per Bot 13) ──
 // addFileTag is idempotent (UNIQUE(file_id,tag) + INSERT OR IGNORE) so re-running
 // an import script never duplicates a tag on the same file.
+// ── Live meetings (Per Bot 38) ──
+function getLiveMeetings(activeOnly = false) {
+  const rows = queryAll(`SELECT * FROM live_meetings ${activeOnly ? 'WHERE active=1' : ''} ORDER BY sort_order ASC, created_at ASC`);
+  return rows.map(r => ({ ...r, active: !!r.active }));
+}
+function createLiveMeeting({ title, schedule_text, meeting_url, sort_order = 0, active = 1 }) {
+  const id = crypto.randomUUID();
+  getDbSync().run(
+    'INSERT INTO live_meetings (id,title,schedule_text,meeting_url,sort_order,active) VALUES (?,?,?,?,?,?)',
+    [id, title, schedule_text, meeting_url, sort_order, active ? 1 : 0]
+  );
+  save();
+  return id;
+}
+function updateLiveMeeting(id, fields) {
+  const cols = ['title', 'schedule_text', 'meeting_url', 'sort_order', 'active'];
+  const sets = [], vals = [];
+  for (const c of cols) {
+    if (fields[c] === undefined) continue;
+    sets.push(`${c}=?`);
+    vals.push(c === 'active' ? (fields[c] ? 1 : 0) : fields[c]);
+  }
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE live_meetings SET ${sets.join(',')} WHERE id=?`, vals);
+  save();
+}
+function deleteLiveMeeting(id) {
+  getDbSync().run('DELETE FROM live_meetings WHERE id=?', [id]);
+  save();
+}
+
 function addFileTag(fileId, tag) {
   getDbSync().run('INSERT OR IGNORE INTO library_file_tags (id,file_id,tag) VALUES (?,?,?)', [crypto.randomUUID(), fileId, tag]);
   save();
@@ -7500,6 +7549,7 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
+  getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,

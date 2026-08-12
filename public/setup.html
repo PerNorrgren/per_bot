@@ -250,6 +250,24 @@
     </div>
   </div>
 
+  <!-- Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
+       shown as their own carousel under Books on the splash screen.
+       Same list-plus-add-row pattern as Skins above. -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Live Meetings</div></div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:16px">Recurring group calls — e.g. "Every Thursday morning" — shown as their own carousel under Books on the splash screen. Tapping a card opens the meeting URL directly.</div>
+      <div id="liveMeetingsList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px"></div>
+      <div style="display:flex; flex-direction:column; gap:8px; padding:12px; background:rgba(255,255,255,0.03); border-radius:10px">
+        <input type="text" id="newMeetingTitle" placeholder="Title, e.g. Weekly Live Meeting"/>
+        <input type="text" id="newMeetingSchedule" placeholder="Schedule text, e.g. Every Thursday morning"/>
+        <input type="text" id="newMeetingUrl" placeholder="Meeting URL, e.g. https://zoom.us/j/..."/>
+        <button class="btn-primary" style="padding:9px 18px; font-size:12px; white-space:nowrap; align-self:flex-start" onclick="createLiveMeeting()">+ Add meeting</button>
+      </div>
+      <div class="msg err" id="liveMeetingsErr" style="margin-top:8px"></div>
+    </div>
+  </div>
+
   <!-- Per Bot 25 — Maintenance. Per asked where the code/DB actually
        live and wanted a way to pull a full copy of the database
        himself — this is that. Streams the live SQLite file straight
@@ -363,6 +381,61 @@
     btn.textContent = 'Run selected';
   }
   loadAdminScripts();
+
+  // ── Live Meetings (Per Bot 38) ──
+  let _liveMeetingsData = [];
+  async function loadLiveMeetings() {
+    try {
+      const res = await fetch('/api/admin/live-meetings');
+      _liveMeetingsData = await res.json();
+      renderLiveMeetingsList();
+    } catch(e) { /* quiet — secondary panel */ }
+  }
+  function renderLiveMeetingsList() {
+    const el = document.getElementById('liveMeetingsList');
+    if (!_liveMeetingsData.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No live meetings yet — the Books shelf on the splash screen will not show a Live Meetings row until there is at least one.</div>'; return; }
+    el.innerHTML = _liveMeetingsData.map(m => `
+      <div style="display:flex; flex-direction:column; gap:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 14px; ${m.active ? '' : 'opacity:0.5'}">
+        <div style="display:flex; align-items:center; gap:10px">
+          <div style="flex:1">
+            <div style="font-size:13.5px;color:rgba(255,255,255,0.85)">${m.title}</div>
+            <div style="font-size:11.5px;color:rgba(255,255,255,0.4)">${m.schedule_text}</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.5);cursor:pointer;white-space:nowrap">
+            <input type="checkbox" ${m.active ? 'checked' : ''} onchange="toggleLiveMeetingActive('${m.id}', this.checked)"/> Active
+          </label>
+          <button style="padding:6px 12px;font-size:11px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,180,170,0.85);cursor:pointer" onclick="deleteLiveMeeting('${m.id}')">Delete</button>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35);word-break:break-all">${m.meeting_url}</div>
+      </div>
+    `).join('');
+  }
+  async function createLiveMeeting() {
+    const titleEl = document.getElementById('newMeetingTitle');
+    const schedEl = document.getElementById('newMeetingSchedule');
+    const urlEl = document.getElementById('newMeetingUrl');
+    const errEl = document.getElementById('liveMeetingsErr');
+    const title = titleEl.value.trim(), schedule_text = schedEl.value.trim(), meeting_url = urlEl.value.trim();
+    if (!title || !schedule_text || !meeting_url) { errEl.textContent = 'Title, schedule text, and meeting URL are all required.'; return; }
+    errEl.textContent = '';
+    try {
+      const res = await fetch('/api/admin/live-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, schedule_text, meeting_url }) });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Could not add the meeting.'; return; }
+      titleEl.value = ''; schedEl.value = ''; urlEl.value = '';
+      await loadLiveMeetings();
+    } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  }
+  async function toggleLiveMeetingActive(id, active) {
+    try { await fetch(`/api/admin/live-meetings/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }); await loadLiveMeetings(); }
+    catch(e) { document.getElementById('liveMeetingsErr').textContent = 'Could not update — please try again.'; }
+  }
+  async function deleteLiveMeeting(id) {
+    if (!confirm('Remove this live meeting? This cannot be undone.')) return;
+    try { await fetch(`/api/admin/live-meetings/${id}`, { method: 'DELETE' }); await loadLiveMeetings(); }
+    catch(e) { document.getElementById('liveMeetingsErr').textContent = 'Could not delete — please try again.'; }
+  }
+  loadLiveMeetings();
   </script>
 
   <!-- Skin editor — appears when a skin from the list above is opened.

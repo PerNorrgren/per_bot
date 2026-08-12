@@ -5413,7 +5413,8 @@
         Array.isArray(data.content) ? data.content : [],
         Array.isArray(data.recentPoems) ? data.recentPoems : [],
         Array.isArray(data.recentPosts) ? data.recentPosts : [],
-        Array.isArray(data.recentBooks) ? data.recentBooks : []
+        Array.isArray(data.recentBooks) ? data.recentBooks : [],
+        Array.isArray(data.liveMeetings) ? data.liveMeetings : []
       );
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
     // Same WebKit quirk as Tomte's panel and the lesson chooser: adding
@@ -5444,7 +5445,8 @@
   // items — automatic by recency, no manual Featured curation needed for
   // these two.
   let _shelvesData = [];
-  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks) {
+  let _liveMeetingsById = {};
+  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks, liveMeetings) {
     _featuredContentData = content.concat(recentPoems, recentPosts, recentBooks);
     const el = document.getElementById('featuredShelves');
     const shelves = [];
@@ -5502,6 +5504,27 @@
 
     if (recentBooks.length) {
       shelves.push({ label: 'Books', rows: recentBooks, cardHtml: miniCard });
+    }
+
+    // Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
+    // its own carousel right after Books. Tapping a card opens the
+    // meeting URL directly in a new tab — on a phone this hands off to
+    // the Zoom app automatically if it's installed (standard zoom.us
+    // universal-link behaviour), same as tapping a Zoom link anywhere
+    // else. No lock/accessible concept here unlike every other shelf —
+    // a live meeting is either on for everyone or it isn't (the Active
+    // toggle in Settings > Live Meetings), there's no tier gating to
+    // represent.
+    if (liveMeetings && liveMeetings.length) {
+      const meetingCard = (m) => `
+        <div class="shelf-card" onclick="openLiveMeeting('${m.id}')">
+          <div class="shelf-card-title">🎥 ${m.title}</div>
+          <div class="shelf-card-meta">${m.schedule_text}</div>
+        </div>
+      `;
+      _liveMeetingsById = {};
+      liveMeetings.forEach(m => { _liveMeetingsById[m.id] = m; });
+      shelves.push({ label: 'Live Meetings', rows: liveMeetings, cardHtml: meetingCard });
     }
 
     // poems/posts keep this around for the "More poems/posts →" link
@@ -5668,6 +5691,15 @@
     const f = _featuredContentData.find(x => x.id === id);
     if (!f) return;
     openContentFile({ id: f.id, title: f.title, file_type: f.file_type, description: f.description || '', content_type: f.content_type, accessible: f.accessible });
+  }
+
+  // Per Bot 38 — window.open (not location.href) so the app itself stays
+  // put; on a phone this hands off to the Zoom app automatically if it's
+  // installed, same as tapping any other zoom.us link.
+  function openLiveMeeting(id) {
+    const m = _liveMeetingsById[id];
+    if (!m || !m.meeting_url) return;
+    window.open(m.meeting_url, '_blank');
   }
 
   async function loadCalmLandingContent() {
