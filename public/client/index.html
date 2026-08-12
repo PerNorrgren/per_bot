@@ -233,11 +233,6 @@
     @media (max-width: 480px) {
       #youView .lib-subnav { flex-wrap: wrap; overflow-x: visible; }
       #youView .lib-subnav-btn-danger { margin-left: 0; }
-      /* Per Bot 25 — My Practices table Date column: full timestamp
-         (down to the second) is genuinely useful on desktop for telling
-         apart a batch of same-day uploads, but there's no room for it on
-         a phone-width screen — just the date stays. */
-      .mp-time { display: none; }
     }
     .lib-sub-panel { display:none; flex-direction:column; overflow:hidden; flex:1; min-height:0; }
     .lib-sub-panel.visible { display:flex; }
@@ -4452,7 +4447,7 @@
         </td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.area || '—'}</td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.course || '—'}</td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}<span class="mp-time">${r.date ? ' ' + r.date.slice(11, 19) : ''}</span></td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}</td>
         <td style="padding:9px 10px;white-space:nowrap;text-align:right">
           <button class="heart-btn ${r.is_favourite ? 'active' : ''}" onclick="event.stopPropagation();toggleFavouriteInMyPractices('${r.kind}','${r.id}',this)" title="Favourite">♥</button>
           <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${r.kind}','${r.id}')">✕</button>
