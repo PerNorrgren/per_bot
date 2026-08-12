@@ -81,6 +81,17 @@
          beneath it. */
       .bottom-nav { padding-bottom:env(safe-area-inset-bottom); }
       .player-overlay { border-radius:0; }
+      /* Per's follow-up — the outer app frame was flush, but every tab's
+         own content area still had its own separate inner gutter
+         (.talk-view's 24px, the various -scroll containers' 18px), so
+         section labels and the first/last card in each row were still
+         sitting well in from the true edge. Zeroed here too. Cards
+         themselves keep their own generous internal padding (16px+), so
+         text inside a card is nowhere near the true screen edge even
+         though the card's own edge now is. */
+      .talk-view { padding-left:0; padding-right:0; }
+      .practices-scroll, .sessions-scroll, .history-scroll,
+      .courses-scroll, .poems-scroll { padding-left:0; padding-right:0; }
     }
 
     /* Per Bot 24 — .header only ever had padding declared (see the two
