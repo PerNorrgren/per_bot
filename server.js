@@ -9517,49 +9517,68 @@ app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['adm
   res.json(mmpmPracticesJob);
 });
 
-// ── Meditation theme tags — August 2026 batch (Per Bot 27) ── One-time,
-// same job-log pattern as the MMPM practices import above. Applies the
-// confirmed tag mapping (meditation_tags_import/meditation_tags_manifest.json)
-// to the 156 files from the recent 161-file bulk upload that actually
-// landed in the library. Safe to re-run — addFileTag is INSERT OR IGNORE.
-let meditationTagsJob = null;
-app.post('/api/admin/run-meditation-tags-import', auth.requireAuthApi(['admin']), (req, res) => {
-  if (meditationTagsJob && !meditationTagsJob.done) {
-    return res.json({ started: false, alreadyRunning: true, job: meditationTagsJob });
-  }
-  meditationTagsJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
-  const job = meditationTagsJob;
-  const { runImport } = require('./apply_meditation_tags');
-  runImport((line) => { job.log.push(line); console.log(line); })
-    .then((result) => { job.result = result; job.done = true; })
-    .catch((e) => { console.error('meditation tags import error:', e.message); job.error = e.message; job.done = true; });
-  res.json({ started: true, job });
-});
-app.get('/api/admin/run-meditation-tags-import/status', auth.requireAuthApi(['admin']), (req, res) => {
-  if (!meditationTagsJob) return res.status(404).json({ error: 'No import has been started yet.' });
-  res.json(meditationTagsJob);
-});
+// ── Admin scripts registry (Per Bot 30) ── Generic replacement for the
+// one-off "Run X import" buttons that kept accumulating on Settings >
+// Maintenance (meditation tags, tag casing cleanup, and whatever comes
+// after). Adding a new one-time script from here on means: write the
+// script as a module exporting async runImport(log), add one line to
+// ADMIN_SCRIPTS below — no new route, no new button, no new poll loop.
+// Jobs are in-memory (not persisted across a restart), same as every
+// import job before this — a script is expected to be run once, watched
+// to completion, and then just sit there as "already run" until the
+// process restarts; that's an acceptable trade for not needing a new DB
+// table just to remember button-click history.
+const ADMIN_SCRIPTS = [
+  {
+    id: 'meditation-tags-import',
+    label: 'Meditation tags import (Aug 2026 batch)',
+    description: 'Applies the confirmed theme tags to the August meditation upload batch (156 files). Safe to re-run.',
+    module: './apply_meditation_tags',
+  },
+  {
+    id: 'tag-casing-cleanup',
+    label: 'Tag casing cleanup',
+    description: "Merges tag casing variants (e.g. 'Grounding'/'grounding') into a single lowercase tag, across the whole library. Safe to re-run.",
+    module: './cleanup_tag_casing',
+  },
+  {
+    id: 'set-practices-member-visibility',
+    label: 'Set all practices to Member visibility',
+    description: "Sets every meditation/practice library file (except one-to-one assigned ones) to Member visibility, as a baseline to then hand-pick some down to Explorer. Safe to re-run.",
+    module: './set_practices_member_visibility',
+  },
+  // Add future one-time scripts here: { id, label, description, module }.
+  // The module just needs to export async runImport(log) — see either
+  // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
+  // themselves, as the template.
+];
+const adminScriptJobs = {}; // id -> job
 
-// ── Tag casing cleanup (Per Bot 28) ── One-time, same job-log pattern.
-// Merges e.g. 'Grounding'/'grounding' on the same file into a single
-// lowercase tag across the whole library, not just meditation content —
-// see cleanup_tag_casing.js for why a blind SQL update can't do this safely.
-let tagCasingCleanupJob = null;
-app.post('/api/admin/run-tag-casing-cleanup', auth.requireAuthApi(['admin']), (req, res) => {
-  if (tagCasingCleanupJob && !tagCasingCleanupJob.done) {
-    return res.json({ started: false, alreadyRunning: true, job: tagCasingCleanupJob });
+app.get('/api/admin/scripts', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(ADMIN_SCRIPTS.map(s => ({
+    id: s.id, label: s.label, description: s.description,
+    job: adminScriptJobs[s.id] || null,
+  })));
+});
+app.post('/api/admin/scripts/:id/run', auth.requireAuthApi(['admin']), (req, res) => {
+  const script = ADMIN_SCRIPTS.find(s => s.id === req.params.id);
+  if (!script) return res.status(404).json({ error: 'Unknown script.' });
+  const existing = adminScriptJobs[script.id];
+  if (existing && !existing.done) {
+    return res.json({ started: false, alreadyRunning: true, job: existing });
   }
-  tagCasingCleanupJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
-  const job = tagCasingCleanupJob;
-  const { runImport } = require('./cleanup_tag_casing');
-  runImport((line) => { job.log.push(line); console.log(line); })
+  const job = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  adminScriptJobs[script.id] = job;
+  const { runImport } = require(script.module);
+  runImport((line) => { job.log.push(line); console.log(`[${script.id}] ${line}`); })
     .then((result) => { job.result = result; job.done = true; })
-    .catch((e) => { console.error('tag casing cleanup error:', e.message); job.error = e.message; job.done = true; });
+    .catch((e) => { console.error(`${script.id} error:`, e.message); job.error = e.message; job.done = true; });
   res.json({ started: true, job });
 });
-app.get('/api/admin/run-tag-casing-cleanup/status', auth.requireAuthApi(['admin']), (req, res) => {
-  if (!tagCasingCleanupJob) return res.status(404).json({ error: 'No import has been started yet.' });
-  res.json(tagCasingCleanupJob);
+app.get('/api/admin/scripts/:id/status', auth.requireAuthApi(['admin']), (req, res) => {
+  const job = adminScriptJobs[req.params.id];
+  if (!job) return res.status(404).json({ error: 'No run has been started yet.' });
+  res.json(job);
 });
 
 // ── Standalone poems import (Per Bot 14) ──

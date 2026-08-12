@@ -293,7 +293,9 @@
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
-    .shelf-card.locked { opacity:0.45; }
+    /* Per's request — the app is dark enough already that dimming locked
+       cards further makes them look broken/missing rather than "gated".
+       The lock emoji already communicates that; no opacity change here. */
     .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
     .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.4); }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; text-align:center; }
@@ -511,7 +513,8 @@
     .courses-section-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:10px; }
     .course-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:border-color 0.2s; }
     .course-card:hover { border-color:rgba(255,255,255,0.18); }
-    .course-card.locked { opacity:0.5; }
+    /* No opacity dimming — see .shelf-card.locked note above; the lock
+       emoji on the title already does the job. */
     .course-card-title { font-size:14px; color:rgba(255,255,255,0.82); }
     .course-card-sub { font-size:12px; color:rgba(255,255,255,0.35); margin-top:3px; }
     .course-progress-bar { height:5px; background:rgba(255,255,255,0.08); border-radius:3px; margin-top:10px; overflow:hidden; }
@@ -557,7 +560,10 @@
     .library-search-clear.visible { display:block; }
     .content-item { display:flex; align-items:center; gap:10px; padding:9px 18px; cursor:pointer; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.04); }
     .content-item:hover { background:rgba(255,255,255,0.04); }
-    .content-item.locked { opacity:0.35; cursor:default; }
+    /* No opacity dimming — see .shelf-card.locked note above. Still not a
+       hand cursor: clicking a locked row here opens the upgrade notice,
+       not the file itself, so it isn't styled as a normal clickable row. */
+    .content-item.locked { cursor:default; }
     .content-icon { font-size:16px; flex-shrink:0; width:20px; text-align:center; }
     .content-title { flex:1; font-size:13px; color:rgba(255,255,255,0.8); line-height:1.4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .content-desc { font-size:11px; color:rgba(255,255,255,0.3); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -707,7 +713,8 @@
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
     .chooser-tick { float:right; color:rgba(140,220,170,0.9); font-weight:bold; }
     .chooser-mandatory-badge { float:right; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:rgba(220,90,80,0.85); color:#fff; font-size:11px; font-weight:bold; }
-    .chooser-locked { opacity:0.4; cursor:pointer; }
+    /* No opacity dimming — see .shelf-card.locked note above. */
+    .chooser-locked { cursor:pointer; }
     .text-doc-reader {
       max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
       max-width:560px; margin:0 auto; padding:4px 12px 12px;

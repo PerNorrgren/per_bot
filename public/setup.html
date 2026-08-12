@@ -254,79 +254,109 @@
       <div class="field-note" style="margin-bottom:16px">A full copy of the live database, exactly as it stands right now. Safe to download any time — this only reads the data, nothing here can change or affect the live app.</div>
       <a href="/api/admin/backup/download" class="btn-primary" style="display:inline-block; padding:9px 18px; font-size:12px; text-decoration:none;">Download database backup</a>
 
-      <!-- Per Bot 27 — one-time job runner. Same job-log pattern as the
-           MMPM import before it: click once, poll status, see the log.
-           Safe to click more than once (addFileTag is INSERT OR IGNORE),
-           but hides itself once done so it isn't sitting there inviting a
-           re-run every time someone visits this page. -->
-      <div id="medTagsJobWrap" style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
-        <div class="field-note" style="margin-bottom:10px">One-time: apply the confirmed theme tags to the August meditation upload batch (156 files).</div>
-        <button type="button" class="btn-primary" id="medTagsBtn" style="padding:9px 18px;font-size:12px" onclick="runMeditationTagsImport()">Run meditation tags import</button>
-        <div id="medTagsLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
-      </div>
-
-      <!-- Per Bot 28 — same one-click job runner pattern as above. Merges
-           e.g. 'Grounding'/'grounding' on the same file into a single
-           lowercase tag across the whole library. -->
-      <div id="tagCasingJobWrap" style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
-        <div class="field-note" style="margin-bottom:10px">One-time: merge tag casing (e.g. 'Grounding' and 'grounding') into a single lowercase tag, across every content type.</div>
-        <button type="button" class="btn-primary" id="tagCasingBtn" style="padding:9px 18px;font-size:12px" onclick="runTagCasingCleanup()">Run tag casing cleanup</button>
-        <div id="tagCasingLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
+      <!-- Per Bot 30 — generic admin scripts table, replacing the pair of
+           hand-built one-off buttons above. Rows come straight from the
+           server's ADMIN_SCRIPTS registry — adding a future one-time
+           script means adding one entry there, not building a new button
+           + poll loop here every time. Select one or more, Run in the
+           header runs them in sequence, shared log pane below shows
+           whichever is currently running (or was last run). -->
+      <div id="adminScriptsWrap" style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="field-note" style="margin-bottom:0">One-time admin scripts. Safe to re-run — each one already guards against duplicating its own work.</div>
+          <button type="button" class="btn-primary" id="scriptsRunBtn" style="padding:7px 16px;font-size:12px;white-space:nowrap" onclick="runSelectedAdminScripts()">Run selected</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead>
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+              <th style="width:26px;padding:6px 6px"><input type="checkbox" id="scriptsSelectAll" onchange="toggleSelectAllAdminScripts(this.checked)"/></th>
+              <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,0.5)">Script</th>
+              <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,0.5)">Description</th>
+              <th style="text-align:left;padding:6px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">Status</th>
+            </tr>
+          </thead>
+          <tbody id="scriptsTableBody"></tbody>
+        </table>
+        <div id="scriptsLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
       </div>
     </div>
   </div>
 
   <script>
-  async function runMeditationTagsImport() {
-    const btn = document.getElementById('medTagsBtn');
-    const logEl = document.getElementById('medTagsLog');
-    btn.disabled = true;
-    btn.textContent = 'Running…';
+  let _adminScripts = [];
+  let _adminScriptsSelected = new Set();
+
+  async function loadAdminScripts() {
     try {
-      await fetch('/api/admin/run-meditation-tags-import', { method: 'POST' });
+      const res = await fetch('/api/admin/scripts');
+      _adminScripts = res.ok ? await res.json() : [];
+    } catch { _adminScripts = []; }
+    renderAdminScriptsTable();
+  }
+  function scriptStatusLabel(job) {
+    if (!job) return 'Not run yet';
+    if (!job.done) return 'Running…';
+    if (job.error) return 'Failed';
+    return 'Done';
+  }
+  function renderAdminScriptsTable() {
+    const body = document.getElementById('scriptsTableBody');
+    if (!body) return;
+    body.innerHTML = _adminScripts.map(s => {
+      const status = scriptStatusLabel(s.job);
+      const color = status === 'Failed' ? 'rgba(255,140,120,0.85)' : status === 'Done' ? 'rgba(180,230,200,0.85)' : status === 'Running…' ? 'rgba(255,220,140,0.85)' : 'rgba(255,255,255,0.35)';
+      return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+        <td style="padding:6px 6px"><input type="checkbox" class="script-cb" ${_adminScriptsSelected.has(s.id)?'checked':''} onchange="onAdminScriptCheck('${s.id}', this.checked)"/></td>
+        <td style="padding:6px 10px;color:rgba(255,255,255,0.85)">${s.label}</td>
+        <td style="padding:6px 10px;color:rgba(255,255,255,0.5)">${s.description}</td>
+        <td style="padding:6px 10px;white-space:nowrap;color:${color}">${status}</td>
+      </tr>`;
+    }).join('');
+    const selAll = document.getElementById('scriptsSelectAll');
+    if (selAll) selAll.checked = _adminScripts.length > 0 && _adminScripts.every(s => _adminScriptsSelected.has(s.id));
+  }
+  function onAdminScriptCheck(id, checked) {
+    if (checked) _adminScriptsSelected.add(id); else _adminScriptsSelected.delete(id);
+  }
+  function toggleSelectAllAdminScripts(checked) {
+    _adminScriptsSelected = checked ? new Set(_adminScripts.map(s => s.id)) : new Set();
+    renderAdminScriptsTable();
+  }
+  async function runOneAdminScript(id, logEl) {
+    const script = _adminScripts.find(s => s.id === id);
+    logEl.textContent += (logEl.textContent ? '\n\n' : '') + `── ${script ? script.label : id} ──`;
+    await fetch(`/api/admin/scripts/${id}/run`, { method: 'POST' });
+    return new Promise((resolve) => {
       const poll = async () => {
-        const res = await fetch('/api/admin/run-meditation-tags-import/status');
+        const res = await fetch(`/api/admin/scripts/${id}/status`);
         const job = await res.json();
-        logEl.textContent = (job.log || []).join('\n');
+        const idx = _adminScripts.findIndex(s => s.id === id);
+        if (idx > -1) _adminScripts[idx].job = job;
+        renderAdminScriptsTable();
+        const base = logEl.textContent.split('── ' + (script ? script.label : id) + ' ──')[0];
+        logEl.textContent = (base ? base + '\n\n' : '') + `── ${script ? script.label : id} ──\n` + (job.log || []).join('\n');
         logEl.scrollTop = logEl.scrollHeight;
         if (!job.done) { setTimeout(poll, 1000); return; }
-        btn.textContent = job.error ? 'Failed — see log' : 'Done';
-        if (!job.error) {
-          logEl.textContent += `\n\nFinished: ${job.result.filesTagged}/${job.result.totalInManifest} files tagged, ${job.result.tagsApplied} tag rows applied.`;
-        }
+        resolve();
       };
       poll();
-    } catch (e) {
-      logEl.textContent = 'Could not start the job — network error.';
-      btn.disabled = false;
-      btn.textContent = 'Run meditation tags import';
-    }
+    });
   }
-  async function runTagCasingCleanup() {
-    const btn = document.getElementById('tagCasingBtn');
-    const logEl = document.getElementById('tagCasingLog');
+  async function runSelectedAdminScripts() {
+    const ids = Array.from(_adminScriptsSelected);
+    if (!ids.length) return;
+    const btn = document.getElementById('scriptsRunBtn');
+    const logEl = document.getElementById('scriptsLog');
+    logEl.textContent = '';
     btn.disabled = true;
     btn.textContent = 'Running…';
-    try {
-      await fetch('/api/admin/run-tag-casing-cleanup', { method: 'POST' });
-      const poll = async () => {
-        const res = await fetch('/api/admin/run-tag-casing-cleanup/status');
-        const job = await res.json();
-        logEl.textContent = (job.log || []).join('\n');
-        logEl.scrollTop = logEl.scrollHeight;
-        if (!job.done) { setTimeout(poll, 1000); return; }
-        btn.textContent = job.error ? 'Failed — see log' : 'Done';
-        if (!job.error) {
-          logEl.textContent += `\n\nFinished: ${job.result.filesChanged} files merged, ${job.result.filesUnchanged} already clean. Tag rows: ${job.result.tagRowsBefore} -> ${job.result.tagRowsAfter}.`;
-        }
-      };
-      poll();
-    } catch (e) {
-      logEl.textContent = 'Could not start the job — network error.';
-      btn.disabled = false;
-      btn.textContent = 'Run tag casing cleanup';
+    for (const id of ids) {
+      await runOneAdminScript(id, logEl);
     }
+    btn.disabled = false;
+    btn.textContent = 'Run selected';
   }
+  loadAdminScripts();
   </script>
 
   <!-- Skin editor — appears when a skin from the list above is opened.
