@@ -253,8 +253,47 @@
     <div class="card-body">
       <div class="field-note" style="margin-bottom:16px">A full copy of the live database, exactly as it stands right now. Safe to download any time — this only reads the data, nothing here can change or affect the live app.</div>
       <a href="/api/admin/backup/download" class="btn-primary" style="display:inline-block; padding:9px 18px; font-size:12px; text-decoration:none;">Download database backup</a>
+
+      <!-- Per Bot 27 — one-time job runner. Same job-log pattern as the
+           MMPM import before it: click once, poll status, see the log.
+           Safe to click more than once (addFileTag is INSERT OR IGNORE),
+           but hides itself once done so it isn't sitting there inviting a
+           re-run every time someone visits this page. -->
+      <div id="medTagsJobWrap" style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
+        <div class="field-note" style="margin-bottom:10px">One-time: apply the confirmed theme tags to the August meditation upload batch (156 files).</div>
+        <button type="button" class="btn-primary" id="medTagsBtn" style="padding:9px 18px;font-size:12px" onclick="runMeditationTagsImport()">Run meditation tags import</button>
+        <div id="medTagsLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
+      </div>
     </div>
   </div>
+
+  <script>
+  async function runMeditationTagsImport() {
+    const btn = document.getElementById('medTagsBtn');
+    const logEl = document.getElementById('medTagsLog');
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    try {
+      await fetch('/api/admin/run-meditation-tags-import', { method: 'POST' });
+      const poll = async () => {
+        const res = await fetch('/api/admin/run-meditation-tags-import/status');
+        const job = await res.json();
+        logEl.textContent = (job.log || []).join('\n');
+        logEl.scrollTop = logEl.scrollHeight;
+        if (!job.done) { setTimeout(poll, 1000); return; }
+        btn.textContent = job.error ? 'Failed — see log' : 'Done';
+        if (!job.error) {
+          logEl.textContent += `\n\nFinished: ${job.result.filesTagged}/${job.result.totalInManifest} files tagged, ${job.result.tagsApplied} tag rows applied.`;
+        }
+      };
+      poll();
+    } catch (e) {
+      logEl.textContent = 'Could not start the job — network error.';
+      btn.disabled = false;
+      btn.textContent = 'Run meditation tags import';
+    }
+  }
+  </script>
 
   <!-- Skin editor — appears when a skin from the list above is opened.
        Kept as one panel that swaps its target skin, rather than a modal,

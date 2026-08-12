@@ -479,6 +479,37 @@
         <input type="text" id="upAutoCourseNewTitle" placeholder="New course title" style="display:none"/>
       </div>
     </div>
+    <!-- Per Bot 26 — persistent to-do list (upload_queue table). Shown
+         pre-loaded whenever this modal opens, so a batch that stopped
+         partway — or was never finished before the tab closed — is right
+         there instead of needing to be reconstructed from memory. -->
+    <div id="upPersistedWrap" style="display:none;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Still outstanding from before</div>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="modal-cancel" style="padding:4px 10px;font-size:12px" onclick="removeSelectedPersistedQueue()">Remove selected</button>
+          <button type="button" class="modal-cancel" style="padding:4px 10px;font-size:12px" onclick="clearPersistedQueueAll()">Clear all</button>
+        </div>
+      </div>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid rgba(255,255,255,0.1);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead>
+            <tr style="position:sticky;top:0;background:#141a17">
+              <th style="padding:6px 8px;text-align:left"><input type="checkbox" id="upPersistedSelectAll" onchange="toggleSelectAllPersistedQueue(this.checked)"/></th>
+              <th style="padding:6px 8px;text-align:left;cursor:pointer;color:rgba(255,255,255,0.5)" onclick="sortPersistedQueue('original_name')">Filename ⇅</th>
+              <th style="padding:6px 8px;text-align:left;cursor:pointer;color:rgba(255,255,255,0.5)" onclick="sortPersistedQueue('file_size')">Size ⇅</th>
+              <th style="padding:6px 8px;text-align:left;cursor:pointer;color:rgba(255,255,255,0.5)" onclick="sortPersistedQueue('added_at')">Added ⇅</th>
+              <th style="padding:6px 8px;text-align:left;cursor:pointer;color:rgba(255,255,255,0.5)" onclick="sortPersistedQueue('status')">Status ⇅</th>
+              <th style="padding:6px 8px"></th>
+            </tr>
+          </thead>
+          <tbody id="upPersistedBody"></tbody>
+        </table>
+      </div>
+      <div style="font-size:11.5px;color:rgba(255,255,255,0.35);margin-top:6px">
+        Drag the same source files back in below — anything matching a row here by filename resumes automatically instead of creating a duplicate.
+      </div>
+    </div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('bulkInput').click()">
       <input type="file" id="bulkInput" multiple style="display:none"/>
       <div style="font-size:28px;margin-bottom:10px">📂</div>
@@ -491,6 +522,18 @@
       <button class="modal-cancel" onclick="closeModal('uploadModal')">Cancel</button>
       <button class="modal-ok" id="upBtn" onclick="doUpload()">Upload all</button>
     </div>
+  </div>
+</div>
+
+<!-- Per Bot 26 — batch completion popup. Sits above uploadModal (z-index
+     via later-in-DOM stacking, same pattern as every other modal-overlay
+     here) so it reads as "this batch just finished" rather than being
+     lost behind the upload screen it just came from. -->
+<div class="modal-overlay" id="uploadCompleteModal">
+  <div class="modal" style="max-width:400px">
+    <h3 id="ucTitle">Upload finished</h3>
+    <div id="ucBody" style="color:rgba(255,255,255,0.7);font-size:14px;line-height:1.6;margin-bottom:4px"></div>
+    <div class="modal-btns" id="ucBtns"></div>
   </div>
 </div>
 
@@ -1278,6 +1321,12 @@ async function toggleLessonFilePreview(refId, fileId, fileType) {
   row.insertAdjacentElement('afterend', wrap);
 }
 function fsize(b){if(!b)return'';if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(1)+'MB';}
+// Per Bot 27 — same tier labels as the visibility dropdowns elsewhere on
+// this page (upVisDefault etc.), just as a plain lookup for read-only
+// display contexts like the duplicates scan.
+function visLabel(v){
+  return {registered:'Explorer', member:'Member', client:'Client', facilitator:'Facilitator', admin:'Admin'}[v] || v || '—';
+}
 async function updateVisibility(fileId, vis) {
   await fetch(`/api/content/library/${fileId}`, {
     method: 'PATCH',
@@ -1723,6 +1772,8 @@ function openUpload(){
   document.getElementById('upOneToOne').checked=false;
   document.getElementById('upOneToOneRow').style.display='none';
   document.getElementById('upAssignedClientPicker').innerHTML='';
+  _persistedSelected = new Set();
+  loadPersistedQueue();
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
@@ -2276,6 +2327,7 @@ function addToQ(files){
   const headerVis  = document.getElementById('upVisDefault').value;
   const headerKind = document.getElementById('upKindDefault').value;
   const headerAssignedClient = document.getElementById('upOneToOne').checked ? getPersonPickerValue('upAssignedClientPicker') : '';
+  const newlyRegistered = [];
   Array.from(files).forEach(f=>{
     const inferred = inferFromFilename(f.name);
     // If Facilitator-resource mode is on, every file — including ones added after the
@@ -2284,9 +2336,118 @@ function addToQ(files){
     // (if set to something specific) is the explicit starting point; per-file should only
     // diverge from it on purpose, not by accident of when the file was added.
     const vis = facResourceMode ? 'facilitator' : (headerVis || inferred.vis);
-    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient});
+    // Per Bot 26 — match against the persistent upload-queue table by
+    // filename first. A file re-selected after a closed tab or a batch
+    // that stopped partway already has a row there (possibly
+    // status='failed'); reusing that row's id — rather than quietly
+    // registering a second one — is what keeps the persisted to-do list
+    // accurate instead of drifting from what's actually still needed.
+    const existingIdx = _persistedQueue.findIndex(r => r.original_name === f.name);
+    let queueId;
+    if (existingIdx > -1) {
+      queueId = _persistedQueue[existingIdx].id;
+      _persistedQueue.splice(existingIdx, 1);
+    } else {
+      queueId = crypto.randomUUID();
+      newlyRegistered.push({ id: queueId, originalName: f.name, fileSize: f.size,
+        categoryId: inferred.catId, subcategoryId: inferred.subId, visibility: vis,
+        contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: '' });
+    }
+    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient, queueId});
   });
   renderQ();
+  renderPersistedQueue();
+  if (newlyRegistered.length) {
+    fetch('/api/admin/upload-queue', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({items:newlyRegistered})}).catch(()=>{});
+  }
+}
+
+// ── Persisted upload queue (Per Bot 26) — the to-do-list table shown at
+// the top of this modal, backed by the upload_queue DB table. Files
+// matched into the active upQueue above (see addToQ) are spliced out of
+// _persistedQueue for display purposes only — their DB row isn't touched
+// until the upload actually succeeds or fails.
+let _persistedQueue = [];
+let _persistedSort = { col: 'added_at', dir: 'asc' };
+let _persistedSelected = new Set();
+
+async function loadPersistedQueue() {
+  try {
+    const res = await fetch('/api/admin/upload-queue');
+    _persistedQueue = res.ok ? await res.json() : [];
+  } catch { _persistedQueue = []; }
+  renderPersistedQueue();
+}
+function fmtQueueDate(s) {
+  if (!s) return '';
+  return String(s).slice(0,10).replace(/-/g,'/'); // yyyy/mm/dd
+}
+function fmtQueueSize(bytes) {
+  if (!bytes) return '';
+  const mb = bytes / (1024*1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes/1024)} KB`;
+}
+function sortPersistedQueue(col) {
+  if (_persistedSort.col === col) _persistedSort.dir = _persistedSort.dir === 'asc' ? 'desc' : 'asc';
+  else _persistedSort = { col, dir: 'asc' };
+  renderPersistedQueue();
+}
+function renderPersistedQueue() {
+  const wrap = document.getElementById('upPersistedWrap');
+  const body = document.getElementById('upPersistedBody');
+  if (!wrap || !body) return;
+  if (!_persistedQueue.length) { wrap.style.display='none'; body.innerHTML=''; return; }
+  wrap.style.display='block';
+  const { col, dir } = _persistedSort;
+  const rows = [..._persistedQueue].sort((a,b) => {
+    let av = a[col], bv = b[col];
+    if (col === 'file_size') { av = av||0; bv = bv||0; }
+    else { av = (av||'').toString().toLowerCase(); bv = (bv||'').toString().toLowerCase(); }
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  body.innerHTML = rows.map(r => `
+    <tr style="border-top:1px solid rgba(255,255,255,0.06)">
+      <td style="padding:6px 8px"><input type="checkbox" class="up-persisted-cb" ${_persistedSelected.has(r.id)?'checked':''} onchange="onPersistedCheck('${r.id}', this.checked)"/></td>
+      <td style="padding:6px 8px">${escHtml(r.original_name)}</td>
+      <td style="padding:6px 8px;color:rgba(255,255,255,0.5);white-space:nowrap">${fmtQueueSize(r.file_size)}</td>
+      <td style="padding:6px 8px;color:rgba(255,255,255,0.5);white-space:nowrap">${fmtQueueDate(r.added_at)}</td>
+      <td style="padding:6px 8px;white-space:nowrap;${r.status==='failed'?'color:rgba(255,140,120,0.85)':'color:rgba(255,255,255,0.4)'}" title="${escHtml(r.error_message||'')}">${escHtml(r.status)}</td>
+      <td style="padding:6px 8px"><button type="button" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:13px" onclick="removeOnePersistedQueueRow('${r.id}')" title="Remove">✕</button></td>
+    </tr>
+  `).join('');
+  const selAll = document.getElementById('upPersistedSelectAll');
+  if (selAll) selAll.checked = _persistedQueue.length>0 && _persistedQueue.every(r=>_persistedSelected.has(r.id));
+}
+function onPersistedCheck(id, checked) {
+  if (checked) _persistedSelected.add(id); else _persistedSelected.delete(id);
+}
+function toggleSelectAllPersistedQueue(checked) {
+  _persistedSelected = checked ? new Set(_persistedQueue.map(r=>r.id)) : new Set();
+  renderPersistedQueue();
+}
+async function removeOnePersistedQueueRow(id) {
+  await fetch(`/api/admin/upload-queue/${id}`, { method: 'DELETE' }).catch(()=>{});
+  _persistedQueue = _persistedQueue.filter(r=>r.id!==id);
+  _persistedSelected.delete(id);
+  renderPersistedQueue();
+}
+async function removeSelectedPersistedQueue() {
+  const ids = Array.from(_persistedSelected);
+  if (!ids.length) return;
+  await fetch('/api/admin/upload-queue/remove-batch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids})}).catch(()=>{});
+  _persistedQueue = _persistedQueue.filter(r=>!_persistedSelected.has(r.id));
+  _persistedSelected.clear();
+  renderPersistedQueue();
+}
+async function clearPersistedQueueAll() {
+  const ok = await appConfirm(`Remove all ${_persistedQueue.length} outstanding rows from the queue? This only clears the to-do list — it doesn't affect any files already uploaded.`);
+  if (!ok) return;
+  await fetch('/api/admin/upload-queue', { method: 'DELETE' }).catch(()=>{});
+  _persistedQueue = [];
+  _persistedSelected.clear();
+  renderPersistedQueue();
 }
 function getCatName(id){return allCats.find(c=>c.id===id)?.name||'';}
 
@@ -2507,14 +2668,17 @@ function renderDuplicatesResults(groups) {
     return;
   }
   const totalCopies = groups.reduce((sum, g) => sum + g.length - 1, 0);
-  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${groups.length} duplicate title${groups.length!==1?'s':''} found, ${totalCopies} extra cop${totalCopies!==1?'ies':'y'} checked by default (oldest of each group left unchecked, to keep). Adjust anything before deleting.</div>` +
+  body.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px">${groups.length} duplicate title${groups.length!==1?'s':''} found, ${totalCopies} extra cop${totalCopies!==1?'ies':'y'} checked by default (oldest of each group left unchecked, to keep). Adjust anything before deleting — a copy assigned to a specific person is highlighted, since that's often intentional (public copy + a one-to-one copy for someone) rather than an accidental re-upload.</div>` +
     groups.map((g, gi) => `
       <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;margin-bottom:8px">
         <div style="font-size:13px;color:rgba(255,255,255,0.85);margin-bottom:6px">${escHtml(g[0].title)} <span style="color:rgba(255,255,255,0.35);font-size:11px">(${escHtml(g[0].content_type||'—')} · ${g.length} copies)</span></div>
         ${g.map((f, fi) => `
           <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;color:rgba(255,255,255,0.6);cursor:pointer">
             <input type="checkbox" class="dup-check" data-group="${gi}" value="${f.id}" ${fi === 0 ? '' : 'checked'}/>
-            ${f.created_at||'—'} · ${escHtml(f.category_name||'no category')} · ${fsize(f.file_size)} ${fi === 0 ? '<span style="color:rgba(180,230,200,0.6)">(oldest — unchecked by default)</span>' : ''}
+            ${f.created_at||'—'} · ${escHtml(f.category_name||'no category')} · ${fsize(f.file_size)}
+            · <span style="color:rgba(255,255,255,0.45)">${escHtml(visLabel(f.visibility))}</span>
+            ${f.assigned_client_name ? `<span style="color:rgba(255,180,120,0.85)">· 1:1 — ${escHtml(f.assigned_client_name)}</span>` : ''}
+            ${fi === 0 ? '<span style="color:rgba(180,230,200,0.6)">(oldest — unchecked by default)</span>' : ''}
           </label>
         `).join('')}
       </div>
@@ -2852,6 +3016,64 @@ async function confirmAutoCourse(){
   openCourseDetail(courseId);
 }
 
+// Per Bot 26 — fire-and-forget: the queue row update matters for next
+// time the admin opens this screen, not for the current upload to
+// continue, so these don't block or throw into the main upload loop.
+function removeUploadQueueRow(id) {
+  fetch(`/api/admin/upload-queue/${id}`, { method: 'DELETE' }).catch(()=>{});
+}
+function markUploadQueueRowFailed(id, message) {
+  fetch(`/api/admin/upload-queue/${id}/failed`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({errorMessage: message||''}) }).catch(()=>{});
+}
+
+// Per Bot 26 — elapsed-time formatting for the completion popup ("Loaded
+// 161/161 in 4m 12s"). Under a minute just shows seconds, no "0m" clutter.
+function fmtElapsed(ms) {
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60), s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function showUploadCompletionModal() {
+  const st = _bulkUploadState;
+  const titleEl = document.getElementById('ucTitle');
+  const bodyEl = document.getElementById('ucBody');
+  const btnsEl = document.getElementById('ucBtns');
+  const remaining = st.total - st.done;
+  const elapsed = fmtElapsed(Date.now() - st.startedAt);
+
+  if (remaining <= 0) {
+    titleEl.textContent = 'All done';
+    bodyEl.textContent = `Loaded ${st.done}/${st.total} in ${elapsed}.`;
+    btnsEl.innerHTML = '<button class="modal-ok" onclick="closeUploadCompletionModal(true)">Close</button>';
+  } else {
+    titleEl.textContent = 'Upload stopped';
+    bodyEl.textContent = `Loaded ${st.done}/${st.total} — ${remaining} left to do.`;
+    btnsEl.innerHTML =
+      '<button class="modal-cancel" onclick="closeUploadCompletionModal(false)">Exit</button>' +
+      '<button class="modal-ok" onclick="retryUploadFromCompletionModal()">Try again</button>';
+  }
+  openModal('uploadCompleteModal');
+}
+function closeUploadCompletionModal(alsoFinish) {
+  closeModal('uploadCompleteModal');
+  if (alsoFinish) {
+    if (document.getElementById('upAutoCourse').checked) { openAutoCourseConfirm(); return; }
+    closeModal('uploadModal');
+    loadAll();
+  } else {
+    // "Exit" — the outstanding files stay in the persisted queue table
+    // (upload_queue rows untouched) for whenever the admin comes back to
+    // it, but the modal itself can just close.
+    renderQ();
+    loadPersistedQueue();
+  }
+}
+function retryUploadFromCompletionModal() {
+  closeModal('uploadCompleteModal');
+  doUpload();
+}
+
 async function doUpload(){
   const cat=document.getElementById('upCat').value;
   const sub=document.getElementById('upSub').value;
@@ -2869,40 +3091,50 @@ async function doUpload(){
     setTimeout(() => { catEl.style.outline = ''; }, 2000);
     return;
   }
-  if(!upQueue.length){err.textContent='No files selected.';return;}
+  // Per Bot 26 — only files that still have their bytes loaded in this
+  // browser session (it.file present) and haven't already succeeded
+  // (it.done not set) are actually upload-able right now. Re-running
+  // doUpload() via "Try again" hits this same filter, so already-finished
+  // files from the first pass are never re-sent.
+  const runnable = upQueue.filter(it => it.file && !it.done);
+  if(!runnable.length){err.textContent='No files selected.';return;}
   err.textContent='';
   const btn=document.getElementById('upBtn');
-  setBtnLoading(btn, true, 'Uploading…');
-  _bulkUploadState = { total: upQueue.length, done: 0, currentName: upQueue[0]?.file.name||'', active: true };
+  const alreadyDone = upQueue.filter(it => it.done).length;
+  _bulkUploadState = { total: upQueue.length, done: alreadyDone, currentName: runnable[0]?.file.name||'', active: true, startedAt: Date.now() };
+  setBtnLoading(btn, true, `Uploading ${_bulkUploadState.done}/${_bulkUploadState.total}…`);
   updateUploadTicker();
-  for(const it of upQueue){
+  for(const it of runnable){
     it.progress = 0;
     _bulkUploadState.currentName = it.file.name;
     updateUploadTicker();
     try {
       await uploadOneFile(it, cat, sub);
       it.progress = 100;
+      it.done = true;
       _bulkUploadState.done++;
+      setBtnLoading(btn, true, `Uploading ${_bulkUploadState.done}/${_bulkUploadState.total}…`);
       updateUploadTicker();
+      // Per Bot 26 — this file is now genuinely finished (library row
+      // created), so its row comes off the persistent to-do list. If the
+      // whole batch dies right after this, whatever's already off the
+      // list stays off it — no double-counting on the next attempt.
+      if (it.queueId) removeUploadQueueRow(it.queueId);
     } catch (e) {
       err.textContent = `${it.file.name}: ${e.message}`;
       setBtnLoading(btn, false);
       renderQ();
       _bulkUploadState.active = false;
       updateUploadTicker();
-      appAlert(`Upload stopped: ${it.file.name} — ${e.message}. ${_bulkUploadState.done} of ${_bulkUploadState.total} finished before this.`);
+      if (it.queueId) markUploadQueueRowFailed(it.queueId, e.message);
+      showUploadCompletionModal();
       return; // stop the batch on first failure so the admin sees which file failed
     }
   }
   setBtnLoading(btn, false);
   _bulkUploadState.active = false;
   updateUploadTicker();
-  if (document.getElementById('upAutoCourse').checked) {
-    openAutoCourseConfirm();
-    return;
-  }
-  closeModal('uploadModal');
-  loadAll();
+  showUploadCompletionModal();
 }
 
 // ── Edit file ──

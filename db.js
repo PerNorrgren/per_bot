@@ -1214,6 +1214,36 @@ async function getDb() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_tag ON library_file_tags(tag)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_library_file_tags_file ON library_file_tags(file_id)`);
 
+  // ── Upload queue (Per Bot 26) ── A large bulk-upload batch (100+ files)
+  // used to live only as an in-memory array in the admin's browser tab —
+  // a crash, an accidental tab close, or a failed file partway through
+  // meant starting over with no record of what had already gone through.
+  // This table is the persistent to-do list: a row is written the moment
+  // a file is added to the queue (metadata only — title, category,
+  // tags — not the file bytes, which the browser can't hand back after a
+  // reload anyway), and the row is deleted the moment that file's upload
+  // actually succeeds. Reopening the upload screen on a different day
+  // shows exactly what's still outstanding; dragging the same source
+  // folder back in matches picked files to existing rows by original_name
+  // so nothing already done gets re-sent. A row that failed mid-transfer
+  // stays with status='failed' and the error, rather than disappearing,
+  // so "Try again" has something to retry.
+  db.run(`CREATE TABLE IF NOT EXISTS upload_queue (
+    id TEXT PRIMARY KEY,
+    original_name TEXT NOT NULL,
+    file_size INTEGER DEFAULT 0,
+    category_id TEXT,
+    subcategory_id TEXT,
+    visibility TEXT DEFAULT 'client',
+    content_kind TEXT,
+    assigned_client_id TEXT,
+    tags TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending',
+    error_message TEXT,
+    added_at TEXT DEFAULT (datetime('now'))
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_upload_queue_status ON upload_queue(status)`);
+
   // ── TTS cache (Per Bot 14) ── A small number of fixed scripts (the
   // three quick-practice buttons on the calm landing) used to hit
   // ElevenLabs live every single tap, via the same path as an ordinary
@@ -2704,9 +2734,17 @@ function getAllTextHtmlFiles() {
 // File size matching too is a much stronger signal that two rows are
 // actually the same content uploaded twice (the failure mode from the
 // rocky Per Bot 14 poem import), not just similarly named.
+// Per Bot 27 — now also joins in assigned_client_name (and leaves
+// visibility on f.* as-is, already there). A pair that looks like a
+// careless double-upload at a glance can actually be intentional — one
+// row assigned one-to-one to a specific person, the other left public —
+// so the admin screen needs to show who (if anyone) each copy is
+// assigned to before anyone deletes something on purpose.
 function findDuplicateLibraryFiles() {
-  const files = queryAll(`SELECT f.*, cat.name as category_name FROM library_files f
+  const files = queryAll(`SELECT f.*, cat.name as category_name, ac.name as assigned_client_name
+    FROM library_files f
     LEFT JOIN categories cat ON f.category_id=cat.id
+    LEFT JOIN users ac ON f.assigned_client_id=ac.id
     WHERE f.archived=0`);
   const groups = {};
   files.forEach(f => {
@@ -2812,6 +2850,47 @@ function getFilesByTag(tag) {
     WHERE t.tag=? AND f.archived=0
     ORDER BY f.created_at DESC`, [tag]);
 }
+
+// ── Upload queue (Per Bot 26) ──
+// items: array of {id, originalName, fileSize, categoryId, subcategoryId,
+// visibility, contentKind, assignedClientId, tags} — tags stored as a
+// comma-separated string, matching how the rest of the queue UI passes
+// them around; re-split on read.
+function addUploadQueueItems(items) {
+  const d = getDbSync();
+  for (const it of items) {
+    d.run(`INSERT INTO upload_queue
+      (id, original_name, file_size, category_id, subcategory_id, visibility, content_kind, assigned_client_id, tags)
+      VALUES (?,?,?,?,?,?,?,?,?)`,
+      [it.id, it.originalName, it.fileSize || 0, it.categoryId || null, it.subcategoryId || null,
+       it.visibility || 'client', it.contentKind || null, it.assignedClientId || null, it.tags || '']);
+  }
+  save();
+}
+function getUploadQueueItems() {
+  return queryAll('SELECT * FROM upload_queue ORDER BY added_at ASC');
+}
+function removeUploadQueueItem(id) {
+  getDbSync().run('DELETE FROM upload_queue WHERE id=?', [id]); save();
+}
+function removeUploadQueueItems(ids) {
+  if (!ids || !ids.length) return;
+  const d = getDbSync();
+  ids.forEach(id => d.run('DELETE FROM upload_queue WHERE id=?', [id]));
+  save();
+}
+function clearUploadQueue() {
+  getDbSync().run('DELETE FROM upload_queue'); save();
+}
+function markUploadQueueItemFailed(id, errorMessage) {
+  getDbSync().run('UPDATE upload_queue SET status=?, error_message=? WHERE id=?', ['failed', errorMessage || '', id]);
+  save();
+}
+function markUploadQueueItemPending(id) {
+  getDbSync().run('UPDATE upload_queue SET status=?, error_message=NULL WHERE id=?', ['pending', id]);
+  save();
+}
+
 function getTtsCacheEntry(cacheKey) {
   return queryOne('SELECT * FROM tts_cache WHERE cache_key=?', [cacheKey]);
 }
@@ -7399,7 +7478,10 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
-  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag, getTtsCacheEntry, setTtsCacheEntry,
+  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
+  addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
+  clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,
+  getTtsCacheEntry, setTtsCacheEntry,
   getTranslatedTemplate, saveTranslatedTemplate,
   getBreathingPatterns, getBreathingPattern, getBreathingPatternMenu, createBreathingPattern, updateBreathingPattern, deleteBreathingPattern,
   // Sectioned knowledge (Per Bot 15p)

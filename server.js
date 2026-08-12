@@ -8289,6 +8289,49 @@ app.post('/api/content/library/presign-upload', auth.requireAuthApi(['admin']), 
   }
 });
 
+// ── Upload queue (Per Bot 26) ── Persistent to-do list for large bulk
+// uploads. A row is written the instant a file is added to the admin's
+// queue (metadata only — see db.js comment on the table itself for why),
+// and removed the instant that file's upload actually succeeds. This is
+// what lets a big batch survive a closed tab, a crash, or a stopped-partway
+// failure without losing track of what's left — reopen the upload screen,
+// see exactly what's outstanding, drag the same source folder back in.
+app.get('/api/admin/upload-queue', auth.requireAuthApi(['admin']), (req, res) => {
+  res.json(db.getUploadQueueItems());
+});
+app.post('/api/admin/upload-queue', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: 'No items provided.' });
+    const withIds = items.map(it => ({ ...it, id: it.id || uuidv4() }));
+    db.addUploadQueueItems(withIds);
+    res.json({ ids: withIds.map(it => it.id) });
+  } catch (e) {
+    console.error('upload-queue add error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.patch('/api/admin/upload-queue/:id/failed', auth.requireAuthApi(['admin']), (req, res) => {
+  db.markUploadQueueItemFailed(req.params.id, req.body.errorMessage || '');
+  res.json({ ok: true });
+});
+app.patch('/api/admin/upload-queue/:id/retry', auth.requireAuthApi(['admin']), (req, res) => {
+  db.markUploadQueueItemPending(req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/upload-queue/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  db.removeUploadQueueItem(req.params.id);
+  res.json({ ok: true });
+});
+app.post('/api/admin/upload-queue/remove-batch', auth.requireAuthApi(['admin']), (req, res) => {
+  db.removeUploadQueueItems(Array.isArray(req.body.ids) ? req.body.ids : []);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/upload-queue', auth.requireAuthApi(['admin']), (req, res) => {
+  db.clearUploadQueue();
+  res.json({ ok: true });
+});
+
 // ── R2 upload — Step 2: browser has finished uploading directly to R2; save the metadata row. ──
 // ── Audiobook chapter combining (Per Bot 53) ── Author's Republic (the
 // audiobook distribution aggregator) requires separate per-chapter MP3
@@ -9446,6 +9489,29 @@ app.post('/api/admin/run-mmpm-practices-import', auth.requireAuthApi(['admin']),
 app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['admin']), (req, res) => {
   if (!mmpmPracticesJob) return res.status(404).json({ error: 'No import has been started yet.' });
   res.json(mmpmPracticesJob);
+});
+
+// ── Meditation theme tags — August 2026 batch (Per Bot 27) ── One-time,
+// same job-log pattern as the MMPM practices import above. Applies the
+// confirmed tag mapping (meditation_tags_import/meditation_tags_manifest.json)
+// to the 156 files from the recent 161-file bulk upload that actually
+// landed in the library. Safe to re-run — addFileTag is INSERT OR IGNORE.
+let meditationTagsJob = null;
+app.post('/api/admin/run-meditation-tags-import', auth.requireAuthApi(['admin']), (req, res) => {
+  if (meditationTagsJob && !meditationTagsJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: meditationTagsJob });
+  }
+  meditationTagsJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = meditationTagsJob;
+  const { runImport } = require('./apply_meditation_tags');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('meditation tags import error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-meditation-tags-import/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!meditationTagsJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(meditationTagsJob);
 });
 
 // ── Standalone poems import (Per Bot 14) ──
