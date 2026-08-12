@@ -2065,6 +2065,12 @@ async function getDb() {
     // that's real and unambiguous.
     "ALTER TABLE users ADD COLUMN birthday_prompt_last_shown_at TEXT",
     "ALTER TABLE users ADD COLUMN birthday_prompt_responded_at TEXT",
+    // Per Bot 25 — "you have N new files" login notification. NULL means
+    // never checked — the first-ever check for an existing user seeds
+    // this to now() and reports 0 rather than dumping every file ever
+    // assigned to them as "new", the same grandfather reasoning as the
+    // onboarding_completed migrations above.
+    "ALTER TABLE users ADD COLUMN library_notify_last_seen_at TEXT",
 
 
     // Per Bot 27 — length of a signal script in minutes, for the admin
@@ -5020,6 +5026,32 @@ function markBirthdayPromptResponded(userId) {
   getDbSync().run('UPDATE users SET birthday_prompt_responded_at=? WHERE id=?', [new Date().toISOString(), userId]);
 }
 
+// ── New library files login notification (Per Bot 25) ── "You have N
+// new files in your library" — counts files assigned specifically to
+// this person (assigned_client_id) created since they last acknowledged
+// this notification. Deliberately scoped to assigned files only, not
+// every new addition to the whole library — this exists because a
+// facilitator assigning a real batch (13 tracks at once) turned out to
+// have no visible confirmation for the client at all; general new
+// content across the whole app is a different, much noisier thing this
+// isn't meant to cover.
+function getNewLibraryFilesCount(userId) {
+  const user = queryOne('SELECT library_notify_last_seen_at FROM users WHERE id=?', [userId]);
+  if (!user) return 0;
+  if (!user.library_notify_last_seen_at) {
+    // First check ever — seed the checkpoint now rather than counting
+    // everything historically assigned as "new".
+    markLibraryNotificationSeen(userId);
+    return 0;
+  }
+  const row = queryOne('SELECT COUNT(*) as n FROM library_files WHERE assigned_client_id=? AND archived=0 AND created_at > ?',
+    [userId, user.library_notify_last_seen_at]);
+  return (row && row.n) || 0;
+}
+function markLibraryNotificationSeen(userId) {
+  getDbSync().run('UPDATE users SET library_notify_last_seen_at=? WHERE id=?', [new Date().toISOString(), userId]);
+}
+
 // ── User favourites ──
 function addFavourite(id, clientId, fileId) {
   try { getDbSync().run('INSERT OR IGNORE INTO user_favourites (id,client_id,file_id) VALUES (?,?,?)', [id, clientId, fileId]); save(); } catch(e) {}
@@ -7450,6 +7482,7 @@ module.exports = {
   addFavourite, removeFavourite, getFavourites, getNextActionSuggestion,
   getReferralPromptTrigger, markReferralPromptShown, markReferralPromptResponded,
   getBirthdayPromptTrigger, markBirthdayPromptShown, markBirthdayPromptResponded,
+  getNewLibraryFilesCount, markLibraryNotificationSeen,
   // User playlists
   createUserPlaylist, getUserPlaylists, addToUserPlaylist, removeFromUserPlaylist, deleteUserPlaylist, renameUserPlaylist,
   // Registration

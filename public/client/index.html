@@ -233,6 +233,11 @@
     @media (max-width: 480px) {
       #youView .lib-subnav { flex-wrap: wrap; overflow-x: visible; }
       #youView .lib-subnav-btn-danger { margin-left: 0; }
+      /* Per Bot 25 — My Practices table Date column: full timestamp
+         (down to the second) is genuinely useful on desktop for telling
+         apart a batch of same-day uploads, but there's no room for it on
+         a phone-width screen — just the date stays. */
+      .mp-time { display: none; }
     }
     .lib-sub-panel { display:none; flex-direction:column; overflow:hidden; flex:1; min-height:0; }
     .lib-sub-panel.visible { display:flex; }
@@ -894,45 +899,6 @@
             <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:left"></div>
             <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
-          <!-- Per Bot 25 — referral prompt. Same quiet card language as
-               What's New just above (not a blocking modal — a real ask
-               shouldn't feel like an interruption). Hidden by default;
-               shown only when checkReferralPrompt() below finds a real
-               trigger (a just-crossed consistency milestone or a
-               just-finished course), never for a brand-new account,
-               never more than once per real cooldown window. -->
-          <div id="referralPromptCard" class="whats-new-card" style="display:none; margin-top:14px;">
-            <div id="referralPromptBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:center"></div>
-            <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-              <button type="button" onclick="respondReferralPrompt('share')" style="background:rgba(180,230,200,0.14); border:1px solid rgba(180,230,200,0.4); border-radius:12px; padding:10px 16px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Yes, share</button>
-              <button type="button" onclick="respondReferralPrompt('not_now')" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px 16px; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Not now</button>
-              <button type="button" onclick="respondReferralPrompt('no_thanks')" style="background:none; border:none; color:rgba(255,255,255,0.35); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-decoration:underline;">Don't ask again</button>
-            </div>
-          </div>
-          <!-- Per Bot 25 — birthday re-offer. Same quiet card language,
-               same three-way response shape as the referral card just
-               above. Self-contained month/day picker right here (no
-               dedicated My Account section exists to send someone to —
-               the only other place this was ever askable was the
-               one-time onboarding stepper). -->
-          <div id="birthdayPromptCard" class="whats-new-card" style="display:none; margin-top:14px;">
-            <div style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:10px; text-align:center">We never got your birthday — just the day, so we can say happy birthday. No year, ever.</div>
-            <div style="display:flex; gap:8px; margin-bottom:12px;">
-              <select id="birthdayPromptMonth" style="flex:1">
-                <option value="">Month</option>
-                <option value="1">January</option><option value="2">February</option><option value="3">March</option>
-                <option value="4">April</option><option value="5">May</option><option value="6">June</option>
-                <option value="7">July</option><option value="8">August</option><option value="9">September</option>
-                <option value="10">October</option><option value="11">November</option><option value="12">December</option>
-              </select>
-              <select id="birthdayPromptDay" style="flex:1"><option value="">Day</option></select>
-            </div>
-            <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-              <button type="button" onclick="respondBirthdayPrompt('save')" style="background:rgba(180,230,200,0.14); border:1px solid rgba(180,230,200,0.4); border-radius:12px; padding:10px 16px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Save</button>
-              <button type="button" onclick="respondBirthdayPrompt('not_now')" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px 16px; color:rgba(255,255,255,0.6); font-family:Georgia,serif; font-size:13px; cursor:pointer;">Not now</button>
-              <button type="button" onclick="respondBirthdayPrompt('no_thanks')" style="background:none; border:none; color:rgba(255,255,255,0.35); font-family:Georgia,serif; font-size:12px; cursor:pointer; text-decoration:underline;">Don't ask again</button>
-            </div>
-          </div>
         </div>
         <div style="display:flex; align-items:center; gap:16px; margin-bottom:-13px;">
           <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
@@ -1465,6 +1431,24 @@
     <div class="pw-btns">
       <button class="pw-ok" id="consentGateBtn" onclick="submitConsentGate()" disabled>Continue</button>
     </div>
+  </div>
+</div>
+
+<!-- Per Bot 25 — one shared login-notification popup, queued: after the
+     (mandatory, blocking) consent gate above resolves, checkLoginNotifications()
+     checks a short fixed sequence — new library files, then referral,
+     then birthday — and shows whichever ONE is actually eligible right
+     now, one at a time, never more than one competing for attention on
+     the same visit. Per: "ensure all of these little messages/
+     notifications/etc. use popups on login" — this replaces what used
+     to be separate always-on-Home cards for referral/birthday, plus adds
+     the new "new files" notification, all through this single reusable
+     shell rather than three separate bespoke UIs. Body content swaps
+     per notification type; loginNotifyClose() advances to the next
+     queued item (if any) rather than just closing. -->
+<div class="pw-overlay" id="loginNotifyOverlay">
+  <div class="pw-modal" style="max-width:440px">
+    <div id="loginNotifyBody"></div>
   </div>
 </div>
 
@@ -4468,7 +4452,7 @@
         </td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.area || '—'}</td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.course || '—'}</td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 19).replace('T', ' ') || '—'}</td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}<span class="mp-time">${r.date ? ' ' + r.date.slice(11, 19) : ''}</span></td>
         <td style="padding:9px 10px;white-space:nowrap;text-align:right">
           <button class="heart-btn ${r.is_favourite ? 'active' : ''}" onclick="event.stopPropagation();toggleFavouriteInMyPractices('${r.kind}','${r.id}',this)" title="Favourite">♥</button>
           <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${r.kind}','${r.id}')">✕</button>
@@ -5561,7 +5545,6 @@
     } catch(e) {}
     renderWhatsNewPromo();
     loadActivitySummary();
-    checkReferralAndBirthdayPrompts();
   }
   // Per Bot 24 (activity/engagement, group 1) — quiet, factual, never
   // guilt-shaped. Milestone (rare — shown once ever, at real spaced-out
@@ -5586,77 +5569,133 @@
     } catch(e) { el.style.display = 'none'; }
   }
 
-  // Per Bot 25 — referral prompt. See getReferralPromptTrigger in db.js
-  // for the actual trigger logic/reasoning (a real discussion happened
-  // on this before any code, per Per's own request). 'shown' is marked
-  // the moment this actually renders, not on a later click — so
-  // navigating away without answering still starts the cooldown, rather
-  // than showing again on every single Home visit until someone reacts.
-  // Returns whether it actually showed, so checkReferralAndBirthdayPrompts
-  // below can keep these mutually exclusive — one gentle ask at a time,
-  // never both competing for attention on the same visit.
-  async function checkReferralPrompt() {
-    try {
-      const res = await fetch('/api/my/referral-prompt');
-      const data = await res.json();
-      if (!data.show) return false;
-      const cfg = await window.brandReady.catch(() => ({}));
-      document.getElementById('referralPromptBody').textContent = `${data.message} If ${cfg.appName || 'this'} has been good for you, would you share it with someone who might feel the same?`;
-      document.getElementById('referralPromptCard').style.display = '';
-      fetch('/api/my/referral-prompt/shown', { method: 'POST' }).catch(() => {});
-      return true;
-    } catch (e) { return false; /* silent — a missed prompt isn't worth surfacing an error for */ }
-  }
-  async function respondReferralPrompt(action) {
-    document.getElementById('referralPromptCard').style.display = 'none';
-    if (action === 'not_now') return; // cooldown from the 'shown' call above already covers this
-    fetch('/api/my/referral-prompt/respond', { method: 'POST' }).catch(() => {});
-    if (action === 'share') {
-      const cfg = await window.brandReady.catch(() => ({}));
-      shareMoment(`I've been using ${cfg.appName || 'this'} and thought of you.`);
+  // Per Bot 25 — one shared login-notification popup (see the
+  // #loginNotifyOverlay comment near its markup for the full reasoning).
+  // Checked once, at boot, via checkLoginNotifications() near the
+  // bottom of this script — not from Home's render, so it behaves like
+  // an actual login-time notification rather than re-firing on every
+  // Home visit within the same session. QUEUE is the fixed check order;
+  // each entry's check() returns the popup content (or null if not
+  // eligible right now), and onShown()/respond() handle its own
+  // server-side bookkeeping. The queue advances to the next eligible
+  // item every time the current one is dismissed, so at most one shows
+  // at a time but nothing gets silently skipped in the same session.
+  const LOGIN_NOTIFY_QUEUE = [
+    {
+      key: 'library',
+      check: async () => {
+        const data = await (await fetch('/api/my/library-notification')).json();
+        if (!data.count) return null;
+        return {
+          html: `<h3>New in your library</h3>
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:18px">You have ${data.count} new file${data.count === 1 ? '' : 's'} in your library.</div>`,
+          buttons: `<button class="pw-ok" onclick="loginNotifyRespond('library','view')">View my library</button>
+            <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('library','dismiss')">Dismiss</button>`,
+        };
+      },
+      onShown: () => fetch('/api/my/library-notification/seen', { method: 'POST' }).catch(() => {}),
+      respond: (action) => {
+        if (action === 'view') { switchTab('library'); switchLibrarySub('practices'); setPracticesGroupMode('mine'); }
+      },
+    },
+    {
+      key: 'referral',
+      check: async () => {
+        const data = await (await fetch('/api/my/referral-prompt')).json();
+        if (!data.show) return null;
+        const cfg = await window.brandReady.catch(() => ({}));
+        return {
+          html: `<h3>A quick thought</h3>
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:18px">${data.message} If ${cfg.appName || 'this'} has been good for you, would you share it with someone who might feel the same?</div>`,
+          buttons: `<button class="pw-ok" onclick="loginNotifyRespond('referral','share')">Yes, share</button>
+            <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('referral','not_now')">Not now</button>
+            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.35);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('referral','no_thanks')">Don't ask again</button>`,
+        };
+      },
+      onShown: () => fetch('/api/my/referral-prompt/shown', { method: 'POST' }).catch(() => {}),
+      respond: async (action) => {
+        if (action === 'not_now') return; // cooldown from onShown above already covers this
+        fetch('/api/my/referral-prompt/respond', { method: 'POST' }).catch(() => {});
+        if (action === 'share') {
+          const cfg = await window.brandReady.catch(() => ({}));
+          shareMoment(`I've been using ${cfg.appName || 'this'} and thought of you.`);
+        }
+      },
+    },
+    {
+      key: 'birthday',
+      check: async () => {
+        const data = await (await fetch('/api/my/birthday-prompt')).json();
+        if (!data.show) return null;
+        const dayOptions = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+        return {
+          html: `<h3>One more thing</h3>
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:14px">We never got your birthday — just the day, so we can say happy birthday. No year, ever.</div>
+            <div style="display:flex;gap:8px;margin-bottom:18px">
+              <select id="loginNotifyBdayMonth" style="flex:1">
+                <option value="">Month</option>
+                <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+                <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+                <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+                <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+              </select>
+              <select id="loginNotifyBdayDay" style="flex:1"><option value="">Day</option>${dayOptions}</select>
+            </div>`,
+          buttons: `<button class="pw-ok" onclick="loginNotifyRespond('birthday','save')">Save</button>
+            <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('birthday','not_now')">Not now</button>
+            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.35);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('birthday','no_thanks')">Don't ask again</button>`,
+        };
+      },
+      onShown: () => fetch('/api/my/birthday-prompt/shown', { method: 'POST' }).catch(() => {}),
+      respond: async (action) => {
+        if (action === 'not_now') return; // cooldown from onShown above already covers this
+        if (action === 'no_thanks') { fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {}); return; }
+        if (action === 'save') {
+          const m = document.getElementById('loginNotifyBdayMonth').value;
+          const d = document.getElementById('loginNotifyBdayDay').value;
+          if (!m || !d) { appAlert('Pick both a month and a day, or tap "Not now".'); throw new Error('incomplete'); } // re-thrown to keep the popup open — see loginNotifyRespond
+          await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dob_month: m, dob_day: d }) });
+          fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {});
+          if (fullAccount) Object.assign(fullAccount, { dob_month: m, dob_day: d });
+        }
+      },
+    },
+  ];
+
+  async function checkLoginNotifications() {
+    // Never compete with the mandatory consent gate or the onboarding
+    // stepper — this is a soft, fully-skippable set of notifications,
+    // not something that should stack on top of (or fight for attention
+    // with) something the person actually has to resolve. If either is
+    // up, this check is simply skipped for the session; it runs again
+    // next login.
+    if (document.getElementById('consentGateOverlay').classList.contains('visible')) return;
+    if (document.getElementById('onboardingModal').classList.contains('visible')) return;
+    for (const item of LOGIN_NOTIFY_QUEUE) {
+      let content;
+      try { content = await item.check(); } catch (e) { continue; }
+      if (content) { showLoginNotify(item.key, content); return; }
     }
   }
-
-  // Per Bot 25 — birthday re-offer. Same reasoning/shape as the referral
-  // prompt just above; see getBirthdayPromptTrigger in db.js.
-  async function checkBirthdayPrompt() {
+  function showLoginNotify(key, content) {
+    document.getElementById('loginNotifyBody').innerHTML = `${content.html}<div class="pw-btns" style="flex-wrap:wrap">${content.buttons}</div>`;
+    document.getElementById('loginNotifyOverlay').classList.add('visible');
+    document.getElementById('loginNotifyOverlay').dataset.key = key;
+    const item = LOGIN_NOTIFY_QUEUE.find(i => i.key === key);
+    item.onShown?.();
+  }
+  async function loginNotifyRespond(key, action) {
+    const item = LOGIN_NOTIFY_QUEUE.find(i => i.key === key);
     try {
-      const res = await fetch('/api/my/birthday-prompt');
-      const data = await res.json();
-      if (!data.show) return;
-      const daySel = document.getElementById('birthdayPromptDay');
-      if (daySel.options.length <= 1) {
-        for (let d = 1; d <= 31; d++) daySel.innerHTML += `<option value="${d}">${d}</option>`;
-      }
-      document.getElementById('birthdayPromptCard').style.display = '';
-      fetch('/api/my/birthday-prompt/shown', { method: 'POST' }).catch(() => {});
-    } catch (e) { /* silent — a missed prompt isn't worth surfacing an error for */ }
-  }
-  async function respondBirthdayPrompt(action) {
-    document.getElementById('birthdayPromptCard').style.display = 'none';
-    if (action === 'not_now') return; // cooldown from the 'shown' call above already covers this
-    if (action === 'no_thanks') { fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {}); return; }
-    if (action === 'save') {
-      const m = document.getElementById('birthdayPromptMonth').value;
-      const d = document.getElementById('birthdayPromptDay').value;
-      if (!m || !d) { appAlert('Pick both a month and a day, or tap "Not now".'); document.getElementById('birthdayPromptCard').style.display = ''; return; }
-      try {
-        await fetch('/api/account', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dob_month: m, dob_day: d }) });
-        fetch('/api/my/birthday-prompt/respond', { method: 'POST' }).catch(() => {});
-        if (fullAccount) Object.assign(fullAccount, { dob_month: m, dob_day: d });
-      } catch (e) { appAlert('Could not save that — please try again.'); }
+      await item.respond(action);
+    } catch (e) {
+      return; // e.g. birthday's incomplete-selection guard — leave the popup open, don't advance the queue
     }
-  }
-
-  // Per Bot 25 — one gentle ask per Home visit, never both at once.
-  // Referral takes priority when both happen to be eligible on the same
-  // visit (rare — different cooldowns, different trigger conditions) —
-  // arbitrary but needs *some* fixed order, and referral's trigger is
-  // tied to a specific moment (a milestone/course, not just "still
-  // missing"), so it's the more time-sensitive of the two to honour.
-  async function checkReferralAndBirthdayPrompts() {
-    const referralShown = await checkReferralPrompt();
-    if (!referralShown) checkBirthdayPrompt();
+    document.getElementById('loginNotifyOverlay').classList.remove('visible');
+    // Advance to the next eligible item, if any, rather than just
+    // closing — same one-at-a-time behaviour as the queue's first pass,
+    // so answering one doesn't hide a second genuinely-pending one.
+    checkLoginNotifications();
   }
 
   // Per Bot 24 — "What's New" home promo, rewritten for a rotating set of
@@ -7246,6 +7285,14 @@
   loadA11yPrefsFromServer();
   checkOnboarding();
   checkPendingConsents(); // Per Bot 24 — see the function itself for why this one gate covers every account-creation path at once.
+  // Per Bot 25 — login notifications (new files/referral/birthday), same
+  // "once at boot" timing as the two checks above, not tied to Home's
+  // render. Short delay purely to let the two mandatory/blocking checks
+  // above actually paint first if either has something pending —
+  // checkLoginNotifications() itself also checks their visibility
+  // directly before doing anything, so this delay is a courtesy for the
+  // common "nothing pending" case, not the real guard.
+  setTimeout(checkLoginNotifications, 1000);
   // Per Bot 12: quietly watches for an incoming video/audio call from this
   // client's facilitator, independent of whichever tab is active — same
   // "run once, regardless of tab" reasoning as the two calls above.

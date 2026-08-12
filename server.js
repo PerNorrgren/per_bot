@@ -10015,6 +10015,17 @@ app.post('/api/my/birthday-prompt/respond', auth.requireAuthApi(['client']), (re
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── New library files login notification (Per Bot 25) ── see the
+// getNewLibraryFilesCount comment in db.js for the reasoning.
+app.get('/api/my/library-notification', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json({ count: db.getNewLibraryFilesCount(req.user.id) }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/my/library-notification/seen', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.markLibraryNotificationSeen(req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 24 (activity/engagement, group 2) — "one obvious next action"
 // on the home screen. The client only calls this when the resume card
 // (course-in-progress) has nothing to show — see loadNextAction there.
