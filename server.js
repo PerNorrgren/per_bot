@@ -5698,6 +5698,22 @@ async function anthropicFetch(systemPrompt, messages, maxTokens, timeoutMs = 250
   // further down the line and just look like "nothing happened").
   const textBlock = data.content.find(b => b.type === 'text');
   if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+  // Per Bot 39 — a truncated reply used to come back here looking
+  // exactly like a normal, complete one: textBlock.text was whatever
+  // Claude had written before running out of room, with nothing to
+  // distinguish it from a finished response. Every caller of this
+  // function trusts what it gets back completely — several (ai-polish
+  // chief among them) replace the user's existing content outright with
+  // whatever comes back, no review step. A cut-off reply landing there
+  // silently overwrote and lost real work rather than failing loudly.
+  // Throwing here routes every caller into the try/catch + generic
+  // "could not get a suggestion, try again" error path they already
+  // have — turning silent data loss into a clean, visible failure,
+  // with no new failure mode for any existing caller.
+  if (data.stop_reason === 'max_tokens') {
+    console.error(`anthropicFetch: response truncated at max_tokens (requested ${maxTokens}, thinking ${disableThinking ? 'disabled' : 'enabled — shares this budget'}) — ${textBlock.text.length} chars returned before cutoff`);
+    throw new Error('Response was cut off before finishing — try again, or with a shorter message.');
+  }
   return textBlock.text;
 }
 
@@ -5737,6 +5753,13 @@ async function anthropicFetchWithWebSearch(systemPrompt, messages, maxTokens, ti
   if (!data.content) throw new Error(JSON.stringify(data));
   const textBlock = data.content.find(b => b.type === 'text');
   if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+  // Per Bot 39 — same truncation guard as anthropicFetch above; see that
+  // comment for why silently returning a cut-off reply here is a real
+  // data-loss bug, not a theoretical one.
+  if (data.stop_reason === 'max_tokens') {
+    console.error(`anthropicFetchWithWebSearch: response truncated at max_tokens (requested ${maxTokens}) — ${textBlock.text.length} chars returned before cutoff`);
+    throw new Error('Response was cut off before finishing — try again, or with a shorter message.');
+  }
   return textBlock.text;
 }
 
@@ -5760,6 +5783,11 @@ async function anthropicFetchWithTools(systemPrompt, messages, tools, toolResolv
     if (data.stop_reason !== 'tool_use') {
       const textBlock = data.content.find(b => b.type === 'text');
       if (!textBlock) throw new Error('No text block in Claude response (stop_reason=' + data.stop_reason + '): ' + JSON.stringify(data));
+      // Per Bot 39 — same truncation guard as anthropicFetch above.
+      if (data.stop_reason === 'max_tokens') {
+        console.error(`anthropicFetchWithTools: response truncated at max_tokens (requested ${maxTokens}) — ${textBlock.text.length} chars returned before cutoff`);
+        throw new Error('Response was cut off before finishing — try again, or with a shorter message.');
+      }
       return textBlock.text;
     }
 
@@ -6133,7 +6161,22 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     const b = brand();
     const language = getAdminLanguage();
     const systemPrompt = prompts.AI_POLISH_SIGNAL_PROMPT(b.name, language);
-    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 2000);
+    // Per Bot 39 — bumped 2000 -> 6000 and thinking disabled (this task
+    // doesn't need extended reasoning, and thinking draws from this same
+    // budget — see the Per Bot 15t comment on anthropicFetch). At 2000
+    // with thinking left on, anything longer than a short message could
+    // run out of room mid-generation; a full newsletter with a couple of
+    // poems in it easily needs more than that once HTML markup overhead
+    // is counted too. Paired with the truncation guard now added to
+    // anthropicFetch itself: if this ever does run out of room even at
+    // 6000, it now throws instead of silently handing back a cut-off
+    // reply — which matters here specifically, since the caller
+    // (message-editor.js's runAiPolish) replaces the whole editor's
+    // content outright with whatever comes back, no review step. A
+    // thrown error here means that replace never happens and the
+    // person's original message is left untouched; a truncated .html
+    // used to mean it got silently overwritten and lost.
+    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 6000, true);
     res.json({ html: reply.trim() });
   } catch(e) {
     console.error('ai-polish error:', e.message);
