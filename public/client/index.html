@@ -333,12 +333,26 @@
     /* Talk */
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; min-height:0; overflow-y:auto; }
     /* Per Bot 28 — curated shelves: horizontally-scrollable rows of
-       larger tappable cards, one row per featured category. */
+       larger tappable cards, one row per featured category.
+       Per Bot 37 — auto-advancing carousel with a centred highlight (see
+       initShelfCarousels in JS). scroll-snap-align changed start->center
+       and mandatory (was proximity) so a card always comes to rest
+       exactly centred, whether autoplay or a manual swipe moved it. The
+       calc(50% - 75px) side padding (75px = half the 150px card width)
+       is what lets the very first and very last card actually reach
+       centre — without it there's no room to their outside for the
+       browser to scroll into. */
     .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
-    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 14px; scroll-snap-type:x proximity; }
+    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px calc(50% - 75px) 14px; scroll-snap-type:x mandatory; }
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
-    .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; }
+    .shelf-card { flex:0 0 auto; scroll-snap-align:center; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
+    /* The centred card — kept in sync with whichever card the carousel
+       (auto or manual) has actually brought to centre, via the
+       IntersectionObserver in initShelfCarousels rather than by
+       tracking an index in JS, so it can never drift out of sync with
+       what's really on screen. */
+    .shelf-card.carousel-active { transform:scale(1.08); border-color:rgba(180,230,200,0.5); background:rgba(180,230,200,0.1); box-shadow:0 6px 20px rgba(0,0,0,0.3); }
     /* Per's request — the app is dark enough already that dimming locked
        cards further makes them look broken/missing rather than "gated".
        The lock emoji already communicates that; no opacity change here. */
@@ -5501,6 +5515,82 @@
         <div class="shelf-row">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
       </div>
     `).join('');
+    initShelfCarousels();
+  }
+  // Per Bot 37 — auto-advancing carousels: each .shelf-row moves itself
+  // one card at a time, pausing while it's actually being looked at
+  // (see below), with the centred card visually highlighted and that
+  // highlight following the carousel rather than being tied to a fixed
+  // position. Re-runs every time renderFeaturedShelves rebuilds the DOM
+  // (a tab switch, a pull-to-refresh, a "More" fetch merging new data
+  // in) — _shelfCarouselCleanups holds every interval/observer/listener
+  // from the previous render so they're torn down first; without that,
+  // returning to the Talk tab a few times would silently stack up
+  // multiple autoplay timers all fighting over the same rows.
+  let _shelfCarouselCleanups = [];
+  const SHELF_AUTOPLAY_MS = 3500;
+  const SHELF_RESUME_AFTER_MS = 6000;
+  function initShelfCarousels() {
+    _shelfCarouselCleanups.forEach(fn => fn());
+    _shelfCarouselCleanups = [];
+
+    document.querySelectorAll('#featuredShelves .shelf-row').forEach(row => {
+      const cards = Array.from(row.children);
+      if (cards.length < 2) return; // nothing to carousel with just one card
+
+      // Keeps the highlight on whichever card is actually centred right
+      // now, regardless of whether it got there via autoplay or a
+      // manual swipe — reading the real scroll position rather than
+      // tracking a separate "current index" in JS, so the two can never
+      // drift apart. rootMargin trims the observed area down to a thin
+      // vertical strip through the row's horizontal centre; only a card
+      // actually crossing that strip counts as "centred".
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          entry.target.classList.toggle('carousel-active', entry.isIntersecting);
+        });
+      }, { root: row, rootMargin: '0px -42% 0px -42%', threshold: 0.5 });
+      cards.forEach(c => observer.observe(c));
+
+      let paused = false;
+      let resumeTimer = null;
+      const step = () => {
+        if (paused) return;
+        // offsetParent is null when the row (or an ancestor, e.g. the
+        // Library tab being hidden) isn't actually visible — skip the
+        // tick rather than scrolling an off-screen row, which would
+        // otherwise show up as a jarring jump the next time someone
+        // looks at it.
+        if (row.offsetParent === null) return;
+        const cardWidth = cards[0].getBoundingClientRect().width;
+        const gap = 12;
+        const atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - cardWidth / 2;
+        if (atEnd) row.scrollTo({ left: 0, behavior: 'smooth' });
+        else row.scrollBy({ left: cardWidth + gap, behavior: 'smooth' });
+      };
+      const timer = setInterval(step, SHELF_AUTOPLAY_MS);
+
+      // A manual swipe/drag pauses autoplay immediately (fighting the
+      // user's own scroll gesture looks broken) and resumes it a few
+      // seconds after they let go, rather than stopping forever — this
+      // is meant to sit in the background and keep gently cycling
+      // whenever nobody's actively using it.
+      const pauseThenResume = () => {
+        paused = true;
+        clearTimeout(resumeTimer);
+        resumeTimer = setTimeout(() => { paused = false; }, SHELF_RESUME_AFTER_MS);
+      };
+      row.addEventListener('pointerdown', pauseThenResume);
+      row.addEventListener('touchstart', pauseThenResume, { passive: true });
+
+      _shelfCarouselCleanups.push(() => {
+        clearInterval(timer);
+        clearTimeout(resumeTimer);
+        observer.disconnect();
+        row.removeEventListener('pointerdown', pauseThenResume);
+        row.removeEventListener('touchstart', pauseThenResume);
+      });
+    });
   }
   // Every card in every row (Courses aside) opens the same list-style
   // overlay — heart/play/add-to-playlist per row, reusing contentItemHTML
