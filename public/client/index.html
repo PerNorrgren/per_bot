@@ -4363,10 +4363,17 @@
   // Per Bot 25 — sort state for the table below. Persists across
   // re-renders within the session (not saved anywhere) so re-sorting
   // isn't needed after every favourite/remove action.
-  let _myPracticesSort = { col: 'date', dir: 'desc' };
+  // Per Bot 25 — 'default' is its own real sort mode, not just an alias
+  // for date-desc: favourite first, then most-recent-first within each
+  // group. Everything loads in this state; clicking a column header
+  // switches to sorting purely by that column instead. 'fav' is its own
+  // clickable column too — click the heart header to sort by favourite
+  // status directly, same click-to-toggle-direction behaviour as every
+  // other column.
+  let _myPracticesSort = { col: 'default', dir: 'desc' };
   function sortMyPracticesTable(col) {
     if (_myPracticesSort.col === col) _myPracticesSort.dir = _myPracticesSort.dir === 'asc' ? 'desc' : 'asc';
-    else _myPracticesSort = { col, dir: col === 'date' ? 'desc' : 'asc' };
+    else _myPracticesSort = { col, dir: col === 'date' || col === 'fav' ? 'desc' : 'asc' };
     renderPractices();
   }
 
@@ -4424,16 +4431,33 @@
     if (!rows.length) return '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Nothing in My Practices yet — favourite a practice or meditation, and anything a facilitator or admin gives you shows up here too.</div>';
 
     const { col, dir } = _myPracticesSort;
-    const getVal = { name: r => r.name.toLowerCase(), area: r => r.area.toLowerCase(), course: r => r.course.toLowerCase(), date: r => r.date }[col] || (r => r.date);
-    rows.sort((a, b) => {
-      const av = getVal(a), bv = getVal(b);
-      if (av < bv) return dir === 'asc' ? -1 : 1;
-      if (av > bv) return dir === 'asc' ? 1 : -1;
-      return 0;
-    });
+    // Per Bot 25 — 'default' and 'fav' both sort favourite-first, tied
+    // items broken by full-precision date (the underlying r.date is the
+    // real created_at timestamp down to the second, not the truncated
+    // display string below — comparing the full ISO string is what
+    // actually respects load order when several things were uploaded
+    // close together, which a date-only comparison can't distinguish).
+    // Plain column sorts (name/area/course/date) below are unaffected by
+    // favourite status — clicking one of those genuinely sorts by just
+    // that column, full stop.
+    if (col === 'default' || col === 'fav') {
+      const favFirst = !(col === 'fav' && dir === 'asc'); // true unless someone explicitly clicked the heart header to flip to favourite-last
+      rows.sort((a, b) => {
+        if (a.is_favourite !== b.is_favourite) return favFirst ? (a.is_favourite ? -1 : 1) : (a.is_favourite ? 1 : -1);
+        return (b.date || '').localeCompare(a.date || '');
+      });
+    } else {
+      const getVal = { name: r => r.name.toLowerCase(), area: r => r.area.toLowerCase(), course: r => r.course.toLowerCase(), date: r => r.date }[col] || (r => r.date);
+      rows.sort((a, b) => {
+        const av = getVal(a), bv = getVal(b);
+        if (av < bv) return dir === 'asc' ? -1 : 1;
+        if (av > bv) return dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
 
     const arrow = (c) => col === c ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
-    const th = (c, label) => `<th onclick="sortMyPracticesTable('${c}')" style="text-align:left;padding:8px 10px;cursor:pointer;color:rgba(255,255,255,0.45);font-weight:normal;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;user-select:none;white-space:nowrap">${label}${arrow(c)}</th>`;
+    const th = (c, label, align) => `<th onclick="sortMyPracticesTable('${c}')" style="text-align:${align||'left'};padding:8px 10px;cursor:pointer;color:rgba(255,255,255,0.45);font-weight:normal;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;user-select:none;white-space:nowrap">${label}${arrow(c)}</th>`;
     const rowsHtml = rows.map(r => `
       <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
         <td style="padding:9px 10px;cursor:pointer" onclick="${r.onClick}">
@@ -4444,7 +4468,7 @@
         </td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.area || '—'}</td>
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.course || '—'}</td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}</td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 19).replace('T', ' ') || '—'}</td>
         <td style="padding:9px 10px;white-space:nowrap;text-align:right">
           <button class="heart-btn ${r.is_favourite ? 'active' : ''}" onclick="event.stopPropagation();toggleFavouriteInMyPractices('${r.kind}','${r.id}',this)" title="Favourite">♥</button>
           <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${r.kind}','${r.id}')">✕</button>
@@ -4461,7 +4485,7 @@
     // an always-empty column; worth a real conversation about what it
     // should show here specifically before adding it blind.
     return `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
-      <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.12)">${th('name','Name')}${th('area','Area')}${th('course','Course')}${th('date','Date')}<th></th></tr></thead>
+      <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.12)">${th('name','Name')}${th('area','Area')}${th('course','Course')}${th('date','Date')}${th('fav','♥','right')}</tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table></div>`;
   }
