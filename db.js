@@ -4493,8 +4493,16 @@ function getLibraryFilesForUser(userFlags) {
 // manage every file regardless of what it's attached to.
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
-  const files = queryAll(`SELECT * FROM library_files WHERE archived=0 AND facilitator_resource=0
-    AND id NOT IN (SELECT file_id FROM lesson_file_refs) ORDER BY title ASC`);
+  // Per Bot 25 — category_name/subcategory_name added via the same JOIN
+  // pattern getPracticesForClient/getFacilitatorResources already use.
+  // Needed for the client's new sortable My Practices table (Area/Course
+  // columns) — files never had these resolved before, only the raw ids.
+  const files = queryAll(`SELECT f.*, cat.name as category_name, sub.name as subcategory_name
+    FROM library_files f
+    LEFT JOIN categories cat ON f.category_id=cat.id
+    LEFT JOIN categories sub ON f.subcategory_id=sub.id
+    WHERE f.archived=0 AND f.facilitator_resource=0
+    AND f.id NOT IN (SELECT file_id FROM lesson_file_refs) ORDER BY f.title ASC`);
   // Per Bot 24 — a one-to-one file's assigned_client_id was only ever used
   // to decide `accessible` (locked-but-listed, same treatment as an
   // ordinary tier-gated file) — meaning every other person's title, and
