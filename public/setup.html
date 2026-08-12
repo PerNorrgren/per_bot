@@ -31,6 +31,12 @@
     .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
 
     .panel { width:100%; max-width:560px; display:flex; flex-direction:column; gap:18px; padding:40px 16px 80px; }
+    /* Per's request — no outer margin on phone-width screens. Left/right
+       only: top/bottom stays for status-bar clearance and comfortable
+       scrolling on this settings page. */
+    @media (max-width: 500px) {
+      .panel { padding-left:0; padding-right:0; }
+    }
     .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:4px; }
     .page-title { font-size:24px; color:rgba(255,255,255,0.85); font-weight:normal; margin-bottom:6px; }
     .page-sub { font-size:14px; color:rgba(255,255,255,0.4); line-height:1.6; }

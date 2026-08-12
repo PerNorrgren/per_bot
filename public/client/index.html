@@ -55,6 +55,34 @@
         this line and keep the vh value above. */
     }
 
+    /* Per's request — on an actual phone, the 14px .panel padding plus
+       the .glass card's own rounded corners leave a visible margin of
+       background showing on every edge, making the app look like a
+       floating card rather than a full-screen app. Real installed apps
+       (and this one, once someone's actually using it day to day) don't
+       do that — edge to edge is the expectation. Scoped to genuinely
+       phone-width screens only; the existing tablet/desktop breakpoints
+       above are untouched, since a floating centred card makes sense
+       once there's real background space either side to fill.
+       env(safe-area-inset-*) keeps the header clear of the notch/status
+       bar and the bottom nav clear of the home-indicator strip on
+       notched phones — without it, flush-to-edge would put real content
+       under both. */
+    @media (max-width: 500px) {
+      .panel { padding:0; }
+      .glass {
+        max-width:100%; border-radius:0;
+        height:100vh; height:100dvh;
+        padding-top:env(safe-area-inset-top);
+      }
+      /* padding here (not also on .glass) so the nav bar's own
+         background extends down to fill the safe area, rather than a
+         visible seam of the glass card's different background showing
+         beneath it. */
+      .bottom-nav { padding-bottom:env(safe-area-inset-bottom); }
+      .player-overlay { border-radius:0; }
+    }
+
     /* Per Bot 24 — .header only ever had padding declared (see the two
        media-query overrides below), never an actual layout — its two
        children (the 🏠/wordmark group, and Display) were just stacking

@@ -11,6 +11,16 @@
   <style>
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; align-items:flex-start; justify-content:center; padding:20px 16px 40px; }
+    /* Per's request — no outer margin on phone-width screens. Left/right
+       only: top/bottom padding stays, since this is a scrollable list of
+       separate cards (not a single full-screen frame) and needs some
+       breathing room at the top for the status bar and at the bottom for
+       comfortable scrolling. Individual .card corners are a list-item
+       styling choice, not the "floating app" margin Per flagged, so
+       those are left rounded. */
+    @media (max-width: 500px) {
+      html, body { padding-left:0; padding-right:0; }
+    }
 
     .slideshow { position:fixed; inset:0; z-index:0; }
     .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }

@@ -28,6 +28,18 @@
       display:flex; flex-direction:column; gap:24px;
     }
 
+    /* Per's request — same edge-to-edge treatment as the main app: on
+       phone-width screens, no outer margin around the card. Width only
+       (not height) — this is a naturally-sized login form, not a
+       full-screen app frame, so stretching it to fill the viewport
+       height would leave a large empty gap rather than looking more
+       "full screen". The card's own internal padding is untouched, so
+       the form fields stay just as readable. */
+    @media (max-width: 500px) {
+      .panel { max-width:100%; padding:0; }
+      .glass { border-radius:0; }
+    }
+
     .wordmark { text-align:center; }
     .wordmark-main { font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); display:block; }
     .wordmark-sub { font-size:20px; color:rgba(255,255,255,0.8); display:block; margin-top:6px; }

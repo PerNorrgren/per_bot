@@ -26,6 +26,14 @@
       display:flex; flex-direction:column; gap:20px;
     }
 
+    /* Per's request — edge-to-edge on phone-width screens, matching the
+       main app. Width only, not height — this is a naturally-sized
+       form, not a full-screen app frame. */
+    @media (max-width: 500px) {
+      .panel { max-width:100%; padding:0; }
+      .glass { border-radius:0; }
+    }
+
     .wordmark { text-align:center; }
     .wordmark-main { font-size:11px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); display:block; }
     .wordmark-sub  { font-size:20px; color:rgba(255,255,255,0.8); display:block; margin-top:6px; }
