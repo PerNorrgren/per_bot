@@ -2803,7 +2803,20 @@ function getLibraryFiles(filters = {}) {
   if (filters.search)        { sql += ' AND (f.title LIKE ? OR f.original_name LIKE ?)';
     params.push('%'+filters.search+'%', '%'+filters.search+'%'); }
   sql += ' ORDER BY f.created_at DESC';
-  return queryAll(sql, params);
+  const files = queryAll(sql, params);
+  // Per Bot 29 — tags attached here (one extra query, not N+1) so the
+  // admin Content Library table/cards can show and filter by tag without
+  // every row needing its own round trip. Tags are now the primary way
+  // content gets organized (see the splash Practices shelf and the
+  // casing cleanup) — the admin's own file list needs to reflect that
+  // the same way it already reflects category/visibility.
+  if (files.length) {
+    const tagRows = queryAll('SELECT file_id, tag FROM library_file_tags ORDER BY tag');
+    const tagsByFile = {};
+    tagRows.forEach(r => { (tagsByFile[r.file_id] = tagsByFile[r.file_id] || []).push(r.tag); });
+    files.forEach(f => { f.tags = tagsByFile[f.id] || []; });
+  }
+  return files;
 }
 function updateLibraryFile(id, fields) {
   const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice','epub_opf_path','full_version_id'];

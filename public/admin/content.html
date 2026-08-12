@@ -256,6 +256,13 @@
             <option value="admin">Admin</option>
           </select>
           <select class="filter" id="libKind" onchange="filterLib()"></select>
+          <!-- Per Bot 29 — tags are now the primary way content gets
+               organized (see the splash Practices shelf), so the admin
+               table needs its own filter for them, same as category or
+               visibility already have. Populated from whatever tags
+               actually exist across allFiles — no separate admin screen
+               to maintain a fixed list. -->
+          <select class="filter" id="libTag" onchange="filterLib()"><option value="">All tags</option></select>
           <select class="filter" id="libFileType" onchange="filterLib()">
             <option value="">All file types</option>
             <option value="audio">Audio</option>
@@ -446,6 +453,16 @@
         <label>Content type</label>
         <select id="upKindDefault" oninput="applyBatchContentKind(this.value)"></select>
       </div>
+    </div>
+    <!-- Per Bot 29 — tags are now the default way content gets organized
+         (theme shelves, admin filtering), so applying them belongs at
+         upload time, not a separate follow-up step. Same value goes to
+         every file in this batch — comma-separated, lowercased on save
+         to match the casing cleanup's canonical form regardless of how
+         it's typed here. -->
+    <div style="margin:4px 0 14px">
+      <label>Tags <span style="font-weight:normal;color:rgba(255,255,255,0.35)">— comma-separated, applied to every file in this batch (e.g. grounding, sleep)</span></label>
+      <input type="text" id="upTags" placeholder="grounding, sleep" style="width:100%"/>
     </div>
     <div style="margin:4px 0 14px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
@@ -1421,6 +1438,7 @@ async function loadAll(){
   ]);
   allCats=cats;allFiles=files;allCourses=courses;allPlaylists=pls;allInstances=instances;
   CONTENT_KINDS=[{value:'',label:'Not set'}, ...kinds.map(k=>({value:k.value,label:k.label}))];
+  populateLibTagFilter();
   // Per Bot 33l — restricting a course to a skin so only that group's
   // logins ever see it (e.g. a University cohort). No restriction = the
   // default, visible to everyone, same "opt-in" pattern as Featured.
@@ -1498,14 +1516,28 @@ function filterLib(){
   const sub=document.getElementById('libSub').value;
   const vis=document.getElementById('libVis').value;
   const kind=document.getElementById('libKind').value;
+  const tag=document.getElementById('libTag').value;
   const fileType=document.getElementById('libFileType').value;
   const q=document.getElementById('libSearch').value.toLowerCase();
   renderLib(allFiles.filter(f=>
     (!cat||f.category_id===cat)&&(!sub||f.subcategory_id===sub)&&
     (!vis||f.visibility===vis)&&(!kind||f.content_type===kind)&&
+    (!tag||(f.tags||[]).includes(tag))&&
     (!fileType||fileTypeBucket(f.file_type)===fileType)&&
     (!q||f.title.toLowerCase().includes(q)||(f.original_name||'').toLowerCase().includes(q))
   ));
+}
+// Per Bot 29 — rebuilt on every loadAll (same "no fixed list to maintain"
+// approach as libKind), since the tag vocabulary itself is meant to grow
+// freely as content gets tagged, not be a fixed admin-managed enum.
+function populateLibTagFilter(){
+  const sel = document.getElementById('libTag');
+  if (!sel) return;
+  const prev = sel.value;
+  const allTags = new Set();
+  allFiles.forEach(f => (f.tags||[]).forEach(t => allTags.add(t)));
+  sel.innerHTML = '<option value="">All tags</option>' + [...allTags].sort().map(t => `<option value="${t}">${t}</option>`).join('');
+  sel.value = prev;
 }
 
 // Per Bot 16 — captured here rather than only inside filterLib, since
@@ -1541,6 +1573,7 @@ function renderLibCards(files){
         <div class="file-card-tags" style="align-items:center;gap:4px">
           ${f.category_name?`<span class="tag cat">${f.category_name}</span>`:''}
           ${f.subcategory_name?`<span class="tag cat">${f.subcategory_name}</span>`:''}
+          ${(f.tags||[]).map(t=>`<span class="tag" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.85)">${t}</span>`).join('')}
           ${kbadge(f.content_type)}${onebadge(f)}
           ${f.assigned_client_id
             ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap" title="Visibility tier is ignored for one-to-one files">My</span>`
@@ -1586,7 +1619,7 @@ function renderLibList(files){
     <div class="file-list-row">
       <input type="checkbox" class="flr-cb" value="${f.id}" ${_libSel.has(f.id)?'checked':''} onchange="toggleFileSel('${f.id}',this.checked)"/>
       <span class="flr-icon">${ficon(f.file_type)}</span>
-      <span class="flr-title" title="${f.title}">${f.title}${f.use_count>0?` <span class="tag uses" style="margin-left:4px">×${f.use_count}</span>`:''}</span>
+      <span class="flr-title" title="${f.title}">${f.title}${f.use_count>0?` <span class="tag uses" style="margin-left:4px">×${f.use_count}</span>`:''}${(f.tags||[]).map(t=>` <span class="tag" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.85);margin-left:4px">${t}</span>`).join('')}</span>
       <span class="flr-meta" title="${f.created_at||''}">${(f.created_at||'').slice(0,10)} · ${fsize(f.file_size)}</span>
       <span class="flr-cat" title="${f.category_name||''} ${f.subcategory_name?'/ '+f.subcategory_name:''}">${f.category_name||'—'}${f.subcategory_name?' / '+f.subcategory_name:''}</span>
       <span class="flr-vis">
@@ -1769,6 +1802,7 @@ function openUpload(){
   document.getElementById('upFacResource').checked=false;
   document.getElementById('upKindDefault').innerHTML = contentKindOptions('');
   document.getElementById('upKindDefault').value='';
+  document.getElementById('upTags').value='';
   document.getElementById('upOneToOne').checked=false;
   document.getElementById('upOneToOneRow').style.display='none';
   document.getElementById('upAssignedClientPicker').innerHTML='';
@@ -2327,6 +2361,7 @@ function addToQ(files){
   const headerVis  = document.getElementById('upVisDefault').value;
   const headerKind = document.getElementById('upKindDefault').value;
   const headerAssignedClient = document.getElementById('upOneToOne').checked ? getPersonPickerValue('upAssignedClientPicker') : '';
+  const headerTags = document.getElementById('upTags').value.trim();
   const newlyRegistered = [];
   Array.from(files).forEach(f=>{
     const inferred = inferFromFilename(f.name);
@@ -2351,9 +2386,9 @@ function addToQ(files){
       queueId = crypto.randomUUID();
       newlyRegistered.push({ id: queueId, originalName: f.name, fileSize: f.size,
         categoryId: inferred.catId, subcategoryId: inferred.subId, visibility: vis,
-        contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: '' });
+        contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: headerTags });
     }
-    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient, queueId});
+    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: headerTags, queueId});
   });
   renderQ();
   renderPersistedQueue();
@@ -2514,6 +2549,7 @@ async function uploadOneFile(it, cat, sub) {
     fd.append('visibility',    it.vis);
     fd.append('contentKind',   it.contentKind || '');
     fd.append('assignedClientId', it.assignedClientId || '');
+    fd.append('tags', it.tags || '');
     fd.append('facilitatorResource', facResource);
     const res = await fetch('/api/content/library', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
@@ -2555,6 +2591,7 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('originalName',  it.file.name);
   fd.append('contentType',   it.file.type || 'application/octet-stream');
   fd.append('fileSize',      it.file.size);
+  fd.append('tags',          it.tags || '');
   fd.append('facilitatorResource', facResource);
   const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
   if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');

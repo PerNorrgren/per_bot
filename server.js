@@ -2844,12 +2844,30 @@ app.patch('/api/my/referrals/seen', auth.requireAuthApi(['client']), (req, res) 
 // library content grouped separately, content further grouped by its own
 // content_type client-side into one row per type (meditations, practices,
 // etc.) rather than this endpoint hardcoding which types exist.
+// Per Bot 29 — the Practices theme shelf below used to only ever show
+// files an admin had separately, manually flagged Featured — meaning a
+// freshly-tagged batch (like the August meditation upload) needed a
+// second round of individual "mark as Featured" clicks before anyone
+// could actually find it by theme, on top of already being tagged. Per:
+// tags should be the thing that drives this, not a second manual flag —
+// every meditation/practice file the person is permitted to see (same
+// tier/one-to-one rules as the Meditations tab itself) now shows up here,
+// grouped straight from its tags. 'Featured' still exists and still
+// gates the separate Courses row below, untouched.
 app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const favIds = new Set(db.getFavourites(req.user.id).map(f => f.id));
     const userRecord = db.getUser(req.user.id);
     const userFlags = db.userFlagsFromRecord(userRecord, 'client');
-    const content = db.getFeaturedLibraryFiles(userFlags, req.user.id).map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
+    const practiceContentTypes = ['meditation', 'practice'];
+    // Per Bot 16's convention elsewhere (see contentItemHTML): tier-locked
+    // content stays in the list with accessible:false rather than being
+    // filtered out — shows with a lock/upgrade prompt instead of
+    // vanishing. Keeping that here too, rather than hiding locked files
+    // from the shelf entirely.
+    const content = db.getAllLibraryFilesWithAccess(userFlags, req.user.id)
+      .filter(f => practiceContentTypes.includes(f.content_type))
+      .map(f => ({ ...f, tags: db.getFileTags(f.id), is_favourite: favIds.has(f.id) }));
     res.json({
       courses: db.getFeaturedCourses({ userTier: userRecord?.member_tier || 0, skinId: userRecord?.skin_id || null, userId: req.user.id }),
       content,
@@ -8514,6 +8532,12 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
       const target = db.getUser(assignedClientId);
       if (!target) return res.status(400).json({ error: 'That is not a valid person.' });
     }
+    // Per Bot 29 — tags are now the default way content gets organized
+    // (theme shelves, admin filtering), so the upload path applies them
+    // at creation time rather than needing a separate script run
+    // afterward. Comma-separated from the bulk-upload form; lowercased
+    // and trimmed to match the casing cleanup's canonical form.
+    const tags = (req.body.tags || '').split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
 
     // Path A — R2 upload already completed client-side; just save the reference.
     if (req.body.r2Key) {
@@ -8524,6 +8548,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
         categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource,
         contentKind, externalLink, assignedClientId
       );
+      tags.forEach(t => db.addFileTag(id, t));
       return res.json({ id });
     }
 
@@ -8531,6 +8556,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     if (!req.file) return res.status(400).json({ error: 'No file provided.' });
     const id = uuidv4();
     db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource, contentKind, externalLink, assignedClientId);
+    tags.forEach(t => db.addFileTag(id, t));
     res.json({ id });
   } catch (e) {
     console.error('library upload error:', e.message);
