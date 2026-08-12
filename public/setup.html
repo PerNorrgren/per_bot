@@ -264,6 +264,15 @@
         <button type="button" class="btn-primary" id="medTagsBtn" style="padding:9px 18px;font-size:12px" onclick="runMeditationTagsImport()">Run meditation tags import</button>
         <div id="medTagsLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
       </div>
+
+      <!-- Per Bot 28 — same one-click job runner pattern as above. Merges
+           e.g. 'Grounding'/'grounding' on the same file into a single
+           lowercase tag across the whole library. -->
+      <div id="tagCasingJobWrap" style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
+        <div class="field-note" style="margin-bottom:10px">One-time: merge tag casing (e.g. 'Grounding' and 'grounding') into a single lowercase tag, across every content type.</div>
+        <button type="button" class="btn-primary" id="tagCasingBtn" style="padding:9px 18px;font-size:12px" onclick="runTagCasingCleanup()">Run tag casing cleanup</button>
+        <div id="tagCasingLog" style="margin-top:10px;font-size:11.5px;color:rgba(255,255,255,0.5);white-space:pre-wrap;max-height:220px;overflow-y:auto"></div>
+      </div>
     </div>
   </div>
 
@@ -291,6 +300,31 @@
       logEl.textContent = 'Could not start the job — network error.';
       btn.disabled = false;
       btn.textContent = 'Run meditation tags import';
+    }
+  }
+  async function runTagCasingCleanup() {
+    const btn = document.getElementById('tagCasingBtn');
+    const logEl = document.getElementById('tagCasingLog');
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    try {
+      await fetch('/api/admin/run-tag-casing-cleanup', { method: 'POST' });
+      const poll = async () => {
+        const res = await fetch('/api/admin/run-tag-casing-cleanup/status');
+        const job = await res.json();
+        logEl.textContent = (job.log || []).join('\n');
+        logEl.scrollTop = logEl.scrollHeight;
+        if (!job.done) { setTimeout(poll, 1000); return; }
+        btn.textContent = job.error ? 'Failed — see log' : 'Done';
+        if (!job.error) {
+          logEl.textContent += `\n\nFinished: ${job.result.filesChanged} files merged, ${job.result.filesUnchanged} already clean. Tag rows: ${job.result.tagRowsBefore} -> ${job.result.tagRowsAfter}.`;
+        }
+      };
+      poll();
+    } catch (e) {
+      logEl.textContent = 'Could not start the job — network error.';
+      btn.disabled = false;
+      btn.textContent = 'Run tag casing cleanup';
     }
   }
   </script>

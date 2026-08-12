@@ -9514,6 +9514,28 @@ app.get('/api/admin/run-meditation-tags-import/status', auth.requireAuthApi(['ad
   res.json(meditationTagsJob);
 });
 
+// ── Tag casing cleanup (Per Bot 28) ── One-time, same job-log pattern.
+// Merges e.g. 'Grounding'/'grounding' on the same file into a single
+// lowercase tag across the whole library, not just meditation content —
+// see cleanup_tag_casing.js for why a blind SQL update can't do this safely.
+let tagCasingCleanupJob = null;
+app.post('/api/admin/run-tag-casing-cleanup', auth.requireAuthApi(['admin']), (req, res) => {
+  if (tagCasingCleanupJob && !tagCasingCleanupJob.done) {
+    return res.json({ started: false, alreadyRunning: true, job: tagCasingCleanupJob });
+  }
+  tagCasingCleanupJob = { done: false, log: [], result: null, error: null, startedAt: new Date().toISOString() };
+  const job = tagCasingCleanupJob;
+  const { runImport } = require('./cleanup_tag_casing');
+  runImport((line) => { job.log.push(line); console.log(line); })
+    .then((result) => { job.result = result; job.done = true; })
+    .catch((e) => { console.error('tag casing cleanup error:', e.message); job.error = e.message; job.done = true; });
+  res.json({ started: true, job });
+});
+app.get('/api/admin/run-tag-casing-cleanup/status', auth.requireAuthApi(['admin']), (req, res) => {
+  if (!tagCasingCleanupJob) return res.status(404).json({ error: 'No import has been started yet.' });
+  res.json(tagCasingCleanupJob);
+});
+
 // ── Standalone poems import (Per Bot 14) ──
 let standalonePoemsJob = null;
 app.post('/api/admin/run-standalone-poems-import', auth.requireAuthApi(['admin']), (req, res) => {

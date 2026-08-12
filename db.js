@@ -2832,6 +2832,15 @@ function removeFileTag(fileId, tag) {
 function getFileTags(fileId) {
   return queryAll('SELECT tag FROM library_file_tags WHERE file_id=? ORDER BY tag', [fileId]).map(r => r.tag);
 }
+// Per Bot 28 — raw rows (id, file_id, tag), unfiltered/ungrouped. Used by
+// the one-time tag-casing cleanup script, which needs to see every literal
+// tag value per file (including case-duplicates like 'Grounding' and
+// 'grounding' both sitting on the same file) to merge them correctly —
+// getAllTags() below already groups by exact string, which hides exactly
+// the thing this needs to see.
+function getAllFileTagRows() {
+  return queryAll('SELECT id, file_id, tag FROM library_file_tags');
+}
 // Every distinct tag currently in use, with how many files carry it — powers
 // an admin "browse by theme" view and eventually the theme sliders themselves.
 function getAllTags() {
@@ -7478,7 +7487,7 @@ module.exports = {
   addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
-  addFileTag, removeFileTag, getFileTags, getAllTags, getFilesByTag,
+  addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,
   getTtsCacheEntry, setTtsCacheEntry,
