@@ -92,6 +92,13 @@
       .talk-view { padding-left:0; padding-right:0; }
       .practices-scroll, .sessions-scroll, .history-scroll,
       .courses-scroll, .poems-scroll { padding-left:0; padding-right:0; }
+      /* #calmLanding carries its own separate inline padding:10px 20px
+         (a nested wrapper inside .talk-view, not covered by the rule
+         above) — this is what was actually holding the shelf carousels
+         in by 20px even after .talk-view itself went flush. !important
+         needed here purely to beat that inline style's specificity, not
+         because this rule is fighting anything else. */
+      #calmLanding { padding-left:0 !important; padding-right:0 !important; }
     }
 
     /* Per Bot 24 — .header only ever had padding declared (see the two
