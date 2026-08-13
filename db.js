@@ -54,6 +54,27 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Admin scripts state (Per Bot 43) ── Per noticed the "Not run yet /
+  // Done / Failed" status on the Settings > scripts table was resetting
+  // to "Not run yet" between deploys — it was, because that status lived
+  // entirely in an in-memory object on the server process (adminScriptJobs
+  // in server.js), which a Railway restart wipes exactly like any other
+  // in-memory state. This table is what actually persists it. Also
+  // covers "delete a script row" — since the registry itself is a
+  // hardcoded array in server.js (a script is code, not user data,
+  // deleting it for real would mean removing its file), "delete" here
+  // means dismissed=1: hidden from the list from then on, without
+  // touching the underlying script file or registry entry, and easy to
+  // un-hide later by flipping the flag back if it's ever needed again.
+  db.run(`CREATE TABLE IF NOT EXISTS admin_script_state (
+    script_id TEXT PRIMARY KEY,
+    last_status TEXT,
+    last_run_at TEXT,
+    last_result TEXT,
+    last_error TEXT,
+    dismissed INTEGER NOT NULL DEFAULT 0
+  )`);
+
   // ── 1:1 video/audio calls (Per Bot 12) ──
   // One row per call attempt between a facilitator and a client. Recording
   // is genuinely optional per call (consent asked fresh each time, not a
@@ -2888,6 +2909,35 @@ function updateLiveMeeting(id, fields) {
 }
 function deleteLiveMeeting(id) {
   getDbSync().run('DELETE FROM live_meetings WHERE id=?', [id]);
+  save();
+}
+
+// ── Admin scripts state (Per Bot 43) ──
+function getAdminScriptStates() {
+  const rows = queryAll('SELECT * FROM admin_script_state');
+  const byId = {};
+  rows.forEach(r => { byId[r.script_id] = r; });
+  return byId;
+}
+function upsertAdminScriptState(scriptId, { status, result, error }) {
+  const existing = queryOne('SELECT script_id FROM admin_script_state WHERE script_id=?', [scriptId]);
+  const resultJson = result !== undefined ? JSON.stringify(result) : null;
+  if (existing) {
+    getDbSync().run('UPDATE admin_script_state SET last_status=?, last_run_at=?, last_result=?, last_error=? WHERE script_id=?',
+      [status, new Date().toISOString(), resultJson, error || null, scriptId]);
+  } else {
+    getDbSync().run('INSERT INTO admin_script_state (script_id,last_status,last_run_at,last_result,last_error,dismissed) VALUES (?,?,?,?,?,0)',
+      [scriptId, status, new Date().toISOString(), resultJson, error || null]);
+  }
+  save();
+}
+function setAdminScriptDismissed(scriptId, dismissed) {
+  const existing = queryOne('SELECT script_id FROM admin_script_state WHERE script_id=?', [scriptId]);
+  if (existing) {
+    getDbSync().run('UPDATE admin_script_state SET dismissed=? WHERE script_id=?', [dismissed ? 1 : 0, scriptId]);
+  } else {
+    getDbSync().run('INSERT INTO admin_script_state (script_id,dismissed) VALUES (?,?)', [scriptId, dismissed ? 1 : 0]);
+  }
   save();
 }
 
@@ -7557,6 +7607,7 @@ module.exports = {
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
+  getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,

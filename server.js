@@ -9626,13 +9626,29 @@ const ADMIN_SCRIPTS = [
   // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
   // themselves, as the template.
 ];
-const adminScriptJobs = {}; // id -> job
+const adminScriptJobs = {}; // id -> job, live progress during THIS process's lifetime only
 
 app.get('/api/admin/scripts', auth.requireAuthApi(['admin']), (req, res) => {
-  res.json(ADMIN_SCRIPTS.map(s => ({
-    id: s.id, label: s.label, description: s.description,
-    job: adminScriptJobs[s.id] || null,
-  })));
+  const persisted = db.getAdminScriptStates();
+  res.json(ADMIN_SCRIPTS
+    .filter(s => !(persisted[s.id] && persisted[s.id].dismissed))
+    .map(s => {
+      const liveJob = adminScriptJobs[s.id];
+      const saved = persisted[s.id];
+      // Per Bot 43 — live in-memory job (this process, this run) wins
+      // while something's actually in flight or just finished; once the
+      // process restarts and that's gone, fall back to what was
+      // persisted last time anything ran, so the status a person
+      // actually did stays visible across a deploy instead of quietly
+      // reverting to "Not run yet".
+      const job = liveJob || (saved && saved.last_status ? {
+        done: true,
+        result: saved.last_result ? JSON.parse(saved.last_result) : null,
+        error: saved.last_error || null,
+        startedAt: saved.last_run_at,
+      } : null);
+      return { id: s.id, label: s.label, description: s.description, job };
+    }));
 });
 app.post('/api/admin/scripts/:id/run', auth.requireAuthApi(['admin']), (req, res) => {
   const script = ADMIN_SCRIPTS.find(s => s.id === req.params.id);
@@ -9645,14 +9661,33 @@ app.post('/api/admin/scripts/:id/run', auth.requireAuthApi(['admin']), (req, res
   adminScriptJobs[script.id] = job;
   const { runImport } = require(script.module);
   runImport((line) => { job.log.push(line); console.log(`[${script.id}] ${line}`); })
-    .then((result) => { job.result = result; job.done = true; })
-    .catch((e) => { console.error(`${script.id} error:`, e.message); job.error = e.message; job.done = true; });
+    .then((result) => {
+      job.result = result; job.done = true;
+      db.upsertAdminScriptState(script.id, { status: 'done', result });
+    })
+    .catch((e) => {
+      console.error(`${script.id} error:`, e.message);
+      job.error = e.message; job.done = true;
+      db.upsertAdminScriptState(script.id, { status: 'failed', error: e.message });
+    });
   res.json({ started: true, job });
 });
 app.get('/api/admin/scripts/:id/status', auth.requireAuthApi(['admin']), (req, res) => {
   const job = adminScriptJobs[req.params.id];
   if (!job) return res.status(404).json({ error: 'No run has been started yet.' });
   res.json(job);
+});
+// Per Bot 43 — "delete" a script row. Doesn't touch the script's file or
+// its ADMIN_SCRIPTS entry (that's code, not data — an actual delete
+// would mean removing it from the array in a future deploy), just hides
+// it from this list from now on. Easy to bring back by flipping
+// dismissed off directly in the DB if a "one-off" ever needs a rerun
+// after all.
+app.delete('/api/admin/scripts/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  const script = ADMIN_SCRIPTS.find(s => s.id === req.params.id);
+  if (!script) return res.status(404).json({ error: 'Unknown script.' });
+  db.setAdminScriptDismissed(req.params.id, true);
+  res.json({ ok: true });
 });
 
 // ── Standalone poems import (Per Bot 14) ──
@@ -9988,6 +10023,37 @@ app.post('/api/content/courses/:id/mandatory-all', auth.requireAuthApi(['admin']
   db.setAllFileRefsMandatoryForCourse(req.params.id, !!req.body.mandatory);
   res.json({ ok: true });
 });
+// Per Bot 43 — Per's observation: every FELT lesson (Finding Calm etc.)
+// follows the same real, established file order — the session
+// document/PDF first, then Introduction, then the main Practice, then
+// the Poem, then the Daily Top-up — confirmed directly against Sessions
+// 1-4's actual stored order. Neither place that adds files to a lesson
+// (creating a lesson with a batch of files, or adding one file to a
+// lesson that already exists) has ever placed files by what they
+// actually are — one just used whatever order the browser happened to
+// queue them in, the other always appended to the very end regardless
+// of file type. Either can land in the right order by coincidence (e.g.
+// if files were queued in a sensible order to begin with) but neither
+// is actually enforcing it, so it isn't reliable. This infers a rank
+// from the title text itself and both routes below now sort/insert by
+// it instead of by upload order — matching the real pattern rather than
+// hoping to land on it. Genuinely unrecognised titles fall through to
+// the end (rank 99), same as today's behaviour, rather than causing an
+// error.
+function inferFileOrderRank(title) {
+  const t = (title || '').toLowerCase();
+  if (/\bintroduction\b/.test(t)) return 1;
+  if (/\bpractice\b/.test(t)) return 2;
+  if (/\bpoem\b/.test(t)) return 3;
+  if (/\bdaily\s*top[\s-]*up\b/.test(t)) return 4;
+  // A session's own document/PDF has no further descriptor beyond the
+  // session number itself (e.g. "Finding_Calm_v2_Session5") — checked
+  // last, after every more-specific keyword above has had a chance to
+  // match, so a title like "Session 5 Introduction" doesn't fall
+  // through to this rather than matching "introduction" above.
+  if (/session/.test(t)) return 0;
+  return 99;
+}
 app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { courseId, lessonNumber, title, visibility, accessStatus, fileIds } = req.body;
@@ -10000,7 +10066,17 @@ app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
     }
     const lessonId = uuidv4();
     db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client', accessStatus || 'visible');
-    if (fileIds?.length) fileIds.forEach((fid, i) => db.addLessonFileRef(uuidv4(), lessonId, fid, i));
+    if (fileIds?.length) {
+      // Per Bot 43 — sort by inferred rank (title text) before assigning
+      // sort_order, rather than trusting fileIds' own order (whatever
+      // order the browser happened to queue the upload in). A stable
+      // sort keeps files of the same rank — e.g. two files that both
+      // fell through to "unrecognised" — in their original relative
+      // order rather than shuffling them.
+      const ranked = fileIds.map((fid, i) => ({ fid, i, rank: inferFileOrderRank((db.getLibraryFile(fid) || {}).title) }));
+      ranked.sort((a, b) => a.rank - b.rank || a.i - b.i);
+      ranked.forEach((r, i) => db.addLessonFileRef(uuidv4(), lessonId, r.fid, i));
+    }
     res.json({ id: lessonId });
   } catch (e) {
     console.error('create lesson error:', e);
@@ -10034,7 +10110,22 @@ app.post('/api/content/lesson-file-refs', auth.requireAuthApi(['admin']), (req, 
   try {
     const { lessonId, fileId } = req.body;
     if (!lessonId || !fileId) return res.status(400).json({ error: 'Missing fields.' });
-    db.addLessonFileRef(uuidv4(), lessonId, fileId, db.getFilesForLesson(lessonId).length);
+    const newRefId = uuidv4();
+    // Per Bot 43 — used to just append (sort_order = current count).
+    // Insert first (sort_order doesn't matter yet — reorderLessonFileRefs
+    // right below renumbers everyone including this one), then work out
+    // where it actually belongs among the lesson's existing files by the
+    // same inferred rank used when a lesson's created with a batch of
+    // files, and reorder to match. A tie in rank (e.g. this file's rank
+    // matches an existing file's) keeps the existing files' current
+    // relative order and places the new one after them, via the stable
+    // sort below — reasonable default for a case that shouldn't
+    // ordinarily happen (two "practice" files in one lesson).
+    db.addLessonFileRef(newRefId, lessonId, fileId, 999);
+    const files = db.getFilesForLesson(lessonId); // includes the ref just added
+    const ranked = files.map((f, i) => ({ refId: f.ref_id, i, rank: inferFileOrderRank(f.title) }));
+    ranked.sort((a, b) => a.rank - b.rank || a.i - b.i);
+    db.reorderLessonFileRefs(lessonId, ranked.map(r => r.refId));
     res.json({ ok: true });
   } catch (e) {
     console.error('add lesson file ref error:', e);
