@@ -454,15 +454,35 @@
         <select id="upKindDefault" oninput="applyBatchContentKind(this.value)"></select>
       </div>
     </div>
-    <!-- Per Bot 29 — tags are now the default way content gets organized
+    <!-- Per Bot 42 — tags are the default way content gets organized
          (theme shelves, admin filtering), so applying them belongs at
-         upload time, not a separate follow-up step. Same value goes to
-         every file in this batch — comma-separated, lowercased on save
-         to match the casing cleanup's canonical form regardless of how
-         it's typed here. -->
-    <div style="margin:4px 0 14px">
-      <label>Tags <span style="font-weight:normal;color:rgba(255,255,255,0.35)">— comma-separated, applied to every file in this batch (e.g. grounding, sleep)</span></label>
-      <input type="text" id="upTags" placeholder="grounding, sleep" style="width:100%"/>
+         upload time, not a separate follow-up step. Was a free-text
+         comma-separated field; per Per's request this is now a checkbox
+         dropdown of tags that actually exist already (matching what the
+         content is really organised by, rather than someone having to
+         remember/retype exact spelling), plus an "add new tag" row. A
+         brand-new tag needs no separate setup anywhere — the moment
+         it's applied to any file here it already IS a real tag/theme
+         group (getAllTags() in db.js just reads whatever's actually on
+         file rows), so typing one in below and uploading is the whole
+         process. #upTags itself is now a hidden input the dropdown
+         keeps in sync (lowercased on save, same as before) — addToQ()
+         and everything downstream that reads it is completely
+         unchanged. -->
+    <div style="margin:4px 0 14px; position:relative">
+      <label>Tags <span style="font-weight:normal;color:rgba(255,255,255,0.35)">— applied to every file in this batch</span></label>
+      <input type="hidden" id="upTags" value=""/>
+      <button type="button" id="upTagsDropdownBtn" onclick="toggleUpTagsDropdown()" style="width:100%; text-align:left; display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:9px 12px; color:rgba(255,255,255,0.8); cursor:pointer; font-size:13px">
+        <span id="upTagsDropdownLabel">No tags selected</span>
+        <span style="opacity:0.5">▾</span>
+      </button>
+      <div id="upTagsDropdown" style="display:none; position:absolute; z-index:50; top:100%; left:0; right:0; margin-top:4px; background:#171d1a; border:1px solid rgba(255,255,255,0.15); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.4); max-height:280px; overflow-y:auto; padding:8px">
+        <div id="upTagsCheckboxList" style="display:flex; flex-direction:column; gap:2px"></div>
+        <div style="display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.08)">
+          <input type="text" id="upNewTagInput" placeholder="New tag name…" style="flex:1; font-size:12px" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewUpTag();}"/>
+          <button type="button" class="btn sm primary" onclick="addNewUpTag()">Add</button>
+        </div>
+      </div>
     </div>
     <div style="margin:4px 0 14px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55)">
@@ -1803,6 +1823,7 @@ function openUpload(){
   document.getElementById('upKindDefault').innerHTML = contentKindOptions('');
   document.getElementById('upKindDefault').value='';
   document.getElementById('upTags').value='';
+  loadUpTagsDropdown();
   document.getElementById('upOneToOne').checked=false;
   document.getElementById('upOneToOneRow').style.display='none';
   document.getElementById('upAssignedClientPicker').innerHTML='';
@@ -1811,6 +1832,75 @@ function openUpload(){
   openModal('uploadModal');
 }
 function onUpCatChange(){populateSub('upCat','upSub');}
+
+// ── Upload tags dropdown (Per Bot 42) ──
+let _upTagsAll = [];       // every real tag in the system right now (from getAllTags)
+let _upTagsSelected = new Set();
+
+async function loadUpTagsDropdown() {
+  _upTagsSelected = new Set();
+  try {
+    const res = await fetch('/api/admin/tags');
+    _upTagsAll = res.ok ? await res.json() : [];
+  } catch(e) { _upTagsAll = []; }
+  renderUpTagsCheckboxList();
+  syncUpTagsHiddenInput();
+}
+function renderUpTagsCheckboxList() {
+  const el = document.getElementById('upTagsCheckboxList');
+  if (!_upTagsAll.length) {
+    el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:6px 4px">No tags exist yet — add the first one below.</div>';
+    return;
+  }
+  el.innerHTML = _upTagsAll.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:6px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.8)" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='none'">
+      <input type="checkbox" ${_upTagsSelected.has(t.tag)?'checked':''} onchange="onUpTagCheck('${t.tag}', this.checked)"/>
+      <span style="flex:1">${t.tag}</span>
+      <span style="font-size:11px;color:rgba(255,255,255,0.3)">${t.file_count}</span>
+    </label>
+  `).join('');
+}
+function onUpTagCheck(tag, checked) {
+  if (checked) _upTagsSelected.add(tag); else _upTagsSelected.delete(tag);
+  syncUpTagsHiddenInput();
+}
+function syncUpTagsHiddenInput() {
+  document.getElementById('upTags').value = Array.from(_upTagsSelected).join(',');
+  const label = document.getElementById('upTagsDropdownLabel');
+  const n = _upTagsSelected.size;
+  label.textContent = n === 0 ? 'No tags selected' : n === 1 ? Array.from(_upTagsSelected)[0] : `${n} tags selected`;
+}
+function toggleUpTagsDropdown() {
+  const dd = document.getElementById('upTagsDropdown');
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+// New tag needs no separate setup anywhere in the system — the moment
+// it's applied to a file it already IS a real tag (and therefore a real
+// theme/shelf group). This just adds it to the checked set for this
+// batch and to the visible list so it doesn't disappear if the dropdown
+// re-renders; getAllTags() will pick it up for real the next time this
+// modal opens, once at least one file actually carries it.
+function addNewUpTag() {
+  const input = document.getElementById('upNewTagInput');
+  const raw = input.value.trim().toLowerCase();
+  if (!raw) return;
+  if (!_upTagsAll.some(t => t.tag === raw)) {
+    _upTagsAll.unshift({ tag: raw, file_count: 0 });
+  }
+  _upTagsSelected.add(raw);
+  input.value = '';
+  renderUpTagsCheckboxList();
+  syncUpTagsHiddenInput();
+}
+// Click-outside-to-close, same pattern as every other dropdown in this file.
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('upTagsDropdown');
+  const btn = document.getElementById('upTagsDropdownBtn');
+  if (!dd || dd.style.display === 'none') return;
+  if (dd.contains(e.target) || (btn && btn.contains(e.target))) return;
+  dd.style.display = 'none';
+});
+
 
 // Per Bot 50 — this whole block was missing entirely. The modal, the
 // button, and the backend all existed and worked in isolation, but

@@ -179,10 +179,30 @@
 
     /* Quill dark-theme overrides — the "snow" theme ships white/light by default */
     #newsletterRichEditor { background:rgba(255,255,255,0.03); border-radius:0 0 8px 8px; }
-    .ql-toolbar.ql-snow { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; }
+    /* Per Bot 42 — Per's report: on a long message, the toolbar (and the
+       Insert field / Generate & insert row below the whole editor)
+       scroll away, so every format change or AI action means scrolling
+       all the way back up (or down) to reach them again. .modal is the
+       actual scrolling element here (max-height:90vh; overflow-y:auto),
+       so position:sticky on these needs to be relative to IT, not the
+       page — top:0 pins the toolbar to the top of the modal's visible
+       area once you've scrolled past it, bottom:0 (on the row below,
+       see .newsletter-sticky-actions further down) does the same at the
+       bottom. Solid background (not the usual near-transparent
+       rgba(255,255,255,0.05)) so content scrolling underneath doesn't
+       show through and blend into the toolbar text once it's stuck.
+       z-index above the editor content (Quill's own z-index:1 on some
+       internal elements) so it stays on top while stuck. */
+    .ql-toolbar.ql-snow { background:#171d1a; border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; position:sticky; top:0; z-index:20; }
     .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; min-height:220px; font-family:'Georgia',serif; font-size:14px; }
     .ql-editor { color:rgba(255,255,255,0.85); min-height:220px; }
     .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
+    /* Per Bot 42 — the row below the editor (Insert field / Generate &
+       insert) gets the same treatment at the bottom of the modal's
+       scroll area, for the same reason. Solid background + a touch of
+       padding so it reads as a distinct pinned bar rather than content
+       that happens to have stopped moving. */
+    .newsletter-sticky-actions { position:sticky; bottom:0; z-index:20; background:#141a17; padding:8px 4px; border-radius:8px; }
     .ql-snow .ql-stroke { stroke:rgba(255,255,255,0.5); }
     .ql-snow .ql-fill { fill:rgba(255,255,255,0.5); }
     .ql-snow .ql-picker { color:rgba(255,255,255,0.5); }
@@ -583,7 +603,7 @@
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
       <div id="newsletterRichEditor" style="display:none"></div>
       <input type="file" id="newsletterImageInput" accept="image/*" style="display:none"/>
-      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center" class="newsletter-sticky-actions">
         <select onchange="if(this.value){insertNewsletterToken('body',this.value);this.value='';}" style="font-size:11px">
           <option value="">Insert field into body…</option>
           <option value="{{name}}">Recipient's name</option>
