@@ -179,21 +179,20 @@
 
     /* Quill dark-theme overrides — the "snow" theme ships white/light by default */
     #newsletterRichEditor { background:rgba(255,255,255,0.03); border-radius:0 0 8px 8px; }
-    /* Per Bot 42 — Per's report: on a long message, the toolbar (and the
-       Insert field / Generate & insert row below the whole editor)
-       scroll away, so every format change or AI action means scrolling
-       all the way back up (or down) to reach them again. .modal is the
-       actual scrolling element here (max-height:90vh; overflow-y:auto),
-       so position:sticky on these needs to be relative to IT, not the
-       page — top:0 pins the toolbar to the top of the modal's visible
-       area once you've scrolled past it, bottom:0 (on the row below,
-       see .newsletter-sticky-actions further down) does the same at the
-       bottom. Solid background (not the usual near-transparent
-       rgba(255,255,255,0.05)) so content scrolling underneath doesn't
-       show through and blend into the toolbar text once it's stuck.
-       z-index above the editor content (Quill's own z-index:1 on some
-       internal elements) so it stays on top while stuck. */
-    .ql-toolbar.ql-snow { background:#171d1a; border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; position:sticky; top:0; z-index:20; }
+    /* Per Bot 44 — the sticky toolbar + opaque background now live in
+       message-editor.js's shared ensureStyles() (.me-ql-wrap
+       .ql-toolbar.ql-snow), not duplicated here. Per Bot 42 originally
+       added position:sticky here directly, but .me-ql-wrap .ql-toolbar
+       .ql-snow (3 classes) is MORE specific than the plain rule that was
+       here (2 classes) — so the shared file's near-transparent
+       background was silently winning over this one's opaque background
+       regardless of which loaded second, and scrolled text showed
+       straight through the "stuck" toolbar. Fixed at the source instead
+       of re-fighting specificity here: the shared rule is opaque and
+       sticky now, for every editor in the app, not just this one. Only
+       .ql-container/.ql-editor's own sizing stays local here (this
+       page's min-height is taller than the shared default, which is the
+       whole reason these were ever overridden locally to begin with). */
     .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; min-height:220px; font-family:'Georgia',serif; font-size:14px; }
     .ql-editor { color:rgba(255,255,255,0.85); min-height:220px; }
     .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }

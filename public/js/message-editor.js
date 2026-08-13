@@ -80,7 +80,19 @@
     _stylesInjected = true;
     const style = document.createElement('style');
     style.textContent = `
-      .me-ql-wrap .ql-toolbar.ql-snow { background:rgba(255,255,255,0.05); border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; }
+      /* Per Bot 44 — every rich editor's toolbar sticks to the top of
+         its scrolling ancestor now (not just the newsletter editor
+         Per specifically asked about — this is the shared definition
+         every editor in the app draws from, so it's consistent
+         everywhere rather than needing this fix repeated per page).
+         The background here MUST be solid, not the near-transparent
+         rgba(255,255,255,0.05) this used to be — once stuck, scrolled
+         text runs directly underneath it, and a transparent background
+         let it show straight through, which is what actually caused
+         Per's report ("the text flows up under it"): position:sticky
+         itself was working fine, the toolbar just wasn't opaque enough
+         to hide what was scrolling behind it. */
+      .me-ql-wrap .ql-toolbar.ql-snow { background:#171d1a; border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; position:sticky; top:0; z-index:20; }
       .me-ql-wrap .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; font-family:'Georgia',serif; font-size:14px; border-radius:0 0 8px 8px; }
       .me-ql-wrap .ql-editor { color:rgba(255,255,255,0.85); min-height:140px; }
       .me-ql-wrap .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
