@@ -250,6 +250,26 @@
     </div>
   </div>
 
+  <!-- Per Bot 48 — Per had set "What's New seconds per item" to 10
+       expecting it to control the Practices shelf carousel's speed —
+       reasonable to assume, but that setting is for a different feature
+       entirely, and the carousel's speed had no admin control at all
+       (a hardcoded 3.5s constant). This is that real, dedicated
+       setting, site-wide rather than per-account since "how fast does
+       this move" is a brand/site decision the same way tagline is. -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Splash Carousel</div></div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:12px">How fast the Practices shelf on the splash screen auto-advances. Only Practices moves on its own — every other shelf is scrolled by hand. Each person can still turn this off entirely for themselves via Display on the splash screen; this just sets the pace when it's on.</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="number" id="carouselSpeedInput" min="1" max="30" step="0.5" style="width:90px" value="3.5"/>
+        <span style="font-size:13px;color:rgba(255,255,255,0.5)">seconds between moves</span>
+        <button type="button" class="btn-primary" style="padding:7px 16px;font-size:12px;white-space:nowrap" onclick="saveCarouselSpeed()">Save</button>
+      </div>
+      <div class="msg err" id="carouselSpeedErr" style="margin-top:8px"></div>
+    </div>
+  </div>
+
   <!-- Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
        shown as their own carousel under Books on the splash screen.
        Same list-plus-add-row pattern as Skins above. -->
@@ -459,6 +479,32 @@
     catch(e) { document.getElementById('liveMeetingsErr').textContent = 'Could not delete — please try again.'; }
   }
   loadLiveMeetings();
+
+  // ── Splash Carousel speed (Per Bot 48) ──
+  async function loadCarouselSpeed() {
+    try {
+      const res = await fetch('/api/setup/config');
+      const cfg = await res.json();
+      const val = (cfg && cfg.carousel_speed_seconds !== null && cfg.carousel_speed_seconds !== undefined) ? cfg.carousel_speed_seconds : 3.5;
+      document.getElementById('carouselSpeedInput').value = val;
+    } catch(e) { /* leave the default shown in the input */ }
+  }
+  async function saveCarouselSpeed() {
+    const input = document.getElementById('carouselSpeedInput');
+    const errEl = document.getElementById('carouselSpeedErr');
+    const val = parseFloat(input.value);
+    if (!val || val < 1 || val > 30) { errEl.textContent = 'Enter a number of seconds between 1 and 30.'; return; }
+    errEl.textContent = '';
+    try {
+      const res = await fetch('/api/admin/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carouselSpeedSeconds: val }) });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || 'Could not save.'; return; }
+      errEl.style.color = 'rgba(180,230,200,0.85)';
+      errEl.textContent = 'Saved.';
+      setTimeout(() => { errEl.textContent = ''; errEl.style.color = ''; }, 2000);
+    } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  }
+  loadCarouselSpeed();
   </script>
 
   <!-- Skin editor — appears when a skin from the list above is opened.

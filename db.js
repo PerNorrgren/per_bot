@@ -2207,6 +2207,18 @@ async function getDb() {
     // behaviour) rather than off, so this migration doesn't silently
     // change anything for people who never open Display settings.
     "ALTER TABLE users ADD COLUMN carousel_autoplay INTEGER DEFAULT NULL",
+    // Per Bot 48 — Per's follow-up: he'd set "What's New seconds per
+    // item" (whats_new_seconds_per_item above) to 10, expecting it to
+    // control the Practices shelf carousel's speed — a reasonable
+    // assumption, but that field is for a different feature entirely
+    // (the What's New ticker), and the carousel's speed was actually a
+    // hardcoded 3.5s constant in client/index.html with no admin
+    // control at all. This is that real, dedicated setting. Site-wide
+    // (one value for everyone), not a per-account preference like
+    // carousel_autoplay above — a "how fast should this move" is a
+    // brand/site decision the same way tagline or primary_color is, not
+    // something each person would want to tune individually.
+    "ALTER TABLE app_config ADD COLUMN carousel_speed_seconds REAL DEFAULT 3.5",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -7353,7 +7365,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id','carousel_speed_seconds'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

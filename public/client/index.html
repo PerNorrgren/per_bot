@@ -347,7 +347,22 @@
        to the plain start-aligned rule below it. */
     .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
     .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 14px; scroll-snap-type:x proximity; }
-    .shelf-row[data-shelf-label="Practices"] { padding:2px calc(50% - 75px) 14px; scroll-snap-type:x mandatory; }
+    .shelf-row[data-shelf-label="Practices"] {
+      /* Per's follow-up — starting pre-centred (equal padding on both
+         sides) looked odd at rest, before the carousel had actually
+         moved anywhere. Left padding matches every other row's plain
+         4px gutter now, so it starts flush like they do; the right
+         side keeps the centring padding, since that's still needed for
+         the LAST card to be able to reach true centre once scrolling
+         does happen — without it there'd be no room to its right for
+         the browser to scroll into. Cards naturally become properly
+         centred as autoplay/a swipe moves further into the row; only
+         the very first one, and the resting state before anything's
+         moved, doesn't need to be.
+      */
+      padding:2px calc(50% - 75px) 14px 4px;
+      scroll-snap-type:x mandatory;
+    }
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
@@ -5421,6 +5436,13 @@
     try {
       const res = await fetch('/api/client/featured');
       const data = await res.json();
+      // Per Bot 48 — admin-configurable carousel speed. Set before
+      // renderFeaturedShelves runs (it calls initShelfCarousels at the
+      // end, which reads this), so a changed setting takes effect on
+      // the very next load, no separate wiring needed.
+      if (typeof data.carouselSpeedSeconds === 'number' && data.carouselSpeedSeconds > 0) {
+        SHELF_AUTOPLAY_MS = data.carouselSpeedSeconds * 1000;
+      }
       renderFeaturedShelves(
         Array.isArray(data.courses) ? data.courses : [],
         Array.isArray(data.content) ? data.content : [],
@@ -5582,7 +5604,13 @@
   // someone changes the Display setting.
   let _shelfCarouselCleanups = [];
   let _practicesCarouselControl = null;
-  const SHELF_AUTOPLAY_MS = 3500;
+  // Per Bot 48 — was a fixed constant with no admin control at all;
+  // now a mutable variable, updated from app_config's
+  // carousel_speed_seconds (see loadFeaturedShelves) before
+  // initShelfCarousels ever reads it. Defaults to 3.5s here purely as
+  // a fallback for the brief moment before that fetch resolves, or if
+  // it ever fails — not the source of truth once the real value's in.
+  let SHELF_AUTOPLAY_MS = 3500;
   const SHELF_RESUME_AFTER_MS = 6000;
   const AUTOPLAY_SHELF_LABEL = 'Practices';
   function initShelfCarousels() {
