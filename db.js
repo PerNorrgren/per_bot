@@ -2962,6 +2962,39 @@ function getAllFileTagRows() {
 }
 // Every distinct tag currently in use, with how many files carry it — powers
 // an admin "browse by theme" view and eventually the theme sliders themselves.
+// Per's request — the count shown next to each splash shelf heading
+// (PRACTICES (245) etc.), scoped specifically to Explorer+Member: the
+// two tiers everyone can actually see regardless of what plan they're
+// on, rather than every tier including Client/Facilitator/Admin-gated
+// content nobody but a handful of people can open. Recomputed on every
+// /api/client/featured call, so it's always live — no caching, no risk
+// of it drifting from what's actually in the library. Practices merges
+// content_type 'meditation' and 'practice' into one count, matching how
+// the Practices shelf itself already treats them as one category.
+// Courses' required_tier is a plain integer on the same 0/1/2/3 scale as
+// member_tier (0=Explorer, 1=Member) rather than library_files' named
+// visibility strings, hence the separate query shape.
+function getShelfCounts() {
+  const libRows = queryAll(`
+    SELECT content_type, COUNT(*) as n FROM library_files
+    WHERE archived=0 AND visibility IN ('registered','member')
+      AND content_type IN ('meditation','practice','poem','blog','book')
+    GROUP BY content_type`);
+  const byType = {};
+  libRows.forEach(r => { byType[r.content_type] = r.n; });
+  const courseRow = queryOne(`
+    SELECT COUNT(*) as n FROM courses
+    WHERE required_tier IS NULL OR required_tier<=1`);
+  const meetingRow = queryOne(`SELECT COUNT(*) as n FROM live_meetings WHERE active=1`);
+  return {
+    practices: (byType.meditation || 0) + (byType.practice || 0),
+    courses: courseRow ? courseRow.n : 0,
+    poems: byType.poem || 0,
+    posts: byType.blog || 0,
+    books: byType.book || 0,
+    liveMeetings: meetingRow ? meetingRow.n : 0,
+  };
+}
 function getAllTags() {
   return queryAll(`SELECT tag, COUNT(*) as file_count FROM library_file_tags
     GROUP BY tag ORDER BY file_count DESC, tag ASC`);
@@ -7608,6 +7641,7 @@ module.exports = {
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
+  getShelfCounts,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,

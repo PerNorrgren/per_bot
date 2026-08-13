@@ -2875,6 +2875,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentBooks: db.getRecentStandaloneFiles('book', null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       liveMeetings: db.getLiveMeetings(true), // Per Bot 38 — its own shelf, Books then Live Meetings
+      shelfCounts: db.getShelfCounts(), // Per Bot 44 — Explorer+Member totals shown in each shelf heading
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

@@ -5427,7 +5427,8 @@
         Array.isArray(data.recentPoems) ? data.recentPoems : [],
         Array.isArray(data.recentPosts) ? data.recentPosts : [],
         Array.isArray(data.recentBooks) ? data.recentBooks : [],
-        Array.isArray(data.liveMeetings) ? data.liveMeetings : []
+        Array.isArray(data.liveMeetings) ? data.liveMeetings : [],
+        data.shelfCounts || {}
       );
     } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
     // Same WebKit quirk as Tomte's panel and the lesson chooser: adding
@@ -5459,7 +5460,8 @@
   // these two.
   let _shelvesData = [];
   let _liveMeetingsById = {};
-  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks, liveMeetings) {
+  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks, liveMeetings, shelfCounts) {
+    shelfCounts = shelfCounts || {};
     _featuredContentData = content.concat(recentPoems, recentPosts, recentBooks);
     const el = document.getElementById('featuredShelves');
     const shelves = [];
@@ -5477,6 +5479,7 @@
     if (themeCards.length) {
       shelves.push({
         label: 'Practices',
+        count: shelfCounts.practices,
         rows: themeCards,
         cardHtml: (row, i) => `
           <div class="shelf-card" onclick="openThemeDetail('practices',${i})">
@@ -5490,6 +5493,7 @@
     if (courses.length) {
       shelves.push({
         label: 'Courses',
+        count: shelfCounts.courses,
         rows: courses,
         cardHtml: (c) => `
           <div class="shelf-card" onclick="openFeaturedCourse('${c.instance_id}', ${c.enrolled ? 'true' : 'false'})">
@@ -5508,15 +5512,15 @@
     `;
 
     if (recentPoems.length) {
-      shelves.push({ label: 'Poems', rows: recentPoems, cardHtml: miniCard });
+      shelves.push({ label: 'Poems', count: shelfCounts.poems, rows: recentPoems, cardHtml: miniCard });
     }
 
     if (recentPosts.length) {
-      shelves.push({ label: 'Posts', rows: recentPosts, cardHtml: miniCard });
+      shelves.push({ label: 'Posts', count: shelfCounts.posts, rows: recentPosts, cardHtml: miniCard });
     }
 
     if (recentBooks.length) {
-      shelves.push({ label: 'Books', rows: recentBooks, cardHtml: miniCard });
+      shelves.push({ label: 'Books', count: shelfCounts.books, rows: recentBooks, cardHtml: miniCard });
     }
 
     // Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
@@ -5537,7 +5541,7 @@
       `;
       _liveMeetingsById = {};
       liveMeetings.forEach(m => { _liveMeetingsById[m.id] = m; });
-      shelves.push({ label: 'Live Meetings', rows: liveMeetings, cardHtml: meetingCard });
+      shelves.push({ label: 'Live Meetings', count: shelfCounts.liveMeetings, rows: liveMeetings, cardHtml: meetingCard });
     }
 
     // poems/posts keep this around for the "More poems/posts →" link
@@ -5547,7 +5551,7 @@
     _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }] };
     el.innerHTML = shelves.map(s => `
       <div>
-        <div class="shelf-label">${s.label}</div>
+        <div class="shelf-label">${s.label}${(s.count !== undefined && s.count !== null) ? ` (${s.count})` : ''}</div>
         <div class="shelf-row" data-shelf-label="${s.label}">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
       </div>
     `).join('');
