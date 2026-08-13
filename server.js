@@ -9615,6 +9615,12 @@ const ADMIN_SCRIPTS = [
     description: "Sets every meditation/practice library file (except one-to-one assigned ones) to Member visibility, as a baseline to then hand-pick some down to Explorer. Safe to re-run.",
     module: './set_practices_member_visibility',
   },
+  {
+    id: 'import-poems-for-the-soul',
+    label: 'Import Poems for the Soul (68 new)',
+    description: "Adds the 68 poems from Per's Poems_for_the_Soul.docx that aren't already in the library (51 of the 119 in the document were already there). Lands in Writing > Poems at Member visibility. Safe to re-run — checks titles against the live library each time.",
+    module: './import_poems',
+  },
   // Add future one-time scripts here: { id, label, description, module }.
   // The module just needs to export async runImport(log) — see either
   // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
