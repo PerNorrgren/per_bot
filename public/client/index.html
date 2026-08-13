@@ -334,24 +334,34 @@
     .talk-view { padding:24px 24px 20px; display:flex; flex-direction:column; align-items:center; gap:20px; flex:1; min-height:0; overflow-y:auto; }
     /* Per Bot 28 — curated shelves: horizontally-scrollable rows of
        larger tappable cards, one row per featured category.
-       Per Bot 37 — auto-advancing carousel with a centred highlight (see
-       initShelfCarousels in JS). scroll-snap-align changed start->center
-       and mandatory (was proximity) so a card always comes to rest
-       exactly centred, whether autoplay or a manual swipe moved it. The
-       calc(50% - 75px) side padding (75px = half the 150px card width)
-       is what lets the very first and very last card actually reach
-       centre — without it there's no room to their outside for the
-       browser to scroll into. */
+       Per Bot 40 — only the Practices row still auto-advances (see
+       initShelfCarousels in JS) — every other shelf is back to a plain
+       left-aligned scrollable row, same as before Per Bot 37. The
+       centred/highlighted look only makes sense on a row that's actually
+       moving on its own; on a row you have to swipe yourself, starting
+       with a card already centred just wastes the first screenful of
+       space on empty padding either side of it. [data-shelf-label
+       ="Practices"] carries the centred-carousel padding/snap (75px =
+       half the 150px card width — see the Per Bot 37 comment history for
+       why that number specifically); every other .shelf-row falls back
+       to the plain start-aligned rule below it. */
     .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
-    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px calc(50% - 75px) 14px; scroll-snap-type:x mandatory; }
+    .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 14px; scroll-snap-type:x proximity; }
+    .shelf-row[data-shelf-label="Practices"] { padding:2px calc(50% - 75px) 14px; scroll-snap-type:x mandatory; }
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
-    .shelf-card { flex:0 0 auto; scroll-snap-align:center; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
+    .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
+    .shelf-row[data-shelf-label="Practices"] .shelf-card { scroll-snap-align:center; }
     /* The centred card — kept in sync with whichever card the carousel
        (auto or manual) has actually brought to centre, via the
        IntersectionObserver in initShelfCarousels rather than by
        tracking an index in JS, so it can never drift out of sync with
-       what's really on screen. */
+       what's really on screen. Per Bot 40 — this observer now only ever
+       runs on the Practices row (see initShelfCarousels), so in practice
+       this class only ever appears there, but the rule is left scoped to
+       .shelf-card rather than removed — no harm if it did ever apply
+       elsewhere, and it keeps this CSS block honest about what the class
+       itself means rather than where it happens to be used today. */
     .shelf-card.carousel-active { transform:scale(1.08); border-color:rgba(180,230,200,0.5); background:rgba(180,230,200,0.1); box-shadow:0 6px 20px rgba(0,0,0,0.3); }
     /* Per's request — the app is dark enough already that dimming locked
        cards further makes them look broken/missing rather than "gated".
@@ -5579,6 +5589,12 @@
     document.querySelectorAll('#featuredShelves .shelf-row').forEach(row => {
       const cards = Array.from(row.children);
       if (cards.length < 2) return; // nothing to carousel with just one card
+      // Per Bot 40 — the centred-highlight effect only makes sense on the
+      // one row that actually moves on its own; every other shelf is a
+      // plain left-aligned scrollable row now (see the CSS comment above
+      // .shelf-row), so there's no "centred" position for this observer
+      // to meaningfully track there.
+      if (row.dataset.shelfLabel !== AUTOPLAY_SHELF_LABEL) return;
 
       // Keeps the highlight on whichever card is actually centred right
       // now, regardless of whether it got there via autoplay or a
@@ -5586,9 +5602,7 @@
       // tracking a separate "current index" in JS, so the two can never
       // drift apart. rootMargin trims the observed area down to a thin
       // vertical strip through the row's horizontal centre; only a card
-      // actually crossing that strip counts as "centred". This runs for
-      // every shelf regardless of the autoplay setting — a manual swipe
-      // still deserves to land on a clearly-highlighted card.
+      // actually crossing that strip counts as "centred".
       const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
           entry.target.classList.toggle('carousel-active', entry.isIntersecting);
@@ -5598,8 +5612,6 @@
 
       const cleanupFns = [() => observer.disconnect()];
       _shelfCarouselCleanups.push(() => cleanupFns.forEach(fn => fn()));
-
-      if (row.dataset.shelfLabel !== AUTOPLAY_SHELF_LABEL) return; // manual-scroll-only shelf
 
       let paused = false;
       let resumeTimer = null;
