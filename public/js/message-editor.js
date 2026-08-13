@@ -872,23 +872,62 @@
   // "make this better" nudge. Distinct from the Generate & insert
   // dropdown (aiGenerateHtml/runAiGenerate below) — this improves what's
   // already there; that inserts something new alongside it.
+  // Per Bot 41 — Per's report: clicking AI Help showed a "…" on the
+  // button and nothing else, and on at least one try the text came back
+  // unchanged with zero indication of why — no error, no confirmation,
+  // nothing to go on. Two problems, really: no visible progress while
+  // waiting, and a straight overwrite of the whole message the moment a
+  // reply came back, success or (before Per Bot 39's truncation guard)
+  // partial failure alike. Rebuilt to match how Generate-and-insert
+  // already works elsewhere in this editor: open a panel, show a clear
+  // "Improving your message…" state, then either the suggested rewrite
+  // with an explicit "Use this version" to actually apply it, or a
+  // plain-language error with a Try again button — never a silent
+  // no-op and never an unreviewed overwrite.
+  const aiPolishState = {};
   async function runAiPolish(q, btn) {
     if (!btn) return;
+    const containerId = btn.closest('.me-ql-wrap') ? btn.closest('.me-ql-wrap').id : null;
+    const panel = containerId ? document.getElementById(`${containerId}_polishPanel`) : null;
     if (!q.getText().trim()) { window.appAlert('Write something first.'); return; }
-    const orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '…';
-    try {
-      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: q.root.innerHTML }) });
-      const data = await res.json();
-      if (data.html) q.root.innerHTML = data.html;
-      else window.appAlert(data.error || 'Could not get a suggestion right now.');
-    } catch (e) {
-      window.appAlert('Something went wrong — please try again.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = orig;
+    if (!panel) { // fallback for any editor instance that somehow has no panel (shouldn't happen — see mountRich)
+      window.appAlert('Could not open AI Help here — please try reloading the page.');
+      return;
     }
+    aiPolishState[containerId] = { q, html: q.root.innerHTML };
+    panel.style.display = 'block';
+    startAiPolish(containerId);
+  }
+  async function startAiPolish(containerId) {
+    const st = aiPolishState[containerId];
+    if (!st) return;
+    document.getElementById(`${containerId}_polishRetry`).style.display = 'none';
+    document.getElementById(`${containerId}_polishInsert`).style.display = 'none';
+    document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">Improving your message…</span>`;
+    try {
+      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: st.html }) });
+      const data = await res.json();
+      if (!res.ok || !data.html) throw new Error(data.error || 'Could not get a suggestion right now.');
+      st.result = data.html;
+      document.getElementById(`${containerId}_polishBody`).innerHTML = data.html;
+      document.getElementById(`${containerId}_polishRetry`).style.display = '';
+      document.getElementById(`${containerId}_polishInsert`).style.display = '';
+    } catch (e) {
+      document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,120,100,0.85)">${e.message || 'Something went wrong — please try again.'}</span>`;
+      document.getElementById(`${containerId}_polishRetry`).style.display = '';
+    }
+  }
+  function retryAiPolish(containerId) { startAiPolish(containerId); }
+  function closeAiPolishPreview(containerId) {
+    delete aiPolishState[containerId];
+    const panel = document.getElementById(`${containerId}_polishPanel`);
+    if (panel) panel.style.display = 'none';
+  }
+  function insertAiPolishResult(containerId) {
+    const st = aiPolishState[containerId];
+    if (!st || !st.result || !st.q) return;
+    st.q.root.innerHTML = st.result;
+    closeAiPolishPreview(containerId);
   }
 
   function mountRich(containerId, initialHtml, opts) {
@@ -1250,6 +1289,33 @@
     q.root.setAttribute('spellcheck', 'true');
     q.root.setAttribute('autocorrect', 'on');
     q.root.setAttribute('autocapitalize', 'sentences');
+    // Per Bot 41 — AI Help's preview panel. Injected here rather than
+    // requiring every page that mounts a rich editor to remember to
+    // render one (unlike the Generate-and-insert panel, which is opt-in
+    // per page via aiGenerateHtml() — AI Help is on every rich editor's
+    // toolbar automatically, so its panel needs to exist automatically
+    // too). Skipped when opts.aiPolish overrides the button's whole
+    // behaviour (What's New's promo line) — that path has never used
+    // this panel and isn't changing here.
+    if (!opts.aiPolish) {
+      const existing = document.getElementById(`${containerId}_polishPanel`);
+      if (existing) existing.remove();
+      const panel = document.createElement('div');
+      panel.id = `${containerId}_polishPanel`;
+      panel.className = 'me-ai-panel';
+      panel.style.display = 'none';
+      panel.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <strong style="font-size:12px;color:rgba(255,255,255,0.7)">✨ AI Help</strong>
+          <button type="button" onclick="MessageEditor.closeAiPolishPreview('${containerId}')" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;line-height:1">×</button>
+        </div>
+        <div class="me-ai-body" id="${containerId}_polishBody"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+          <button type="button" class="btn sm" id="${containerId}_polishRetry" style="display:none" onclick="MessageEditor.retryAiPolish('${containerId}')">Try again</button>
+          <button type="button" class="btn sm primary" id="${containerId}_polishInsert" style="display:none" onclick="MessageEditor.insertAiPolishResult('${containerId}')">Use this version</button>
+        </div>`;
+      container.parentNode.insertBefore(panel, container.nextSibling);
+    }
     return q;
   }
 
@@ -1530,6 +1596,7 @@
     formatToggleHtml, mountRich, destroy, getHtml, isMounted, getInstance,
     mountOnTextarea, setTextareaContent, resolvePrivateMedia,
     aiGenerateHtml, runAiGenerate, retryAiGenerate, closeAiPreview, insertAiResult,
+    retryAiPolish, closeAiPolishPreview, insertAiPolishResult,
     renderVersionSection, refreshVersionSection,
   };
 
