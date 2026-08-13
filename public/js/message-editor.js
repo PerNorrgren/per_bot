@@ -908,6 +908,16 @@
     }
     aiPolishState[containerId] = { q, html: q.root.innerHTML };
     panel.style.display = 'block';
+    // Per's report: "AI Help does nothing." It wasn't doing nothing —
+    // the panel lives right after the whole editor block in the
+    // document (see mountRich), which on a long message can be a long
+    // way below wherever someone's actually scrolled to when they click
+    // the toolbar's AI Help button (the toolbar itself is sticky and
+    // stays on screen the whole time, but the panel it opens isn't).
+    // Scrolling it into view the moment it opens means it's always
+    // where they're looking, regardless of how long the message is or
+    // where in it they clicked from.
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     startAiPolish(containerId);
   }
   async function startAiPolish(containerId) {
