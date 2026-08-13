@@ -2179,6 +2179,13 @@ async function getDb() {
     // content, so the original recording stays playable, not just its
     // transcribed text. NULL for every existing written/upload entry.
     "ALTER TABLE client_journal_entries ADD COLUMN audio_key TEXT",
+    // Per Bot 40 — carousel autoplay preference, same save-to-account
+    // pattern as a11y_contrast/a11y_text_scale above (follows the person
+    // to whatever device they log in on, not just this browser). NULL
+    // means "no preference set yet" — treated as on (the current default
+    // behaviour) rather than off, so this migration doesn't silently
+    // change anything for people who never open Display settings.
+    "ALTER TABLE users ADD COLUMN carousel_autoplay INTEGER DEFAULT NULL",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -4575,7 +4582,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale','carousel_autoplay'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,

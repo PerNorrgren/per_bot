@@ -904,6 +904,9 @@
           <button class="a11y-menu-opt" id="a11yTextNormal" onclick="setA11yTextScale('normal')">Normal</button>
           <button class="a11y-menu-opt" id="a11yTextLarge" onclick="setA11yTextScale('large')">Large</button>
           <button class="a11y-menu-opt" id="a11yTextLarger" onclick="setA11yTextScale('larger')">Larger</button>
+          <div class="a11y-menu-label">Movement</div>
+          <button class="a11y-menu-opt" id="a11yCarouselOn" onclick="setCarouselAutoplay(1)">Carousel moves on its own</button>
+          <button class="a11y-menu-opt" id="a11yCarouselOff" onclick="setCarouselAutoplay(0)">Carousel stays still</button>
         </div>
       </div>
     </div>
@@ -5535,7 +5538,7 @@
     el.innerHTML = shelves.map(s => `
       <div>
         <div class="shelf-label">${s.label}</div>
-        <div class="shelf-row">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
+        <div class="shelf-row" data-shelf-label="${s.label}">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
       </div>
     `).join('');
     initShelfCarousels();
@@ -5550,12 +5553,28 @@
   // from the previous render so they're torn down first; without that,
   // returning to the Talk tab a few times would silently stack up
   // multiple autoplay timers all fighting over the same rows.
+  //
+  // Per Bot 40 — Per's follow-up: every shelf moving at once was too
+  // much. Auto-advance is now Practices only (the centred-highlight
+  // effect itself still applies to every row on a manual swipe — that's
+  // just visual feedback, not "movement" — only the self-driving timer
+  // is restricted). Also now genuinely optional per person via Display >
+  // Movement, saved to the account the same way a11y_contrast/
+  // a11y_text_scale already are, so it follows someone to whatever
+  // device they log in on rather than being a per-browser setting.
+  // _practicesCarouselControl holds {start,stop} for the one row that
+  // can autoplay, so setCarouselAutoplay() below can flip it live —
+  // instantly, without needing a full shelves re-render — the moment
+  // someone changes the Display setting.
   let _shelfCarouselCleanups = [];
+  let _practicesCarouselControl = null;
   const SHELF_AUTOPLAY_MS = 3500;
   const SHELF_RESUME_AFTER_MS = 6000;
+  const AUTOPLAY_SHELF_LABEL = 'Practices';
   function initShelfCarousels() {
     _shelfCarouselCleanups.forEach(fn => fn());
     _shelfCarouselCleanups = [];
+    _practicesCarouselControl = null;
 
     document.querySelectorAll('#featuredShelves .shelf-row').forEach(row => {
       const cards = Array.from(row.children);
@@ -5567,7 +5586,9 @@
       // tracking a separate "current index" in JS, so the two can never
       // drift apart. rootMargin trims the observed area down to a thin
       // vertical strip through the row's horizontal centre; only a card
-      // actually crossing that strip counts as "centred".
+      // actually crossing that strip counts as "centred". This runs for
+      // every shelf regardless of the autoplay setting — a manual swipe
+      // still deserves to land on a clearly-highlighted card.
       const observer = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
           entry.target.classList.toggle('carousel-active', entry.isIntersecting);
@@ -5575,8 +5596,14 @@
       }, { root: row, rootMargin: '0px -42% 0px -42%', threshold: 0.5 });
       cards.forEach(c => observer.observe(c));
 
+      const cleanupFns = [() => observer.disconnect()];
+      _shelfCarouselCleanups.push(() => cleanupFns.forEach(fn => fn()));
+
+      if (row.dataset.shelfLabel !== AUTOPLAY_SHELF_LABEL) return; // manual-scroll-only shelf
+
       let paused = false;
       let resumeTimer = null;
+      let timer = null;
       const step = () => {
         if (paused) return;
         // offsetParent is null when the row (or an ancestor, e.g. the
@@ -5591,7 +5618,8 @@
         if (atEnd) row.scrollTo({ left: 0, behavior: 'smooth' });
         else row.scrollBy({ left: cardWidth + gap, behavior: 'smooth' });
       };
-      const timer = setInterval(step, SHELF_AUTOPLAY_MS);
+      const startTimer = () => { if (!timer) timer = setInterval(step, SHELF_AUTOPLAY_MS); };
+      const stopTimer = () => { clearInterval(timer); timer = null; };
 
       // A manual swipe/drag pauses autoplay immediately (fighting the
       // user's own scroll gesture looks broken) and resumes it a few
@@ -5606,13 +5634,15 @@
       row.addEventListener('pointerdown', pauseThenResume);
       row.addEventListener('touchstart', pauseThenResume, { passive: true });
 
-      _shelfCarouselCleanups.push(() => {
-        clearInterval(timer);
+      cleanupFns.push(() => {
+        stopTimer();
         clearTimeout(resumeTimer);
-        observer.disconnect();
         row.removeEventListener('pointerdown', pauseThenResume);
         row.removeEventListener('touchstart', pauseThenResume);
       });
+
+      _practicesCarouselControl = { start: startTimer, stop: stopTimer };
+      if (getCarouselAutoplayEnabled()) startTimer();
     });
   }
   // Every card in every row (Courses aside) opens the same list-style
@@ -7328,13 +7358,51 @@
       applyA11yState(contrast, scale);
       localStorage.setItem('a11y_contrast', contrast ? '1' : '0');
       localStorage.setItem('a11y_text_scale', scale);
+      // Per Bot 40 — carousel_autoplay is NULL for anyone who's never
+      // touched this setting (see the migration comment in db.js) —
+      // treated as "on" (the default) rather than off, same reasoning as
+      // the a11y fields above not needing a NULL case: those two always
+      // have a real default value at the column level, this one's NULL
+      // is deliberately meaningful ("no preference yet") rather than a
+      // gap to fill in.
+      const autoplay = data.carousel_autoplay === null || data.carousel_autoplay === undefined ? true : !!Number(data.carousel_autoplay);
+      applyCarouselAutoplayState(autoplay);
+      localStorage.setItem('carousel_autoplay', autoplay ? '1' : '0');
       // Per Bot 24 — "Log in as" red frame. Piggybacked on this existing
       // /api/account fetch (already happens unconditionally on every
       // load) rather than adding a second request just for this.
       if (data.impersonating) showImpersonationFrame(data.impersonating);
     } catch(e) {
       applyA11yState(document.body.classList.contains('a11y-contrast'), localStorage.getItem('a11y_text_scale') || 'normal');
+      applyCarouselAutoplayState(getCarouselAutoplayEnabled());
     }
+  }
+  // Per Bot 40 — Display > Movement. Same save-to-account pattern as
+  // setA11yContrast/setA11yTextScale above: applied instantly and cached
+  // to localStorage for next load, PATCHed to the account so it follows
+  // the person to another device too. Talks directly to
+  // _practicesCarouselControl (see initShelfCarousels) to start/stop the
+  // one carousel that can autoplay right away, rather than requiring a
+  // full shelves re-render just to pick up a setting change.
+  function getCarouselAutoplayEnabled() {
+    return localStorage.getItem('carousel_autoplay') !== '0'; // default on
+  }
+  function applyCarouselAutoplayState(enabled) {
+    const onBtn = document.getElementById('a11yCarouselOn');
+    const offBtn = document.getElementById('a11yCarouselOff');
+    if (onBtn) onBtn.classList.toggle('active', !!enabled);
+    if (offBtn) offBtn.classList.toggle('active', !enabled);
+  }
+  async function setCarouselAutoplay(val) {
+    const enabled = !!val;
+    applyCarouselAutoplayState(enabled);
+    try { localStorage.setItem('carousel_autoplay', enabled ? '1' : '0'); } catch(e) {}
+    if (_practicesCarouselControl) {
+      if (enabled) _practicesCarouselControl.start(); else _practicesCarouselControl.stop();
+    }
+    try {
+      await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ carousel_autoplay: enabled ? 1 : 0 }) });
+    } catch(e) { /* applied locally regardless — worst case it doesn't follow them to another device yet */ }
   }
   // Per Bot 24 — persistent, unmissable red frame the whole time an admin
   // is genuinely driving this exact session — this is real access to a
