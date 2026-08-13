@@ -12632,12 +12632,16 @@ app.post('/api/admin/scheduled-messages/:id/send-now', auth.requireAuthApi(['adm
     db.addNewsletter(newsletterId, msg.subject, msg.body, msg.audience, msg.format, null, null, msg.id);
     const newsletter = db.getNewsletter(newsletterId);
     const recipients = db.getNewsletterRecipients(newsletter.audience);
+    // Per Bot 47 — batched: one save() for the whole pre-log instead of
+    // one per recipient (was 375 full-database disk writes happening
+    // synchronously before this request could even respond).
     const logRowsByUserId = {};
-    for (const user of recipients) {
+    const pendingLogRows = recipients.map(user => {
       const id = uuidv4();
       logRowsByUserId[user.id] = id;
-      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
-    }
+      return { id, kind: 'newsletter', email: user.email, subject: newsletter.subject, newsletterId: newsletter.id, userId: user.id };
+    });
+    db.logEmailPendingBatch(pendingLogRows);
     db.updateNewsletterStatus(newsletter.id, 'sending');
     res.json({ ok: true, started: true, recipientCount: recipients.length });
     runNewsletterSend(newsletter, recipients, logRowsByUserId).catch(e => {
@@ -12862,12 +12866,16 @@ async function sendDueScheduledMessages() {
     db.addNewsletter(newsletterId, msg.subject, msg.body, msg.audience, msg.format, null, null, msg.id);
     const newsletter = db.getNewsletter(newsletterId);
     const recipients = db.getNewsletterRecipients(newsletter.audience);
+    // Per Bot 47 — batched: one save() for the whole pre-log instead of
+    // one per recipient (was 375 full-database disk writes happening
+    // synchronously before this request could even respond).
     const logRowsByUserId = {};
-    for (const user of recipients) {
+    const pendingLogRows = recipients.map(user => {
       const id = uuidv4();
       logRowsByUserId[user.id] = id;
-      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
-    }
+      return { id, kind: 'newsletter', email: user.email, subject: newsletter.subject, newsletterId: newsletter.id, userId: user.id };
+    });
+    db.logEmailPendingBatch(pendingLogRows);
     db.updateNewsletterStatus(newsletter.id, 'sending');
     await runNewsletterSend(newsletter, recipients, logRowsByUserId);
     db.markScheduledMessageSent(msg.id, todayStr);
@@ -12895,12 +12903,16 @@ app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), asyn
     // batch, this table already shows all 377 intended recipients, so
     // "who's missing" is a query against our own data, not a forensic
     // exercise against Scaleway's console.
+    // Per Bot 47 — batched: one save() for the whole pre-log instead of
+    // one per recipient (was 375 full-database disk writes happening
+    // synchronously before this request could even respond).
     const logRowsByUserId = {};
-    for (const user of recipients) {
+    const pendingLogRows = recipients.map(user => {
       const id = uuidv4();
       logRowsByUserId[user.id] = id;
-      db.logEmailPending(id, 'newsletter', user.email, newsletter.subject, newsletter.id, user.id);
-    }
+      return { id, kind: 'newsletter', email: user.email, subject: newsletter.subject, newsletterId: newsletter.id, userId: user.id };
+    });
+    db.logEmailPendingBatch(pendingLogRows);
 
     // Mark as sending immediately and respond right away — the actual
     // loop below runs after this response goes out, so however long 377
@@ -13008,14 +13020,16 @@ app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']),
     // newsletter first, so trying again while dialling in the Scaleway
     // lookup doesn't pile up duplicate log rows each time.
     db.clearEmailLogForNewsletter(newsletter.id);
-    already.forEach(u => {
-      const id = uuidv4();
-      db.logEmailResult(id, 'newsletter', u.email, newsletter.subject, newsletter.id, u.id, 'sent', null, null);
-    });
-    missing.forEach(u => {
-      const id = uuidv4();
-      db.logEmailPending(id, 'newsletter', u.email, newsletter.subject, newsletter.id, u.id);
-    });
+    // Per Bot 47 — batched (one save() for the whole reconcile, not one
+    // per already/missing recipient).
+    db.logEmailResultBatch(already.map(u => ({
+      id: uuidv4(), kind: 'newsletter', email: u.email, subject: newsletter.subject,
+      newsletterId: newsletter.id, userId: u.id, status: 'sent',
+    })));
+    db.logEmailPendingBatch(missing.map(u => ({
+      id: uuidv4(), kind: 'newsletter', email: u.email, subject: newsletter.subject,
+      newsletterId: newsletter.id, userId: u.id,
+    })));
     if (newsletter.status === 'draft') db.updateNewsletterStatus(newsletter.id, 'sending');
 
     res.json({

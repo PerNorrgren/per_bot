@@ -6102,11 +6102,50 @@ function logEmailPending(id, kind, email, subject, newsletterId, userId) {
     [id, kind, email, subject || '', newsletterId || null, userId || null]
   ); save();
 }
+// Per Bot 47 — Per's report: sending a newsletter left the admin UI
+// unresponsive for several minutes before "sending" ever appeared,
+// even though the actual send loop genuinely does run in the
+// background (see runNewsletterSend — the HTTP response was already
+// designed to return before that starts). The real bottleneck was
+// here: every recipient gets pre-logged as pending before sending
+// starts (so "who's missing" is always a query against our own data,
+// even if the server crashes mid-batch), and logEmailPending calls
+// save() on every single row — save() re-serializes and rewrites the
+// ENTIRE database file to disk, not just the row that changed. For
+// 375 recipients that's 375 full-database disk writes happening
+// synchronously before the response can go out, not 375 cheap single-
+// row inserts. This does the same inserts but calls save() once at
+// the very end, after the whole batch — same pre-logging guarantee,
+// a few hundred times less disk I/O before anyone gets a response.
+function logEmailPendingBatch(rows) {
+  const dbc = getDbSync();
+  rows.forEach(({ id, kind, email, subject, newsletterId, userId }) => {
+    dbc.run(
+      `INSERT INTO email_log (id,kind,email,subject,newsletter_id,user_id,status) VALUES (?,?,?,?,?,?,'pending')`,
+      [id, kind, email, subject || '', newsletterId || null, userId || null]
+    );
+  });
+  save();
+}
 function logEmailResult(id, kind, email, subject, newsletterId, userId, status, scalewayEmailId, error) {
   getDbSync().run(
     `INSERT INTO email_log (id,kind,email,subject,newsletter_id,user_id,status,scaleway_email_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
     [id, kind, email, subject || '', newsletterId || null, userId || null, status, scalewayEmailId || null, error || null]
   ); save();
+}
+// Per Bot 47 — same batching fix as logEmailPendingBatch above, for the
+// "reconcile with Scaleway" route, which does the exact same
+// one-save()-per-row loop over however many recipients Scaleway
+// confirms actually received the email.
+function logEmailResultBatch(rows) {
+  const dbc = getDbSync();
+  rows.forEach(({ id, kind, email, subject, newsletterId, userId, status, scalewayEmailId, error }) => {
+    dbc.run(
+      `INSERT INTO email_log (id,kind,email,subject,newsletter_id,user_id,status,scaleway_email_id,error,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))`,
+      [id, kind, email, subject || '', newsletterId || null, userId || null, status, scalewayEmailId || null, error || null]
+    );
+  });
+  save();
 }
 // bodyHtml (Per Bot 21) — the rendered HTML this specific send used, passed
 // in from sendEmail() where it's already been built. Optional so every
@@ -7767,7 +7806,7 @@ module.exports = {
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   getAllScheduledMessages, getScheduledMessage, createScheduledMessage, updateScheduledMessage, deleteScheduledMessage, markScheduledMessageSent, scheduledMessageMatchesDate,
-  logEmailPending, logEmailResult, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
+  logEmailPending, logEmailPendingBatch, logEmailResult, logEmailResultBatch, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
