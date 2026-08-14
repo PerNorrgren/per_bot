@@ -3667,6 +3667,18 @@
     }
   }
 
+  // Per's follow-up: each Offline Files row now opens with the right
+  // viewer for its type — same dispatch logic openContentFile already
+  // uses elsewhere, just routed here directly rather than through
+  // openContentFileById (which only ever looks a file up in whatever's
+  // already loaded into _contentData/_featuredContentData — arrays the
+  // Offline Files tab has no reason to have populated if it's the first
+  // thing opened in a session).
+  let _offlineTabFiles = [];
+  function playOfflineItem(f) {
+    if (isAudio(f)) mpPlay(f);
+    else openContentFile(f);
+  }
   async function loadOfflineFilesTab() {
     const listEl = document.getElementById('offlineFilesList');
     const summaryEl = document.getElementById('offlineFilesSummary');
@@ -3681,18 +3693,29 @@
         listEl.innerHTML = '<div class="no-practices">Tick the offline icon on anything in your Library or a course to keep it with you when there\'s no signal.</div>';
         return;
       }
+      // Kept around so each row's Play/Open button can reference the
+      // exact same object mpPlay/openContentFile already expect
+      // (_offlineTabFiles[i], a live array index — not JSON embedded in
+      // the markup), without a second server round trip per click.
+      _offlineTabFiles = files;
       const totalBytes = files.reduce((sum, f) => sum + (f.approxBytes || 0), 0);
       summaryEl.textContent = `${files.length} item${files.length === 1 ? '' : 's'}${totalBytes ? ' · ~' + formatOfflineBytes(totalBytes) : ''}`;
       removeAllBtn.style.display = '';
-      listEl.innerHTML = files.map(f => `
-        <div class="content-item">
-          <div style="flex:1">
-            <div class="content-item-title">${f.title}</div>
-            <div class="content-item-meta">${f.approxBytes ? formatOfflineBytes(f.approxBytes) : 'Saved for offline use'}${f.error ? ' · could not be cached: ' + f.error : ''}</div>
+      listEl.innerHTML = files.map((f, i) => {
+        const playIcon = isAudio(f) ? '🎵' : f.content_type === 'book' ? '📖' : '📄';
+        const playLabel = isAudio(f) ? 'Play' : f.content_type === 'book' ? 'Read' : 'Open';
+        return `
+        <div class="content-item" onclick="playOfflineItem(_offlineTabFiles[${i}])">
+          <span style="font-size:15px;flex-shrink:0">${playIcon}</span>
+          <div style="flex:1;min-width:0">
+            <div class="content-title" style="white-space:normal">${f.title}</div>
+            <div class="content-desc" style="white-space:normal">${f.approxBytes ? formatOfflineBytes(f.approxBytes) : 'Saved for offline use'}${f.error ? ' · could not be cached: ' + f.error : ''}</div>
           </div>
-          <button type="button" onclick="removeOneOfflineFile('${f.id}')" style="background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,150,140,0.8);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">Remove</button>
+          <button type="button" onclick="event.stopPropagation();playOfflineItem(_offlineTabFiles[${i}])" style="background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.25);border-radius:8px;color:rgba(180,230,200,0.85);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">${playLabel}</button>
+          <button type="button" onclick="event.stopPropagation();removeOneOfflineFile('${f.id}')" style="background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,150,140,0.8);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">Remove</button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     } catch (e) {
       summaryEl.textContent = '';
       listEl.innerHTML = '<div class="no-practices">Could not load your offline files right now.</div>';
@@ -4743,6 +4766,7 @@
         <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}</td>
         <td style="padding:9px 10px;white-space:nowrap;text-align:right">
           <button class="heart-btn ${r.is_favourite ? 'active' : ''}" onclick="event.stopPropagation();toggleFavouriteInMyPractices('${r.kind}','${r.id}',this)" title="Favourite">♥</button>
+          ${r.icon !== '🎬' ? `<button class="offline-tick-btn ${isMarkedOffline(r.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${r.id}',this)" title="Available offline">⬇</button>` : ''}
           <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${r.kind}','${r.id}')">✕</button>
         </td>
       </tr>`).join('');
