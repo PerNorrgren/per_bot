@@ -471,6 +471,57 @@
     </div>
   </div>
 
+  <!-- ── Custom reminders (Per Bot 50) ── Distinct from "Practice
+       reminders" above (a system-driven nudge if you've gone quiet) —
+       this is any number of the person's own reminders, each on its
+       own schedule and channel, regardless of activity. -->
+  <div class="card">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Reminders</div><span class="card-chevron">▾</span></div>
+    <div class="card-body" style="display:none">
+      <div class="pref-desc" style="margin-bottom:14px">Set as many of your own reminders as you like — each on its own schedule, by email and/or text.</div>
+      <div id="customRemindersList"></div>
+      <div class="msg" id="customRemindersMsg" style="margin-top:8px"></div>
+
+      <div id="newReminderForm" style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:12px">
+        <div class="field">
+          <label>Reminder text</label>
+          <input type="text" id="newReminderLabel" placeholder="Practice Reminder" value="Practice Reminder"/>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="field" style="max-width:160px">
+            <label>How often</label>
+            <select id="newReminderFrequency" onchange="onReminderFrequencyChange('newReminder')">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="hourly">Hourly</option>
+            </select>
+          </div>
+          <div class="field" id="newReminderDayField" style="max-width:160px">
+            <label>Day</label>
+            <select id="newReminderDay">
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+              <option value="0">Sunday</option>
+            </select>
+          </div>
+          <div class="field" id="newReminderTimeField" style="max-width:140px">
+            <label>Time</label>
+            <select id="newReminderTime"></select>
+          </div>
+        </div>
+        <div class="channel-pair">
+          <label class="channel-check"><input type="checkbox" id="newReminderEmail" checked/> Email</label>
+          <label class="channel-check"><input type="checkbox" id="newReminderSms"/> SMS</label>
+        </div>
+        <button type="button" onclick="addCustomReminder()" style="align-self:flex-start;background:rgba(180,230,200,0.1);border:1px solid rgba(180,230,200,0.3);border-radius:8px;color:rgba(180,230,200,0.85);font-family:Georgia,serif;font-size:12.5px;padding:9px 16px;cursor:pointer">+ Add reminder</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Voice ── -->
   <div class="card">
     <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Voice</div><span class="card-chevron">▾</span></div>
@@ -792,6 +843,90 @@
     const consentDate = fmtDate(a.consent_date);
     document.getElementById('gdprConsentDate').textContent = consentDate || 'Not recorded';
     document.getElementById('gdprBasis').textContent       = a.lawful_basis || 'Consent';
+
+    // Custom reminders (Per Bot 50)
+    loadCustomReminders();
+  }
+
+  // ── Custom reminders (Per Bot 50) ── Any number of the person's own
+  // reminders, each independently timed and channelled — see the
+  // server-side comment on sendCustomReminders for how these differ
+  // from the "Practice reminders" toggle above.
+  function populateHourSelect(selectEl) {
+    selectEl.innerHTML = Array.from({ length: 24 }, (_, h) => {
+      const hh = String(h).padStart(2, '0');
+      return `<option value="${hh}:00">${hh}:00</option>`;
+    }).join('');
+  }
+  function onReminderFrequencyChange(prefix) {
+    const freq = document.getElementById(`${prefix}Frequency`).value;
+    document.getElementById(`${prefix}DayField`).style.display = freq === 'weekly' ? '' : 'none';
+    document.getElementById(`${prefix}TimeField`).style.display = freq === 'hourly' ? 'none' : '';
+  }
+  const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function describeReminderSchedule(r) {
+    if (r.frequency === 'hourly') return 'Every hour, 7am–9pm';
+    if (r.frequency === 'daily') return `Every day at ${r.time_of_day}`;
+    return `Every ${DAY_NAMES[r.day_of_week]} at ${r.time_of_day}`;
+  }
+  async function loadCustomReminders() {
+    populateHourSelect(document.getElementById('newReminderTime'));
+    onReminderFrequencyChange('newReminder');
+    try {
+      const res = await fetch('/api/account/custom-reminders');
+      const reminders = await res.json();
+      renderCustomRemindersList(Array.isArray(reminders) ? reminders : []);
+    } catch (e) { document.getElementById('customRemindersList').innerHTML = ''; }
+  }
+  function renderCustomRemindersList(reminders) {
+    const el = document.getElementById('customRemindersList');
+    if (!reminders.length) {
+      el.innerHTML = '<div class="pref-desc" style="font-style:italic">No reminders set yet — add one below.</div>';
+      return;
+    }
+    el.innerHTML = reminders.map(r => `
+      <div class="pref-row">
+        <div class="pref-label">
+          <div class="pref-name">${escapeHtmlForAccount(r.label)}</div>
+          <div class="pref-desc">${describeReminderSchedule(r)} · ${[r.channel_email ? 'Email' : null, r.channel_sms ? 'SMS' : null].filter(Boolean).join(' + ') || 'No channel selected'}</div>
+        </div>
+        <button type="button" onclick="deleteCustomReminder('${r.id}')" style="background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,150,140,0.8);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">Remove</button>
+      </div>
+    `).join('');
+  }
+  // Reminder labels are free text a person typed themselves and get
+  // rendered straight into the page — this is the one place on this
+  // page that's true, so it's the one place that needs its own escape
+  // rather than relying on a value attribute or textContent elsewhere.
+  function escapeHtmlForAccount(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  async function addCustomReminder() {
+    const label = document.getElementById('newReminderLabel').value.trim() || 'Practice Reminder';
+    const frequency = document.getElementById('newReminderFrequency').value;
+    const day_of_week = frequency === 'weekly' ? parseInt(document.getElementById('newReminderDay').value, 10) : null;
+    const time_of_day = frequency === 'hourly' ? null : document.getElementById('newReminderTime').value;
+    const channel_email = document.getElementById('newReminderEmail').checked;
+    const channel_sms = document.getElementById('newReminderSms').checked;
+    const msgEl = document.getElementById('customRemindersMsg');
+    if (!channel_email && !channel_sms) { msgEl.className = 'msg err'; msgEl.textContent = 'Choose at least one of email or SMS.'; return; }
+    msgEl.textContent = '';
+    try {
+      const res = await fetch('/api/account/custom-reminders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label, frequency, day_of_week, time_of_day, channel_email, channel_sms })
+      });
+      const data = await res.json();
+      if (!res.ok) { msgEl.className = 'msg err'; msgEl.textContent = data.error || 'Could not add that reminder.'; return; }
+      document.getElementById('newReminderLabel').value = 'Practice Reminder';
+      document.getElementById('newReminderSms').checked = false;
+      document.getElementById('newReminderEmail').checked = true;
+      await loadCustomReminders();
+    } catch (e) { msgEl.className = 'msg err'; msgEl.textContent = 'Something went wrong. Please try again.'; }
+  }
+  async function deleteCustomReminder(id) {
+    try { await fetch(`/api/account/custom-reminders/${id}`, { method: 'DELETE' }); await loadCustomReminders(); }
+    catch (e) { document.getElementById('customRemindersMsg').textContent = 'Could not remove — please try again.'; }
   }
 
   // ── Tomte personalization (Per Bot 8) ──

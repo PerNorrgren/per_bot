@@ -75,6 +75,40 @@ async function getDb() {
     dismissed INTEGER NOT NULL DEFAULT 0
   )`);
 
+  // ── Custom reminders (Per Bot 50) ── Per's request: the existing
+  // "Practice reminders" toggle is one automatic, system-driven nudge
+  // ("you've gone quiet, here's a gentle prompt") — genuinely different
+  // from what was asked for here, which is a person setting their OWN
+  // reminder(s) on their own schedule ("remind me every morning", "remind
+  // me every Monday evening"), any number of them, each independently
+  // timed and each with its own email/SMS choice. Kept as an addition
+  // alongside the existing inactivity-based reminder rather than a
+  // replacement — they answer different questions ("nudge me if I go
+  // quiet" vs "remind me on my own schedule regardless") and someone may
+  // reasonably want both, one, or neither.
+  // frequency: 'hourly' | 'daily' | 'weekly'. day_of_week (0=Sun..6=Sat)
+  // only meaningful for weekly; time_of_day ('HH:00', hour-only — the
+  // cron tick itself only runs on the hour, so finer precision couldn't
+  // actually be honoured) meaningful for daily/weekly, NULL for hourly.
+  // last_sent_at/last_sent_date_str exist purely so the hourly cron tick
+  // can tell "have I already sent this one for its current period" —
+  // without it, an hourly cron matching on "is it currently the right
+  // hour" would refire every single tick for the rest of that same hour.
+  db.run(`CREATE TABLE IF NOT EXISTS custom_reminders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT 'Practice Reminder',
+    frequency TEXT NOT NULL DEFAULT 'daily',
+    day_of_week INTEGER,
+    time_of_day TEXT,
+    channel_email INTEGER NOT NULL DEFAULT 1,
+    channel_sms INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_sent_at TEXT,
+    last_sent_date_str TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── 1:1 video/audio calls (Per Bot 12) ──
   // One row per call attempt between a facilitator and a client. Recording
   // is genuinely optional per call (consent asked fresh each time, not a
@@ -2951,6 +2985,58 @@ function setAdminScriptDismissed(scriptId, dismissed) {
     getDbSync().run('INSERT INTO admin_script_state (script_id,dismissed) VALUES (?,?)', [scriptId, dismissed ? 1 : 0]);
   }
   save();
+}
+
+// ── Custom reminders (Per Bot 50) ──
+function getCustomRemindersForUser(userId) {
+  return queryAll('SELECT * FROM custom_reminders WHERE user_id=? ORDER BY created_at ASC', [userId])
+    .map(r => ({ ...r, channel_email: !!r.channel_email, channel_sms: !!r.channel_sms, active: !!r.active }));
+}
+function createCustomReminder(userId, { label, frequency, day_of_week, time_of_day, channel_email, channel_sms }) {
+  const id = crypto.randomUUID();
+  getDbSync().run(
+    'INSERT INTO custom_reminders (id,user_id,label,frequency,day_of_week,time_of_day,channel_email,channel_sms) VALUES (?,?,?,?,?,?,?,?)',
+    [id, userId, label || 'Practice Reminder', frequency || 'daily', day_of_week ?? null, time_of_day || null, channel_email ? 1 : 0, channel_sms ? 1 : 0]
+  );
+  save();
+  return id;
+}
+// Scoped to userId as well as id in the WHERE clause — belt-and-braces
+// against one account ever editing/deleting another's reminder via a
+// guessed or reused id, on top of the route-level ownership check.
+function updateCustomReminder(id, userId, fields) {
+  const cols = ['label', 'frequency', 'day_of_week', 'time_of_day', 'channel_email', 'channel_sms', 'active'];
+  const sets = [], vals = [];
+  for (const c of cols) {
+    if (fields[c] === undefined) continue;
+    sets.push(`${c}=?`);
+    vals.push((c === 'channel_email' || c === 'channel_sms' || c === 'active') ? (fields[c] ? 1 : 0) : fields[c]);
+  }
+  if (!sets.length) return;
+  vals.push(id, userId);
+  getDbSync().run(`UPDATE custom_reminders SET ${sets.join(',')} WHERE id=? AND user_id=?`, vals);
+  save();
+}
+function deleteCustomReminder(id, userId) {
+  getDbSync().run('DELETE FROM custom_reminders WHERE id=? AND user_id=?', [id, userId]);
+  save();
+}
+function markCustomReminderSent(id, dateStr) {
+  getDbSync().run('UPDATE custom_reminders SET last_sent_at=datetime(\'now\'), last_sent_date_str=? WHERE id=?', [dateStr, id]);
+  save();
+}
+// Everyone's active custom reminders, joined with the fields the cron
+// hour-matching loop needs from their account (timezone, email, phone,
+// SMS opt-in gate is per-reminder not per-account here — channel_sms on
+// the reminder itself already IS the person's explicit choice for that
+// specific reminder, so no separate pref_sms_* gate the way the
+// system-driven reminders use one).
+function getAllActiveCustomReminders() {
+  return queryAll(`
+    SELECT r.*, u.email as user_email, u.phone as user_phone, u.name as user_name, u.timezone as user_timezone
+    FROM custom_reminders r JOIN users u ON u.id = r.user_id
+    WHERE r.active=1`)
+    .map(r => ({ ...r, channel_email: !!r.channel_email, channel_sms: !!r.channel_sms }));
 }
 
 function addFileTag(fileId, tag) {
@@ -7692,6 +7778,7 @@ module.exports = {
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
+  getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,

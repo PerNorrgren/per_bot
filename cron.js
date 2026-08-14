@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -139,6 +139,25 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] inactivity reminders failed:', e.message);
       record('inactivity_reminders', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Custom reminders — hourly, :20 past (see cron.js) ── Per Bot 50.
+  // Its own tick, staggered 5 minutes off inactivity reminders' :15 —
+  // same reasoning as every other hourly job in this file being offset
+  // from each other: nothing about these two needs to run at the exact
+  // same moment, and spreading the minute they land on keeps any one
+  // tick's work smaller.
+  cron.schedule('20 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendCustomReminders();
+      const detail = `matched=${result.matched} active=${result.totalActive} email=${result.sentEmail} sms=${result.sentSms}`;
+      console.log(`[cron] custom reminders: ${detail}`);
+      record('custom_reminders', 'ok', detail, null, t0);
+    } catch (e) {
+      console.error('[cron] custom reminders failed:', e.message);
+      record('custom_reminders', 'failed', null, e.message, t0);
     }
   });
 

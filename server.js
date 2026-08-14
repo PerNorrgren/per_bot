@@ -1439,6 +1439,75 @@ async function sendInactivityReminders() {
   return { ok: true, matched: matchedHour, candidatePool: inactive.length, sentEmail, sentSms, thresholdDays: days };
 }
 
+// Minimal inline escape for user-typed free text going into HTML email —
+// specifically the custom reminder's own label, right below. Nothing
+// else in this file has needed this before (every other place a person
+// can type free text either goes through Quill/comms2's own sanitizing,
+// or isn't inserted raw into an HTML attribute/element the way a bare
+// label is here).
+function escapeHtmlText(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Custom reminders — hourly, :20 past (see cron.js) ── Per Bot 50 —
+// a person's own reminder(s), each independently timed and channelled,
+// unlike sendInactivityReminders above there's no "have they gone
+// quiet" gate here at all: someone set this reminder deliberately, so
+// it fires on its own schedule regardless of activity.
+// Hourly frequency needs no extra de-dup beyond the cron tick itself
+// (already once an hour); daily/weekly compare last_sent_date_str
+// against today's local date so a matching hour can't double-fire, and
+// naturally won't fire again until the same day-of-week comes back
+// around for weekly.
+async function sendCustomReminders() {
+  const reminders = db.getAllActiveCustomReminders();
+  const b = brand();
+  const nowUtc = new Date();
+  let sentEmail = 0, sentSms = 0, matched = 0;
+  for (const r of reminders) {
+    let local;
+    try { local = getLocalDayHourDate(r.user_timezone || 'Europe/London', nowUtc); }
+    catch (e) { local = getLocalDayHourDate('Europe/London', nowUtc); }
+
+    let due = false;
+    if (r.frequency === 'hourly') {
+      // Sensible waking-hours window even for "every hour" — a 3am ping
+      // helps nobody, regardless of how the reminder's phrased.
+      due = local.hour >= 7 && local.hour <= 21;
+    } else if (r.frequency === 'daily') {
+      const targetHour = parseInt((r.time_of_day || '09:00').split(':')[0], 10);
+      due = local.hour === targetHour && r.last_sent_date_str !== local.dateStr;
+    } else if (r.frequency === 'weekly') {
+      const targetHour = parseInt((r.time_of_day || '09:00').split(':')[0], 10);
+      due = local.day === r.day_of_week && local.hour === targetHour && r.last_sent_date_str !== local.dateStr;
+    }
+    if (!due) continue;
+    matched++;
+
+    const label = r.label || 'Practice Reminder';
+    const link = `${APP_URL}/client/`;
+    if (r.channel_email && r.user_email) {
+      const html = `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+          <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+          <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">${escapeHtmlText(label)}</h1>
+          <p style="font-size:15px;line-height:1.7">A reminder you set for yourself.</p>
+          <p style="font-size:14px;line-height:1.7"><a href="${link}" style="color:#2d6a4f">Visit your practice space →</a></p>
+          <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+          <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage reminders</a></p>
+        </div>`;
+      try { await sendEmail(r.user_email, label, html); sentEmail++; } catch (e) { console.error('[custom-reminder] email failed:', e.message); }
+    }
+    if (r.channel_sms && r.user_phone) {
+      try {
+        const result = await sms.sendSms(r.user_phone, `${b.name}: ${label} — ${link}`);
+        if (result.ok) sentSms++;
+      } catch (e) { console.error('[custom-reminder] sms failed:', e.message); }
+    }
+    db.markCustomReminderSent(r.id, local.dateStr);
+  }
+  return { ok: true, matched, totalActive: reminders.length, sentEmail, sentSms };
+}
+
 // ── Renewal reminders ── Genuinely new (Per Bot 6) — pref_email_renewal
 // existed as a column before this, but nothing ever checked subscription
 // expiry or sent anything for it. Built on member_expires_at, which the
@@ -10359,7 +10428,7 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
     // affected by this. Found while building the birthday re-offer,
     // which reads this same onboarding_completed field as its own
     // eligibility gate.
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','carousel_autoplay'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     if (prefs.a11y_contrast !== undefined) {
@@ -10467,6 +10536,67 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
     }
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Custom reminders (Per Bot 50) ── A person's own reminder(s), on
+// their own schedule — distinct from the automatic inactivity-based
+// "Practice reminders" toggle above, which is system-driven ("you've
+// gone quiet"). This is the opposite: any number of reminders, each
+// independently timed (hourly / daily at a set hour / weekly on a set
+// day+hour) and each with its own email/SMS choice, regardless of
+// activity. Scoped to req.user.id throughout — id in the URL alone was
+// never trusted as ownership proof.
+app.get('/api/account/custom-reminders', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getCustomRemindersForUser(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/account/custom-reminders', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const { label, frequency, day_of_week, time_of_day, channel_email, channel_sms } = req.body || {};
+    if (!['hourly', 'daily', 'weekly'].includes(frequency)) {
+      return res.status(400).json({ error: "Frequency must be 'hourly', 'daily', or 'weekly'." });
+    }
+    if (frequency !== 'hourly' && !/^([01]\d|2[0-3]):00$/.test(time_of_day || '')) {
+      return res.status(400).json({ error: 'Please choose a time of day.' });
+    }
+    if (frequency === 'weekly' && (day_of_week === undefined || day_of_week === null || day_of_week < 0 || day_of_week > 6)) {
+      return res.status(400).json({ error: 'Please choose a day of the week.' });
+    }
+    if (!channel_email && !channel_sms) {
+      return res.status(400).json({ error: 'Choose at least one of email or SMS.' });
+    }
+    if (channel_sms) {
+      const user = db.getUser(req.user.id);
+      if (!user.phone) return res.status(400).json({ error: 'Add a mobile number first — needed for SMS reminders.' });
+    }
+    const id = db.createCustomReminder(req.user.id, {
+      label: (label || 'Practice Reminder').trim().slice(0, 80),
+      frequency,
+      day_of_week: frequency === 'weekly' ? day_of_week : null,
+      time_of_day: frequency === 'hourly' ? null : time_of_day,
+      channel_email: !!channel_email,
+      channel_sms: !!channel_sms,
+    });
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/account/custom-reminders/:id', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const fields = {};
+    ['label', 'frequency', 'day_of_week', 'time_of_day', 'channel_email', 'channel_sms', 'active'].forEach(k => {
+      if (req.body[k] !== undefined) fields[k] = req.body[k];
+    });
+    if (fields.channel_sms) {
+      const user = db.getUser(req.user.id);
+      if (!user.phone) return res.status(400).json({ error: 'Add a mobile number first — needed for SMS reminders.' });
+    }
+    db.updateCustomReminder(req.params.id, req.user.id, fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/account/custom-reminders/:id', auth.requireAuthApi(['client']), (req, res) => {
+  try { db.deleteCustomReminder(req.params.id, req.user.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Client journal (Per Bot 6) ── Written entries and simple .txt uploads
@@ -13081,7 +13211,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();
