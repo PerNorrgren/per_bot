@@ -528,6 +528,13 @@
     .heart-btn { background:none; border:none; cursor:pointer; font-size:18px; opacity:0.35; transition:all 0.2s; flex-shrink:0; padding:4px; }
     .heart-btn.fav { opacity:1; }
     .heart-btn:hover { opacity:0.8; transform:scale(1.15); }
+    /* Per Bot 51 — same visual language as .heart-btn: dim until ticked,
+       full opacity + a highlight colour once marked. Blue/teal rather
+       than the heart's usual red-toned "favourited" look, so the two
+       ticks read as clearly different actions at a glance. */
+    .offline-tick-btn { background:none; border:none; cursor:pointer; font-size:16px; opacity:0.3; transition:all 0.2s; flex-shrink:0; padding:6px; color:rgba(255,255,255,0.6); }
+    .offline-tick-btn.active { opacity:1; color:rgba(140,190,230,0.95); }
+    .offline-tick-btn:hover { opacity:0.75; transform:scale(1.1); }
     .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
     .practices-group-row { display:flex; gap:8px; padding:10px 5px 12px; }
     .practices-group-chip { font-size:11px; padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; }
@@ -1167,6 +1174,7 @@
         <button class="lib-subnav-btn active" id="libSubPractices" onclick="switchLibrarySub('practices')">Practices</button>
         <button class="lib-subnav-btn" id="libSubMeditations" onclick="meditationsTabClicked()">Meditations</button>
         <button class="lib-subnav-btn" id="libSubReadWatch" onclick="switchLibrarySub('readwatch')">Read &amp; watch</button>
+        <button class="lib-subnav-btn" id="libSubOffline" onclick="switchLibrarySub('offline')">Offline Files</button>
         <button class="lib-subnav-btn" id="libSubTimers" onclick="toggleTimersMenu()">Timers ▾</button>
       </div>
 
@@ -1210,6 +1218,19 @@
             <button class="mp-btn" onclick="mpClose()" style="font-size:14px">×</button>
           </div>
         </div>
+      </div>
+
+      <!-- Offline Files (Per Bot 51) — everything currently marked for
+           offline use, with a Remove all button. This is deliberately
+           the only place a bulk action for this feature exists;
+           marking/unmarking elsewhere is always one file (or one
+           lesson's files) at a time. -->
+      <div class="lib-sub-panel" id="libOfflinePanel">
+        <div style="padding:14px 18px 4px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.4)" id="offlineFilesSummary">Loading…</div>
+          <button type="button" id="offlineRemoveAllBtn" onclick="removeAllOfflineFiles()" style="display:none;background:rgba(255,255,255,0.06);border:1px solid rgba(255,140,120,0.3);border-radius:8px;color:rgba(255,160,140,0.85);font-family:Georgia,serif;font-size:12px;padding:7px 14px;cursor:pointer;white-space:nowrap">Remove all</button>
+        </div>
+        <div class="practices-scroll" id="offlineFilesList"></div>
       </div>
     </div>
 
@@ -1899,14 +1920,16 @@
   }
   function switchLibrarySub(sub) {
     _currentLibSub = sub;
-    ['practices','meditations','readwatch'].forEach(s => {
+    ['practices','meditations','readwatch','offline'].forEach(s => {
       document.getElementById('libSub' + s.charAt(0).toUpperCase() + s.slice(1).replace('watch','Watch')).classList.toggle('active', s === sub);
     });
     document.getElementById('libPracticesPanel').classList.toggle('visible', sub === 'practices');
     document.getElementById('libMeditationsPanel').classList.toggle('visible', sub === 'meditations');
     document.getElementById('libReadWatchPanel').classList.toggle('visible', sub === 'readwatch');
+    document.getElementById('libOfflinePanel').classList.toggle('visible', sub === 'offline');
     syncLibrarySearchBox();
     if (sub === 'meditations') loadLibraryMeditations();
+    if (sub === 'offline') loadOfflineFilesTab();
   }
 
   // ── You sub-nav ──
@@ -3342,8 +3365,20 @@
         try { resumePosition = (await positionRes.json()).positionSeconds || 0; } catch { resumePosition = 0; }
       }
     } catch {
-      if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
-      return;
+      // Per's spec: "looks live first then if not available, looks
+      // offline" — this catch only fires on a genuine network failure
+      // (no signal), not a normal 403/404 (those are handled above via
+      // playRes.ok). If this file was marked for offline use, the
+      // stable offline-stream URL is exactly what the service worker
+      // intercepts and serves from cache — same URL whether the request
+      // actually reaches the server or not, so no separate "read from
+      // cache" logic is needed here at all.
+      if (isMarkedOffline(file.id)) {
+        playUrl = `/api/content/library/${file.id}/offline-stream`;
+      } else {
+        if (myToken === _mpToken) document.getElementById('mpPlayBtn').textContent = '▶';
+        return;
+      }
     }
 
     // A newer play request superseded this one while we were waiting on
@@ -3554,6 +3589,153 @@
     return f.file_type?.startsWith('video') || f.filename?.match(/\.(mp4|mov|webm|m4v)$/i);
   }
 
+  // ── Offline marks (Per Bot 51, Phase 1) ── Same tick-to-mark model as
+  // the heart/favourite above — ticking marks a file AND caches it right
+  // away (no need to ever open/play it), unticking removes both the
+  // mark and the cached bytes. _offlineMarkedIds is the live client-side
+  // mirror of what's marked, kept in sync with the server on every
+  // change rather than re-fetched on every render, so heart-style icons
+  // across Library/lesson lists can check it synchronously.
+  let _offlineMarkedIds = new Set();
+  async function loadOfflineMarkedIds() {
+    try {
+      const res = await fetch('/api/client/offline-marks');
+      const marks = await res.json();
+      _offlineMarkedIds = new Set(Array.isArray(marks) ? marks.map(m => m.id) : []);
+    } catch (e) { /* leave whatever was already loaded — a stale set is far better than an empty one wiping every tick icon */ }
+  }
+  function isMarkedOffline(fileId) { return _offlineMarkedIds.has(fileId); }
+
+  function swPostMessage(msg) {
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+    navigator.serviceWorker.controller.postMessage(msg);
+  }
+  async function cacheFileForOffline(fileId) {
+    try {
+      const res = await fetch(`/api/content/library/${fileId}/offline-manifest`);
+      const data = await res.json();
+      if (data.urls && data.urls.length) swPostMessage({ type: 'CACHE_URLS', urls: data.urls });
+    } catch (e) { /* the mark itself still saved server-side even if caching couldn't start right now — loadOfflineMarkedIds's login-time refresh will retry */ }
+  }
+  async function removeFileFromOfflineCache(fileId) {
+    try {
+      const res = await fetch(`/api/content/library/${fileId}/offline-manifest`);
+      const data = await res.json();
+      if (data.urls && data.urls.length) swPostMessage({ type: 'REMOVE_URLS', urls: data.urls });
+    } catch (e) { /* not fatal — worst case a little stale cache lingers until it's overwritten by something else */ }
+  }
+  // The one icon this whole feature is built around — reused in the
+  // Library list, the theme detail overlay, and lesson content lists.
+  // Marking is enough on its own; nothing needs to be played first.
+  async function toggleOfflineMark(fileId, btn) {
+    const wasMarked = isMarkedOffline(fileId);
+    btn.classList.toggle('active', !wasMarked); // instant feedback, corrected below only on a genuine failure
+    try {
+      if (wasMarked) {
+        await fetch(`/api/client/offline-marks/${fileId}`, { method: 'DELETE' });
+        _offlineMarkedIds.delete(fileId);
+        removeFileFromOfflineCache(fileId);
+      } else {
+        await fetch(`/api/client/offline-marks/${fileId}`, { method: 'POST' });
+        _offlineMarkedIds.add(fileId);
+        cacheFileForOffline(fileId);
+      }
+    } catch (e) {
+      btn.classList.toggle('active', wasMarked); // roll back the optimistic toggle — the request itself didn't go through
+    }
+  }
+  async function markWholeLessonOffline(lessonId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Marking…'; }
+    try {
+      const res = await fetch(`/api/client/offline-marks/lesson/${lessonId}`, { method: 'POST' });
+      const data = await res.json();
+      await loadOfflineMarkedIds();
+      // Cache every file the lesson chooser already knows about, rather
+      // than a second server round trip to ask "which files are in this
+      // lesson" again — _lessonChooserFiles is already that exact list
+      // whenever this button is reachable at all (see openLessonChooser).
+      if (Array.isArray(_lessonChooserFiles)) {
+        _lessonChooserFiles.forEach(f => cacheFileForOffline(f.id));
+      }
+      if (btn) { btn.textContent = `✓ Marked (${data.marked || ''})`; btn.disabled = false; }
+      // Re-render so every row's tick icon reflects the new marks — the
+      // chooser is rebuilt from the exact same lesson/files/lock state
+      // it's already holding, not a fresh server fetch.
+      if (_lessonCtx && _lessonCtx.lesson) openLessonChooser(_lessonCtx.lesson, _lessonChooserFiles, _lessonCtx.lessonLocked);
+    } catch (e) {
+      if (btn) { btn.textContent = '⬇ Mark whole lesson offline'; btn.disabled = false; }
+    }
+  }
+
+  async function loadOfflineFilesTab() {
+    const listEl = document.getElementById('offlineFilesList');
+    const summaryEl = document.getElementById('offlineFilesSummary');
+    const removeAllBtn = document.getElementById('offlineRemoveAllBtn');
+    listEl.innerHTML = '<div class="no-practices">Loading…</div>';
+    try {
+      const res = await fetch('/api/client/offline-marks');
+      const files = await res.json();
+      if (!Array.isArray(files) || !files.length) {
+        summaryEl.textContent = 'Nothing marked for offline use yet.';
+        removeAllBtn.style.display = 'none';
+        listEl.innerHTML = '<div class="no-practices">Tick the offline icon on anything in your Library or a course to keep it with you when there\'s no signal.</div>';
+        return;
+      }
+      const totalBytes = files.reduce((sum, f) => sum + (f.approxBytes || 0), 0);
+      summaryEl.textContent = `${files.length} item${files.length === 1 ? '' : 's'}${totalBytes ? ' · ~' + formatOfflineBytes(totalBytes) : ''}`;
+      removeAllBtn.style.display = '';
+      listEl.innerHTML = files.map(f => `
+        <div class="content-item">
+          <div style="flex:1">
+            <div class="content-item-title">${f.title}</div>
+            <div class="content-item-meta">${f.approxBytes ? formatOfflineBytes(f.approxBytes) : 'Saved for offline use'}${f.error ? ' · could not be cached: ' + f.error : ''}</div>
+          </div>
+          <button type="button" onclick="removeOneOfflineFile('${f.id}')" style="background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,150,140,0.8);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">Remove</button>
+        </div>
+      `).join('');
+    } catch (e) {
+      summaryEl.textContent = '';
+      listEl.innerHTML = '<div class="no-practices">Could not load your offline files right now.</div>';
+    }
+  }
+  function formatOfflineBytes(n) {
+    if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  async function removeOneOfflineFile(fileId) {
+    await fetch(`/api/client/offline-marks/${fileId}`, { method: 'DELETE' });
+    _offlineMarkedIds.delete(fileId);
+    removeFileFromOfflineCache(fileId);
+    loadOfflineFilesTab();
+  }
+  async function removeAllOfflineFiles() {
+    if (!confirm('Remove every file marked for offline use? This only affects offline copies — nothing is deleted from the library itself.')) return;
+    try {
+      const res = await fetch('/api/client/offline-marks');
+      const files = await res.json();
+      await fetch('/api/client/offline-marks', { method: 'DELETE' });
+      _offlineMarkedIds.clear();
+      if (Array.isArray(files)) {
+        const allUrls = files.flatMap(f => f.urls || []);
+        if (allUrls.length) swPostMessage({ type: 'REMOVE_URLS', urls: allUrls });
+      }
+      loadOfflineFilesTab();
+    } catch (e) { document.getElementById('offlineFilesSummary').textContent = 'Something went wrong removing these — please try again.'; }
+  }
+  // Per's requirement: "when logging on, the offline cache is checked to
+  // see if there's a need to update content". Re-runs the exact same
+  // cacheFileForOffline used when something's first marked — the
+  // service worker's own CACHE_URLS handler already does a conditional
+  // fetch (only actually re-downloading if the ETag changed), so this
+  // is cheap on a day nothing's changed and correctly refreshes
+  // anything that has, with no separate "check for updates" code path
+  // to keep in sync with the marking one.
+  async function refreshOfflineCacheOnLogin() {
+    await loadOfflineMarkedIds();
+    if (!_offlineMarkedIds.size) return;
+    Array.from(_offlineMarkedIds).forEach(id => cacheFileForOffline(id));
+  }
+
   function logHistory(contentType, contentId) {
     fetch('/api/client/history', {
       method: 'POST',
@@ -3572,6 +3754,13 @@
     const locked = f.accessible === false;
     const icon  = isAudio(f) ? '🎵' : f.file_type?.startsWith('video') ? '🎬' : '📄';
     const heart = `<button class="heart-btn ${f.is_favourite?'active':''}" onclick="event.stopPropagation();toggleFavourite('${f.id}',this)" title="Favourite">♥</button>`;
+    // Per Bot 51 — offline tick, same "mark it, don't have to play it"
+    // model as everywhere else. Video isn't offline-eligible yet
+    // (Phase 1 is audio/PDF/ebook/text only), so this simply doesn't
+    // render for a video row rather than showing a tick that wouldn't
+    // actually do anything.
+    const canOffline = !f.file_type?.startsWith('video');
+    const offlineTick = canOffline ? `<button class="offline-tick-btn ${isMarkedOffline(f.id)?'active':''}" onclick="event.stopPropagation();toggleOfflineMark('${f.id}',this)" title="Available offline">⬇</button>` : '';
     // Per Bot 24 — the play icon used to route to the lightweight
     // mini-player (mpPlayById) instead of the same full overlay the row
     // itself opens — fine for a quick-play affordance on ordinary
@@ -3591,7 +3780,7 @@
         <div class="content-title">${f.title}</div>
         ${f.description?`<div class="content-desc">${f.description}</div>`:''}
       </div>
-      ${play}${addPl}${locked ? '' : heart}
+      ${play}${addPl}${locked ? '' : heart}${locked ? '' : offlineTick}
     </div>`;
   }
 
@@ -4106,8 +4295,17 @@
       url = data.url;
       epubReaderUrl = data.epubReaderUrl || null;
     } catch {
-      mediaEl.innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this file — network error.</div>';
-      return;
+      // Per's spec: try live first, fall back to the offline copy only
+      // when the request genuinely can't reach the server at all — see
+      // the matching comment in mpPlay for why the offline-stream URL
+      // alone is enough (the service worker, not this code, is what
+      // actually serves the cached bytes when there's no signal).
+      if (isMarkedOffline(f.id)) {
+        url = `/api/content/library/${f.id}/offline-stream`;
+      } else {
+        mediaEl.innerHTML = '<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this file — network error.</div>';
+        return;
+      }
     }
 
     if (isEpub) {
@@ -7154,6 +7352,7 @@
       ? `<div style="background:rgba(255,210,140,0.08); border:1px solid rgba(255,210,140,0.25); border-radius:10px; padding:10px 14px; margin-bottom:10px; font-size:13px; color:rgba(255,220,170,0.9)">${lockedBannerText}</div>${descHtml}`
       : descHtml + "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
+      ${!lessonLocked ? `<button type="button" onclick="markWholeLessonOffline('${lesson.id}', this)" style="width:100%;margin-bottom:12px;background:rgba(140,190,230,0.1);border:1px solid rgba(140,190,230,0.3);border-radius:8px;color:rgba(160,200,235,0.9);font-family:Georgia,serif;font-size:12.5px;padding:9px;cursor:pointer">⬇ Mark whole lesson offline</button>` : ''}
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
           const locked = lessonLocked || f.locked;
@@ -7169,7 +7368,16 @@
             // previous file in this same lesson that hasn't been opened yet.
             return `<button class="doc-link chooser-locked" onclick="showLockedFileNotice(${i}, ${lessonLocked ? 'true' : 'false'})">🔒 ${label}${tick}</button>`;
           }
-          return `<button class="doc-link" style="display:block;width:100%;margin-bottom:10px" onclick="chooseLessonFile(${i})">${label}${tick}</button>`;
+          // Per Bot 51 — offline tick sits beside the row rather than
+          // inside its button, so tapping it doesn't also open/play the
+          // file. stopPropagation isn't actually needed here (it's a
+          // sibling, not a nested element) but is harmless insurance
+          // against this markup ever getting nested later.
+          const offlineTick = `<button type="button" class="offline-tick-btn ${isMarkedOffline(f.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${f.id}', this)" title="Available offline">⬇</button>`;
+          return `<div style="display:flex;align-items:center;gap:4px;margin-bottom:10px">
+            <button class="doc-link" style="flex:1;margin-bottom:0" onclick="chooseLessonFile(${i})">${label}${tick}</button>
+            ${offlineTick}
+          </div>`;
         }).join('')}
       </div>
       ${(() => {
@@ -7583,6 +7791,23 @@
   // defaults to Talk selected — this IS the landing experience now, not
   // a separate screen to navigate to.
   initFacStrip();
+
+  // Per Bot 51 — offline caching (Phase 1: audio, PDFs, ebooks). Feature-
+  // detected (serviceWorker isn't available in every browser context —
+  // e.g. some in-app browsers), and failing silently is deliberately the
+  // right behaviour here: someone whose browser can't do this should
+  // just get the normal always-online experience, not an error.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  }
+  // Per's requirement: "when logging on, the offline cache is checked...
+  // so the cache is up to date." loadOfflineMarkedIds alone (used
+  // everywhere else for tick-icon state) is cheap and safe to run
+  // unconditionally; the actual re-caching pass is deliberately
+  // deferred a few seconds so it never competes with the page's own
+  // first paint for bandwidth on a slow connection.
+  loadOfflineMarkedIds();
+  setTimeout(refreshOfflineCacheOnLogin, 4000);
 </script>
 <!-- Onboarding stepper (Per Bot 7) — one short question at a time, always
      skippable, shown once for a new account. Notification style has no

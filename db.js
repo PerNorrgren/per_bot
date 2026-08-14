@@ -688,6 +688,23 @@ async function getDb() {
     UNIQUE(client_id, file_id)
   )`);
 
+  // ── Offline marks (Per Bot 51) ── Same shape as user_favourites right
+  // above, deliberately — Per asked for this to work exactly like the
+  // heart icon (tick a file, it's marked, untick to remove), not a
+  // separate "download manager" concept. Marking a whole lesson offline
+  // just creates one of these rows per file currently in that lesson
+  // (see the /lesson/:id route in server.js) rather than a separate
+  // lesson-level marker — a lesson is nothing more than "several files",
+  // so the Offline Files list, the caching logic, and the removal logic
+  // all only ever need to think about one thing: a marked file.
+  db.run(`CREATE TABLE IF NOT EXISTS user_offline_marks (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(client_id, file_id)
+  )`);
+
   db.run(`CREATE TABLE IF NOT EXISTS user_playlists (
     id TEXT PRIMARY KEY,
     client_id TEXT NOT NULL,
@@ -5403,6 +5420,28 @@ function getFavourites(clientId) {
     WHERE uf.client_id=? ORDER BY uf.created_at DESC`, [clientId]);
 }
 
+// ── Offline marks (Per Bot 51) — same shape as favourites above ──
+function addOfflineMark(id, clientId, fileId) {
+  try { getDbSync().run('INSERT OR IGNORE INTO user_offline_marks (id,client_id,file_id) VALUES (?,?,?)', [id, clientId, fileId]); save(); } catch(e) {}
+}
+function removeOfflineMark(clientId, fileId) {
+  getDbSync().run('DELETE FROM user_offline_marks WHERE client_id=? AND file_id=?', [clientId, fileId]); save();
+}
+function isFileMarkedOffline(clientId, fileId) {
+  return !!queryOne('SELECT id FROM user_offline_marks WHERE client_id=? AND file_id=?', [clientId, fileId]);
+}
+function getOfflineMarkedFileIds(clientId) {
+  return queryAll('SELECT file_id FROM user_offline_marks WHERE client_id=?', [clientId]).map(r => r.file_id);
+}
+function getOfflineMarkedFiles(clientId) {
+  return queryAll(`SELECT lf.*, 1 as is_offline FROM library_files lf
+    JOIN user_offline_marks om ON lf.id = om.file_id
+    WHERE om.client_id=? ORDER BY om.created_at DESC`, [clientId]);
+}
+function clearAllOfflineMarks(clientId) {
+  getDbSync().run('DELETE FROM user_offline_marks WHERE client_id=?', [clientId]); save();
+}
+
 // Per Bot 24 (activity/engagement, group 2) — "one obvious next action"
 // on the home screen. Only ever called when the existing resume card
 // (course-in-progress) has nothing to show — that's still the real #1
@@ -7864,6 +7903,7 @@ module.exports = {
   importLiveConfigIntoMessageVersions,
   // Favourites
   addFavourite, removeFavourite, getFavourites, getNextActionSuggestion,
+  addOfflineMark, removeOfflineMark, isFileMarkedOffline, getOfflineMarkedFileIds, getOfflineMarkedFiles, clearAllOfflineMarks,
   getReferralPromptTrigger, markReferralPromptShown, markReferralPromptResponded,
   getBirthdayPromptTrigger, markBirthdayPromptShown, markBirthdayPromptResponded,
   getNewLibraryFilesCount, markLibraryNotificationSeen,

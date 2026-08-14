@@ -605,6 +605,19 @@ function renderEmailParagraphs(text) {
     .map(p => `<p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">${p}</p>`).join('');
 }
 
+// Small helper — an R2 object's .Body is a readable stream; this reads
+// it fully into a string, used where the content itself needs parsing
+// (the EPUB OPF manifest, offline-manifest route below) rather than
+// piping straight through to a response.
+function streamToString(readable) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    readable.on('data', (c) => chunks.push(c));
+    readable.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    readable.on('error', reject);
+  });
+}
+
 function brand() {
   const cfg = db.getAppConfig() || {};
   return {
@@ -1795,6 +1808,20 @@ app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(
 // introduced them.
 app.get('/js/dialogs.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'dialogs.js')));
 app.get('/js/call.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'call.js')));
+// Per Bot 51 — offline caching's service worker. Must be reachable at
+// the site root (not e.g. /js/service-worker.js) — a service worker's
+// default control scope is everything at or below its own URL path, and
+// this one needs to intercept /api/content/library/... requests, which
+// a /js/-scoped worker never could. no-store for the same reason as
+// message-editor.js below: this file is what the browser checks on
+// every page load to see whether a new version needs installing, and a
+// cached stale copy of the CHECKER ITSELF would mean an update never
+// gets noticed at all.
+app.get('/service-worker.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'service-worker.js'));
+});
 // Per Bot 24 — explicit no-store here, unlike the other static routes
 // above. This file is under active iteration (comms2's shared editor) —
 // without this, a deploy that changes it can leave a browser silently
@@ -3535,6 +3562,7 @@ function faviconUrl(stored) {
   if (stored.startsWith('favicon/')) return `/favicon-asset/${stored.slice('favicon/'.length)}`;
   return stored.includes('/') ? `/${stored}` : `/uploads/${stored}`;
 }
+
 // ── Skins (Per Bot 20) — multi-brand foundation, see db.js for the full
 // reasoning. Same R2-backed asset pattern as the favicon above, just
 // parameterized by which skin and which asset (logo/favicon/background)
@@ -7275,6 +7303,61 @@ app.delete('/api/client/favourites/:fileId', auth.requireAuthApi(['client']), (r
   res.json({ ok: true });
 });
 
+// ── Offline marks (Per Bot 51) ── Mirrors favourites above exactly —
+// same tick-a-file-and-it's-marked model, not a separate download
+// manager. Marking triggers actual caching client-side (see
+// client/index.html's toggleOfflineMark) — this route just records the
+// intent; it doesn't itself touch R2 or a Service Worker, since a
+// server request has no access to a browser's Cache Storage at all.
+app.post('/api/client/offline-marks/:fileId', auth.requireAuthApi(['client']), (req, res) => {
+  db.addOfflineMark(uuidv4(), req.user.id, req.params.fileId);
+  res.json({ ok: true });
+});
+app.delete('/api/client/offline-marks/:fileId', auth.requireAuthApi(['client']), (req, res) => {
+  db.removeOfflineMark(req.user.id, req.params.fileId);
+  res.json({ ok: true });
+});
+// Every file this person has marked, each with the manifest of URLs it
+// needs cached — one round trip covers everything the Offline Files tab
+// needs to render itself AND (on first load / login) re-verify the
+// cache is current, rather than the client looping a manifest fetch per
+// file itself.
+app.get('/api/client/offline-marks', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const files = db.getOfflineMarkedFiles(req.user.id);
+    const withManifests = await Promise.all(files.map(async (f) => {
+      try {
+        const manifest = await buildOfflineManifest(f);
+        return { id: f.id, title: f.title, content_type: f.content_type, file_type: f.file_type, urls: manifest.urls, approxBytes: manifest.approxBytes };
+      } catch (e) {
+        return { id: f.id, title: f.title, content_type: f.content_type, file_type: f.file_type, urls: [], approxBytes: null, error: e.message };
+      }
+    }));
+    res.json(withManifests);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Bulk removal — deliberately the ONE place any bulk action exists for
+// this feature (marking/unmarking elsewhere is always one file, or one
+// lesson's worth, at a time). Only unmarks server-side; the client is
+// still responsible for telling the Service Worker to actually clear
+// the cached bytes, same as any single removal.
+app.delete('/api/client/offline-marks', auth.requireAuthApi(['client']), (req, res) => {
+  db.clearAllOfflineMarks(req.user.id);
+  res.json({ ok: true });
+});
+// Mark every file currently in a lesson offline in one action — per
+// Per's request, a lesson-level "mark whole lesson" is just a
+// convenience for marking each of its files individually; nothing about
+// a lesson itself gets recorded, so a file added to the lesson later
+// simply isn't included until marked (here again, or on its own).
+app.post('/api/client/offline-marks/lesson/:lessonId', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const files = db.getFilesForLesson(req.params.lessonId);
+    files.forEach(f => db.addOfflineMark(uuidv4(), req.user.id, f.id));
+    res.json({ ok: true, marked: files.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 22 — My Practices removal. Three different underlying sources
 // feed that one view (an admin/facilitator share, a facilitator's direct
 // single-client assignment, and a facilitator-added practice row), each
@@ -9287,6 +9370,110 @@ app.patch('/api/content/library/:id/text-content', auth.requireAuthApi(['admin']
 // rather than a single presigned URL to the whole archive. Same-origin,
 // so the reader's normal auth cookie covers every request automatically
 // — no per-resource presigned URLs to juggle.
+// ── Offline caching (Per Bot 51, Phase 1: audio, PDFs, poems/blogs, ebooks) ──
+// Per's request: let the app itself cache content to the device for
+// offline use (flights, remote signal-free locations), auto-updating
+// the cached copy if the file changes — not a manual "download this
+// file" the person has to manage.
+//
+// Why this needs its own route rather than reusing the existing
+// playback-url flow: every existing audio/PDF URL (media.getPlaybackUrl)
+// is a freshly-signed, short-lived R2 URL — a different string every
+// single time it's requested. A Service Worker's cache is keyed on the
+// exact request URL, so caching a signed URL today doesn't help when
+// the app asks for a NEW signed URL tomorrow; the cache would never be
+// found again. This route gives every file a permanent, stable URL
+// instead (no signature, never changes) — proxying the actual bytes
+// through this server rather than redirecting to R2 — which is what a
+// Service Worker cache actually needs as a key.
+//
+// R2's own ETag is passed straight through as the HTTP ETag, so this
+// gets real conditional-request support (a 304 Not Modified round-trip)
+// for free — that's the mechanism "auto-update if the file changed"
+// actually runs on: the service worker does a lightweight conditional
+// check against this URL, and only re-downloads the full file if R2
+// says the ETag has actually changed.
+app.get('/api/content/library/:id/offline-stream', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : db.canAccessFile(file, userFlags, req.user.id);
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    if (file.storage_type !== 'r2') return res.status(400).json({ error: 'This file is not eligible for offline caching yet.' });
+
+    const obj = await media.getPublicObject(file.filename);
+    res.set('Content-Type', obj.ContentType || file.file_type || 'application/octet-stream');
+    // immutable — the ETag/conditional-request mechanism above is what
+    // actually detects a real change, so the browser/service worker
+    // never needs to re-ask "is this still good" on a timer.
+    res.set('Cache-Control', 'private, max-age=31536000, immutable');
+    if (obj.ETag) res.set('ETag', obj.ETag);
+    if (obj.LastModified) res.set('Last-Modified', new Date(obj.LastModified).toUTCString());
+    obj.Body.pipe(res);
+  } catch (e) {
+    console.error('offline-stream error:', e.message);
+    res.status(404).json({ error: 'File not found.' });
+  }
+});
+
+// Every URL a file needs cached for genuinely complete offline use.
+// Single-file types (audio, PDF, poem/blog HTML) are just the one
+// offline-stream URL above. An EPUB book is many small files (each
+// chapter, image, stylesheet, font) served individually via the
+// existing epub-resource route below — which already has a stable,
+// unsigned URL pattern, so it didn't need a new streaming route, just
+// enumerating. That list comes from the book's own OPF manifest (the
+// same file the EPUB reader itself already parses to know what's in
+// the book), so this only ever lists resources that genuinely exist —
+// not a guess at what a book "usually" contains. Shared by the
+// per-file route below and by GET /api/client/offline-marks, which
+// needs the same thing for every marked file at once.
+async function buildOfflineManifest(file) {
+  const urls = [];
+  let approxBytes = 0;
+
+  if (file.epub_opf_path) {
+    const opfKey = `epub-unpacked/${file.id}/${file.epub_opf_path}`;
+    const opfObj = await media.getPublicObject(opfKey);
+    const opfXml = await streamToString(opfObj.Body);
+    const opfDir = file.epub_opf_path.includes('/') ? file.epub_opf_path.slice(0, file.epub_opf_path.lastIndexOf('/') + 1) : '';
+    const hrefs = [...opfXml.matchAll(/<item\b[^>]*\bhref="([^"]+)"/g)].map(m => m[1]);
+    urls.push(`/api/content/library/${file.id}/epub-resource/${file.epub_opf_path}`);
+    hrefs.forEach(h => {
+      const decoded = decodeURIComponent(h);
+      urls.push(`/api/content/library/${file.id}/epub-resource/${opfDir}${decoded}`);
+    });
+    approxBytes = null;
+  } else if (file.storage_type === 'r2') {
+    urls.push(`/api/content/library/${file.id}/offline-stream`);
+    approxBytes = file.file_size || null;
+  } else {
+    throw new Error('This file is not eligible for offline caching yet.');
+  }
+  return { urls, approxBytes };
+}
+app.get('/api/content/library/:id/offline-manifest', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : db.canAccessFile(file, userFlags, req.user.id);
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    const { urls, approxBytes } = await buildOfflineManifest(file);
+    res.json({ id: file.id, title: file.title, urls, approxBytes });
+  } catch (e) {
+    console.error('offline-manifest error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/content/library/:id/epub-resource/*', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
