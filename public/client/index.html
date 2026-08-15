@@ -676,6 +676,16 @@
        hand cursor: clicking a locked row here opens the upgrade notice,
        not the file itself, so it isn't styled as a normal clickable row. */
     .content-item.locked { cursor:default; }
+    /* Per's own explicit request this time — unlike locked/tier-gated
+       content (which deliberately does NOT dim, per an earlier request,
+       since a permission gate isn't the same thing as "broken"), this
+       genuinely is temporarily unavailable, and greying it out was
+       exactly what Per asked for: a non-downloaded file now looks
+       visibly different from a downloaded one while offline, rather
+       than looking identical and then silently doing nothing on tap. */
+    .content-item.offline-unavailable { opacity:0.4; cursor:default; }
+    .content-item.offline-unavailable .heart-btn,
+    .content-item.offline-unavailable .play-btn { pointer-events:none; }
     .content-icon { font-size:16px; flex-shrink:0; width:20px; text-align:center; }
     .content-title { flex:1; font-size:13px; color:rgba(255,255,255,0.8); line-height:1.4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .content-desc { font-size:11px; color:rgba(255,255,255,0.3); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -3856,6 +3866,18 @@
     }).catch(() => {}); // history logging is best-effort, never blocks playback
   }
 
+  // Per's report: a non-downloaded file looked exactly like a downloaded
+  // one while offline, so tapping it opened a player that just sat there
+  // doing nothing — confusing, with no way to tell in advance which ones
+  // would actually work. Checked at render time against both connectivity
+  // and the offline-marked set, so it's correct for the actual scenario
+  // reported (opening the app while already offline, then browsing).
+  function isOfflineUnavailable(f) {
+    return !navigator.onLine && !isMarkedOffline(f.id);
+  }
+  function offlineUnavailableClick() {
+    appAlert("This isn't saved for offline use — connect to the internet to play it, or tick the offline icon next time you have signal.");
+  }
   function contentItemHTML(f) {
     // Per Bot 16 — tier-locked content is now included in the list (not
     // hidden server-side) so it can show up with a lock, matching the
@@ -3864,6 +3886,7 @@
     // for sequence-locking) are untouched by this since that field is
     // simply absent there.
     const locked = f.accessible === false;
+    const offlineUnavailable = !locked && isOfflineUnavailable(f);
     const icon  = isAudio(f) ? '🎵' : f.file_type?.startsWith('video') ? '🎬' : '📄';
     const heart = `<button class="heart-btn ${f.is_favourite?'active':''}" onclick="event.stopPropagation();toggleFavourite('${f.id}',this)" title="Favourite">♥</button>`;
     // Per Bot 51 — offline tick, same "mark it, don't have to play it"
@@ -3879,15 +3902,17 @@
     // browsing, but a one-to-one facilitator-assigned file felt like it
     // just started playing with no real controls or way to stop it. Now
     // both the icon and the row open the same proper player/reader.
-    const play  = isAudio(f) && !locked
+    const play  = isAudio(f) && !locked && !offlineUnavailable
       ? `<button class="play-btn" data-file-id="${f.id}" onclick="event.stopPropagation();openContentFileById('${f.id}')" title="Play">▶</button>`
       : '';
     const addPl = locked ? '' : `<button class="play-btn" style="font-size:9px" onclick="event.stopPropagation();openAddToPlaylist('${f.id}')" title="Add to playlist">＋</button>`;
     const onClick = locked
       ? `event.stopPropagation();showUpgradeNotice('${(f.title||'').replace(/'/g,"\\'")}')`
+      : offlineUnavailable
+      ? `event.stopPropagation();offlineUnavailableClick()`
       : `event.stopPropagation();openContentFileById('${f.id}')`;
-    return `<div class="content-item ${locked ? 'locked' : ''}" onclick="${onClick}">
-      <span class="content-icon">${locked ? '🔒' : icon}</span>
+    return `<div class="content-item ${locked ? 'locked' : ''} ${offlineUnavailable ? 'offline-unavailable' : ''}" onclick="${onClick}">
+      <span class="content-icon">${locked ? '🔒' : offlineUnavailable ? '📡' : icon}</span>
       <div style="flex:1;min-width:0">
         <div class="content-title">${f.title}</div>
         ${f.description?`<div class="content-desc">${f.description}</div>`:''}
@@ -4842,11 +4867,19 @@
 
     const arrow = (c) => col === c ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
     const th = (c, label, align) => `<th onclick="sortMyPracticesTable('${c}')" style="text-align:${align||'left'};padding:8px 10px;cursor:pointer;color:rgba(255,255,255,0.45);font-weight:normal;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;user-select:none;white-space:nowrap">${label}${arrow(c)}</th>`;
-    const rowsHtml = rows.map(r => `
-      <tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
-        <td style="padding:9px 10px;cursor:pointer" onclick="${r.onClick}">
+    const rowsHtml = rows.map(r => {
+      // Per's request — "same for all files": identical treatment to
+      // the main content list. r.icon !== '🎬' is the same video
+      // exclusion the offline tick above already uses (video was never
+      // offline-eligible in Phase 1, so there's no "downloaded" state
+      // to check it against).
+      const rowOfflineUnavailable = !navigator.onLine && r.icon !== '🎬' && !isMarkedOffline(r.id);
+      const rowOnClick = rowOfflineUnavailable ? 'offlineUnavailableClick()' : r.onClick;
+      return `
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.06)${rowOfflineUnavailable ? ';opacity:0.4' : ''}">
+        <td style="padding:9px 10px;cursor:${rowOfflineUnavailable ? 'default' : 'pointer'}" onclick="${rowOnClick}">
           <div style="display:flex;align-items:center;gap:8px">
-            <span>${r.icon}</span>
+            <span>${rowOfflineUnavailable ? '📡' : r.icon}</span>
             <div><div style="color:rgba(255,255,255,0.85)">${r.name}</div><div style="font-size:11px;color:rgba(255,255,255,0.4)">${r.subtitle}</div></div>
           </div>
         </td>
@@ -4858,7 +4891,8 @@
           ${r.icon !== '🎬' ? `<button class="offline-tick-btn ${isMarkedOffline(r.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${r.id}',this)" title="Available offline">⬇</button>` : ''}
           <button class="play-btn" style="font-size:11px" title="Remove from My Practices" onclick="event.stopPropagation();removeFromMyPractices('${r.kind}','${r.id}')">✕</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     // Per Bot 25 — a "Session" column was asked for alongside Name/Area/
     // Course/Date, but nothing in this particular merged list (favourited
