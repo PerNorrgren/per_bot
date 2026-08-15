@@ -9407,6 +9407,13 @@ app.get('/api/content/library/:id/offline-stream', auth.requireAuthApi(['client'
 
     const obj = await media.getPublicObject(file.filename);
     res.set('Content-Type', obj.ContentType || file.file_type || 'application/octet-stream');
+    // Explicit Content-Length matters more here than it would for most
+    // files — epub.js/JSZip need to know the EXACT total size to locate
+    // a ZIP's central directory (which lives at a known offset from the
+    // very end of the file). obj.ContentLength comes straight from R2's
+    // own object metadata, so this was always available, just never
+    // actually being sent.
+    if (obj.ContentLength !== undefined) res.set('Content-Length', String(obj.ContentLength));
     // immutable — the ETag/conditional-request mechanism above is what
     // actually detects a real change, so the browser/service worker
     // never needs to re-ask "is this still good" on a timer.

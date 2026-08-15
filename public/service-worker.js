@@ -196,7 +196,7 @@ self.addEventListener('fetch', (event) => {
 
     if (!navigator.onLine) {
       // No signal at all — this is the entire point of the feature.
-      return cached || new Response('Offline and this item was not saved for offline use.', { status: 503 });
+      return cached ? respondWithRange(cached, req) : new Response('Offline and this item was not saved for offline use.', { status: 503 });
     }
 
     try {
@@ -208,19 +208,66 @@ self.addEventListener('fetch', (event) => {
         headers.set('If-None-Match', cached.headers.get('ETag'));
       }
       const netRes = await fetch(req, { headers });
-      if (netRes.status === 304 && cached) return cached;
+      if (netRes.status === 304 && cached) return respondWithRange(cached, req);
       if (netRes.ok) {
         cache.put(req, netRes.clone());
         return netRes;
       }
-      return cached || netRes;
+      return cached ? respondWithRange(cached, req) : netRes;
     } catch (e) {
       // Fetch itself threw — flaky/dropping signal rather than a clean
       // "offline" state navigator.onLine would have caught above.
-      return cached || new Response('Could not reach the server, and this item was not saved for offline use.', { status: 503 });
+      return cached ? respondWithRange(cached, req) : new Response('Could not reach the server, and this item was not saved for offline use.', { status: 503 });
     }
   })());
 });
+
+// Per's report — the ebook opened its reader shell offline but never
+// showed any content, on both desktop and mobile, even once the actual
+// .epub file was confirmed genuinely and completely cached. Root cause:
+// epub.js doesn't download a whole book upfront when given a URL — it
+// reads the ZIP's central directory first, then fetches only the
+// specific byte ranges it actually needs per chapter, using real HTTP
+// Range requests. A cache lookup has no concept of that on its own —
+// cache.match just hands back the complete stored response every time,
+// with a plain 200 status, regardless of what Range header the request
+// actually carried. epub.js, having asked for (say) the last 1KB to
+// locate the central directory, would instead receive the entire
+// multi-MB file back starting from byte 0 — not an error exactly, just
+// completely wrong data for what it asked for, which is a very
+// plausible way to fail silently rather than throw a catchable
+// exception. This slices the cached body to match whatever Range was
+// actually requested, and returns a real 206 Partial Content response
+// with the headers a Range-aware reader expects — same shape a normal
+// HTTP server would send for a ranged request.
+async function respondWithRange(cachedResponse, request) {
+  const rangeHeader = request.headers.get('Range');
+  if (!rangeHeader) return cachedResponse;
+
+  const buffer = await cachedResponse.clone().arrayBuffer();
+  const total = buffer.byteLength;
+  const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+  if (!match) return cachedResponse; // header present but not a form we recognise — full body is still a valid (if unexpected) response
+
+  let start = match[1] ? parseInt(match[1], 10) : undefined;
+  let end = match[2] ? parseInt(match[2], 10) : undefined;
+  if (start === undefined) { // suffix range, e.g. "bytes=-500" = last 500 bytes
+    start = Math.max(0, total - end);
+    end = total - 1;
+  } else if (end === undefined || end >= total) {
+    end = total - 1;
+  }
+  if (start > end || start >= total) {
+    return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } });
+  }
+
+  const slice = buffer.slice(start, end + 1);
+  const headers = new Headers(cachedResponse.headers);
+  headers.set('Content-Range', `bytes ${start}-${end}/${total}`);
+  headers.set('Content-Length', String(slice.byteLength));
+  headers.set('Accept-Ranges', 'bytes');
+  return new Response(slice, { status: 206, statusText: 'Partial Content', headers });
+}
 
 self.addEventListener('message', (event) => {
   const { type, urls, url } = event.data || {};
