@@ -5743,27 +5743,28 @@
   // nothing's been curated yet, so an unused deployment doesn't show a
   // half-built-looking section.
   let _featuredContentData = [];
+  const FEATURED_SHELVES_CACHE_KEY = 'dm_featured_shelves_cache';
   async function loadFeaturedShelves() {
     try {
       const res = await fetch('/api/client/featured');
       const data = await res.json();
-      // Per Bot 48 — admin-configurable carousel speed. Set before
-      // renderFeaturedShelves runs (it calls initShelfCarousels at the
-      // end, which reads this), so a changed setting takes effect on
-      // the very next load, no separate wiring needed.
-      if (typeof data.carouselSpeedSeconds === 'number' && data.carouselSpeedSeconds > 0) {
-        SHELF_AUTOPLAY_MS = data.carouselSpeedSeconds * 1000;
-      }
-      renderFeaturedShelves(
-        Array.isArray(data.courses) ? data.courses : [],
-        Array.isArray(data.content) ? data.content : [],
-        Array.isArray(data.recentPoems) ? data.recentPoems : [],
-        Array.isArray(data.recentPosts) ? data.recentPosts : [],
-        Array.isArray(data.recentBooks) ? data.recentBooks : [],
-        Array.isArray(data.liveMeetings) ? data.liveMeetings : [],
-        data.shelfCounts || {}
-      );
-    } catch(e) { document.getElementById('featuredShelves').innerHTML = ''; }
+      // Per's report — the splash landing was empty when opening the app
+      // with no signal at all: this fetch is a live, personalised,
+      // tier-aware call with no offline path of its own, and the old
+      // catch block just cleared the shelves rather than showing
+      // anything. Cached to localStorage on every successful load (same
+      // pattern as the Offline Files tab / tick-icon state) so a later
+      // failure can still show what was last actually on screen, rather
+      // than nothing at all.
+      try { localStorage.setItem(FEATURED_SHELVES_CACHE_KEY, JSON.stringify(data)); } catch (e) {}
+      applyFeaturedShelvesData(data);
+    } catch(e) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(FEATURED_SHELVES_CACHE_KEY) || 'null');
+        if (cached) { applyFeaturedShelvesData(cached); }
+        else document.getElementById('featuredShelves').innerHTML = '';
+      } catch (e2) { document.getElementById('featuredShelves').innerHTML = ''; }
+    }
     // Same WebKit quirk as Tomte's panel and the lesson chooser: adding
     // this much content to an already-rendered, already-scrolling
     // container (.talk-view) can leave its scrollable area stuck at
@@ -5780,6 +5781,24 @@
         tv.style.overflowY = 'auto';
       }
     });
+  }
+  function applyFeaturedShelvesData(data) {
+    // Per Bot 48 — admin-configurable carousel speed. Set before
+    // renderFeaturedShelves runs (it calls initShelfCarousels at the
+    // end, which reads this), so a changed setting takes effect on
+    // the very next load, no separate wiring needed.
+    if (typeof data.carouselSpeedSeconds === 'number' && data.carouselSpeedSeconds > 0) {
+      SHELF_AUTOPLAY_MS = data.carouselSpeedSeconds * 1000;
+    }
+    renderFeaturedShelves(
+      Array.isArray(data.courses) ? data.courses : [],
+      Array.isArray(data.content) ? data.content : [],
+      Array.isArray(data.recentPoems) ? data.recentPoems : [],
+      Array.isArray(data.recentPosts) ? data.recentPosts : [],
+      Array.isArray(data.recentBooks) ? data.recentBooks : [],
+      Array.isArray(data.liveMeetings) ? data.liveMeetings : [],
+      data.shelfCounts || {}
+    );
   }
   function titleCaseTag(tag) { return tag.replace(/(^|[\s-])\w/g, c => c.toUpperCase()); }
   // Four fixed rows, each a doorway into a list rather than a row of

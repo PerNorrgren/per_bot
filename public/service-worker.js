@@ -51,6 +51,7 @@ const SHELL_ASSET_URLS = [
   '/js/call.js',
   '/js/message-editor.js',
   '/tomte-widget.js',
+  '/assets/tomte.png', // default Talk persona avatar — see isShellAsset below for why a custom brand photo is also covered automatically
 ];
 
 // Only these path shapes are ever cached — deliberately not "cache
@@ -62,9 +63,25 @@ const OFFLINE_PATH_PATTERNS = [
   /^\/api\/content\/library\/[^/]+\/epub-resource\//,
 ];
 
+// Static brand imagery — the Tomte/persona avatar, the site favicon,
+// anything served from a skin. Pattern-based rather than one exact URL,
+// since the actual photo is admin-configurable (defaults to
+// /assets/tomte.png, but a brand can set its own via any of these
+// routes) — matching the route SHAPE means whichever one is actually in
+// use gets picked up automatically, without needing to know the exact
+// URL in advance.
+const SHELL_ASSET_PATTERNS = [
+  /^\/assets\//,
+  /^\/favicon-asset\//,
+  /^\/skin-assets\//,
+];
+
 function isOfflineEligible(url) {
   const path = new URL(url).pathname;
   return OFFLINE_PATH_PATTERNS.some(p => p.test(path));
+}
+function isShellAsset(path) {
+  return SHELL_ASSET_URLS.includes(path) || SHELL_ASSET_PATTERNS.some(p => p.test(path));
 }
 
 self.addEventListener('install', (event) => {
@@ -96,7 +113,7 @@ self.addEventListener('fetch', (event) => {
   // full navigation) and the handful of scripts that page needs to boot
   // at all. Network-first: always prefer the live version when there's
   // any connection, cache only steps in once fetch has genuinely failed.
-  if (req.method === 'GET' && (req.mode === 'navigate' || SHELL_ASSET_URLS.includes(path))) {
+  if (req.method === 'GET' && (req.mode === 'navigate' || isShellAsset(path))) {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE_NAME);
       try {
