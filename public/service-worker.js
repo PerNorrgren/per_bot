@@ -45,6 +45,7 @@ const SHELL_CACHE_NAME = 'dm-shell-v1';
 const SHELL_URL = '/client/';
 const SHELL_ASSET_URLS = [
   SHELL_URL,
+  '/client', // both forms precached — see the fetch handler's fallback comment for why
   '/brand-inject.js',
   '/js/dialogs.js',
   '/js/call.js',
@@ -104,10 +105,26 @@ self.addEventListener('fetch', (event) => {
         return netRes;
       } catch (e) {
         // A failed navigation to some other page still falls back to
-        // the ONE cached shell (SHELL_URL) — there's nothing else to
-        // navigate to offline, and this is what makes launching the
-        // installed icon itself work with zero signal.
-        const fallback = req.mode === 'navigate' ? await cache.match(SHELL_URL) : await cache.match(req);
+        // the app shell — there's nothing else to navigate to offline,
+        // and this is what makes launching the installed icon itself
+        // work with zero signal. Tries the exact URL that was actually
+        // requested first (covers a plain asset request failing), then
+        // every plausible shell URL in turn — a page can genuinely get
+        // cached under more than one of these (start_url is '/',
+        // which redirects to '/login', which for an already-signed-in
+        // person redirects on to '/client/' — whichever of those
+        // someone's browser happened to actually load and cache
+        // successfully before going offline is the one this needs to
+        // find), rather than assuming only one fixed string was ever
+        // the one that got cached.
+        if (req.mode === 'navigate') {
+          for (const url of [req.url, SHELL_URL, '/client', '/']) {
+            const hit = await cache.match(url);
+            if (hit) return hit;
+          }
+          return new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        }
+        const fallback = await cache.match(req);
         return fallback || new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
       }
     })());
