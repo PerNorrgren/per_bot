@@ -3921,6 +3921,7 @@
     </div>`;
   }
 
+  const CONTENT_CACHE_KEY = 'dm_content_cache';
   async function loadContent() {
     const el = document.getElementById('contentScroll');
     el.innerHTML = '<div style="padding:20px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
@@ -3932,8 +3933,21 @@
       ]);
       _contentData   = await filesRes.json();
       _userPlaylists = await plRes.json();
+      // Per's request — populate this tab offline too, same idea as the
+      // splash shelves and the Offline Files tab: cache the last
+      // successful load, fall back to it when there's no signal at all.
+      try { localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify({ content: _contentData, playlists: _userPlaylists })); } catch (e) {}
       renderContentScroll();
     } catch(e) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(CONTENT_CACHE_KEY) || 'null');
+        if (cached) {
+          _contentData = cached.content || [];
+          _userPlaylists = cached.playlists || [];
+          renderContentScroll();
+          return;
+        }
+      } catch (e2) {}
       el.innerHTML = '<div style="padding:20px;color:rgba(255,120,100,0.6);font-size:13px">Could not load content.</div>';
     }
   }
@@ -4683,10 +4697,25 @@
   let _practicesData = [];
   let openPracticeGroups = new Set();
 
+  const PRACTICES_CACHE_KEY = 'dm_practices_cache';
   async function loadPractices() {
-    const res  = await fetch('/api/my/profile');
-    const data = await res.json();
-    _practicesData = data.practices || [];
+    try {
+      const res  = await fetch('/api/my/profile');
+      const data = await res.json();
+      _practicesData = data.practices || [];
+      // Per's request — populate this tab offline too. This function had
+      // no error handling at all before, so a failed fetch here (no
+      // signal) threw and renderPractices() never even ran — "No
+      // practices yet" was actually the page's default empty state
+      // still sitting there from before this call, not a genuine
+      // "checked and there's nothing" result.
+      try { localStorage.setItem(PRACTICES_CACHE_KEY, JSON.stringify(_practicesData)); } catch (e) {}
+    } catch (e) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(PRACTICES_CACHE_KEY) || 'null');
+        if (Array.isArray(cached)) _practicesData = cached;
+      } catch (e2) {}
+    }
     renderPractices();
   }
   function setPracticesGroupMode(mode) {
