@@ -1244,20 +1244,6 @@
           <button class="content-filter-chip" data-filter="book" onclick="setContentFilter('book')">📖 Books</button>
         </div>
         <div class="content-scroll" id="contentScroll"></div>
-        <div class="mini-player" id="miniPlayer">
-          <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer;display:flex;align-items:center;gap:6px">
-            <span id="miniPlayerTitleText">—</span>
-            <span style="font-size:11px;color:rgba(255,255,255,0.35);flex-shrink:0" title="Open full player">⌃</span>
-          </div>
-          <div class="mini-player-controls">
-            <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
-            <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
-              <div class="mp-progress-fill" id="mpFill" style="width:0%"></div>
-            </div>
-            <span class="mp-time" id="mpTime">0:00</span>
-            <button class="mp-btn" onclick="mpClose()" style="font-size:14px">×</button>
-          </div>
-        </div>
       </div>
 
       <!-- Offline Files (Per Bot 51) — everything currently marked for
@@ -1271,6 +1257,31 @@
           <button type="button" id="offlineRemoveAllBtn" onclick="removeAllOfflineFiles()" style="display:none;background:rgba(255,255,255,0.06);border:1px solid rgba(255,140,120,0.3);border-radius:8px;color:rgba(255,160,140,0.85);font-family:Georgia,serif;font-size:12px;padding:7px 14px;cursor:pointer;white-space:nowrap">Remove all</button>
         </div>
         <div class="practices-scroll" id="offlineFilesList"></div>
+      </div>
+
+      <!-- Per's report — this used to live nested inside libReadWatchPanel
+           specifically, so playing something from ANY other Library
+           sub-tab (Practices, Meditations, and especially Offline Files —
+           exactly the tab this whole feature is about) genuinely started
+           playing the audio, but the player itself stayed invisible: its
+           own .visible class was correctly toggled, but its PARENT panel
+           was the one actually hidden, being some other sub-tab's turn to
+           show. Moved out to sit alongside every sub-panel instead of
+           inside just one of them, so its visibility depends only on its
+           own class, not on which Library sub-tab happens to be active. -->
+      <div class="mini-player" id="miniPlayer">
+        <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer;display:flex;align-items:center;gap:6px">
+          <span id="miniPlayerTitleText">—</span>
+          <span style="font-size:11px;color:rgba(255,255,255,0.35);flex-shrink:0" title="Open full player">⌃</span>
+        </div>
+        <div class="mini-player-controls">
+          <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
+          <div class="mp-progress" id="mpProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
+            <div class="mp-progress-fill" id="mpFill" style="width:0%"></div>
+          </div>
+          <span class="mp-time" id="mpTime">0:00</span>
+          <button class="mp-btn" onclick="mpClose()" style="font-size:14px">×</button>
+        </div>
       </div>
     </div>
 
