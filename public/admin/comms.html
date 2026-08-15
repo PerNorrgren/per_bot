@@ -1656,6 +1656,14 @@
     const res = await fetch('/api/admin/scheduled-messages');
     scheduledMessagesData = await res.json();
     renderScheduledMessagesList();
+    // Per's request — pending "Once" schedules now render as rows inside
+    // the main newsletters list too (see renderNewsletterList), which
+    // reads from this same scheduledMessagesData. loadNewsletters() and
+    // this function run independently on page load, so whichever
+    // resolves second needs to re-render the newsletters list too, or a
+    // pending row could be missing until some unrelated action happens
+    // to trigger a re-render.
+    renderNewsletterList();
   }
   // Turns a recurrence_type + recurrence_config back into a plain-English
   // line for the list — the whole point of building the picker UI is
@@ -1767,9 +1775,44 @@
       newsletterListFilter === 'scheduled' ? !!n.scheduled_message_id :
       !n.scheduled_message_id
     );
-    if (!filtered.length) { el.innerHTML = `<div class="empty">No ${newsletterListFilter === 'all' ? '' : newsletterListFilter + ' '}newsletters yet.</div>`; return; }
+    // Per's request — a "Once" schedule is really just a newsletter
+    // that hasn't sent yet, not a reusable recurring template, so it
+    // should show up right here as a pending item with its actual send
+    // date/time, not only in the separate recurring-schedules section
+    // below (which is really meant for genuinely repeating campaigns —
+    // "every Thursday" isn't a single upcoming event the way "15
+    // September" is). No real newsletters row exists for it until the
+    // moment it actually fires, so this builds a synthetic row straight
+    // from scheduledMessagesData rather than the server inventing a
+    // placeholder newsletter row that would need its own draft/pending
+    // status semantics threaded through everywhere else that reads the
+    // newsletters table.
+    const pendingOnce = (scheduledMessagesData || [])
+      .filter(m => m.recurrence_type === 'once' && m.active)
+      .map(m => ({ ...m, _pendingOnce: true }));
+    if (!filtered.length && !pendingOnce.length) { el.innerHTML = `<div class="empty">No ${newsletterListFilter === 'all' ? '' : newsletterListFilter + ' '}newsletters yet.</div>`; return; }
 
-    el.innerHTML = filtered.map(n => `
+    const pendingRowsHtml = (newsletterListFilter === 'manual' ? [] : pendingOnce).map(m => {
+      const cfg = m.recurrence_config || {};
+      const at = `${String(m.send_hour ?? 7).padStart(2,'0')}:00 UTC`;
+      return `
+      <div class="doc-row">
+        <div class="doc-title">
+          ${escHtml(m.subject)}
+          <span class="badge badge-draft" style="margin-left:6px">pending</span>
+        </div>
+        <div class="doc-consent">
+          Sends ${cfg.date || '—'} at ${at} · ${audienceSummary(m.audience)}
+        </div>
+        <div class="doc-actions">
+          <button class="btn sm" onclick="editScheduledMessage('${m.id}')">Edit date/time</button>
+          <button class="btn sm" onclick="sendScheduledMessageNow('${m.id}', this)" title="Sends immediately instead of waiting for the scheduled date">Send now</button>
+          <button class="btn sm danger" onclick="deleteScheduledMessageRow('${m.id}', '${escHtml(m.subject).replace(/'/g,"\\'")}')">Cancel</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = pendingRowsHtml + filtered.map(n => `
       <div class="doc-row">
         <div class="doc-title">
           ${escHtml(n.subject)}
