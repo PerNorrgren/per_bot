@@ -4514,12 +4514,19 @@
       `;
       try {
         if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; }
-        // Unpacked books (data.epubReaderUrl) load lazily — epub.js fetches
-        // each chapter/resource as it's actually needed, through our own
-        // per-resource proxy, rather than downloading and unzipping the
-        // whole book upfront. Older/not-yet-unpacked books fall back to
-        // the original full-file approach — slower, but still works.
-        const book = epubReaderUrl ? ePub(epubReaderUrl) : ePub(url);
+        // Absolute URL, always — when online this was already a full
+        // absolute signed R2 URL (data.url from playback-url is never
+        // relative), but the offline fallback above is a plain relative
+        // path ('/api/content/.../offline-stream'). epub.js does its own
+        // internal URL handling for each chapter it fetches rather than
+        // relying on normal browser URL resolution the way a plain
+        // <audio src> or <iframe src> does — a relative path is a
+        // plausible way for that to quietly resolve wrong (or fail to
+        // resolve at all) specifically in the one case that never used
+        // to happen before this feature existed, without necessarily
+        // throwing anything a try/catch here could ever catch.
+        const epubSrc = new URL(epubReaderUrl || url, window.location.origin).href;
+        const book = ePub(epubSrc);
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
