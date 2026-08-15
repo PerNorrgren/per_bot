@@ -969,6 +969,16 @@
           <div class="a11y-menu-label">Movement</div>
           <button class="a11y-menu-opt" id="a11yCarouselOn" onclick="setCarouselAutoplay(1)">Carousel moves on its own</button>
           <button class="a11y-menu-opt" id="a11yCarouselOff" onclick="setCarouselAutoplay(0)">Carousel stays still</button>
+          <!-- Per Bot 61 — install/add-to-home-screen. Hidden entirely by
+               default; JS below decides which ONE of the two rows (or
+               neither, if already installed) actually makes sense for
+               this browser and reveals just that one. Living in Display
+               rather than a popup banner — genuinely useful to have
+               around permanently, not something to nag about on every
+               visit. -->
+          <div class="a11y-menu-label" id="a11yInstallLabel" style="display:none">Install</div>
+          <button class="a11y-menu-opt" id="a11yInstallBtn" style="display:none" onclick="promptInstallApp()">Install this app</button>
+          <button class="a11y-menu-opt" id="a11yInstallIosBtn" style="display:none" onclick="showIosInstallInstructions()">Add to Home Screen</button>
         </div>
       </div>
     </div>
@@ -1500,6 +1510,19 @@
     <div id="upgradeNotice" style="display:none; position:fixed; left:50%; bottom:100px; transform:translateX(-50%); z-index:600; max-width:min(90vw,380px); background:#1a2420; border:1px solid rgba(180,230,200,0.3); border-radius:14px; padding:14px 18px; font-family:Georgia,serif; font-size:13.5px; color:rgba(220,255,235,0.9); text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5); line-height:1.5;">
       <div id="upgradeNoticeText" style="margin-bottom:10px"></div>
       <a href="/membership" style="display:inline-block; padding:7px 16px; border-radius:8px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.35); color:rgba(180,230,200,0.9); text-decoration:none; font-size:12px; letter-spacing:0.05em; text-transform:uppercase;">Upgrade to unlock</a>
+    </div>
+
+    <!-- Per Bot 61 — iOS install instructions. Doesn't auto-dismiss like
+         upgradeNotice above (someone needs this to stay put while they
+         actually go find the Share button and act on it), so it's a
+         real dismiss-to-close overlay instead of a timed toast. -->
+    <div id="iosInstallOverlay" style="display:none; position:fixed; inset:0; z-index:700; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; padding:20px;">
+      <div style="max-width:340px; width:100%; background:#141a17; border:1px solid rgba(255,255,255,0.15); border-radius:16px; padding:24px; font-family:Georgia,serif; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,0.5);">
+        <div style="font-size:16px; color:rgba(255,255,255,0.9); margin-bottom:14px">Add to Home Screen</div>
+        <div id="iosInstallBody" style="font-size:13.5px; color:rgba(255,255,255,0.7); line-height:1.7; text-align:left; margin-bottom:18px"></div>
+        <div id="iosInstallFootnote" style="font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:18px"></div>
+        <button type="button" onclick="document.getElementById('iosInstallOverlay').style.display='none'" style="background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.3); border-radius:9px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; padding:10px 24px; cursor:pointer;">Got it</button>
+      </div>
     </div>
 
     <!-- Player -->
@@ -8003,6 +8026,66 @@
   // first paint for bandwidth on a slow connection.
   loadOfflineMarkedIds();
   setTimeout(refreshOfflineCacheOnLogin, 4000);
+
+  // Per's follow-up — "Add to Home Screen" from within the app itself.
+  // Real platform split, not something code can smooth over: Chrome/
+  // Edge (desktop and Android) fire beforeinstallprompt for a genuinely
+  // installable site and let a page trigger the native install dialog
+  // itself; Safari on iOS has never implemented that event at all — Apple
+  // keeps "Add to Home Screen" a manual, Share-menu-only action with no
+  // programmatic trigger, full stop. So this shows exactly ONE of two
+  // rows in the Display menu depending on what's actually possible here:
+  // a real one-tap Install button where that exists, or a button that
+  // opens the step-by-step Share-menu instructions where it doesn't.
+  // Neither row shows at all if the app's already running installed
+  // (display-mode:standalone, or navigator.standalone on iOS) — nothing
+  // useful to offer at that point.
+  let _deferredInstallPrompt = null;
+  const alreadyInstalled = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (!alreadyInstalled) {
+    if (isIos) {
+      document.getElementById('a11yInstallLabel').style.display = '';
+      document.getElementById('a11yInstallIosBtn').style.display = '';
+    } else {
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault(); // suppress the browser's own mini-infobar — offered from Display instead, on the person's own terms
+        _deferredInstallPrompt = e;
+        document.getElementById('a11yInstallLabel').style.display = '';
+        document.getElementById('a11yInstallBtn').style.display = '';
+      });
+    }
+  }
+  async function promptInstallApp() {
+    if (!_deferredInstallPrompt) return;
+    toggleA11yMenu(); // close the Display dropdown first — the native install dialog looks odd stacked on top of it
+    _deferredInstallPrompt.prompt();
+    const { outcome } = await _deferredInstallPrompt.userChoice;
+    // The browser only allows a captured prompt to be used once either way —
+    // hide the row once it's been acted on, accepted or not, rather than
+    // offering a second attempt that would just silently fail.
+    if (outcome === 'accepted' || outcome === 'dismissed') {
+      _deferredInstallPrompt = null;
+      document.getElementById('a11yInstallBtn').style.display = 'none';
+      document.getElementById('a11yInstallLabel').style.display = 'none';
+    }
+  }
+  function showIosInstallInstructions() {
+    toggleA11yMenu();
+    // Kept generic across every iOS browser deliberately — an earlier
+    // theory here (that this had to be done specifically from Safari,
+    // not Chrome) turned out to be wrong: Per confirmed a Chrome-saved
+    // icon worked correctly for offline use. Whatever actually caused
+    // the one failed attempt, it wasn't which browser created the icon,
+    // so this doesn't try to steer anyone toward a particular one.
+    document.getElementById('iosInstallBody').innerHTML =
+      `1. Tap the <strong>Share</strong> button <span style="opacity:0.7">(the square with an arrow pointing up)</span> in your browser's toolbar.<br/><br/>
+       2. Scroll down and tap <strong>Add to Home Screen</strong>.<br/><br/>
+       3. Tap <strong>Add</strong> in the top-right corner.`;
+    document.getElementById('iosInstallFootnote').textContent =
+      "This has to be done from your browser's own Share menu — Apple doesn't allow any website to do this step automatically.";
+    document.getElementById('iosInstallOverlay').style.display = 'flex';
+  }
 </script>
 <!-- Onboarding stepper (Per Bot 7) — one short question at a time, always
      skippable, shown once for a new account. Notification style has no
