@@ -37,7 +37,19 @@ window.brandReady = (function() {
   var skinSlug = pathMatch ? pathMatch[1] : null;
   window.__skinSlug = skinSlug;
 
-  var configPromise = fetch('/api/config').then(function(r) { return r.json(); });
+  var CONFIG_CACHE_KEY = 'dm_brand_config_cache';
+  var configPromise = fetch('/api/config').then(function(r) { return r.json(); }).then(function(cfg) {
+    // Per's report — What's New (and anything else riding on this same
+    // config) went blank offline rather than showing what it last had.
+    // The .catch() at the bottom of this file already existed as a
+    // fallback, but it only ever had generic hardcoded defaults to fall
+    // back to (brand name, tagline) — nothing that knew about
+    // whatsNewItems or anything else server-specific. Caching the real
+    // response here means that catch can use actual last-known data
+    // instead of a blank slate.
+    try { localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(cfg)); } catch (e) {}
+    return cfg;
+  });
   var skinPromise = skinSlug
     ? fetch('/api/skins/' + encodeURIComponent(skinSlug)).then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
     : Promise.resolve(null);
@@ -84,6 +96,14 @@ window.brandReady = (function() {
     return cfg;
   }).catch(function(e) {
     console.error('brand-inject: could not load config, falling back to defaults', e);
+    // Per's report — fall back to the real last-known config (from
+    // localStorage, cached above) rather than generic hardcoded
+    // defaults, so anything riding on window.brandReady (What's New,
+    // etc.) can still show real content offline instead of going blank.
+    try {
+      var cached = JSON.parse(localStorage.getItem('dm_brand_config_cache') || 'null');
+      if (cached) return cached;
+    } catch (e2) {}
     return { brandName: 'Deeper Mindfulness', tagline: 'Making the practices land and last for life.', legalEntityName: 'Per Norrgren trading as Deeper Mindfulness' };
   });
 })();

@@ -6201,8 +6201,18 @@
     try {
       const res = await fetch('/api/motd/archive');
       const list = await res.json();
-      if (Array.isArray(list) && list.length) document.getElementById('calmMotdText').textContent = list[0].body;
-    } catch(e) {}
+      if (Array.isArray(list) && list.length) {
+        document.getElementById('calmMotdText').textContent = list[0].body;
+        try { localStorage.setItem('dm_motd_cache', list[0].body); } catch (e) {}
+      }
+    } catch(e) {
+      // Per's report — this went blank offline instead of showing what
+      // was last there, same gap as What's New right below.
+      try {
+        const cached = localStorage.getItem('dm_motd_cache');
+        if (cached) document.getElementById('calmMotdText').textContent = cached;
+      } catch (e2) {}
+    }
     renderWhatsNewPromo();
     loadActivitySummary();
   }
