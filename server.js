@@ -13198,6 +13198,14 @@ async function sendDueScheduledMessages() {
     db.updateNewsletterStatus(newsletter.id, 'sending');
     await runNewsletterSend(newsletter, recipients, logRowsByUserId);
     db.markScheduledMessageSent(msg.id, todayStr);
+    // Per's request — "Once" is a genuine one-off, not a recurring
+    // pattern someone has to remember to switch off. Auto-deactivating
+    // here (rather than deleting it outright) means it still shows up
+    // in the Scheduled list afterwards as a record of what fired and
+    // when, just no longer live — same convention as everything else in
+    // this admin panel favouring "deactivated, still visible" over
+    // "gone", so nothing ever silently vanishes.
+    if (msg.recurrence_type === 'once') db.updateScheduledMessage(msg.id, { active: 0 });
     firedCount++;
     fired.push({ id: msg.id, subject: msg.subject, recipientCount: recipients.length });
   }

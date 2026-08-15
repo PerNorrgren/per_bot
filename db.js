@@ -885,6 +885,7 @@ async function getDb() {
   // same newsletter send pipeline every occurrence (see scheduled_message_id
   // on newsletters below), rather than a second, parallel sending path.
   // recurrence_config is JSON, shape depends on recurrence_type:
+  //   once                → { date: 'YYYY-MM-DD' }               (fires once, then auto-deactivates)
   //   daily               → {}
   //   weekly              → { daysOfWeek: [0-6, ...] }        (0=Sun..6=Sat)
   //   monthly_date        → { dayOfMonth: 1-31 | 'last' }
@@ -6196,6 +6197,21 @@ function scheduledMessageMatchesDate(recurrenceType, config, dateObj) {
   const dom = dateObj.getUTCDate();      // 1-31
   const month = dateObj.getUTCMonth() + 1; // 1-12
   switch (recurrenceType) {
+    case 'once': {
+      // Per's request — a genuine one-off future send, not a recurring
+      // pattern someone has to remember to switch off after it fires
+      // once. cfg.date is a plain YYYY-MM-DD (the same native <input
+      // type="date"> already used for MOTD scheduling in comms.html —
+      // reused here rather than building a second date-picker pattern).
+      // sendDueScheduledMessages deactivates the row the moment this
+      // fires, so — unlike every other recurrence type here — it's
+      // correct for this branch to also match on any date at or after
+      // the target: if the send hour was somehow missed entirely, it
+      // still fires on the very next cron tick rather than silently
+      // never firing at all.
+      const dateStr = dateObj.toISOString().slice(0, 10);
+      return !!cfg.date && dateStr >= cfg.date;
+    }
     case 'daily':
       return true;
     case 'weekly':

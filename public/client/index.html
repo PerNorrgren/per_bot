@@ -527,14 +527,34 @@
     .practice-meta { font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px; }
     .heart-btn { background:none; border:none; cursor:pointer; font-size:18px; opacity:0.35; transition:all 0.2s; flex-shrink:0; padding:4px; }
     .heart-btn.fav { opacity:1; }
-    .heart-btn:hover { opacity:0.8; transform:scale(1.15); }
+    /* Same sticky-:hover-on-touch fix as .offline-tick-btn below — this
+       one hadn't been reported, but it's the identical mechanism
+       (opacity changed on hover), so very likely affected the same way
+       on a phone even if less noticeable against the heart's own
+       red/outline contrast. */
+    @media (hover: hover) {
+      .heart-btn:hover { opacity:0.8; transform:scale(1.15); }
+    }
     /* Per Bot 51 — same visual language as .heart-btn: dim until ticked,
        full opacity + a highlight colour once marked. Blue/teal rather
        than the heart's usual red-toned "favourited" look, so the two
        ticks read as clearly different actions at a glance. */
     .offline-tick-btn { background:none; border:none; cursor:pointer; font-size:16px; opacity:0.3; transition:all 0.2s; flex-shrink:0; padding:6px; color:rgba(255,255,255,0.6); }
     .offline-tick-btn.active { opacity:1; color:rgba(140,190,230,0.95); }
-    .offline-tick-btn:hover { opacity:0.75; transform:scale(1.1); }
+    /* Per's report — "half greyed, then goes fully dark once you tap a
+       DIFFERENT file" is the classic sticky-:hover bug on touchscreens:
+       iOS applies :hover on tap and doesn't clear it until focus moves
+       elsewhere, since there's no real cursor to move away. The click
+       itself was already toggling the real 'active' state correctly
+       underneath the whole time — this opacity:0.75 hover state was
+       just visually masking it until the next tap somewhere else
+       finally cleared the stuck hover and revealed the true state.
+       (hover: hover) scopes this to devices with a real pointer (mouse/
+       trackpad) only, so it can never get stuck on a phone or tablet in
+       the first place. */
+    @media (hover: hover) {
+      .offline-tick-btn:hover { opacity:0.75; transform:scale(1.1); }
+    }
     .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
     .practices-group-row { display:flex; gap:8px; padding:10px 5px 12px; }
     .practices-group-chip { font-size:11px; padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; }
@@ -3606,9 +3626,28 @@
   }
   function isMarkedOffline(fileId) { return _offlineMarkedIds.has(fileId); }
 
-  function swPostMessage(msg) {
-    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
-    navigator.serviceWorker.controller.postMessage(msg);
+  // Was navigator.serviceWorker.controller — a genuine, well-known SW
+  // quirk: on a brand-new device or browser's very FIRST visit, the
+  // worker registers and activates, but doesn't become the CONTROLLING
+  // worker for the page that's already open until that page reloads.
+  // .controller is null the whole time until then, so this used to
+  // silently do nothing on a first visit — the mark itself still saved
+  // fine server-side, but no caching message ever actually reached the
+  // worker. On mobile this went unnoticed because testing happened on a
+  // device that had already loaded the app before (past that window);
+  // a laptop tried for the very first time hit it immediately, which is
+  // almost certainly Per's "no offline option for the laptop" report.
+  // registration.active (via .ready, which resolves once a worker is
+  // genuinely active) receives postMessage regardless of whether it's
+  // controlling this particular page yet — message delivery to a worker
+  // was never actually tied to page-controlling status, only .controller
+  // itself was.
+  async function swPostMessage(msg) {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg.active) reg.active.postMessage(msg);
+    } catch (e) { /* no service worker available on this browser/context — nothing to send to */ }
   }
   async function cacheFileForOffline(fileId) {
     try {

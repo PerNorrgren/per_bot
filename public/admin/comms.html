@@ -656,6 +656,7 @@
       </label>
       <div id="newsletterRecurringFields" style="display:none; margin-top:12px;">
         <select id="recurrenceType" onchange="renderRecurrenceSubFields()" style="width:100%">
+          <option value="once">Once, on a specific date</option>
           <option value="daily">Every day</option>
           <option value="weekly">Every week, on certain days</option>
           <option value="monthly_date">Every month, on a specific date</option>
@@ -1663,6 +1664,7 @@
   function recurrenceSummary(m) {
     const cfg = m.recurrence_config || {};
     const at = `${String(m.send_hour ?? 7).padStart(2,'0')}:00 UTC`;
+    if (m.recurrence_type === 'once') return `Once, on ${cfg.date || '—'} at ${at}${!m.active ? ' — sent' : ''}`;
     if (m.recurrence_type === 'daily') return `Every day at ${at}`;
     if (m.recurrence_type === 'weekly') {
       const days = (cfg.daysOfWeek || []).slice().sort().map(d => WEEKDAY_SHORT[d]).join(', ');
@@ -2075,7 +2077,16 @@
     const type = document.getElementById('recurrenceType').value;
     const cfg = existingConfig || {};
     const el = document.getElementById('recurrenceSubFields');
-    if (type === 'weekly') {
+    if (type === 'once') {
+      // Same plain <input type="date"> already used for MOTD scheduling
+      // just above in this same file — reused deliberately rather than
+      // building a second date-picker pattern for what's functionally
+      // the same kind of choice.
+      el.innerHTML = `
+        <label style="margin:0">Send on</label>
+        <input type="date" id="onceDate" value="${cfg.date || ''}"/>
+        <div class="modal-note" style="margin-top:6px">Fires once at the hour set below, then switches itself off — nothing to remember to deactivate afterwards.</div>`;
+    } else if (type === 'weekly') {
       const selected = new Set(cfg.daysOfWeek || []);
       el.innerHTML = `<div class="day-picker">${WEEKDAY_NAMES.map((name, i) => `
         <button type="button" class="day-chip ${selected.has(i) ? 'active' : ''}" data-dow="${i}" onclick="this.classList.toggle('active')">${name.slice(0,3)}</button>
@@ -2117,6 +2128,9 @@
   }
   function getRecurrenceConfig() {
     const type = document.getElementById('recurrenceType').value;
+    if (type === 'once') {
+      return { type, config: { date: document.getElementById('onceDate').value } };
+    }
     if (type === 'weekly') {
       const daysOfWeek = Array.from(document.querySelectorAll('#recurrenceSubFields .day-chip.active')).map(c => Number(c.dataset.dow));
       return { type, config: { daysOfWeek } };
@@ -2173,6 +2187,7 @@
       if (_explicitRecipientIds) { err.textContent = 'A message to a specific selected list can\'t be a repeating schedule — turn off Repeat first.'; return; }
       const { type, config } = getRecurrenceConfig();
       if (type === 'weekly' && !config.daysOfWeek.length) { err.textContent = 'Pick at least one day of the week.'; return; }
+      if (type === 'once' && !config.date) { err.textContent = 'Pick a date to send on.'; return; }
       const scheduledId = document.getElementById('scheduledMessageEditId').value;
       const payload = {
         subject, body, audience, format: newsletterFormat,
