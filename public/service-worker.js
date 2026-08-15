@@ -68,6 +68,25 @@ const SHELL_ASSET_URLS = [
   '/tomte-widget.js',
   '/assets/tomte.png', // default Talk persona avatar — see isShellAsset below for why a custom brand photo is also covered automatically
 ];
+// Per's report — the ebook reader opened its own chrome fine (title,
+// buttons, the page background — all same-origin, already covered
+// above) but never showed any actual book content, even with a
+// genuinely fresh, uncorrupted cached copy of the .epub file itself.
+// Root cause: epub.js (which parses and renders that file) and its own
+// JSZip dependency are both loaded from an external CDN, not this
+// server — isShellAsset below only ever matched same-origin paths, so
+// neither script was ever cached at all. The book file was being
+// fetched offline just fine; the library needed to actually open and
+// display it simply never loaded in the first place. Cross-origin
+// requests still work with the Cache API (as an opaque response — no
+// script tag needs to read the response, only execute it, so that's
+// fully sufficient here), they just need to be matched explicitly by
+// full URL rather than by same-origin path the way everything else on
+// this list is.
+const EPUB_CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+  'https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js',
+];
 
 // Only these path shapes are ever cached — deliberately not "cache
 // everything the app requests", since most of what the app loads
@@ -95,8 +114,14 @@ function isOfflineEligible(url) {
   const path = new URL(url).pathname;
   return OFFLINE_PATH_PATTERNS.some(p => p.test(path));
 }
-function isShellAsset(path) {
-  return SHELL_ASSET_URLS.includes(path) || SHELL_ASSET_PATTERNS.some(p => p.test(path));
+// Takes the full URL, not just the pathname — same-origin shell assets
+// are safely matched by path alone (this server owns every path it
+// could ever collide with), but the cross-origin EPUB_CDN_URLS need an
+// exact full-URL match, since a bare path like "/npm/epubjs@.../..."
+// means nothing on its own without knowing which host it's from.
+function isShellAsset(url) {
+  const path = new URL(url).pathname;
+  return SHELL_ASSET_URLS.includes(path) || SHELL_ASSET_PATTERNS.some(p => p.test(path)) || EPUB_CDN_URLS.includes(url);
 }
 
 self.addEventListener('install', (event) => {
@@ -105,7 +130,7 @@ self.addEventListener('install', (event) => {
       // allSettled, not addAll — addAll fails (and caches nothing at
       // all) the moment any single URL 404s; one broken shell asset
       // shouldn't cost caching every other one that's fine.
-      Promise.allSettled(SHELL_ASSET_URLS.map(u => cache.add(u)))
+      Promise.allSettled([...SHELL_ASSET_URLS, ...EPUB_CDN_URLS].map(u => cache.add(u)))
     )
   );
   self.skipWaiting();
@@ -128,7 +153,7 @@ self.addEventListener('fetch', (event) => {
   // full navigation) and the handful of scripts that page needs to boot
   // at all. Network-first: always prefer the live version when there's
   // any connection, cache only steps in once fetch has genuinely failed.
-  if (req.method === 'GET' && (req.mode === 'navigate' || isShellAsset(path))) {
+  if (req.method === 'GET' && (req.mode === 'navigate' || isShellAsset(req.url))) {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE_NAME);
       try {
