@@ -36,7 +36,22 @@
 // falls back to the cached shell when that fails — which is the one
 // thing that actually makes "press the icon with no signal" work.
 
-const CACHE_NAME = 'dm-offline-v1';
+// Per Bot 64 — bumped v1 -> v2. Per's report ("player opens, audio
+// doesn't play, stuck at 0:02") is very likely the exact same root
+// cause as the ebook: a file cached with the OLD, buggy res.clone()
+// code (fixed in Per Bot 62) sitting corrupted/truncated in storage —
+// 2 seconds of real data is roughly what would have buffered before a
+// large stream's tee-related failure kicked in. Rather than asking for
+// every single marked file to be manually unticked and re-ticked, this
+// is the real fix: activate (below) already deletes any cache whose
+// NAME doesn't match these constants — it just never had a reason to
+// before, since the name never changed across the update that actually
+// fixed the caching bug. Bumping it here means the next time the app
+// opens online, the entire old (possibly-corrupted) cache is wiped
+// automatically, and refreshOfflineCacheOnLogin (client/index.html)
+// re-downloads every marked file fresh with the now-fixed code — no
+// manual per-file action needed at all.
+const CACHE_NAME = 'dm-offline-v2';
 const SHELL_CACHE_NAME = 'dm-shell-v1';
 // The one page the app shell falls back to for ANY failed navigation —
 // this app is a single-page client (everything past login lives at
