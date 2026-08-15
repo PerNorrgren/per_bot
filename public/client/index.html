@@ -3449,17 +3449,16 @@
     // the network — abandon this one entirely, it must never start.
     if (myToken !== _mpToken) return;
 
-    // Per Bot 60 — book-length audio (audiobooks) opens straight into the
-    // full Now Playing card, chapters and all, rather than leaving
-    // someone to discover the mini-player's expand chevron on their own.
-    // A short meditation or signal script doesn't need this — the
-    // mini-bar is the right amount of UI for those — but a two-and-a-
-    // half-hour book with 51 chapters clearly benefits from landing
-    // straight in the view built for it. Placed here specifically,
-    // after chapters have already loaded above, so the card renders
-    // with the real chapter list from the first frame instead of
-    // showing empty and never updating.
-    if (file.content_type === 'book' && myToken === _mpToken) {
+    // Per's follow-up — every audio track now opens straight into the
+    // full Now Playing card, not just book-length audio. Originally
+    // scoped to audiobooks only (a short meditation "didn't need" the
+    // full view), but Per's asked for the full player as the real
+    // default rather than the compact mini-bar with an easy-to-miss
+    // expand chevron. Placed here specifically, after chapters have
+    // already loaded above, so the card renders with the real chapter
+    // list (when there is one) from the first frame instead of showing
+    // empty and never updating.
+    if (myToken === _mpToken) {
       renderNowPlayingCard(file);
       document.getElementById('miniPlayer').classList.remove('visible');
     }
