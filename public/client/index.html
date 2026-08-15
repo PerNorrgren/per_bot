@@ -5028,6 +5028,43 @@
     const talkSessions = sessions.filter(p => !p.facilitator_id)
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
+    // Per's report — ReferenceError: renderSessionGroupsInto is not
+    // defined, thrown every time My Practices mode loaded. That function
+    // never existed; the real rendering logic (sessionGroup() below, plus
+    // the Talk-sessions block) was defined further down this same
+    // function, AFTER the 'mine' branch's own early return — reachable
+    // for 'course'/'area' mode, which just falls through to it, but never
+    // for 'mine', which returns before ever getting there. Built here
+    // instead, right where supervisorSessions/talkSessions are already
+    // computed, into one shared HTML string both branches below can use
+    // — 'mine' explicitly appends it before its early return; the
+    // course/area path further down was already going to run this same
+    // logic inline as a natural fall-through, so it reuses the string
+    // rather than rebuilding it a second time.
+    const sessionGroup = (key, label, items) => {
+      if (!items.length) return '';
+      const open = openPracticeGroups.has(key);
+      const shown = open ? items.slice(0, 25) : items.slice(0, 5);
+      return `<div class="practices-group-hdr" onclick="togglePracticeGroup('${key}')">
+        <span>${label}</span><span class="practices-group-count">${items.length}${open && items.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
+      </div>
+      <div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
+    };
+    let sessionGroupsHtml = sessionGroup('supervisor-sessions', 'Sessions with Supervisor', supervisorSessions);
+    // Per Bot 15d — Talk sessions specifically simplified further: just the
+    // single most recent one shown inline, with a button opening a proper
+    // modal window (not an inline expand) for the rest, capped at 25 there.
+    if (talkSessions.length) {
+      sessionGroupsHtml += `<div class="content-section-hdr">Talk sessions</div>`;
+      sessionGroupsHtml += practiceItemHTML(talkSessions[0]);
+      if (talkSessions.length > 1) {
+        sessionGroupsHtml += `<button type="button" onclick="openTalkSessionsModal()" style="display:block; width:calc(100% - 36px); margin:6px 18px 0; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">See all ${talkSessions.length} sessions with Talk →</button>`;
+      }
+    }
+    // Per Bot 15d — stashed for openTalkSessionsModal, called from the
+    // "See all" button rendered above.
+    _lastTalkSessions = talkSessions;
+
     // Practices the facilitator added directly (source_type='facilitator',
     // Per Bot 15c) — merges with assignedFiles into one "From your
     // facilitator" list below, sorted together by date, since from the
@@ -5099,12 +5136,12 @@
 
     if (_practicesGroupMode === 'mine') {
       html += renderMyPracticesList(list, facilitatorItems);
-      el.innerHTML = html;
-      // Sessions/Talk groups below are still their own thing even in My
+      // Sessions/Talk groups are still their own thing even in My
       // Practices mode — a session summary isn't really a "practice"
       // someone favourited or was given, so it stays out of the merged
       // list above, but is still reachable rather than hidden entirely.
-      renderSessionGroupsInto(el, supervisorSessions, talkSessions);
+      html += sessionGroupsHtml;
+      el.innerHTML = html;
       return;
     }
 
@@ -5139,33 +5176,10 @@
     // session summary isn't really a "practice" someone favourited or
     // was given, so it stays out of the My Practices merged list above
     // too, but is still reachable there rather than hidden entirely.
-    // Per Bot 15c — supervisor sessions get the same 5-inline / click-heading
-    // pattern as the course/area groups above.
-    const sessionGroup = (key, label, items) => {
-      if (!items.length) return '';
-      const open = openPracticeGroups.has(key);
-      const shown = open ? items.slice(0, 25) : items.slice(0, 5);
-      return `<div class="practices-group-hdr" onclick="togglePracticeGroup('${key}')">
-        <span>${label}</span><span class="practices-group-count">${items.length}${open && items.length > 25 ? ' (showing 25 most recent)' : ''} ${open ? '▾' : '▸'}</span>
-      </div>
-      <div style="${open ? 'max-height:420px; overflow-y:auto;' : ''}">${shown.map(practiceItemHTML).join('')}</div>`;
-    };
-    html += sessionGroup('supervisor-sessions', 'Sessions with Supervisor', supervisorSessions);
-
-    // Per Bot 15d — Talk sessions specifically simplified further: just the
-    // single most recent one shown inline, with a button opening a proper
-    // modal window (not an inline expand) for the rest, capped at 25 there.
-    if (talkSessions.length) {
-      html += `<div class="content-section-hdr">Talk sessions</div>`;
-      html += practiceItemHTML(talkSessions[0]);
-      if (talkSessions.length > 1) {
-        html += `<button type="button" onclick="openTalkSessionsModal()" style="display:block; width:calc(100% - 36px); margin:6px 18px 0; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">See all ${talkSessions.length} sessions with Talk →</button>`;
-      }
-    }
-
-    // Per Bot 15d — stashed for openTalkSessionsModal, called from the
-    // "See all" button rendered above.
-    _lastTalkSessions = talkSessions;
+    // (Built earlier alongside supervisorSessions/talkSessions as
+    // sessionGroupsHtml, shared with the 'mine' branch above — see the
+    // comment there for why.)
+    html += sessionGroupsHtml;
 
     el.innerHTML = html;
   }
