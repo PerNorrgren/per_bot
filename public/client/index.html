@@ -4526,7 +4526,23 @@
         // to happen before this feature existed, without necessarily
         // throwing anything a try/catch here could ever catch.
         const epubSrc = new URL(epubReaderUrl || url, window.location.origin).href;
-        const book = ePub(epubSrc);
+        // Per's console screenshot pinpointed this exactly: epub.js
+        // auto-detects, from the URL's shape, whether it's looking at a
+        // single packed archive to download-and-unzip, or an already-
+        // unpacked directory to fetch chapter-by-chapter — and that
+        // detection keys off the URL ending in .epub. The live signed R2
+        // URL happens to end that way; this app's own offline-stream
+        // route (/api/content/library/:id/offline-stream) never could,
+        // so epub.js guessed "directory" and started requesting
+        // META-INF/container.xml as a separate path off the end of it —
+        // a request that could never succeed, against a file structure
+        // that doesn't exist, entirely different from the actual bug
+        // being chased. Forced explicitly rather than left to guess —
+        // but only for the single-file case (no epubReaderUrl): the
+        // lazy-loading path genuinely IS a lookup-by-directory against
+        // the epub-resource proxy, so forcing 'epub' there would break
+        // the one case that's actually supposed to work that way.
+        const book = ePub(epubSrc, epubReaderUrl ? {} : { openAs: 'epub' });
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
