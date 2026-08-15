@@ -192,7 +192,22 @@ self.addEventListener('message', (event) => {
         urls.map(async (u) => {
           const res = await fetch(u);
           if (!res.ok) throw new Error(`${u}: ${res.status}`);
-          await cache.put(u, res.clone());
+          // Was res.clone() — genuine bug, and almost certainly why only
+          // small files (poems/blogs, a few KB) worked offline while
+          // every audio file and the 18MB ebook silently failed. clone()
+          // tees the response body into two independent streams; here
+          // only the clone ever actually got read (by cache.put below) —
+          // the original `res` was never consumed at all. For a small
+          // response browsers buffer that away without issue, but for a
+          // large streamed response (this is a direct R2 pipe with no
+          // fixed Content-Length — see /offline-stream in server.js)
+          // leaving one branch of a tee'd stream completely unread can
+          // stall or fail the other branch once internal buffering limits
+          // are hit. res was never used for anything but the .ok check
+          // above, so there was never a need for two copies in the first
+          // place — passing the original straight to cache.put lets the
+          // Cache API drain the one real stream directly, no tee at all.
+          await cache.put(u, res);
         })
       );
       const failed = results.filter(r => r.status === 'rejected').length;
