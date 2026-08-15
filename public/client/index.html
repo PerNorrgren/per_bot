@@ -3629,19 +3629,34 @@
   // Marking is enough on its own; nothing needs to be played first.
   async function toggleOfflineMark(fileId, btn) {
     const wasMarked = isMarkedOffline(fileId);
-    btn.classList.toggle('active', !wasMarked); // instant feedback, corrected below only on a genuine failure
+    // Both the button's own class AND the shared _offlineMarkedIds set
+    // update synchronously, together, right here — not after the fetch
+    // resolves. Per's report ("doesn't toggle until you press the next
+    // button") was a real race: _offlineMarkedIds used to only update
+    // once the network request finished, so if anything re-rendered the
+    // table in that gap (a heart click, a sort, anything reading
+    // isMarkedOffline() fresh), it would redraw every button from the
+    // still-stale set and silently revert this one's optimistic toggle
+    // — which then only became visible once a LATER click's request had
+    // had time to actually complete. Updating the set here closes that
+    // window; a re-render mid-flight now sees the correct state
+    // immediately, same as the button itself does.
+    btn.classList.toggle('active', !wasMarked);
+    if (wasMarked) _offlineMarkedIds.delete(fileId); else _offlineMarkedIds.add(fileId);
     try {
       if (wasMarked) {
         await fetch(`/api/client/offline-marks/${fileId}`, { method: 'DELETE' });
-        _offlineMarkedIds.delete(fileId);
         removeFileFromOfflineCache(fileId);
       } else {
         await fetch(`/api/client/offline-marks/${fileId}`, { method: 'POST' });
-        _offlineMarkedIds.add(fileId);
         cacheFileForOffline(fileId);
       }
     } catch (e) {
-      btn.classList.toggle('active', wasMarked); // roll back the optimistic toggle — the request itself didn't go through
+      // Roll back both together too — the request itself didn't go
+      // through, so neither the button nor the shared set should have
+      // changed after all.
+      btn.classList.toggle('active', wasMarked);
+      if (wasMarked) _offlineMarkedIds.add(fileId); else _offlineMarkedIds.delete(fileId);
     }
   }
   async function markWholeLessonOffline(lessonId, btn) {
