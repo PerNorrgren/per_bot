@@ -1543,15 +1543,18 @@
          small pointed tail, so it visually reads as coming from Tomte
          specifically, not a generic site-wide banner. z-index sits below
          tomte-widget.js's own panel (99999) since that's a deliberate
-         interaction someone opened — this shouldn't be able to cover it. -->
-    <div id="installNudgeBubble" style="display:none; position:fixed; right:14px; bottom:86px; z-index:800; width:280px; max-width:calc(100vw - 28px); background:#141a17; border:1px solid rgba(230,175,90,0.35); border-radius:14px; padding:16px; font-family:Georgia,serif; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+         interaction someone opened — this shouldn't be able to cover it.
+         Shared by both the install nudge and the offline-content nudge
+         that follows it — same bubble, contents swapped in by JS,
+         rather than two near-identical elements. -->
+    <div id="tomteNudgeBubble" style="display:none; position:fixed; right:14px; bottom:86px; z-index:800; width:280px; max-width:calc(100vw - 28px); background:#141a17; border:1px solid rgba(230,175,90,0.35); border-radius:14px; padding:16px; font-family:Georgia,serif; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
       <div style="position:absolute; bottom:-8px; right:22px; width:16px; height:16px; background:#141a17; border-right:1px solid rgba(230,175,90,0.35); border-bottom:1px solid rgba(230,175,90,0.35); transform:rotate(45deg);"></div>
-      <button type="button" onclick="dismissInstallNudge()" aria-label="Dismiss" style="position:absolute; top:8px; right:10px; background:none; border:none; color:rgba(255,255,255,0.35); font-size:16px; cursor:pointer; padding:4px;">&times;</button>
+      <button type="button" onclick="dismissTomteNudge()" aria-label="Dismiss" style="position:absolute; top:8px; right:10px; background:none; border:none; color:rgba(255,255,255,0.35); font-size:16px; cursor:pointer; padding:4px;">&times;</button>
       <div style="font-size:13px; color:rgba(230,175,90,0.9); margin-bottom:6px; padding-right:16px">Did you know?</div>
-      <div style="font-size:13px; color:rgba(255,255,255,0.75); line-height:1.6; margin-bottom:12px">You can add this app to your home screen — it opens faster, and your saved practices keep working even with no signal.</div>
+      <div id="tomteNudgeText" style="font-size:13px; color:rgba(255,255,255,0.75); line-height:1.6; margin-bottom:12px"></div>
       <div style="display:flex; gap:8px">
-        <button type="button" onclick="installNudgeCta()" style="flex:1; background:rgba(230,175,90,0.12); border:1px solid rgba(230,175,90,0.35); border-radius:8px; color:rgba(255,214,150,0.95); font-family:Georgia,serif; font-size:12.5px; padding:8px; cursor:pointer;">Show me how</button>
-        <button type="button" onclick="dismissInstallNudge()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; padding:8px 12px; cursor:pointer;">Not now</button>
+        <button type="button" onclick="tomteNudgeCta()" style="flex:1; background:rgba(230,175,90,0.12); border:1px solid rgba(230,175,90,0.35); border-radius:8px; color:rgba(255,214,150,0.95); font-family:Georgia,serif; font-size:12.5px; padding:8px; cursor:pointer;">Show me how</button>
+        <button type="button" onclick="dismissTomteNudge()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; padding:8px 12px; cursor:pointer;">Not now</button>
       </div>
     </div>
 
@@ -8189,20 +8192,66 @@
   // running installed. Deliberately delayed a few seconds after load —
   // competing with the very first paint for attention would be the
   // wrong moment for this.
+  // Per's follow-up — a proactive nudge, not just a menu option someone
+  // has to already know to look for. Shown once (localStorage-tracked,
+  // never re-shown once dismissed or acted on) and only when there's
+  // actually something to offer: skipped entirely if the app is already
+  // running installed. Deliberately delayed a few seconds after load —
+  // competing with the very first paint for attention would be the
+  // wrong moment for this.
+  //
+  // Chained into a second nudge about offline content itself once this
+  // one's been dealt with (dismissed, acted on, or simply not
+  // applicable) — same bubble, different message, shown on a LATER
+  // visit rather than stacked in the same sitting, so nobody gets two
+  // popups back to back. The two nudges have a real dependency between
+  // them, though it differs by platform: on iOS, offline reliability
+  // genuinely depends on having installed first (see the caching work
+  // elsewhere in this file), so the offline nudge stays gated behind
+  // alreadyInstalled there. On desktop/Android, a plain bookmark already
+  // caches reliably — installing is a nice convenience, not a real
+  // prerequisite — so the offline nudge doesn't wait on it there at all.
   const INSTALL_NUDGE_KEY = 'dm_install_nudge_seen';
+  const OFFLINE_NUDGE_KEY = 'dm_offline_nudge_seen';
+  let _activeNudge = null; // 'install' | 'offline' — which one's currently showing, so dismiss/CTA know what to do
   function maybeShowInstallNudge() {
-    if (alreadyInstalled) return;
-    try { if (localStorage.getItem(INSTALL_NUDGE_KEY)) return; } catch (e) {}
+    if (alreadyInstalled) { maybeShowOfflineNudge(); return; }
+    let seen = false;
+    try { seen = !!localStorage.getItem(INSTALL_NUDGE_KEY); } catch (e) {}
+    if (seen) { maybeShowOfflineNudge(); return; }
     if (!isIos && !_deferredInstallPrompt) return; // non-iOS: nothing to offer yet if the browser hasn't fired beforeinstallprompt
-    document.getElementById('installNudgeBubble').style.display = 'block';
+    _activeNudge = 'install';
+    document.getElementById('tomteNudgeText').textContent =
+      'You can add this app to your home screen — it opens faster, and your saved practices keep working even with no signal.';
+    document.getElementById('tomteNudgeBubble').style.display = 'block';
   }
-  function dismissInstallNudge() {
-    document.getElementById('installNudgeBubble').style.display = 'none';
-    try { localStorage.setItem(INSTALL_NUDGE_KEY, '1'); } catch (e) {}
+  function maybeShowOfflineNudge() {
+    if (isIos && !alreadyInstalled) return; // see comment above — not reliable enough yet to recommend on iOS specifically
+    try { if (localStorage.getItem(OFFLINE_NUDGE_KEY)) return; } catch (e) {}
+    _activeNudge = 'offline';
+    document.getElementById('tomteNudgeText').textContent =
+      "Did you also know you can save any practice, meditation, or book for offline use? Look for the ⬇ icon in your Library — tap it once and that item keeps working even with no signal at all.";
+    document.getElementById('tomteNudgeBubble').style.display = 'block';
   }
-  function installNudgeCta() {
-    dismissInstallNudge();
-    if (isIos) showIosInstallInstructions(); else promptInstallApp();
+  function dismissTomteNudge() {
+    document.getElementById('tomteNudgeBubble').style.display = 'none';
+    try { localStorage.setItem(_activeNudge === 'offline' ? OFFLINE_NUDGE_KEY : INSTALL_NUDGE_KEY, '1'); } catch (e) {}
+    _activeNudge = null;
+  }
+  function tomteNudgeCta() {
+    const which = _activeNudge;
+    dismissTomteNudge();
+    if (which === 'offline') {
+      // Straight to the tab itself — the tick icons are right there in
+      // context, a better place to actually learn the feature than a
+      // wall of text in a popup.
+      switchTab('library');
+      switchLibrarySub('offline');
+    } else if (isIos) {
+      showIosInstallInstructions();
+    } else {
+      promptInstallApp();
+    }
   }
 </script>
 <!-- Onboarding stepper (Per Bot 7) — one short question at a time, always
