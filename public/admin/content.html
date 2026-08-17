@@ -315,6 +315,7 @@
           <div class="toolbar-title">Courses</div>
           <select class="filter" id="courseCatF" onchange="filterCourses()"><option value="">All categories</option></select>
           <button class="btn" onclick="openCarouselOrder()">Carousel order</button>
+          <button class="btn" id="cleanupEmptyBtn" onclick="cleanupEmptyCourses()" title="Deletes any course with zero lessons — a duplicate created by clicking Save more than once is the usual cause">Clean up empty courses</button>
           <button class="btn primary" onclick="openNewCourse()">+ New course</button>
         </div>
         <div class="item-list" id="courseList"></div>
@@ -3838,7 +3839,7 @@ function renderCourses(courses){
     return `
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}${Number(c.lesson_count)===0?' <span class="tag" style="background:rgba(255,100,80,0.14);color:rgba(255,120,100,0.85)" title="No lessons — usually a leftover from clicking Save more than once. Safe to delete unless you\'re mid-way through adding lessons to it.">⚠ 0 lessons</span>':` <span class="tag" style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)">${c.lesson_count} lesson${Number(c.lesson_count)===1?'':'s'}</span>`}</div>
         <div class="item-row-meta">${c.description||''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
@@ -4322,6 +4323,33 @@ async function moveLessonFileToLesson(refId, lessonId){
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
 async function delCourse(id){if(!(await appConfirm('Delete course and all lessons?')))return;await fetch(`/api/content/courses/${id}`,{method:'DELETE'});loadAll();}
+// Per's request — a fast, safe way to clear out empty-course clutter,
+// the most common cause being exactly what led to it this time: clicking
+// Save more than once before the button gave any feedback (fixed
+// separately, see confirmAutoCourse's setBtnLoading). Filters on
+// lesson_count === 0 only, computed server-side in getAllCourses — never
+// on title, since several of these duplicates can share the exact same
+// title as a real, populated course, and a name match alone would be a
+// genuinely dangerous way to decide what's safe to delete. Names every
+// course about to go in the confirm dialog rather than just a count, so
+// nothing gets removed sight-unseen.
+async function cleanupEmptyCourses(){
+  const empty = allCourses.filter(c => Number(c.lesson_count) === 0);
+  if (!empty.length) { appAlert('No empty courses found — everything currently in the list has at least one lesson.'); return; }
+  const list = empty.map(c => `• ${c.title}`).join('\n');
+  const ok = await appConfirm(`This will permanently delete ${empty.length} course${empty.length===1?'':'s'} with zero lessons:\n\n${list}\n\nThis can't be undone.`, 'Clean up empty courses');
+  if (!ok) return;
+  const btn = document.getElementById('cleanupEmptyBtn');
+  setBtnLoading(btn, true, 'Cleaning up…');
+  try {
+    for (const c of empty) {
+      await fetch(`/api/content/courses/${c.id}`, {method:'DELETE'});
+    }
+    loadAll();
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
 // Per Bot 24 — a one-time heads-up right when Feature is clicked, in
 // addition to the persistent card badge above (renderCourses) — catches
 // it at the moment of the decision rather than only after the fact.

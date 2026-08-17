@@ -3512,7 +3512,8 @@ function setCourseTierGating(id, requiredTier, hideWhenLocked) {
     [requiredTier === null || requiredTier === '' ? null : parseInt(requiredTier, 10), hideWhenLocked ? 1 : 0, id]); save();
 }
 function getAllCourses(filters = {}) {
-  let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name
+  let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name,
+    (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as lesson_count
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
     LEFT JOIN categories sub ON c.subcategory_id=sub.id
@@ -3669,6 +3670,17 @@ function getFilesForLesson(lessonId) {
   return queryAll(`SELECT r.id as ref_id, r.sort_order, r.mandatory, r.free_preview, f.*
     FROM lesson_file_refs r JOIN library_files f ON r.file_id=f.id
     WHERE r.lesson_id=? ORDER BY r.sort_order ASC`, [lessonId]);
+}
+// Per's request — move a file to a different lesson within the same
+// course, in a single update rather than remove-then-re-add (which would
+// silently lose the mandatory/free_preview flags already set on this
+// specific ref). Always appended to the end of the target lesson's file
+// list, same placement a freshly-added file gets.
+function moveLessonFileRefToLesson(refId, targetLessonId) {
+  const maxOrder = queryOne('SELECT MAX(sort_order) as m FROM lesson_file_refs WHERE lesson_id=?', [targetLessonId]);
+  const nextOrder = (maxOrder && maxOrder.m !== null && maxOrder.m !== undefined) ? maxOrder.m + 1 : 0;
+  getDbSync().run('UPDATE lesson_file_refs SET lesson_id=?, sort_order=? WHERE id=?', [targetLessonId, nextOrder, refId]);
+  save();
 }
 function removeLessonFileRef(refId) {
   getDbSync().run('DELETE FROM lesson_file_refs WHERE id=?', [refId]); save();
@@ -7857,7 +7869,7 @@ module.exports = {
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,
   // Lesson file refs
-  addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, reorderLessonFileRefs, setLessonFileRefMandatory,
+  addLessonFileRef, getFilesForLesson, removeLessonFileRef, moveLessonFileRef, moveLessonFileRefToLesson, reorderLessonFileRefs, setLessonFileRefMandatory,
   setLessonFileRefFreePreview, getFreePreviewRef,
   setAllFileRefsMandatoryForLesson, setAllFileRefsMandatoryForCourse,
   // Lesson file opens / progress (Per Bot 13)
