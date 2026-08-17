@@ -318,6 +318,14 @@
           <button class="btn" id="cleanupEmptyBtn" onclick="cleanupEmptyCourses()" title="Deletes any course with zero lessons — a duplicate created by clicking Save more than once is the usual cause">Clean up empty courses</button>
           <button class="btn primary" onclick="openNewCourse()">+ New course</button>
         </div>
+        <div class="bulk-bar" id="courseBulkBar">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="courseBulkSelectAll" onchange="toggleCourseSelectAll(this.checked)"/> Select all
+          </label>
+          <span><span class="count" id="courseBulkCount">0</span> selected</span>
+          <button class="btn sm danger" id="courseBulkDeleteBtn" onclick="bulkDeleteCourses()">Delete</button>
+          <button class="btn sm" onclick="clearCourseSelection()" style="margin-left:auto">Clear</button>
+        </div>
         <div class="item-list" id="courseList"></div>
       </div>
 
@@ -1504,6 +1512,7 @@ function populateInstanceCourseSels(){
 // ── Library ──
 let _libView = 'list';
 const _libSel = new Set();
+const _courseSel = new Set(); // course-tab bulk selection, kept fully separate from _libSel per the comment beside its own functions below
 
 function setLibView(view) {
   _libView = view;
@@ -3843,6 +3852,15 @@ function renderCourses(courses){
     const key = (c.title||'').trim().toLowerCase();
     titleCounts[key] = (titleCounts[key]||0) + 1;
   });
+  // Per's request — a tick box per row plus bulk delete, same pattern as
+  // the Library tab's own bulk-select (_libSel/bulk-bar), for clearing
+  // several confirmed duplicates in one pass instead of one Delete click
+  // each. A course no longer in the current (possibly filtered) list —
+  // e.g. a category filter changed — is dropped from the selection here
+  // so the bulk bar's count can't silently include something not even
+  // visible any more.
+  const visibleIds = new Set(courses.map(c=>c.id));
+  [..._courseSel].forEach(id => { if (!visibleIds.has(id)) _courseSel.delete(id); });
   // Per Bot 24 — "Featured" (Add to Home carousel) silently does nothing
   // without an open Instance too — the fine print in the edit modal said
   // so, but it's easy to miss there and the course just quietly never
@@ -3861,6 +3879,7 @@ function renderCourses(courses){
     const createdDisplay = c.created_at ? new Date(c.created_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : '';
     return `
     <div class="item-row">
+      <input type="checkbox" class="crs-cb" value="${c.id}" ${_courseSel.has(c.id)?'checked':''} onchange="toggleCourseSel('${c.id}',this.checked)" style="flex-shrink:0"/>
       <div class="item-row-info">
         <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}${Number(c.lesson_count)===0?' <span class="tag" style="background:rgba(255,100,80,0.14);color:rgba(255,120,100,0.85)" title="No lessons — usually a leftover from clicking Save more than once. Safe to delete unless you\'re mid-way through adding lessons to it.">⚠ 0 lessons</span>':` <span class="tag" style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)">${c.lesson_count} lesson${Number(c.lesson_count)===1?'':'s'}</span>`}${isDuplicateTitle?` <span class="tag" style="background:rgba(255,180,60,0.14);color:rgba(255,190,90,0.9)" title="Another course shares this exact title — check the lesson count, created date, and enrolments below before deleting either one.">⚠ Possible duplicate</span>`:''}${enrolCount>0?` <span class="tag" style="background:rgba(120,200,160,0.14);color:rgba(140,220,180,0.9)" title="This course has real people enrolled — do not delete without checking first.">👤 ${enrolCount} enrolled</span>`:''}</div>
         <div class="item-row-meta">${c.description||''}${createdDisplay?`${c.description?' · ':''}Created ${createdDisplay}`:''}</div>
@@ -3877,7 +3896,71 @@ function renderCourses(courses){
       </div>
     </div>
   `;}).join('');
+  updateCourseBulkBar();
 }
+
+// ── Course bulk selection — same shape as the Library tab's own
+// _libSel/updateBulkBar, kept as a fully separate Set (declared up with
+// _libSel above) and pair of DOM ids
+// (courseBulkBar/courseBulkCount/courseBulkSelectAll vs the library's
+// bulkBar/bulkCount/bulkSelectAll) so neither tab's selection state or
+// "select all" checkbox can ever cross-contaminate the other.
+function toggleCourseSel(id, checked) {
+  if (checked) _courseSel.add(id); else _courseSel.delete(id);
+  updateCourseBulkBar();
+}
+function toggleCourseSelectAll(checked) {
+  document.querySelectorAll('.crs-cb').forEach(cb => {
+    cb.checked = checked;
+    if (checked) _courseSel.add(cb.value); else _courseSel.delete(cb.value);
+  });
+  updateCourseBulkBar();
+}
+function clearCourseSelection() {
+  _courseSel.clear();
+  document.querySelectorAll('.crs-cb').forEach(cb => cb.checked = false);
+  const sa = document.getElementById('courseBulkSelectAll'); if (sa) sa.checked = false;
+  updateCourseBulkBar();
+}
+function updateCourseBulkBar() {
+  const bar = document.getElementById('courseBulkBar');
+  const count = document.getElementById('courseBulkCount');
+  if (!bar || !count) return;
+  count.textContent = _courseSel.size;
+  bar.classList.toggle('visible', _courseSel.size > 0);
+  const allBoxes = document.querySelectorAll('.crs-cb');
+  const sa = document.getElementById('courseBulkSelectAll');
+  if (sa) sa.checked = allBoxes.length > 0 && [...allBoxes].every(cb => _courseSel.has(cb.value));
+}
+// Per's request — bulk delete for courses, alongside the single-course
+// Delete button already on each row. Reuses the exact same enrolment
+// safety check as delCourse: anything selected that has real people
+// enrolled gets named explicitly in the confirm dialog rather than
+// silently deleted alongside genuine empty duplicates, since a bulk
+// action is exactly where an accidental include is easiest to miss.
+async function bulkDeleteCourses() {
+  const ids = [..._courseSel]; if (!ids.length) return;
+  const selected = allCourses.filter(c => ids.includes(c.id));
+  const withEnrolments = selected.filter(c => Number(c.enrolment_count) > 0);
+  let msg = `Permanently delete ${ids.length} course${ids.length>1?'s':''}? This cannot be undone.`;
+  if (withEnrolments.length) {
+    msg += `\n\nWarning — ${withEnrolments.length} of these ${withEnrolments.length===1?'has':'have'} real people enrolled:\n` +
+      withEnrolments.map(c => `• ${c.title} (${c.enrolment_count} enrolled)`).join('\n');
+  }
+  if (!(await appConfirm(msg))) return;
+  const btn = document.getElementById('courseBulkDeleteBtn');
+  setBtnLoading(btn, true, 'Deleting…');
+  try {
+    for (const id of ids) {
+      await fetch(`/api/content/courses/${id}`, {method:'DELETE'});
+    }
+    clearCourseSelection();
+    loadAll();
+  } finally {
+    setBtnLoading(btn, false);
+  }
+}
+
 
 function openNewCourse(){
   document.getElementById('ncTitle').textContent='New course';
