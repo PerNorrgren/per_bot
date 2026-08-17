@@ -581,7 +581,7 @@
 <div class="modal-overlay" id="autoCourseModal">
   <div class="modal" style="max-width:640px">
     <h3>Confirm course organization</h3>
-    <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Grouped by "Session N" found in each filename. Files with no session number found are listed separately below and won't be added to any lesson — add those by hand afterward. Titles are a best guess from the filename — edit any of them before confirming.</div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Grouped by "Session N" found in each filename. A file with no session number found is grouped into a "Reference" lesson instead, so nothing gets left out — move any of them into the right lesson afterward. Titles are a best guess from the filename — edit any of them before confirming.</div>
     <div id="acBody" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
     <div class="modal-err" id="acErr"></div>
     <div class="modal-btns">
@@ -3073,30 +3073,39 @@ function parseSessionInfo(filename){
   return { num, titleGuess: rest || `Session ${num}` };
 }
 
-let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse
+let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse. num==='reference' is the special no-session-number bucket, always sorted last (see confirmAutoCourse).
 function openAutoCourseConfirm(){
   const groups = {};
-  const ungrouped = [];
+  const refItems = [];
   upQueue.forEach(it => {
     if (!it.fileId) return; // failed uploads never reach here anyway
     const info = parseSessionInfo(it.file.name);
-    if (!info) { ungrouped.push(it); return; }
+    // Per's request — a file with no "SessionN" in its name no longer
+    // falls out of the process entirely. It's grouped into a standing
+    // "Reference" lesson instead (created once, reused on every later
+    // batch — see the title-match lookup in confirmAutoCourse), so
+    // nothing needs re-uploading by hand. Still just a starting point:
+    // any file can be dragged/moved to a real lesson afterward the same
+    // way as any other lesson file.
+    if (!info) { refItems.push(it); return; }
     if (!groups[info.num]) groups[info.num] = { num: info.num, titleGuess: info.titleGuess, items: [] };
     groups[info.num].items.push(it);
   });
   _acGroups = Object.values(groups).sort((a,b)=>a.num-b.num);
+  if (refItems.length) {
+    _acGroups.push({ num: 'reference', titleGuess: 'Reference', items: refItems });
+  }
   const body = document.getElementById('acBody');
   body.innerHTML = _acGroups.map((g,gi)=>`
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:10px 12px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-        <span style="font-size:15px;color:rgba(255,255,255,0.25);min-width:20px">${g.num}</span>
+        <span style="font-size:15px;color:rgba(255,255,255,0.25);min-width:20px">${g.num === 'reference' ? 'Ref' : g.num}</span>
         <input type="text" value="${g.titleGuess.replace(/"/g,'&quot;')}" oninput="_acGroups[${gi}].titleGuess=this.value" style="flex:1"/>
       </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.35);padding-left:28px">${g.items.map(it=>it.file.name).join(', ')}</div>
+      ${g.num === 'reference' ? '<div style="font-size:10.5px;color:rgba(180,230,200,0.55);padding-left:28px;margin-top:4px">No session number found in these filenames — grouped here so nothing is left out. Move individual files into the right lesson any time afterward.</div>' : ''}
     </div>
-  `).join('') + (ungrouped.length ? `
-    <div style="font-size:11px;color:rgba(255,180,60,0.75);padding:8px 4px">No session number found — won't be added to any lesson: ${ungrouped.map(it=>it.file.name).join(', ')}</div>
-  ` : '');
+  `).join('');
   document.getElementById('acErr').textContent = '';
   openModal('autoCourseModal');
 }
@@ -3121,11 +3130,42 @@ async function confirmAutoCourse(){
   // lesson created alongside it.
   const existingLessons = await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json()).catch(()=>[]);
   const existingByNum = {};
-  existingLessons.forEach(l => { existingByNum[l.lesson_number] = l; });
+  let maxLessonNumber = 0;
+  existingLessons.forEach(l => {
+    existingByNum[l.lesson_number] = l;
+    if (l.lesson_number > maxLessonNumber) maxLessonNumber = l.lesson_number;
+  });
+  // Matched by title, not number — "Reference" has no natural lesson
+  // number of its own, and this way a second batch of unmatched files
+  // (a later upload for the same course) lands in the same lesson
+  // rather than creating a second "Reference" lesson alongside it.
+  const existingRefLesson = existingLessons.find(l => (l.title||'').trim().toLowerCase() === 'reference');
+  // Placed after every real session — both the ones already in the
+  // course AND any being created in this same batch — so it never sorts
+  // ahead of Session 1. That matters beyond just display order: the
+  // dashboard's "Continue" card picks the lowest-numbered not-yet-started
+  // lesson for a fresh enrolment, and Reference material isn't meant to
+  // be that first thing a new student is pointed at.
+  const maxNumberedThisBatch = _acGroups.filter(g => g.num !== 'reference').reduce((m,g) => Math.max(m, g.num), 0);
+  const refLessonNumber = Math.max(maxLessonNumber, maxNumberedThisBatch) + 1;
 
   for (const g of _acGroups) {
     const fileIds = g.items.map(it=>it.fileId).filter(Boolean);
     if (!fileIds.length) continue;
+
+    if (g.num === 'reference') {
+      if (existingRefLesson) {
+        for (const fid of fileIds) {
+          await fetch('/api/content/lesson-file-refs', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({lessonId: existingRefLesson.id, fileId: fid})});
+        }
+      } else {
+        await fetch('/api/content/lessons', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({courseId, lessonNumber:refLessonNumber, title:g.titleGuess || 'Reference', visibility:_defaultLessonVisibility||'client', accessStatus:'visible', fileIds})});
+      }
+      continue;
+    }
+
     const existing = existingByNum[g.num];
     if (existing) {
       for (const fid of fileIds) {
@@ -3216,6 +3256,23 @@ async function doUpload(){
     catEl.focus();
     catEl.style.outline = '2px solid rgba(255,140,120,0.6)';
     setTimeout(() => { catEl.style.outline = ''; }, 2000);
+    return;
+  }
+  // Per's request — the same gap as the category check above, for the
+  // "new course" title: previously this only got caught at the very
+  // end, in confirmAutoCourse, AFTER every file had already uploaded —
+  // by then there's no way back to this field at all, since the confirm
+  // modal doesn't have it. Caught here instead, before the batch starts,
+  // exactly like the category check just above.
+  if (document.getElementById('upAutoCourse').checked
+      && document.getElementById('upAutoCourseTarget').value === '__new__'
+      && !document.getElementById('upAutoCourseNewTitle').value.trim()) {
+    err.textContent = 'Enter a title for the new course — see the field highlighted above.';
+    const titleEl = document.getElementById('upAutoCourseNewTitle');
+    titleEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    titleEl.focus();
+    titleEl.style.outline = '2px solid rgba(255,140,120,0.6)';
+    setTimeout(() => { titleEl.style.outline = ''; }, 2000);
     return;
   }
   // Per Bot 26 — only files that still have their bytes loaded in this
