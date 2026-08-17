@@ -4422,9 +4422,29 @@ async function rmLessonFile(refId){
 // how a file lands in the "Reference" bucket (from bulk auto-organize
 // grouping files with no session number) actually gets sorted into a
 // real numbered lesson afterward.
+//
+// Per reported this doing nothing when clicked. Reviewed the client
+// code, the server route, and the db update itself — the db logic tested
+// correctly in isolation against a mock of the real schema — but this
+// function had a real, separate bug either way: a plain fetch() with no
+// res.ok check. fetch() only rejects on an actual network failure, not
+// on a 4xx/5xx from the server, so any server-side error here would have
+// failed completely silently — exactly the "nothing happens" symptom.
+// Now checks the response and shows a real error if something's wrong,
+// rather than swallowing it.
 async function moveLessonFileToLesson(refId, lessonId){
   if(!lessonId) return;
-  await fetch(`/api/content/lesson-file-refs/${refId}/move-to-lesson`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({lessonId})});
+  try {
+    const res = await fetch(`/api/content/lesson-file-refs/${refId}/move-to-lesson`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({lessonId})});
+    if (!res.ok) {
+      const d = await res.json().catch(()=>({}));
+      appAlert(d.error || `Couldn't move that file (server said ${res.status}). Nothing was changed.`);
+      return;
+    }
+  } catch (err) {
+    appAlert("Couldn't reach the server to move that file — check your connection and try again.");
+    return;
+  }
   openCourseDetail(curCourseId);
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
