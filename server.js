@@ -10272,6 +10272,16 @@ app.patch('/api/content/lesson-file-refs/:id/move', auth.requireAuthApi(['admin'
   db.moveLessonFileRef(req.params.id, direction);
   res.json({ ok: true });
 });
+// Per's request — move a file to a different lesson (e.g. out of the
+// auto-organize "Reference" bucket and into a real numbered session).
+// Distinct from the up/down route just above, which only ever reorders a
+// file within its own lesson.
+app.patch('/api/content/lesson-file-refs/:id/move-to-lesson', auth.requireAuthApi(['admin']), (req, res) => {
+  const { lessonId } = req.body;
+  if (!lessonId) return res.status(400).json({ error: 'lessonId required.' });
+  db.moveLessonFileRefToLesson(req.params.id, lessonId);
+  res.json({ ok: true });
+});
 // Per Bot 15g — drag-and-drop reorder: the whole new order in one call.
 app.patch('/api/content/lessons/:id/files/reorder', auth.requireAuthApi(['admin']), (req, res) => {
   if (!Array.isArray(req.body.refIds)) return res.status(400).json({ error: 'refIds array required.' });
