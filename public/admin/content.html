@@ -3828,6 +3828,21 @@ async function openEnrolmentsModal(instanceId,instanceTitle){
 function renderCourses(courses){
   const el=document.getElementById('courseList');
   if(!courses.length){el.innerHTML='<div class="empty">No courses yet.</div>';return;}
+  // Per's request — duplicates from clicking a save/create button more
+  // than once (before setBtnLoading existed on those buttons) turned out
+  // NOT to be reliably empty — a rapid repeat click on Create / add
+  // lessons re-ran the whole thing, so each duplicate got its own full
+  // lesson set and file attachments too, not just an empty shell. Title
+  // alone was never safe to delete on (see cleanupEmptyCourses' own
+  // comment on that), so this only ever flags a possible duplicate for a
+  // human to look at — created date and real enrolment count are shown
+  // per row specifically so the one to KEEP is obvious even when several
+  // share an identical title and an identical lesson count.
+  const titleCounts = {};
+  courses.forEach(c => {
+    const key = (c.title||'').trim().toLowerCase();
+    titleCounts[key] = (titleCounts[key]||0) + 1;
+  });
   // Per Bot 24 — "Featured" (Add to Home carousel) silently does nothing
   // without an open Instance too — the fine print in the edit modal said
   // so, but it's easy to miss there and the course just quietly never
@@ -3836,11 +3851,19 @@ function renderCourses(courses){
   el.innerHTML=courses.map(c=>{
     const hasOpenInstance = allInstances.some(i=>i.course_id===c.id && i.status==='open');
     const featuredButNoInstance = c.featured && !hasOpenInstance;
+    const isDuplicateTitle = titleCounts[(c.title||'').trim().toLowerCase()] > 1;
+    const enrolCount = Number(c.enrolment_count) || 0;
+    // Matches the same plain new Date(created_at) parsing already used
+    // for sort elsewhere in this file (_libSortKey/_pickerSortKey) rather
+    // than a stricter UTC conversion — consistency with the existing
+    // pattern here matters more than the small timezone precision this
+    // display doesn't actually need.
+    const createdDisplay = c.created_at ? new Date(c.created_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : '';
     return `
     <div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}${Number(c.lesson_count)===0?' <span class="tag" style="background:rgba(255,100,80,0.14);color:rgba(255,120,100,0.85)" title="No lessons — usually a leftover from clicking Save more than once. Safe to delete unless you\'re mid-way through adding lessons to it.">⚠ 0 lessons</span>':` <span class="tag" style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)">${c.lesson_count} lesson${Number(c.lesson_count)===1?'':'s'}</span>`}</div>
-        <div class="item-row-meta">${c.description||''}</div>
+        <div class="item-row-title">${c.title}${c.featured?' <span class="tag uses">★ Featured</span>':''}${featuredButNoInstance?' <span class="tag" style="background:rgba(255,180,60,0.15);color:rgba(255,180,60,0.85)" title="Featured courses only show on the Home carousel if they also have an open Instance — this one doesn\'t, so it won\'t appear.">⚠ No open instance — won\'t show in carousel</span>':''}${c.access_status==='locked'?' <span class="tag" style="background:rgba(255,180,60,0.12);color:rgba(255,180,60,0.8)">🔒 Locked</span>':''}${c.access_status==='hidden'?' <span class="tag" style="background:rgba(255,100,100,0.12);color:rgba(255,120,120,0.8)">🚫 Hidden</span>':''}${c.skin_id?` <span class="tag" style="background:rgba(200,160,255,0.12);color:rgba(200,160,255,0.8)">🔒 ${c.skin_name||c.skin_id}</span>`:''}${Number(c.lesson_count)===0?' <span class="tag" style="background:rgba(255,100,80,0.14);color:rgba(255,120,100,0.85)" title="No lessons — usually a leftover from clicking Save more than once. Safe to delete unless you\'re mid-way through adding lessons to it.">⚠ 0 lessons</span>':` <span class="tag" style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.4)">${c.lesson_count} lesson${Number(c.lesson_count)===1?'':'s'}</span>`}${isDuplicateTitle?` <span class="tag" style="background:rgba(255,180,60,0.14);color:rgba(255,190,90,0.9)" title="Another course shares this exact title — check the lesson count, created date, and enrolments below before deleting either one.">⚠ Possible duplicate</span>`:''}${enrolCount>0?` <span class="tag" style="background:rgba(120,200,160,0.14);color:rgba(140,220,180,0.9)" title="This course has real people enrolled — do not delete without checking first.">👤 ${enrolCount} enrolled</span>`:''}</div>
+        <div class="item-row-meta">${c.description||''}${createdDisplay?`${c.description?' · ':''}Created ${createdDisplay}`:''}</div>
         <div class="item-row-tags">
           ${c.category_name?`<span class="tag cat">${c.category_name}</span>`:''}
           ${c.subcategory_name?`<span class="tag cat">${c.subcategory_name}</span>`:''}
@@ -4322,7 +4345,22 @@ async function moveLessonFileToLesson(refId, lessonId){
   openCourseDetail(curCourseId);
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
-async function delCourse(id){if(!(await appConfirm('Delete course and all lessons?')))return;await fetch(`/api/content/courses/${id}`,{method:'DELETE'});loadAll();}
+// Per's request — the plain confirm here used to say the same thing
+// regardless of what's actually at stake. Now checks the course's own
+// enrolment_count (from getAllCourses) and uses a much more explicit
+// warning when there's a real person enrolled, rather than the same
+// generic line whether this is an empty duplicate or someone's actual
+// in-progress course.
+async function delCourse(id){
+  const c = allCourses.find(x=>x.id===id);
+  const enrolCount = c ? (Number(c.enrolment_count)||0) : 0;
+  const msg = enrolCount>0
+    ? `This course has ${enrolCount} real ${enrolCount===1?'person':'people'} enrolled. Deleting it removes their access and progress permanently. Are you sure?`
+    : 'Delete course and all lessons?';
+  if(!(await appConfirm(msg))) return;
+  await fetch(`/api/content/courses/${id}`,{method:'DELETE'});
+  loadAll();
+}
 // Per's request — a fast, safe way to clear out empty-course clutter,
 // the most common cause being exactly what led to it this time: clicking
 // Save more than once before the button gave any feedback (fixed
@@ -4333,6 +4371,15 @@ async function delCourse(id){if(!(await appConfirm('Delete course and all lesson
 // genuinely dangerous way to decide what's safe to delete. Names every
 // course about to go in the confirm dialog rather than just a count, so
 // nothing gets removed sight-unseen.
+//
+// Deliberately does NOT catch a duplicate that has its own full lesson
+// set — turned out a rapid repeat click on Create / add lessons doesn't
+// just make an empty shell, it re-runs the whole thing, so each
+// duplicate can end up fully populated too. Those aren't safe to
+// auto-delete by any rule that can be checked here; the "Possible
+// duplicate" badge plus the per-row lesson count / created date /
+// enrolment count on the course list is what surfaces those for a human
+// to compare and remove by hand instead.
 async function cleanupEmptyCourses(){
   const empty = allCourses.filter(c => Number(c.lesson_count) === 0);
   if (!empty.length) { appAlert('No empty courses found — everything currently in the list has at least one lesson.'); return; }

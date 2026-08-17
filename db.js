@@ -3513,7 +3513,8 @@ function setCourseTierGating(id, requiredTier, hideWhenLocked) {
 }
 function getAllCourses(filters = {}) {
   let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name,
-    (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as lesson_count
+    (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as lesson_count,
+    (SELECT COUNT(*) FROM enrolments e JOIN course_instances ci ON e.course_instance_id = ci.id WHERE ci.course_id = c.id) as enrolment_count
     FROM courses c
     LEFT JOIN categories cat ON c.category_id=cat.id
     LEFT JOIN categories sub ON c.subcategory_id=sub.id
