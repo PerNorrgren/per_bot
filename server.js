@@ -306,6 +306,21 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           // tracking outright, cancellation or payment-failure alike. No
           // partial credit for "still checking in" — a successful renewal
           // is unambiguous.
+          //
+          // Per's request, after a real customer got confused by exactly
+          // this gap — clearing the tracking here was always correct for
+          // access, but silent. Specifically for the payment_failure case
+          // (not cancellation — someone who chose to leave and then pays
+          // again is a different, better story that doesn't need this
+          // particular email), this now sends a short "all sorted" email
+          // before clearing state, so whoever got the earlier "didn't go
+          // through" notice — including cases where Stripe's own retry
+          // resolves it within minutes, before they've done anything —
+          // gets an equally direct follow-up instead of being left to
+          // wonder, the way Jude was.
+          if (userRec.savers_type === 'payment_failure' && userRec.email) {
+            await emailSaversFailureResolved(userRec);
+          }
           if (userRec.savers_type) db.clearSaversState(userRec.id);
         }
         break;
@@ -1245,6 +1260,23 @@ function emailSaversFailureFinal(user, override) {
     `Last day of full access before your account moves to the free Explorer tier — if it's just a card that needs updating, this is the moment to catch it.
 
 If it's genuinely time to step back for now, that's completely fine too — Explorer keeps the free content open regardless.`,
+    {}, override);
+}
+// Per's request, prompted by a real customer (Jude) getting confused and
+// emailing to check whether her payment had actually gone through — it
+// had, and quickly (Stripe's own automatic retry succeeding within a
+// minute of the initial decline is completely normal and not something
+// this app has any control over), but nothing ever told HER that. The
+// account-level fix (clearSaversState, right where this is called from)
+// was already correct — access was never actually at risk — this closes
+// the purely human gap: whoever got the "didn't go through" email and
+// then quietly had it resolve in the background deserves an equally
+// direct "it's sorted" follow-up, not silence.
+function emailSaversFailureResolved(user, override) {
+  return sendSaversEmail(user, 'savers_failure_resolved', "All sorted — that payment went through",
+    `Good news — the payment issue from before has resolved itself, and everything's back to normal. No action needed from you.
+
+If you already went looking for somewhere to update a card, sorry for the runaround — nothing was actually needed after all.`,
     {}, override);
 }
 

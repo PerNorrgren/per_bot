@@ -7364,6 +7364,15 @@ const MESSAGE_TYPE_REGISTRY = {
   savers_failure_day0:  { label: 'Savers \u2014 Payment failure, day 0',   subjectCol: 'savers_failure_day0_subject',  bodyCol: 'savers_failure_day0_body',  formatCol: 'savers_failure_day0_format',  extraCols: {} },
   savers_failure_mid:   { label: 'Savers \u2014 Payment failure, mid',     subjectCol: 'savers_failure_mid_subject',   bodyCol: 'savers_failure_mid_body',   formatCol: 'savers_failure_mid_format',   extraCols: {} },
   savers_failure_final: { label: 'Savers \u2014 Payment failure, final',   subjectCol: 'savers_failure_final_subject', bodyCol: 'savers_failure_final_body', formatCol: 'savers_failure_final_format', extraCols: {} },
+  // Per's request, after Jude got confused by an unresolved-looking
+  // "payment didn't go through" email when it had, in fact, already gone
+  // through — no legacy app_config column for this one (it never existed
+  // before), so importLiveConfigIntoMessageVersions' one-time pull above
+  // will find nothing and correctly skip it; this type simply starts with
+  // zero versions, same as any other type Per hasn't customised yet, and
+  // runs on the built-in default in emailSaversFailureResolved until/
+  // unless he edits it via Comms.
+  savers_failure_resolved: { label: 'Savers \u2014 Payment failure, resolved', subjectCol: 'savers_failure_resolved_subject', bodyCol: 'savers_failure_resolved_body', formatCol: 'savers_failure_resolved_format', extraCols: {} },
 };
 
 function isKnownMessageType(type) { return Object.prototype.hasOwnProperty.call(MESSAGE_TYPE_REGISTRY, type); }
