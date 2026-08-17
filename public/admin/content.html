@@ -934,13 +934,7 @@
       </label>
       <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px">Also needs an open instance under Instances for this course to actually show up — the carousel only lists courses someone can currently enrol in.</div>
     </div>
-    <div id="lessonBuilderWrap"><label>Lessons (files assigned after saving)</label>
-      <div class="lesson-builder">
-        <div class="lesson-builder-hdr">Add lessons</div>
-        <div id="lessonEntries"></div>
-        <div class="add-lesson-row"><button onclick="addLE()">+ Add lesson</button></div>
-      </div>
-    </div>
+    <div class="modal-note" style="margin-top:4px">Lessons are added after saving, from the course's own page — each one lets you set its number, title, and files together in one step.</div>
     <div class="modal-err" id="cErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newCourseModal')">Cancel</button>
@@ -1055,6 +1049,11 @@
           <select id="alPickerTypeF" style="flex:1;font-size:11px" onchange="applyPickerFilters('alPicker')"><option value="">All types</option></select>
         </div>
         <input class="file-picker-search" placeholder="Search library…" oninput="applyPickerFilters('alPicker')"/>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:6px 2px 4px">
+          <span style="font-size:10px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:0.06em">Sort</span>
+          <button type="button" onclick="setPickerSort('alPicker','title')" style="background:none;border:none;color:rgba(255,255,255,0.5);font-size:11px;cursor:pointer;padding:0">Title<span id="alPickerSortTitleInd"></span></button>
+          <button type="button" onclick="setPickerSort('alPicker','created_at')" style="background:none;border:none;color:rgba(255,255,255,0.5);font-size:11px;cursor:pointer;padding:0">Uploaded<span id="alPickerSortDateInd"></span></button>
+        </div>
         <div class="file-picker-list" id="alPicker"></div>
       </div>
     </div>
@@ -1161,6 +1160,11 @@
           <select id="pdPickerTypeF" style="flex:1;font-size:11px" onchange="applyPickerFilters('pdPicker')"><option value="">All types</option></select>
         </div>
         <input class="file-picker-search" placeholder="Search library…" oninput="applyPickerFilters('pdPicker')"/>
+        <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:6px 2px 4px">
+          <span style="font-size:10px;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:0.06em">Sort</span>
+          <button type="button" onclick="setPickerSort('pdPicker','title')" style="background:none;border:none;color:rgba(255,255,255,0.5);font-size:11px;cursor:pointer;padding:0">Title<span id="pdPickerSortTitleInd"></span></button>
+          <button type="button" onclick="setPickerSort('pdPicker','created_at')" style="background:none;border:none;color:rgba(255,255,255,0.5);font-size:11px;cursor:pointer;padding:0">Uploaded<span id="pdPickerSortDateInd"></span></button>
+        </div>
         <div class="file-picker-list" id="pdPicker"></div>
       </div>
     </div>
@@ -1204,7 +1208,6 @@
 <script>
 let allCats=[],allFiles=[],allCourses=[],allPlaylists=[],allInstances=[];
 let upQueue=[];
-let leCount=0;
 let curCourseId=null, curPlaylistId=null, addFilesLessonId=null, editingLessonId=null;
 
 // ── Working-button feedback (Per Bot 21) — same reusable pattern as
@@ -3072,29 +3075,41 @@ function parseSessionInfo(filename){
     .trim();
   return { num, titleGuess: rest || `Session ${num}` };
 }
+// Per's request — a file with no "SessionN" isn't only ever a stray
+// extra. A filename that clearly says "introduction" or "reference" gets
+// its own matching lesson instead of being lumped into one generic
+// bucket. "Introduction" specifically becomes lesson number 0 — the same
+// "sorts before Lesson 1" convention already named in the Add Lesson
+// modal's own NUMBER field hint, not a new idea invented here. Order
+// matters: checked only after parseSessionInfo above has already ruled
+// out a real "SessionN" match, and "introduction" before "reference" so
+// a name that happened to contain both isn't ambiguous.
+function classifyUnmatchedFile(filename){
+  // Underscores and hyphens count as "word characters" to a regex \b, so
+  // without normalizing them first, \bintro\b would never match inside
+  // something like "finding_mindfulness_introduction" — there's no real
+  // word boundary there as far as the regex engine is concerned. Spaces
+  // out first so \b lands on actual word breaks.
+  const lower = filename.toLowerCase().replace(/[_-]+/g, ' ');
+  if (/\bintro(duction)?\b/.test(lower)) return { num: 0, titleGuess: 'Introduction' };
+  if (/\breference\b/.test(lower)) return { num: 'reference', titleGuess: 'Reference' };
+  return { num: 'reference', titleGuess: 'Reference' }; // catch-all — same bucket as an explicit "reference" match
+}
 
-let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse. num==='reference' is the special no-session-number bucket, always sorted last (see confirmAutoCourse).
+let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse. num==='reference' is the special no-session-number bucket, always sorted last (see confirmAutoCourse). num===0 ("Introduction") sorts first, same as any other numbered group.
 function openAutoCourseConfirm(){
   const groups = {};
-  const refItems = [];
   upQueue.forEach(it => {
     if (!it.fileId) return; // failed uploads never reach here anyway
-    const info = parseSessionInfo(it.file.name);
-    // Per's request — a file with no "SessionN" in its name no longer
-    // falls out of the process entirely. It's grouped into a standing
-    // "Reference" lesson instead (created once, reused on every later
-    // batch — see the title-match lookup in confirmAutoCourse), so
-    // nothing needs re-uploading by hand. Still just a starting point:
-    // any file can be dragged/moved to a real lesson afterward the same
-    // way as any other lesson file.
-    if (!info) { refItems.push(it); return; }
+    const info = parseSessionInfo(it.file.name) || classifyUnmatchedFile(it.file.name);
     if (!groups[info.num]) groups[info.num] = { num: info.num, titleGuess: info.titleGuess, items: [] };
     groups[info.num].items.push(it);
   });
-  _acGroups = Object.values(groups).sort((a,b)=>a.num-b.num);
-  if (refItems.length) {
-    _acGroups.push({ num: 'reference', titleGuess: 'Reference', items: refItems });
-  }
+  _acGroups = Object.values(groups).sort((a,b) => {
+    if (a.num === 'reference') return 1;
+    if (b.num === 'reference') return -1;
+    return a.num - b.num;
+  });
   const body = document.getElementById('acBody');
   body.innerHTML = _acGroups.map((g,gi)=>`
     <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:10px 12px">
@@ -3112,6 +3127,15 @@ function openAutoCourseConfirm(){
 
 async function confirmAutoCourse(){
   const err = document.getElementById('acErr');
+  const btn = document.getElementById('acConfirmBtn');
+  // Per's request — this button could genuinely take several seconds
+  // with nothing visible happening: it's a *sequence* of awaited fetches
+  // (one course creation, one lesson-list fetch, then one POST per file
+  // for every group landing in an already-existing lesson), not one
+  // single request. try/finally so the spinner always clears, including
+  // on the early-return validation path below and if any fetch throws.
+  setBtnLoading(btn, true, 'Creating…');
+  try {
   const target = document.getElementById('upAutoCourseTarget').value;
   let courseId = target;
   if (target === '__new__') {
@@ -3181,6 +3205,9 @@ async function confirmAutoCourse(){
   closeModal('uploadModal');
   loadAll();
   openCourseDetail(courseId);
+  } finally {
+    setBtnLoading(btn, false);
+  }
 }
 
 // Per Bot 26 — fire-and-forget: the queue row update matters for next
@@ -3498,9 +3525,60 @@ function sortLibraryFiles(files){
 function naturalSortFiles(files){
   return [...files].sort((a,b)=>(a.title||'').localeCompare(b.title||'',undefined,{numeric:true,sensitivity:'base'}));
 }
+
+// Per's request — a "sort by uploaded" heading on the library picker
+// (Add lesson, playlist tracks). Deliberately its OWN sort state, not a
+// reuse of _libSortKey/_libSortDir above — those already carry a comment
+// explaining a past bug where sorting the main Library tab silently
+// re-sorted this picker too. Persists across modal opens within the
+// page (unlike the category/subcategory/search filters, which do reset
+// on open, see below) since the real use case — sorting a big fresh
+// upload batch by date while working through several lessons in one
+// sitting — wants that choice to stick, not reset every time.
+let _pickerSortKey = 'title';
+let _pickerSortDir = 1;
+function setPickerSort(pickerId, key){
+  if (_pickerSortKey === key) { _pickerSortDir = -_pickerSortDir; }
+  else { _pickerSortKey = key; _pickerSortDir = key === 'created_at' ? -1 : 1; }
+  const selIds = getPickerSel(pickerId);
+  // renderPicker() resets filters/search on its normal (much more common)
+  // fresh-open path — captured and restored here so clicking a sort
+  // button mid-browse doesn't throw away a half-typed search.
+  const wrap = document.getElementById(pickerId).closest('.file-picker');
+  const searchVal = wrap.querySelector('.file-picker-search')?.value || '';
+  const catVal = document.getElementById(pickerId+'CatF')?.value || '';
+  const subVal = document.getElementById(pickerId+'SubF')?.value || '';
+  const typeVal = document.getElementById(pickerId+'TypeF')?.value || '';
+  renderPicker(pickerId, selIds);
+  const searchEl = wrap.querySelector('.file-picker-search');
+  if (searchEl) searchEl.value = searchVal;
+  if (document.getElementById(pickerId+'CatF')) document.getElementById(pickerId+'CatF').value = catVal;
+  if (document.getElementById(pickerId+'SubF')) document.getElementById(pickerId+'SubF').value = subVal;
+  if (document.getElementById(pickerId+'TypeF')) document.getElementById(pickerId+'TypeF').value = typeVal;
+  applyPickerFilters(pickerId);
+}
+function pickerSortIndicator(key){
+  if (_pickerSortKey !== key) return '';
+  return _pickerSortDir === 1 ? ' ▲' : ' ▼';
+}
+function updatePickerSortIndicators(pickerId){
+  const t = document.getElementById(pickerId+'SortTitleInd');
+  const d = document.getElementById(pickerId+'SortDateInd');
+  if (t) t.textContent = pickerSortIndicator('title');
+  if (d) d.textContent = pickerSortIndicator('created_at');
+}
+function sortPickerFiles(files){
+  return [...files].sort((a,b)=>{
+    if (_pickerSortKey === 'created_at') {
+      return (new Date(a.created_at||0) - new Date(b.created_at||0)) * _pickerSortDir;
+    }
+    return (a.title||'').localeCompare(b.title||'',undefined,{numeric:true,sensitivity:'base'}) * _pickerSortDir;
+  });
+}
+
 function renderPicker(pickerId,selIds=[]){
   const el=document.getElementById(pickerId);
-  el.innerHTML=naturalSortFiles(allFiles).map(f=>`
+  el.innerHTML=sortPickerFiles(allFiles).map(f=>`
     <div class="picker-item${selIds.includes(f.id)?' sel':''}" data-id="${f.id}" data-cat="${f.category_id||''}" data-subcat="${f.subcategory_id||''}" data-kind="${f.content_type||''}" onclick="togglePick(this)">
       <input type="checkbox" style="accent-color:#b4e6c8;pointer-events:none" ${selIds.includes(f.id)?'checked':''}/>
       <span style="font-size:16px">${ficon(f.file_type)}</span>
@@ -3518,7 +3596,9 @@ function renderPicker(pickerId,selIds=[]){
   });
   const searchEl=el.closest('.file-picker')?.querySelector('.file-picker-search');
   if(searchEl) searchEl.value='';
+  updatePickerSortIndicators(pickerId);
 }
+
 
 function togglePick(el){
   el.classList.toggle('sel');
@@ -3776,28 +3856,25 @@ function renderCourses(courses){
 }
 
 function openNewCourse(){
-  leCount=0;
   document.getElementById('ncTitle').textContent='New course';
   document.getElementById('editCourseId').value='';
-  document.getElementById('lessonBuilderWrap').style.display='';
   document.getElementById('cTitle').value='';mountRichEditor('cDesc');setRichEditorContent('cDesc','');
   document.getElementById('cCat').value='';document.getElementById('cSub').innerHTML='<option value="">Select…</option>';
   document.getElementById('cSkin').value='';
   document.getElementById('cAccessStatus').value='visible';
   document.getElementById('cFeatured').checked=false;
-  document.getElementById('lessonEntries').innerHTML='';document.getElementById('cErr').textContent='';
-  addLE();openModal('newCourseModal');
+  document.getElementById('cErr').textContent='';
+  openModal('newCourseModal');
 }
 
-// Edit — lesson-builder is hidden here since lessons for an existing course
-// are already managed from the course detail view; re-showing it would just
-// invite duplicate lesson creation on save.
+// Edit — same modal as New course, minus the (now-removed) lesson
+// builder either way: lessons for an existing course are always managed
+// from the course detail view, one at a time, via "+ Add lesson".
 function editCourse(courseId){
   const c=allCourses.find(x=>x.id===courseId);
   if(!c)return;
   document.getElementById('ncTitle').textContent='Edit course';
   document.getElementById('editCourseId').value=courseId;
-  document.getElementById('lessonBuilderWrap').style.display='none';
   document.getElementById('cTitle').value=c.title||'';
   mountRichEditor('cDesc');
   setRichEditorContent('cDesc', c.description||'');
@@ -3836,30 +3913,23 @@ async function saveCourse(){
     return;
   }
 
-  const lessons=[];
-  document.querySelectorAll('.lesson-entry').forEach((el,i)=>{
-    const t=el.querySelector('input[type=text]');const v=el.querySelector('select');
-    if(t?.value.trim())lessons.push({number:i+1,title:t.value.trim(),visibility:v?.value||'client'});
-  });
+  // Per's request — the old bulk lesson-title-only entry here (number,
+  // title, visibility, no files) was a genuinely redundant first pass:
+  // "+ Add lesson" on the course detail page right after this already
+  // covers number, title, visibility, access, AND files in one step, so
+  // this was just asking for the same information twice and leaving a
+  // batch of empty placeholder lessons behind besides. Lessons are
+  // created entirely from the course detail view now — this just makes
+  // the course shell itself.
   const res=await fetch('/api/content/courses',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({title,description:document.getElementById('cDesc').value,
       categoryId:catId,subcategoryId:document.getElementById('cSub').value||null,
       skinId:document.getElementById('cSkin').value||null,
-      accessStatus:document.getElementById('cAccessStatus').value,lessons})});
+      accessStatus:document.getElementById('cAccessStatus').value})});
   const d=await res.json();
   if(d.error){err.textContent=d.error;return;}
   if(featured) await fetch(`/api/content/courses/${d.id}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured:true})});
   closeModal('newCourseModal');loadAll();openCourseDetail(d.id);
-}
-
-function addLE(){
-  leCount++;const n=leCount;
-  const d=document.createElement('div');d.className='lesson-entry';d.id=`le-${n}`;
-  d.innerHTML=`<div class="lesson-entry-num">${n}</div>
-    <input type="text" placeholder="Lesson title" id="le-t-${n}"/>
-    <select id="le-v-${n}"><option value="registered">Explorer</option><option value="member">Member</option><option value="client" selected>Client</option><option value="facilitator">Facilitator</option><option value="admin">Admin</option></select>
-    <button class="lesson-entry-rm" onclick="document.getElementById('le-${n}').remove()">×</button>`;
-  document.getElementById('lessonEntries').appendChild(d);
 }
 
 async function openCourseDetail(courseId){
@@ -3924,6 +3994,10 @@ async function openCourseDetail(courseId){
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:${f.free_preview?'rgba(180,230,200,0.85)':'rgba(255,255,255,0.35)'};cursor:pointer" title="Playable by any Explorer-and-up account, even if this course/lesson is otherwise locked or not enrolled in">
             <input type="checkbox" ${f.free_preview?'checked':''} onchange="toggleFileFreePreview('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> free preview
           </label>
+          <select onchange="if(this.value){moveLessonFileToLesson('${f.ref_id}',this.value);} this.selectedIndex=0;" title="Move this file to a different lesson" style="font-size:11px;max-width:120px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:rgba(255,255,255,0.6)">
+            <option value="">Move to…</option>
+            ${lessons.filter(ol=>ol.id!==l.id).map(ol=>`<option value="${ol.id}">${ol.lesson_number} — ${ol.title}</option>`).join('')}
+          </select>
           <button onclick="rmLessonFile('${f.ref_id}')" style="background:none;border:none;color:rgba(255,100,80,0.4);cursor:pointer;font-size:14px">×</button>
         </div>`).join('')}
       </div>`:''}
@@ -4234,6 +4308,16 @@ async function saveLesson(){
 
 async function rmLessonFile(refId){
   await fetch(`/api/content/lesson-file-refs/${refId}`,{method:'DELETE'});
+  openCourseDetail(curCourseId);
+}
+// Per's request — move a file straight to a different lesson in the same
+// course from its own row, rather than remove-here/re-add-there. Also
+// how a file lands in the "Reference" bucket (from bulk auto-organize
+// grouping files with no session number) actually gets sorted into a
+// real numbered lesson afterward.
+async function moveLessonFileToLesson(refId, lessonId){
+  if(!lessonId) return;
+  await fetch(`/api/content/lesson-file-refs/${refId}/move-to-lesson`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({lessonId})});
   openCourseDetail(curCourseId);
 }
 async function delLesson(id){if(!(await appConfirm('Delete this lesson?')))return;await fetch(`/api/content/lessons/${id}`,{method:'DELETE'});openCourseDetail(curCourseId);}
