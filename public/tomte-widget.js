@@ -37,9 +37,23 @@
     #tomte-fab.tomte-listening { border-color: rgba(255,140,120,0.8); animation: tomte-pulse 1.2s ease-in-out infinite; }
     @keyframes tomte-pulse { 0%,100% { box-shadow: 0 4px 18px rgba(255,140,120,0.15); } 50% { box-shadow: 0 4px 24px rgba(255,140,120,0.45); } }
 
+    /* Per's report — a message with an action link (this tip's "View →")
+       rendered its text but not the link on mobile specifically, while
+       desktop showed both fine. max-height here was plain 60vh, which —
+       same known issue already fixed elsewhere in this app (see
+       client/index.html's own vh/dvh comments) — doesn't shrink for
+       things that eat into a phone's actual visible area without
+       changing the reported viewport height itself, like the on-screen
+       keyboard. A plain vh calculation can end up taller than what's
+       genuinely visible, pushing the last line of the last message
+       (exactly where a tip's action link lives) out of view even though
+       it's really there. dvh tracks the real available space; browsers
+       without dvh support just ignore that second line and keep using
+       plain vh, same graceful-degradation pattern already established
+       elsewhere in this codebase. */
     #tomte-panel {
       position: fixed; right: 18px; bottom: 86px; width: 320px; max-width: calc(100vw - 36px);
-      max-height: 60vh; background: #0d1210; border: 1px solid rgba(255,255,255,0.12);
+      max-height: 60vh; max-height: 60dvh; background: #0d1210; border: 1px solid rgba(255,255,255,0.12);
       border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 99999;
       display: none; flex-direction: column; overflow: hidden; font-family: Georgia, serif;
     }
