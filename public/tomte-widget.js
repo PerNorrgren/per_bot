@@ -914,6 +914,21 @@
     // viewport's own resize event gets around to firing.
     inputEl.addEventListener('focus', () => { if (panel.classList.contains('tomte-open')) positionPanel(); });
     micSendBtn.addEventListener('click', stopListening);
+
+    // Per's request — opens automatically right after a fresh login or
+    // signup. window.TOMTE_AUTO_OPEN_ON_LOGIN is set by client/index.html
+    // reading the ?justLoggedIn=1 redirect param — checked here, at the
+    // very end of this script's own setup, rather than the other script
+    // calling straight into openPanel() itself, since that would depend
+    // on this IIFE having already finished setting up panel/fab/connect
+    // by the time the other script's own code runs — not guaranteed
+    // regardless of <script defer> ordering. Checking a plain flag here
+    // instead has no such race: by the time this line runs, everything
+    // above it in init() already exists.
+    if (window.TOMTE_AUTO_OPEN_ON_LOGIN) {
+      window.TOMTE_AUTO_OPEN_ON_LOGIN = false;
+      openPanel();
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

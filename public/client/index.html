@@ -1867,6 +1867,22 @@
     setPracticesGroupMode('mine');
   }
 
+  // Per's request — Tomte opens automatically right after a fresh login
+  // or signup (see the redirect: '/client/?justLoggedIn=1' in
+  // /api/login and /api/register). tomte-widget.js runs as a fully
+  // separate, self-contained script (its own IIFE — see the top of that
+  // file), so this can't call straight into it; a plain flag it checks
+  // for itself once its own setup is ready is what avoids a startup-order
+  // race between the two scripts. Cleared from the address bar via
+  // history.replaceState so refreshing this same page doesn't reopen
+  // Tomte every time.
+  if (urlParams.get('justLoggedIn') === '1') {
+    window.TOMTE_AUTO_OPEN_ON_LOGIN = true;
+    urlParams.delete('justLoggedIn');
+    const cleanUrl = location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '') + location.hash;
+    history.replaceState(null, '', cleanUrl);
+  }
+
   // ── Slideshow ── (Per Bot 20: skin-aware — see brand-inject.js. A
   // logged-in client's own skin is resolved server-side via /api/config,
   // so this just waits for that instead of needing its own skin lookup.)

@@ -1933,7 +1933,7 @@ app.post('/api/login', async (req, res) => {
     }
   }
 
-  const redirectMap = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/' };
+  const redirectMap = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/?justLoggedIn=1' };
   res.json({ redirect: redirectMap[user.role] || '/login' });
 });
 
@@ -2232,7 +2232,7 @@ app.post('/api/register', async (req, res) => {
     const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
     try { db.logLogin(id, 'client', 'register'); } catch(e) { console.error('[login_log] failed:', e.message); }
-    res.json({ redirect: '/client/' });
+    res.json({ redirect: '/client/?justLoggedIn=1' });
   } catch(e) {
     console.error('register error:', e);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });

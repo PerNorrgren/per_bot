@@ -609,6 +609,17 @@
           <option value="{{invite_link}}">Their login/invite link</option>
           <option value="{{expiry_date}}">Their membership expiry date</option>
         </select>
+        <!-- Per's request — the weekly email's own "insert" row can now
+             also pull straight from the same What's New items used on the
+             app's home splash box (see the "+ Add item" list in Sales),
+             instead of retyping the same one-liner in two places. Options
+             are (re-)fetched each time the newsletter modal opens — see
+             openNewsletterModal below — since a genuinely new item could
+             have been added in Sales since this modal was last open in
+             this same browser tab. -->
+        <select id="newsletterWhatsNewInsert" onchange="if(this.value){insertNewsletterFromWhatsNew(this.value);this.selectedIndex=0;}" style="font-size:11px;max-width:220px">
+          <option value="">Insert from What's New…</option>
+        </select>
         <!-- Per Bot 54 — generate-and-insert now lives in message-editor.js
              (MessageEditor.aiGenerateHtml/runAiGenerate), shared with every
              other page instead of a Newsletter-only copy. Populated by
@@ -1945,6 +1956,56 @@
     q.insertText(range.index, token);
     q.setSelection(range.index + token.length);
   }
+  // Per's request — reuses the same standing set of "What's New" items
+  // already written for the home splash box (Sales tab), rather than
+  // asking Per to type the same one-liner twice for two different
+  // places. Fetched fresh every time the newsletter modal opens (see the
+  // two call sites in openNewsletterModal/editNewsletter above) so an
+  // item added in Sales earlier in the same session still shows up here
+  // without needing a page reload.
+  let _whatsNewItemsForInsert = null;
+  async function populateWhatsNewInsertOptions() {
+    const sel = document.getElementById('newsletterWhatsNewInsert');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Insert from What\'s New…</option>';
+    try {
+      _whatsNewItemsForInsert = await (await fetch('/api/admin/whats-new-items')).json();
+    } catch (e) { _whatsNewItemsForInsert = []; }
+    _whatsNewItemsForInsert.forEach((item, i) => {
+      // Body may be rich HTML (format:'rich') — stripped down to plain
+      // text purely for a readable option label here; the full original
+      // (still HTML if it was HTML) is what actually gets inserted below.
+      const plain = (item.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const label = plain.length > 60 ? plain.slice(0, 60) + '…' : (plain || '(empty item)');
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = (item.active ? '' : '[inactive] ') + label;
+      sel.appendChild(opt);
+    });
+  }
+  // Per's request — inserts the selected item's own text at the cursor,
+  // same insertion mechanics as insertNewsletterToken above (Quill
+  // insertText in rich mode, plain-field insertion otherwise). Always
+  // inserts as plain text, even for a rich-format What's New item —
+  // deliberately not attempting to carry that item's own HTML formatting
+  // into the newsletter body, since the two use separate rich-text
+  // instances (Quill here vs. whatever produced the What's New item) and
+  // a well-formed-in-one-editor HTML fragment isn't guaranteed to paste
+  // cleanly into a different one. If the item links to a course or
+  // practice, that's named as a plain reminder for Per to link manually
+  // in whatever way makes sense for this letter, rather than the two
+  // editors' independent link mechanisms being reconciled automatically.
+  function insertNewsletterFromWhatsNew(indexStr) {
+    const item = _whatsNewItemsForInsert && _whatsNewItemsForInsert[Number(indexStr)];
+    if (!item) return;
+    let text = (item.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (item.link_title) text += ` (linked to: ${item.link_title})`;
+    if (newsletterFormat === 'plain') { insertTokenAtField(document.getElementById('newsletterBody'), text); return; }
+    const q = getQuill();
+    const range = q.getSelection(true) || { index: q.getLength(), length: 0 };
+    q.insertText(range.index, text);
+    q.setSelection(range.index + text.length);
+  }
   // Per Bot 54 — the entire heavy editor (blot registration, columns,
   // video, buttons, image resize/copy/link, AI Help, cell-aware
   // insertion) now lives in message-editor.js (MessageEditor.mountRich),
@@ -2015,6 +2076,7 @@
     document.getElementById('newsletterRecurringToggle').checked = false;
     toggleNewsletterRecurring(false);
     refreshAudienceCount();
+    populateWhatsNewInsertOptions();
     openModal('newsletterModal');
   }
 
@@ -2038,6 +2100,7 @@
     document.getElementById('newsletterOffer').value = n.offer_id || '';
     document.getElementById('newsletterSourceTag').value = n.source_tag || '';
     refreshAudienceCount();
+    populateWhatsNewInsertOptions();
     openModal('newsletterModal');
   }
 
