@@ -158,6 +158,31 @@
     .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
     .a11y-menu-opt:hover { background:rgba(255,255,255,0.07); }
     .a11y-menu-opt.active { background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.95); }
+    /* Per's request — on a phone, the Display button sits near the right
+       edge of the header, and the menu was anchored left:0 relative to
+       IT (see .a11y-menu above), so its right side — where "High
+       contrast", "Carousel moves on its own", etc. actually end — ran
+       straight off the edge of a narrow screen with nothing to scroll it
+       back into view. position:fixed + centred, rather than adjusting
+       the anchor math, so it's correct regardless of exactly how wide
+       the phone is or how long a future menu option's label gets: it's
+       no longer positioned relative to the button at all past this
+       breakpoint. Desktop is untouched — this only applies at the same
+       ≤500px breakpoint the rest of the mobile-specific layout already
+       uses above. */
+    @media (max-width: 500px) {
+      .a11y-menu {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 60px);
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        width: min(280px, 88vw);
+        min-width: 0;
+        max-height: calc(100vh - env(safe-area-inset-top) - 100px);
+        overflow-y: auto;
+      }
+    }
     .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
 
     .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; }
