@@ -300,9 +300,15 @@
        narrow phone that's too many nowrap pill buttons to fit on one row
        without scrolling. Wrapping into two rows instead of scrolling here,
        scoped to just the You page since Library's own sub-nav (3 items)
-       still fits fine as-is. */
+       still fits fine as-is.
+       Per's report — Library's own sub-nav has since grown too (Practices,
+       Meditations, Read & watch, Offline Files, Timers ▾ — 5 items now,
+       not the 3 this comment above was written against), so the same gap
+       reopened there: the first tab scrolled half out of view on a narrow
+       phone rather than being visible at all. Same fix, same reasoning,
+       just extended to cover #libraryView now that it needs it too. */
     @media (max-width: 480px) {
-      #youView .lib-subnav { flex-wrap: wrap; overflow-x: visible; }
+      #youView .lib-subnav, #libraryView .lib-subnav { flex-wrap: wrap; overflow-x: visible; }
       #youView .lib-subnav-btn-danger { margin-left: 0; }
     }
     .lib-sub-panel { display:none; flex-direction:column; overflow:hidden; flex:1; min-height:0; }
