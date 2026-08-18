@@ -530,6 +530,32 @@
         btn.addEventListener('click', openTour);
         div.appendChild(document.createElement('br'));
         div.appendChild(btn);
+      } else if (tip.actionLabel && tip.action === 'view-my-practices') {
+        // Per's report — this used to be a real actionHref link, which
+        // meant a full page reload just to switch tabs within an app
+        // that might already be open and mid-session (it was, for Per —
+        // reloading forced the audio-unlock Begin screen back up, and
+        // the [START] greeting that follows raced with the reload,
+        // leaving a blank stuck screen). switchTab/switchLibrarySub/
+        // setPracticesGroupMode are the exact same three calls the old
+        // ?view=my-practices URL param handling already made on load —
+        // that handling is untouched and still covers a genuine
+        // cold-start deep link — this just does the same switch in
+        // place, with no navigation at all, when clicked from a session
+        // that's already running. closePanel() afterward so the person
+        // can actually see the tab they just switched to, rather than
+        // the switch happening invisibly behind this still-open panel.
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'tomte-tip-action'; btn.style.background = 'none'; btn.style.border = 'none'; btn.style.font = 'inherit'; btn.style.padding = '0';
+        btn.textContent = tip.actionLabel + ' →';
+        btn.addEventListener('click', () => {
+          if (typeof switchTab === 'function') switchTab('library');
+          if (typeof switchLibrarySub === 'function') switchLibrarySub('practices');
+          if (typeof setPracticesGroupMode === 'function') setPracticesGroupMode('mine');
+          closePanel();
+        });
+        div.appendChild(document.createElement('br'));
+        div.appendChild(btn);
       } else if (tip.actionLabel && tip.actionHref) {
         const a = document.createElement('a');
         a.href = tip.actionHref; a.className = 'tomte-tip-action'; a.textContent = tip.actionLabel + ' →';

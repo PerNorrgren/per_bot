@@ -4683,7 +4683,24 @@ app.get('/api/my/tomte-tip', auth.requireAuthApi(['client']), (req, res) => {
           tipId,
           text: 'New practices arrived in My Practices.',
           actionLabel: 'View',
-          actionHref: '/client/?view=my-practices',
+          // Per's report — this used to be actionHref, rendered as a real
+          // <a href>. Following it forced a genuine full-page navigation,
+          // which meant reloading the ENTIRE app from scratch — including
+          // the "tap to unlock audio" Begin screen, even when someone was
+          // already mid-session (Per was mid-poem in Talk when this
+          // happened). Worse, the follow-up [START] bot-greeting that
+          // Begin triggers doesn't know or care that the URL asked for
+          // My Practices specifically, and the two ended up racing,
+          // leaving a genuinely blank screen with no way out but a force
+          // quit. Switched to the same in-app 'action' pattern already
+          // used for open-tour just below — an in-page tab switch, same
+          // three calls the old ?view=my-practices URL param handling
+          // already did, just without any reload at all. The URL param
+          // itself is untouched and still works for a genuine cold-start
+          // deep link (e.g. from outside the app) — this only changes
+          // what happens when the link is clicked from within an
+          // already-running session.
+          action: 'view-my-practices',
         });
       }
     }
