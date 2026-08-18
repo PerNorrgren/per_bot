@@ -180,17 +180,23 @@
       </div>
     </div>
 
-    <!-- Welcome tour (Per Bot 21) — Per's own phone photos of the app,
-         one caption each, offered once by Tomte. Order matters, so this
-         is a list with move up/down rather than the library's free-form
-         grid — see /api/admin/onboarding-tour. -->
+    <!-- Tours (Per's request — a real multi-tour system, replacing the
+         single fixed Welcome Tour this used to be). Per's own phone
+         photos of the app, one caption each, order matters — see
+         /api/admin/tours and /api/admin/tours/:tourId/slides. -->
     <div>
-      <div class="section-label">Welcome tour (Tomte)</div>
+      <div class="section-label">Tours (Tomte)</div>
       <div class="card">
         <div class="card-header"><div class="card-title">Slides</div></div>
         <div class="card-body" style="padding:16px 20px">
           <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:14px">
-            A short walkthrough Tomte offers once someone opens the app — each slide is one of your own screenshots with a caption explaining what it shows. Order matters; use the arrows to reorder. Nothing shows to anyone until at least one slide exists here.
+            A short walkthrough Tomte can offer — each tour is its own named sequence of your own screenshots with a caption explaining what each one shows. The Welcome Tour is offered automatically the first time someone opens the app; any other tour can be linked to directly from a What's New item. Order matters within a tour; use the arrows to reorder.
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+            <select id="tourPicker" onchange="selectTour(this.value)" style="flex:1;min-width:200px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:9px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px"></select>
+            <button class="btn sm" onclick="renameTourPrompt()">Rename</button>
+            <button class="btn sm danger" onclick="deleteTourPrompt()">Delete tour</button>
+            <button class="btn sm primary" onclick="createTourPrompt()">+ New tour</button>
           </div>
           <div id="tourSlidesList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
             <div class="loading">Loading…</div>
@@ -1114,13 +1120,76 @@
   });
   loadTomteLibrary();
 
-  // Per Bot 21 — welcome tour slides admin. Same upload pattern as the
-  // Tomte library above, but an ordered list (move up/down) instead of
-  // a free-form grid, since sequence is the whole point here.
+  // Per's request — a real multi-tour system, "so we can add new things
+  // as we go" (his own words), replacing the single fixed welcome tour
+  // this used to be. _currentTourId tracks whichever tour the picker
+  // above is set to; every slide function below operates on that one.
+  let _tours = [];
+  let _currentTourId = null;
   let _tourSlides = [];
-  async function loadTourSlides() {
+  async function loadTours() {
     try {
-      const res = await fetch('/api/admin/onboarding-tour');
+      _tours = await (await fetch('/api/admin/tours')).json();
+      if (!Array.isArray(_tours)) _tours = [];
+    } catch(e) { _tours = []; }
+    // Prefers the Welcome Tour as the initial selection on first load —
+    // the one every install already has, most likely to be what someone
+    // wants to see first — but otherwise leaves an existing selection
+    // (e.g. after creating a new tour) alone rather than resetting it.
+    if (!_currentTourId) {
+      const welcome = _tours.find(t => t.key === 'welcome');
+      _currentTourId = (welcome && welcome.id) || (_tours[0] && _tours[0].id) || null;
+    }
+    renderTourPicker();
+    loadTourSlides();
+  }
+  function renderTourPicker() {
+    const sel = document.getElementById('tourPicker');
+    if (!_tours.length) { sel.innerHTML = '<option value="">No tours yet</option>'; return; }
+    sel.innerHTML = _tours.map(t => `<option value="${t.id}" ${t.id === _currentTourId ? 'selected' : ''}>${t.name} — ${t.slideCount} slide${t.slideCount === 1 ? '' : 's'}</option>`).join('');
+  }
+  function selectTour(id) {
+    _currentTourId = id || null;
+    loadTourSlides();
+  }
+  async function createTourPrompt() {
+    const name = await appPrompt('Name for the new tour — e.g. "Offline Setup"', '', 'New tour');
+    if (!name || !name.trim()) return;
+    const key = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const res = await fetch('/api/admin/tours', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), key }) });
+    const data = await res.json();
+    if (data.error) { await appAlert(data.error); return; }
+    _currentTourId = data.id;
+    loadTours();
+  }
+  async function renameTourPrompt() {
+    if (!_currentTourId) return;
+    const cur = _tours.find(t => t.id === _currentTourId);
+    const name = await appPrompt('New name for this tour', cur ? cur.name : '', 'Rename tour');
+    if (!name || !name.trim()) return;
+    await fetch(`/api/admin/tours/${_currentTourId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) });
+    loadTours();
+  }
+  async function deleteTourPrompt() {
+    if (!_currentTourId) return;
+    const cur = _tours.find(t => t.id === _currentTourId);
+    // The Welcome Tour is offered automatically to everyone on their
+    // first visit (see the welcome-tour Tomte tip, server-side) — deleting
+    // it out from under that tip would leave it silently pointing at
+    // nothing rather than being a real, considered choice. Emptying its
+    // slides (the tip's own condition already checks for at least one)
+    // is the equivalent of turning it off, without losing the tour
+    // itself or its key.
+    if (cur && cur.key === 'welcome') { await appAlert("The Welcome Tour can't be deleted — it's offered automatically the first time someone opens the app. Remove its slides instead if you want it to stop appearing for now."); return; }
+    if (!(await appConfirm(`Delete "${cur ? cur.name : 'this tour'}" and all its slides? This can't be undone.`))) return;
+    await fetch(`/api/admin/tours/${_currentTourId}`, { method: 'DELETE' });
+    _currentTourId = null;
+    loadTours();
+  }
+  async function loadTourSlides() {
+    if (!_currentTourId) { _tourSlides = []; renderTourSlidesList(); return; }
+    try {
+      const res = await fetch(`/api/admin/tours/${_currentTourId}/slides`);
       _tourSlides = await res.json();
       if (!Array.isArray(_tourSlides)) _tourSlides = [];
     } catch(e) { _tourSlides = []; }
@@ -1128,6 +1197,7 @@
   }
   function renderTourSlidesList() {
     const el = document.getElementById('tourSlidesList');
+    if (!_currentTourId) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">Create a tour above, or pick one, to manage its slides.</div>'; return; }
     if (!_tourSlides.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No slides yet — add one below.</div>'; return; }
     el.innerHTML = _tourSlides.map((s, i) => `
       <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:8px 10px;">
@@ -1140,24 +1210,26 @@
     `).join('');
   }
   async function uploadTourSlide(file) {
+    if (!_currentTourId) { await appAlert('Create or pick a tour first.'); return; }
     const msg = document.getElementById('tourMsg');
     msg.textContent = 'Uploading…'; msg.style.color = 'rgba(255,255,255,0.4)';
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/admin/onboarding-tour', { method: 'POST', body: fd });
+      const res = await fetch(`/api/admin/tours/${_currentTourId}/slides`, { method: 'POST', body: fd });
       const data = await res.json();
-      if (data.ok) { msg.textContent = 'Added.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTourSlides(); }
+      if (data.ok) { msg.textContent = 'Added.'; msg.style.color = 'rgba(180,230,200,0.85)'; loadTourSlides(); loadTours(); }
       else { msg.textContent = data.error || 'Could not upload.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
     } catch(e) { msg.textContent = 'Network error.'; msg.style.color = 'rgba(255,140,120,0.85)'; }
   }
   async function updateTourSlideCaption(id, caption) {
-    await fetch(`/api/admin/onboarding-tour/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
+    await fetch(`/api/admin/tour-slides/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caption }) });
   }
   async function deleteTourSlide(id) {
     if (!(await appConfirm('Remove this slide from the tour?'))) return;
-    await fetch(`/api/admin/onboarding-tour/${id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/tour-slides/${id}`, { method: 'DELETE' });
     loadTourSlides();
+    loadTours();
   }
   async function moveTourSlide(index, direction) {
     const newIndex = index + direction;
@@ -1167,7 +1239,7 @@
     reordered.splice(newIndex, 0, moved);
     _tourSlides = reordered;
     renderTourSlidesList();
-    await fetch('/api/admin/onboarding-tour/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: reordered.map(s => s.id) }) });
+    await fetch(`/api/admin/tours/${_currentTourId}/slides/reorder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: reordered.map(s => s.id) }) });
   }
   const tourDropZone = document.getElementById('tourDropZone');
   const tourFileInput = document.getElementById('tourFileInput');
@@ -1181,7 +1253,7 @@
     const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'));
     if (file) uploadTourSlide(file);
   });
-  loadTourSlides();
+  loadTours();
 
   const tdDropZone = document.getElementById('tdDropZone');
   const tdFileInput = document.getElementById('tdFileInput');

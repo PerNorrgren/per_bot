@@ -541,7 +541,12 @@
         const btn = document.createElement('button');
         btn.type = 'button'; btn.className = 'tomte-tip-action'; btn.style.background = 'none'; btn.style.border = 'none'; btn.style.font = 'inherit'; btn.style.padding = '0';
         btn.textContent = tip.actionLabel + ' →';
-        btn.addEventListener('click', openTour);
+        // Explicit no-args wrapper, not a bare openTour reference —
+        // addEventListener would otherwise pass the click PointerEvent
+        // itself as openTour's first argument, and now that openTour
+        // takes an optional tourKey, a truthy event object there would
+        // be mistaken for one instead of falling through to 'welcome'.
+        btn.addEventListener('click', () => openTour());
         div.appendChild(document.createElement('br'));
         div.appendChild(btn);
       } else if (tip.actionLabel && tip.action === 'view-my-practices') {
@@ -602,9 +607,15 @@
       tourBackBtn.disabled = tourIndex === 0;
       tourNextBtn.textContent = tourIndex === tourSlides.length - 1 ? 'Done' : 'Next →';
     }
-    async function openTour() {
+    async function openTour(tourKey) {
       try {
-        const res = await fetch('/api/onboarding-tour');
+        // Per's request — a real multi-tour system. Defaults to 'welcome'
+        // (the tour that already existed before this change) so every
+        // existing caller — this file's own Tomte tip action, anything
+        // that hasn't been updated to pass a key — keeps working exactly
+        // as before with zero changes needed on its part.
+        const key = tourKey || 'welcome';
+        const res = await fetch('/api/onboarding-tour?key=' + encodeURIComponent(key));
         if (!res.ok) return;
         const slides = await res.json();
         if (!Array.isArray(slides) || !slides.length) return;
@@ -621,6 +632,15 @@
       if (tourIndex < tourSlides.length - 1) { tourIndex++; renderTourSlide(); }
       else closeTour();
     });
+    // Per's request — a What's New item can now link straight to this
+    // tour (see client/index.html's openWhatsNewLink, action id 'tour').
+    // This file is its own self-contained script (top-level IIFE — see
+    // the very top of this file), so client/index.html can't call
+    // openTour() directly; this is the one deliberate, narrow exception
+    // to that, matching the same reasoning as window.TOMTE_PAGE at the
+    // top of this file (a small, explicit public surface, not the whole
+    // internal API opened up).
+    window.openTomteTour = openTour;
 
     function openPanel() {
       panel.classList.add('tomte-open');

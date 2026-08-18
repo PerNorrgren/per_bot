@@ -3823,42 +3823,92 @@ app.delete('/api/admin/tomte-library/:id', auth.requireAuthApi(['admin']), (req,
   res.json({ ok: true });
 });
 
-// ── Onboarding tour slides (Per Bot 21) ── Per's own phone photos of the
-// app, one caption each, in a deliberate walkthrough order — offered by
-// Tomte as a one-time tip once at least one slide exists (see
-// TOMTE_TIPS below). Same R2-backed upload pattern as the Tomte image
-// library above.
-app.get('/api/admin/onboarding-tour', auth.requireAuthApi(['admin']), (req, res) => {
-  res.json(db.getOnboardingTourSlides().map(r => ({ ...r, url: tomteImageUrl(r.filename) })));
+// ── Tours (Per's request — a real multi-tour system, replacing the
+// single fixed "welcome tour" this used to be) ── Each tour is a named,
+// admin-authored slide walkthrough, referenced by a stable key
+// ('welcome' for the one that already existed before this change — see
+// the migration in db.js). Slide management below is unchanged in shape
+// from the original Per Bot 21 routes, just scoped to a specific tour's
+// id instead of assuming there's only ever one.
+app.get('/api/admin/tours', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const tours = db.getTours().map(t => ({ ...t, slideCount: db.getOnboardingTourSlides(t.id).length }));
+    res.json(tours);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.post('/api/admin/onboarding-tour', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+app.post('/api/admin/tours', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const key = (req.body.key || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!name) return res.status(400).json({ error: 'Name required.' });
+    if (!key) return res.status(400).json({ error: 'Key required — used to link to this tour, e.g. from a What\'s New item.' });
+    if (db.getTourByKey(key)) return res.status(400).json({ error: `"${key}" is already used by another tour — pick a different key.` });
+    const id = uuidv4();
+    db.addTour(id, key, name);
+    res.json({ ok: true, id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/tours/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (!db.getTour(req.params.id)) return res.status(404).json({ error: 'Not found.' });
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name required.' });
+    // Key is deliberately not editable here once a tour exists — anything
+    // that already links to it (a What's New item, say) by key would
+    // silently break if it could be renamed out from under them.
+    db.updateTourName(req.params.id, name);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/tours/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteTour(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/tours/:tourId/slides', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (!db.getTour(req.params.tourId)) return res.status(404).json({ error: 'Tour not found.' });
+    res.json(db.getOnboardingTourSlides(req.params.tourId).map(r => ({ ...r, url: tomteImageUrl(r.filename) })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/tours/:tourId/slides', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!db.getTour(req.params.tourId)) return res.status(404).json({ error: 'Tour not found.' });
   if (!req.file) return res.status(400).json({ error: 'No file received.' });
   try {
     const stored = await uploadTomteImageToR2(req.file);
     const id = uuidv4();
-    db.addOnboardingTourSlide(id, stored, (req.body.caption || '').trim() || null);
+    db.addOnboardingTourSlide(id, req.params.tourId, stored, (req.body.caption || '').trim() || null);
     res.json({ ok: true, id, url: tomteImageUrl(stored) });
   } catch (e) {
-    console.error('onboarding-tour upload error:', e.message);
+    console.error('tour slide upload error:', e.message);
     res.status(500).json({ error: 'Could not upload image right now — please try again.' });
   }
 });
-app.patch('/api/admin/onboarding-tour/:id', auth.requireAuthApi(['admin']), (req, res) => {
+app.patch('/api/admin/tour-slides/:id', auth.requireAuthApi(['admin']), (req, res) => {
   db.updateOnboardingTourSlideCaption(req.params.id, (req.body.caption || '').trim());
   res.json({ ok: true });
 });
-app.delete('/api/admin/onboarding-tour/:id', auth.requireAuthApi(['admin']), (req, res) => {
+app.delete('/api/admin/tour-slides/:id', auth.requireAuthApi(['admin']), (req, res) => {
   db.deleteOnboardingTourSlide(req.params.id);
   res.json({ ok: true });
 });
-app.post('/api/admin/onboarding-tour/reorder', auth.requireAuthApi(['admin']), (req, res) => {
+app.post('/api/admin/tours/:tourId/slides/reorder', auth.requireAuthApi(['admin']), (req, res) => {
   db.reorderOnboardingTourSlides(Array.isArray(req.body.order) ? req.body.order : []);
   res.json({ ok: true });
 });
-// Client-facing read — what Tomte's tour overlay actually fetches once
-// someone taps "Show me around".
+// Client-facing read — what Tomte's tour overlay actually fetches when
+// someone taps "Show me around" (or any What's New item linking to a
+// tour by key). ?key= defaults to 'welcome' — the tour that already
+// existed before this change — so every existing caller (the welcome-
+// tour Tomte tip, anything that hasn't been updated to pass a key yet)
+// keeps working exactly as before with zero changes needed on its part.
 app.get('/api/onboarding-tour', auth.requireAuthApi(['client']), (req, res) => {
-  res.json(db.getOnboardingTourSlides().map(r => ({ id: r.id, url: tomteImageUrl(r.filename), caption: r.caption })));
+  try {
+    const key = (req.query.key || 'welcome').trim();
+    const tour = db.getTourByKey(key);
+    if (!tour) return res.json([]);
+    res.json(db.getOnboardingTourSlides(tour.id).map(r => ({ id: r.id, url: tomteImageUrl(r.filename), caption: r.caption })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // Assigns an EXISTING library photo to a language+action, no upload
 // involved — this is what makes a photo able to just sit in the library
@@ -4656,12 +4706,18 @@ const TOMTE_TIPS = [
   // Per Bot 21 — deliberately first in the list (order = priority when
   // more than one tip could apply). Gated on slides actually existing so
   // this never fires and opens an empty tour before Per's uploaded
-  // anything — see /api/admin/onboarding-tour. condition ignores userId
-  // since slide existence isn't per-person, but keeps the same (userId)
-  // signature as every other tip here.
+  // anything — see /api/admin/tours/:tourId/slides. condition ignores
+  // userId since slide existence isn't per-person, but keeps the same
+  // (userId) signature as every other tip here.
+  //
+  // Per's request — explicitly the 'welcome' tour by key now that
+  // multiple tours can exist (see db.js's tours table), rather than
+  // "however many slides exist in total across every tour", which would
+  // have quietly changed this tip's meaning the moment a second tour got
+  // created for something else entirely (e.g. an offline-setup one).
   {
     id: 'welcome-tour',
-    condition: () => db.getOnboardingTourSlides().length > 0,
+    condition: () => { const t = db.getTourByKey('welcome'); return !!t && db.getOnboardingTourSlides(t.id).length > 0; },
     text: "Welcome — I'm Tomte. If it would help, I can walk you through the app with a few pictures showing what everything does.",
     actionLabel: 'Show me around',
     action: 'open-tour',

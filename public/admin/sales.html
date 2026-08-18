@@ -351,9 +351,23 @@
               <option value="">No link — text only</option>
               <option value="practice">A practice / book / poem</option>
               <option value="course">A course</option>
+              <option value="action">Something in the app</option>
             </select>
             <div id="whatsNewLinkPracticePicker" style="flex:1;display:none"></div>
             <select id="whatsNewLinkCourse" style="flex:1;display:none"></select>
+            <!-- Per's request — a What's New item pointing at a real
+                 in-app action (install the app, offline setup, or any
+                 named tour) rather than a piece of content. install-app
+                 and offline-help are fixed on purpose (real, tested,
+                 always-available destinations — see openWhatsNewLink's
+                 'action' branch) — the tour options below them are
+                 populated at runtime from whatever tours actually exist
+                 (see populateWhatsNewActionOptions), since that list can
+                 now grow as Per adds new ones. -->
+            <select id="whatsNewLinkAction" style="flex:1;display:none">
+              <option value="install-app">Install the app (Add to Home Screen)</option>
+              <option value="offline-help">Save something for offline use</option>
+            </select>
           </div>
         </div>
         <label class="me-checkbox-row" style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.7)">
@@ -1287,8 +1301,32 @@
     const type = document.getElementById('whatsNewLinkType').value;
     document.getElementById('whatsNewLinkPracticePicker').style.display = type === 'practice' ? '' : 'none';
     document.getElementById('whatsNewLinkCourse').style.display = type === 'course' ? '' : 'none';
+    document.getElementById('whatsNewLinkAction').style.display = type === 'action' ? '' : 'none';
     if (type === 'practice' && !document.getElementById('whatsNewLinkPracticePicker').innerHTML) renderWhatsNewPracticePicker('');
     if (type === 'course' && !document.getElementById('whatsNewLinkCourse').options.length) populateWhatsNewCourseSelect('');
+    if (type === 'action') populateWhatsNewActionOptions();
+  }
+  // Per's request — the tour options in the "Something in the app"
+  // picker reflect whatever tours actually exist right now, rather than
+  // a fixed list that would need editing here every time a new tour is
+  // added elsewhere. Removes any previously-added tour options first
+  // (keeps the two fixed ones — install-app, offline-help — untouched)
+  // so repeat opens of this modal don't just keep appending duplicates.
+  async function populateWhatsNewActionOptions() {
+    const sel = document.getElementById('whatsNewLinkAction');
+    const selectedValue = sel.value;
+    [...sel.querySelectorAll('option[data-tour]')].forEach(o => o.remove());
+    try {
+      const tours = await (await fetch('/api/admin/tours')).json();
+      tours.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = 'tour:' + t.key;
+        opt.dataset.tour = '1';
+        opt.textContent = `Tour: ${t.name}${t.slideCount ? '' : ' (no slides yet)'}`;
+        sel.appendChild(opt);
+      });
+    } catch(e) { /* fixed options above still work even if this fetch fails */ }
+    if (selectedValue) sel.value = selectedValue;
   }
   // Per Bot 24 — list + modal CRUD, replacing the old single-value
   // load/save. _whatsNewEditId tracks which item is being edited (null
@@ -1411,6 +1449,15 @@
     document.getElementById('whatsNewLinkType').value = (item && item.link_type) || '';
     if (item && item.link_type === 'practice') renderWhatsNewPracticePicker(item.link_id || '');
     if (item && item.link_type === 'course') await populateWhatsNewCourseSelect(item.link_id || '');
+    // action's own options (specifically the tour ones) are populated
+    // asynchronously by onWhatsNewLinkTypeChange below — awaited here,
+    // then the saved value set AFTER, since setting .value to an option
+    // that doesn't exist yet (a tour option not yet fetched) would just
+    // silently select nothing.
+    if (item && item.link_type === 'action') {
+      await populateWhatsNewActionOptions();
+      document.getElementById('whatsNewLinkAction').value = item.link_id || 'install-app';
+    }
     onWhatsNewLinkTypeChange();
     openModal('whatsNewItemModal');
   }
@@ -1418,6 +1465,7 @@
     const linkType = document.getElementById('whatsNewLinkType').value;
     const linkId = linkType === 'practice' ? getWhatsNewPracticeValue()
       : linkType === 'course' ? document.getElementById('whatsNewLinkCourse').value
+      : linkType === 'action' ? document.getElementById('whatsNewLinkAction').value
       : null;
     let linkTitle = null;
     if (linkType === 'practice') {
@@ -1426,6 +1474,9 @@
     } else if (linkType === 'course') {
       const sel = document.getElementById('whatsNewLinkCourse');
       linkTitle = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].textContent : null;
+    } else if (linkType === 'action') {
+      const sel = document.getElementById('whatsNewLinkAction');
+      linkTitle = sel && sel.selectedIndex > -1 ? sel.options[sel.selectedIndex].textContent : null;
     }
     const body = MessageEditor.getInstance('whatsNewBody_rich').root.innerHTML;
     const plain = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();

@@ -6490,6 +6490,19 @@
   // comes from the same /api/config payload already fetched into
   // window.brandReady elsewhere on this page — reused here rather than a
   // second fetch.
+  // Per's request — labels shown on the What's New card button for each
+  // action id, kept in one place since both showWhatsNewItem (button
+  // text) and openWhatsNewLink (dispatch) need to agree on the same set
+  // of ids as the admin picker in Sales (whatsNewLinkAction). Tours are
+  // looked up by prefix below rather than listed here individually,
+  // since which ones exist can grow over time — a fixed per-id map isn't
+  // the right shape for those two specifically.
+  const ACTION_BUTTON_LABELS = { 'install-app': 'Install now', 'offline-help': 'Set up offline' };
+  function actionButtonLabel(linkId) {
+    if (ACTION_BUTTON_LABELS[linkId]) return ACTION_BUTTON_LABELS[linkId];
+    if ((linkId || '').startsWith('tour:')) return 'Take the tour';
+    return 'Open';
+  }
   let _whatsNewItems = [];
   let _whatsNewIndex = 0;
   let _whatsNewTimer = null;
@@ -6530,7 +6543,13 @@
       bodyEl.innerHTML = item.body;
       if (item.linkType && item.linkId) {
         btn.style.display = '';
-        btn.textContent = item.linkType === 'course' ? 'Open course' : 'Open';
+        // Per's request — a nicer label than plain "Open" for the new
+        // action type, matching the treatment "Open course" already gets.
+        // ACTION_BUTTON_LABELS lives once, near openWhatsNewLink, rather
+        // than duplicated here.
+        btn.textContent = item.linkType === 'course' ? 'Open course'
+          : item.linkType === 'action' ? actionButtonLabel(item.linkId)
+          : 'Open';
         btn.dataset.linkType = item.linkType;
         btn.dataset.linkId = item.linkId;
       } else {
@@ -6560,6 +6579,10 @@
   // needed. Course-type target: reuses the exact same
   // switchTab+openCourseDetail+openLesson path the resume card
   // (jumpToResume above) already uses for "continue where you left off".
+  // Per's request — labels shown on the What's New card button for each
+  // action id, kept in one place since both showWhatsNewItem (button
+  // text) and openWhatsNewLink (dispatch) need to agree on the same set
+  // of ids as the admin picker in Sales (whatsNewLinkAction).
   async function openWhatsNewLink() {
     const btn = document.getElementById('whatsNewPromoBtn');
     const type = btn.dataset.linkType, id = btn.dataset.linkId;
@@ -6589,6 +6612,38 @@
       switchTab('courses');
       openCourseDetail(id);
     }
+    // Per's request — a What's New item can now point at a real in-app
+    // action instead of only a piece of content. Small, fixed set on
+    // purpose (see the admin picker in Sales) — each one below is a real,
+    // already-working destination, not a generic string that could point
+    // nowhere if mistyped.
+    if (type === 'action') {
+      if (id === 'install-app') { openInstallFlow(); return; }
+      if (id === 'offline-help') { switchTab('library'); switchLibrarySub('offline'); return; }
+      // Per's request — a specific named tour, not just "the" tour.
+      // id is 'tour:<key>' (see the admin picker in Sales) — the part
+      // after the colon is exactly the key openTour expects, same one
+      // /api/onboarding-tour?key= reads server-side.
+      if (id.startsWith('tour:') && typeof window.openTomteTour === 'function') { window.openTomteTour(id.slice(5)); return; }
+    }
+  }
+  // Per's request — one place that knows how to open the install flow
+  // regardless of platform, reusing exactly the same detection already
+  // set up for the Display menu's own Install row further down this
+  // script (isIos / _deferredInstallPrompt / alreadyInstalled) rather
+  // than duplicating that platform logic a second time. Safe to
+  // reference those here despite being declared later in the file —
+  // this function only actually runs on a button click, long after the
+  // whole script has finished its first top-to-bottom pass and those
+  // are already set; no typeof guard needed (and typeof wouldn't
+  // actually protect against a same-scope let/const referenced too
+  // early anyway — it only protects against a name that was never
+  // declared anywhere in scope at all).
+  function openInstallFlow() {
+    if (alreadyInstalled) { appAlert("You're already using it installed — nothing more to do here."); return; }
+    if (isIos) { showIosInstallInstructions(); return; }
+    if (_deferredInstallPrompt) { promptInstallApp(); return; }
+    appAlert('Open the Display menu (top right) — the Install option will be there once your browser is ready to offer it.');
   }
   // Per Bot 16 — replaced the old random-pick toggle with a proper popup:
   // a list of everything tagged content_type 'calming_sound' (a new, real

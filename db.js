@@ -1116,6 +1116,25 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // Per's request — a real multi-tour system, "so we can add new things
+  // as we go" (his own words), replacing the single fixed welcome tour
+  // this table used to be the whole of. tours is the new top-level list;
+  // onboarding_tour_slides (below, unchanged in name and shape apart from
+  // the new tour_id column added in the migrations list further down)
+  // becomes "slides belonging to a tour" rather than "the one tour's
+  // slides". key is the stable, admin-chosen identifier a link (What's
+  // New, or any future caller) points at — 'welcome' for the tour that
+  // already existed before this change, chosen so the migration below
+  // can adopt every existing slide into it with zero data loss and zero
+  // visible change for anyone already relying on the old single tour.
+  db.run(`CREATE TABLE IF NOT EXISTS tours (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // Per Bot 21 — welcome tour slides: Per's own phone photos of the app
   // with a caption explaining each one, offered by Tomte as a one-time
   // "want a quick walkthrough?" tip (see TOMTE_TIPS in server.js). Same
@@ -1124,6 +1143,8 @@ async function getDb() {
   // /tomte-images/:key route. sort_order is a plain integer set by the
   // admin reorder endpoint, not alphabetical/created_at — the sequence
   // is a deliberate walkthrough order, not a gallery.
+  // tour_id (added via migration below, not here — see "Migrations")
+  // scopes each slide to one row in the new tours table above.
   db.run(`CREATE TABLE IF NOT EXISTS onboarding_tour_slides (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -2271,6 +2292,18 @@ async function getDb() {
     // brand/site decision the same way tagline or primary_color is, not
     // something each person would want to tune individually.
     "ALTER TABLE app_config ADD COLUMN carousel_speed_seconds REAL DEFAULT 3.5",
+    // Per's request — multi-tour system. tour_id links each existing slide
+    // to a row in the new tours table above; the two INSERT/UPDATE lines
+    // right after this one are what actually adopt every slide that
+    // predates this change into a real "Welcome Tour" row with a fixed,
+    // predictable id ('welcome') — chosen deliberately rather than a
+    // random uuid so this exact migration string can reference it safely
+    // on every boot. All three are idempotent (INSERT OR IGNORE, and an
+    // UPDATE guarded by "still NULL") — a no-op on every run after the
+    // first, same pattern as every other migration in this list.
+    "ALTER TABLE onboarding_tour_slides ADD COLUMN tour_id TEXT",
+    "INSERT OR IGNORE INTO tours (id, key, name, sort_order) VALUES ('welcome', 'welcome', 'Welcome Tour', 0)",
+    "UPDATE onboarding_tour_slides SET tour_id='welcome' WHERE tour_id IS NULL",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -6599,17 +6632,52 @@ function deleteTomteImageFromLibrary(id) {
   save();
 }
 
-// Per Bot 21 — welcome tour slides. Same shape as the tomte image
-// library above (upload adds a row, nothing else) but ordered by a
-// deliberate sort_order rather than recency, since this is a fixed
-// walkthrough sequence, not a gallery.
-function getOnboardingTourSlides() {
-  return queryAll('SELECT * FROM onboarding_tour_slides ORDER BY sort_order ASC, created_at ASC');
+// Per's request — a real multi-tour system. Tour management (list/add/
+// rename/delete) alongside the slide functions below, which now take a
+// tourId rather than assuming there's only ever one tour.
+function getTours() {
+  return queryAll('SELECT * FROM tours ORDER BY sort_order ASC, created_at ASC');
 }
-function addOnboardingTourSlide(id, filename, caption) {
-  const existing = getOnboardingTourSlides();
+function getTour(id) { return queryOne('SELECT * FROM tours WHERE id=?', [id]); }
+function getTourByKey(key) { return queryOne('SELECT * FROM tours WHERE key=?', [key]); }
+function addTour(id, key, name) {
+  const existing = getTours();
+  const nextOrder = existing.length ? Math.max(...existing.map(t => t.sort_order)) + 1 : 0;
+  getDbSync().run('INSERT INTO tours (id, key, name, sort_order) VALUES (?,?,?,?)', [id, key, name, nextOrder]);
+  save();
+}
+function updateTourName(id, name) {
+  getDbSync().run('UPDATE tours SET name=? WHERE id=?', [name, id]);
+  save();
+}
+// Deletes the tour's own slides first (no ON DELETE CASCADE relied on —
+// same explicit-two-step pattern already used elsewhere in this file,
+// e.g. deleteLesson above), then the tour row itself. A What's New item
+// (or anything else) still pointing at this tour's key afterward just
+// finds nothing and no-ops client-side, rather than erroring — same
+// "graceful, non-cascading" reasoning as deleting a skin or a Tomte
+// library image.
+function deleteTour(id) {
+  getDbSync().run('DELETE FROM onboarding_tour_slides WHERE tour_id=?', [id]);
+  getDbSync().run('DELETE FROM tours WHERE id=?', [id]);
+  save();
+}
+
+// Per Bot 21 — tour slides. Same shape as the tomte image library above
+// (upload adds a row, nothing else) but ordered by a deliberate
+// sort_order rather than recency, since this is a fixed walkthrough
+// sequence, not a gallery. tourId (Per's request) scopes every one of
+// these to a specific row in tours — the "next sort order" calculation
+// below is scoped the same way, so adding a slide to a brand new tour
+// starts that tour's own sequence at 0 rather than continuing some
+// other tour's numbering.
+function getOnboardingTourSlides(tourId) {
+  return queryAll('SELECT * FROM onboarding_tour_slides WHERE tour_id=? ORDER BY sort_order ASC, created_at ASC', [tourId]);
+}
+function addOnboardingTourSlide(id, tourId, filename, caption) {
+  const existing = getOnboardingTourSlides(tourId);
   const nextOrder = existing.length ? Math.max(...existing.map(s => s.sort_order)) + 1 : 0;
-  getDbSync().run('INSERT INTO onboarding_tour_slides (id, filename, caption, sort_order) VALUES (?,?,?,?)', [id, filename, caption || null, nextOrder]);
+  getDbSync().run('INSERT INTO onboarding_tour_slides (id, tour_id, filename, caption, sort_order) VALUES (?,?,?,?,?)', [id, tourId, filename, caption || null, nextOrder]);
   save();
 }
 function updateOnboardingTourSlideCaption(id, caption) {
@@ -6622,7 +6690,10 @@ function deleteOnboardingTourSlide(id) {
 }
 // Takes a full ordered list of slide IDs and rewrites sort_order to match
 // — simplest reorder model for a small up/down-arrow admin UI, no
-// drag-and-drop library needed.
+// drag-and-drop library needed. Unchanged by the tour_id addition — the
+// caller only ever passes ids belonging to one tour at a time (the admin
+// UI's own slide list is already scoped to whichever tour is open), so
+// nothing here needs to re-check tour_id itself.
 function reorderOnboardingTourSlides(orderedIds) {
   const run = getDbSync();
   (orderedIds || []).forEach((id, i) => run.run('UPDATE onboarding_tour_slides SET sort_order=? WHERE id=?', [i, id]));
@@ -7992,6 +8063,7 @@ module.exports = {
   getAllSignalScripts, getSignalScriptMenu, getSignalScript, createSignalScript, updateSignalScript, deleteSignalScript, setSignalScriptCachedAudio,
   getAllContextDocuments, getContextDocumentsForSkin, createContextDocument, deleteContextDocument,
   getTomteImageLibrary, addTomteImageToLibrary, updateTomteImageLabel, deleteTomteImageFromLibrary,
+  getTours, getTour, getTourByKey, addTour, updateTourName, deleteTour,
   getOnboardingTourSlides, addOnboardingTourSlide, updateOnboardingTourSlideCaption, deleteOnboardingTourSlide, reorderOnboardingTourSlides,
   // Reminders
   getInactiveUsers,
