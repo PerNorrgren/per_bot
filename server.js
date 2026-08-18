@@ -1826,7 +1826,15 @@ app.get('/change-password', (req, res) => res.sendFile(path.join(__dirname, 'pub
 // than adding an express.static() mount, so it doesn't change how the rest
 // of the app serves files.
 app.get('/brand-inject.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'brand-inject.js')));
-app.get('/tomte-widget.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')));
+// Per's report — the exact same symptom message-editor.js's no-store fix
+// below was written for: a real deploy landed correctly (git confirmed
+// nothing left to commit), but the browser kept running the old cached
+// copy with no visible sign anything was wrong. tomte-widget.js just
+// never got this same treatment applied to it before now, despite
+// carrying exactly the same risk — it's under just as active iteration
+// right now (the view-my-practices action fix two rounds back is what
+// surfaced this gap) as message-editor.js was when that fix was written.
+app.get('/tomte-widget.js', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')); });
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
 app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'bulk-import-sample.xlsx')));
 // Per Bot 17 fix: these two were missing entirely. This app has no
