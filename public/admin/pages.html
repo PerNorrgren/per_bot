@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Pages — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
+
+    .page { max-width:1040px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:28px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .section-note { font-size:12.5px; color:rgba(255,255,255,0.35); margin:-6px 0 14px; line-height:1.6; }
+
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    .page-row { display:flex; align-items:center; gap:14px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .page-row:last-child { border-bottom:none; }
+    .page-row-name { flex:1; font-size:13.5px; color:rgba(255,255,255,0.8); }
+    .page-row-desc { flex:2; font-size:12px; color:rgba(255,255,255,0.4); }
+    .page-row-path { font-family:monospace; font-size:11.5px; color:rgba(180,230,200,0.6); background:rgba(180,230,200,0.06); padding:3px 8px; border-radius:5px; white-space:nowrap; }
+    .page-row-tag { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; padding:3px 8px; border-radius:5px; white-space:nowrap; }
+    .page-row-tag.public { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.75); }
+    .page-row-tag.auth { background:rgba(255,180,60,0.1); color:rgba(255,180,60,0.75); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div style="position:relative">
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Pages</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="a11yMenuSlot" style="position:relative"></span>
+      <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
+      <a href="/admin/content" class="btn">Content</a>
+      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+      <a href="/admin/comms" class="btn">Comms 1</a>
+      <a href="/admin/comms2" class="btn" style="color:rgba(180,230,200,0.8)">Comms 2</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+      <a href="/admin/reports" class="btn">Reports</a>
+      <a href="/admin/pages" class="btn primary">Pages</a>
+      <a href="/setup" class="btn">Settings</a>
+    </div>
+  </div>
+
+  <div class="page">
+
+    <div>
+      <div class="section-label">External Pages — Public, No Login Needed</div>
+      <div class="section-note">Anyone with the link can open these, whether or not they have an account. Useful for sharing directly, checking how something actually looks, or just remembering what exists.</div>
+      <div class="card" id="externalPagesCard"></div>
+    </div>
+
+    <div>
+      <div class="section-label">Internal Pages — Inside the App</div>
+      <div class="section-note">These need the right kind of login to actually work — clicking View from here will prompt for one if you're not already signed in as that role.</div>
+      <div class="card" id="internalPagesCard"></div>
+    </div>
+
+  </div>
+
+<script>
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('adminMenu');
+    if (menu.style.display !== 'none' && !e.target.closest('#adminMenu') && !e.target.closest('.logo-name')) menu.style.display = 'none';
+  });
+  async function logout() { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+
+  // Per's request — a plain catalog of every real route in the app, "to
+  // start with". Deliberately a hardcoded list, not something pulled
+  // live from server.js's actual route table — these paths are fixed
+  // parts of the codebase, not admin-editable data, so there's nothing
+  // a database query would tell this page that isn't already true here.
+  // If a page gets added or removed in code, this list needs a matching
+  // one-line edit — no different from how a new admin screen already
+  // needs its own nav link added by hand across every other admin page.
+  const EXTERNAL_PAGES = [
+    { name: 'Login', path: '/login', desc: 'Sign in — the front door for everyone.' },
+    { name: 'Register', path: '/register', desc: 'Create a new account (Explorer trial).' },
+    { name: 'Join', path: '/join', desc: 'Accept an invitation link.' },
+    { name: 'Membership', path: '/membership', desc: 'Membership tiers and pricing.' },
+    { name: 'Become a Facilitator', path: '/become-a-facilitator', desc: 'Request form for existing members.' },
+    { name: 'Teaching The FELT Way', path: '/teaching-the-felt-way', desc: 'The facilitator recruiting/marketing page.' },
+    { name: 'Courses', path: '/courses', desc: 'Public schedule — every open course instance.' },
+    { name: 'Course Overview', path: '/courses/COURSE_ID', desc: 'One course\'s public page. Needs a real course id in the link to actually load anything.' },
+    { name: 'Course Instance', path: '/course-instance/INSTANCE_ID', desc: 'One specific instance\'s public page — dates, facilitators, enrol. Needs a real instance id.' },
+    { name: 'Facilitator Bio', path: '/facilitators/FACILITATOR_ID', desc: 'A facilitator\'s public profile, if they\'ve opted in. Needs a real facilitator id.' },
+    { name: 'Reset Password', path: '/reset-password', desc: 'Password reset flow, reached from an emailed link.' },
+    { name: 'Legal', path: '/legal', desc: 'Terms and privacy.' },
+  ];
+  const INTERNAL_PAGES = [
+    { name: 'Client App', path: '/client/', desc: 'The main app — Talk, Library, Courses, You.', role: 'Client' },
+    { name: 'Admin — People', path: '/admin/', desc: 'Clients, facilitators, admins.', role: 'Admin' },
+    { name: 'Admin — Content', path: '/admin/content', desc: 'Library, courses, instances, lessons.', role: 'Admin' },
+    { name: 'Admin — Talk & Tomte', path: '/admin/talk', desc: 'Prompts, tours, Tomte tuning.', role: 'Admin' },
+    { name: 'Admin — Comms 1', path: '/admin/comms', desc: 'Newsletters and messages.', role: 'Admin' },
+    { name: 'Admin — Comms 2', path: '/admin/comms2', desc: 'Reminder/renewal/birthday message types.', role: 'Admin' },
+    { name: 'Admin — Sales & Marketing', path: '/admin/sales', desc: 'What\'s New items, offers.', role: 'Admin' },
+    { name: 'Admin — Reports', path: '/admin/reports', desc: 'Usage and email reports.', role: 'Admin' },
+    { name: 'Admin — Pages', path: '/admin/pages', desc: 'This page.', role: 'Admin' },
+    { name: 'Settings', path: '/setup', desc: 'App identity and configuration.', role: 'Admin' },
+    { name: 'Facilitator Workspace', path: '/facilitator/', desc: 'Clients, courses, sessions, the teaching companion.', role: 'Facilitator' },
+    { name: 'My Account', path: '/account', desc: 'Personal account settings.', role: 'Any' },
+  ];
+
+  function renderPages(list, elId) {
+    document.getElementById(elId).innerHTML = list.map(p => `
+      <div class="page-row">
+        <div class="page-row-name">${p.name}</div>
+        <div class="page-row-desc">${p.desc}</div>
+        ${p.role ? `<div class="page-row-tag auth">${p.role}</div>` : ''}
+        <div class="page-row-path">${p.path}</div>
+        <a class="btn sm" href="${p.path}" target="_blank">View</a>
+      </div>
+    `).join('');
+  }
+  renderPages(EXTERNAL_PAGES, 'externalPagesCard');
+  renderPages(INTERNAL_PAGES, 'internalPagesCard');
+</script>
+</body>
+</html>
