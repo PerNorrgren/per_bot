@@ -439,6 +439,25 @@ async function getDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── Instance facilitators ── (Per's request — allowing other people to
+  // facilitate a course) A genuine many-to-many: n facilitators can run one
+  // instance (co-facilitating a cohort together), and one facilitator can
+  // run n instances, of the same or different courses, over time. This is
+  // deliberately separate from users.facilitator_id above, which is a
+  // different, pre-existing relationship — one student's individual 1:1
+  // coach — and stays untouched by this; a course cohort's facilitator(s)
+  // don't have to be the same person as any given enrolled student's own
+  // 1:1 facilitator, if they even have one.
+  db.run(`CREATE TABLE IF NOT EXISTS instance_facilitators (
+    id TEXT PRIMARY KEY,
+    course_instance_id TEXT NOT NULL,
+    facilitator_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(course_instance_id, facilitator_id),
+    FOREIGN KEY (course_instance_id) REFERENCES course_instances(id),
+    FOREIGN KEY (facilitator_id) REFERENCES facilitators(id)
+  )`);
+
   // ── Quizzes ── (Per Bot 5 follow-on — basic quiz support from the start)
   // One quiz per lesson, optional. question_type: 'single_choice' |
   // 'multi_choice' | 'true_false' — the three basic types for v1.
@@ -3886,11 +3905,64 @@ function getEnrolmentsForUser(userId) {
   });
 }
 function getEnrolmentsForInstance(courseInstanceId) {
-  return queryAll(
+  // Per's request — the facilitator roster view needs the same live
+  // percent_complete the student's own "My Courses" list already computes
+  // in getEnrolmentsForUser above (never stored/stale, same reasoning).
+  // course_id pulled via a join here since, unlike getEnrolmentsForUser,
+  // the caller only has an instance id, not a courseId, to hand in.
+  const courseRow = queryOne('SELECT course_id FROM course_instances WHERE id=?', [courseInstanceId]);
+  const courseId = courseRow && courseRow.course_id;
+  const totalLessons = courseId ? queryOne('SELECT COUNT(*) as n FROM lessons WHERE course_id=?', [courseId]).n : 0;
+  const rows = queryAll(
     `SELECT e.*, u.name as user_name, u.email as user_email
      FROM enrolments e JOIN users u ON e.user_id = u.id
      WHERE e.course_instance_id=? ORDER BY e.enrolled_at DESC`, [courseInstanceId]
   );
+  return rows.map(r => {
+    const completedLessons = queryOne(`SELECT COUNT(*) as n FROM lesson_progress WHERE enrolment_id=? AND status='completed'`, [r.id]).n;
+    const percentComplete = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+    return { ...r, total_lessons: totalLessons, completed_lessons: completedLessons, percent_complete: percentComplete };
+  });
+}
+// Per's request — n facilitators per instance, n instances per facilitator.
+// getFacilitatorsForInstance/getInstancesForFacilitator are the two read
+// directions of the same instance_facilitators join table above;
+// isFacilitatorAssignedToInstance is the ownership check every
+// facilitator-scoped instance route needs (same shape as the existing
+// requireClientOwnedByFacilitator middleware, just for instances instead
+// of 1:1 clients).
+function getFacilitatorsForInstance(courseInstanceId) {
+  return queryAll(
+    `SELECT f.id, f.name, f.email FROM instance_facilitators inf
+     JOIN facilitators f ON inf.facilitator_id = f.id
+     WHERE inf.course_instance_id=? ORDER BY f.name ASC`, [courseInstanceId]
+  );
+}
+function getInstancesForFacilitator(facilitatorId) {
+  return queryAll(
+    `SELECT ci.*, c.title as course_title,
+       (SELECT COUNT(*) FROM enrolments e WHERE e.course_instance_id = ci.id) as enrolment_count
+     FROM instance_facilitators inf
+     JOIN course_instances ci ON inf.course_instance_id = ci.id
+     JOIN courses c ON ci.course_id = c.id
+     WHERE inf.facilitator_id=?
+     ORDER BY ci.start_date DESC, ci.created_at DESC`, [facilitatorId]
+  );
+}
+function isFacilitatorAssignedToInstance(facilitatorId, courseInstanceId) {
+  return !!queryOne('SELECT 1 FROM instance_facilitators WHERE facilitator_id=? AND course_instance_id=?', [facilitatorId, courseInstanceId]);
+}
+function assignFacilitatorToInstance(id, courseInstanceId, facilitatorId) {
+  // INSERT OR IGNORE — the UNIQUE(course_instance_id, facilitator_id) on
+  // the table means assigning the same facilitator twice is a harmless
+  // no-op rather than an error, same pattern used for other join-table
+  // inserts throughout this file.
+  getDbSync().run('INSERT OR IGNORE INTO instance_facilitators (id, course_instance_id, facilitator_id) VALUES (?,?,?)', [id, courseInstanceId, facilitatorId]);
+  save();
+}
+function removeFacilitatorFromInstance(courseInstanceId, facilitatorId) {
+  getDbSync().run('DELETE FROM instance_facilitators WHERE course_instance_id=? AND facilitator_id=?', [courseInstanceId, facilitatorId]);
+  save();
 }
 function updateEnrolmentPaymentStatus(id, paymentStatus, amountPaidCents, stripePaymentIntentId) {
   getDbSync().run(
@@ -4111,6 +4183,11 @@ function addInstanceSession(id, courseInstanceId, sessionNumber, title, schedule
 function getSessionsForInstance(courseInstanceId) {
   return queryAll('SELECT * FROM instance_sessions WHERE course_instance_id=? ORDER BY session_number ASC', [courseInstanceId]);
 }
+// Per's request — a single-row getter, needed so a PATCH/DELETE on one
+// session (identified only by its own id in the URL, not also its
+// instance id) can still look up which instance it belongs to, for the
+// ownership check every facilitator-scoped session route needs.
+function getInstanceSession(id) { return queryOne('SELECT * FROM instance_sessions WHERE id=?', [id]); }
 function updateInstanceSession(id, fields) {
   const allowed = ['title','scheduled_at','facilitator_notes','handout'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
@@ -4130,6 +4207,20 @@ function addStudentNote(id, courseInstanceId, userId, facilitatorId, note) {
 }
 function getNotesForStudentInInstance(courseInstanceId, userId) {
   return queryAll('SELECT * FROM student_notes WHERE course_instance_id=? AND user_id=? ORDER BY created_at DESC', [courseInstanceId, userId]);
+}
+// Per's request — a roster-wide notes feed (not just one student at a
+// time), for an instance's overview. Joins in both the student's and the
+// writing facilitator's name — the latter matters once co-facilitation
+// is real: two facilitators on the same instance should each be able to
+// tell whose note is whose, not just read an anonymous list.
+function getNotesForInstance(courseInstanceId) {
+  return queryAll(
+    `SELECT sn.*, u.name as user_name, f.name as facilitator_name
+     FROM student_notes sn
+     JOIN users u ON sn.user_id = u.id
+     JOIN facilitators f ON sn.facilitator_id = f.id
+     WHERE sn.course_instance_id=? ORDER BY sn.created_at DESC`, [courseInstanceId]
+  );
 }
 
 // ── Quizzes ──
@@ -7964,9 +8055,10 @@ module.exports = {
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
-  addInstanceSession, getSessionsForInstance, updateInstanceSession, deleteInstanceSession,
+  addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession,
   // Student notes
-  addStudentNote, getNotesForStudentInInstance,
+  addStudentNote, getNotesForStudentInInstance, getNotesForInstance,
+  getFacilitatorsForInstance, getInstancesForFacilitator, isFacilitatorAssignedToInstance, assignFacilitatorToInstance, removeFacilitatorFromInstance,
   // Quizzes
   createQuiz, getQuiz, getQuizForLesson, updateQuiz, deleteQuiz, getFullQuiz, getQuizForTaking,
   addQuizQuestion, getQuestionsForQuiz, updateQuizQuestion, deleteQuizQuestion,

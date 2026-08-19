@@ -1138,6 +1138,25 @@
   </div>
 </div>
 
+<!-- Facilitators Modal (Per's request — n facilitators per instance) —
+     same shape as Sessions/Enrolments above: a small dedicated modal per
+     instance, not a field buried in the main Edit form, since this can
+     change independently of everything else about the instance. -->
+<div class="modal-overlay" id="instanceFacilitatorsModal">
+  <div class="modal" style="max-width:480px">
+    <h3 id="instFacModalTitle">Facilitators</h3>
+    <input type="hidden" id="instFacInstanceId"/>
+    <div id="instFacAssignedList" style="margin-bottom:14px"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="instFacAddSelect" style="flex:1"><option value="">Add a facilitator…</option></select>
+      <button class="btn sm primary" onclick="addInstanceFacilitator()">Add</button>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('instanceFacilitatorsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Playlist Modal -->
 <div class="modal-overlay" id="newPlaylistModal">
   <div class="modal">
@@ -3683,6 +3702,7 @@ function renderInstances(){
         <button class="btn sm" onclick="editInstance('${i.id}')">Edit</button>
         ${i.mode==='cohort'?`<button class="btn sm" onclick="openSessionsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Sessions</button>`:''}
         <button class="btn sm" onclick="openEnrolmentsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Enrolments</button>
+        <button class="btn sm" onclick="openInstanceFacilitatorsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Facilitators</button>
         <button class="btn sm danger" onclick="delInstance('${i.id}')">Delete</button>
       </div>
     </div>
@@ -3832,6 +3852,51 @@ async function openEnrolmentsModal(instanceId,instanceTitle){
       </div>
     `).join('');
   openModal('enrolmentsModal');
+}
+
+// ── Instance facilitators (Per's request — n facilitators per instance,
+// n instances per facilitator) — same open/refresh/openModal shape as
+// Sessions and Enrolments above, so this behaves exactly the way the
+// two already-familiar modals next to it do.
+async function openInstanceFacilitatorsModal(instanceId,instanceTitle){
+  document.getElementById('instFacInstanceId').value=instanceId;
+  document.getElementById('instFacModalTitle').textContent='Facilitators — '+instanceTitle;
+  await refreshInstanceFacilitatorsModal();
+  openModal('instanceFacilitatorsModal');
+}
+async function refreshInstanceFacilitatorsModal(){
+  const instanceId=document.getElementById('instFacInstanceId').value;
+  const [assigned, all] = await Promise.all([
+    fetch(`/api/admin/course-instances/${instanceId}/facilitators`).then(r=>r.json()),
+    fetch('/api/admin/facilitators').then(r=>r.json()),
+  ]);
+  const assignedIds = new Set(assigned.map(f=>f.id));
+  const listEl = document.getElementById('instFacAssignedList');
+  listEl.innerHTML = assigned.length ? assigned.map(f => `
+    <div style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;margin-bottom:6px">
+      <div style="flex:1">
+        <div style="font-size:13px;color:rgba(255,255,255,0.8)">${f.name}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4)">${f.email}</div>
+      </div>
+      <button class="btn sm danger" onclick="removeInstanceFacilitator('${f.id}')">Remove</button>
+    </div>
+  `).join('') : '<div style="font-size:12px;color:rgba(255,255,255,0.35);font-style:italic;margin-bottom:6px">No facilitators assigned yet — this instance won\'t show up for anyone in their facilitator portal until at least one is added.</div>';
+  const addSel = document.getElementById('instFacAddSelect');
+  const notYetAssigned = all.filter(f => !assignedIds.has(f.id));
+  addSel.innerHTML = '<option value="">Add a facilitator…</option>' +
+    notYetAssigned.map(f => `<option value="${f.id}">${f.name} (${f.email})</option>`).join('');
+}
+async function addInstanceFacilitator(){
+  const instanceId=document.getElementById('instFacInstanceId').value;
+  const facilitatorId=document.getElementById('instFacAddSelect').value;
+  if(!facilitatorId) return;
+  await fetch(`/api/admin/course-instances/${instanceId}/facilitators`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({facilitatorId})});
+  await refreshInstanceFacilitatorsModal();
+}
+async function removeInstanceFacilitator(facilitatorId){
+  const instanceId=document.getElementById('instFacInstanceId').value;
+  await fetch(`/api/admin/course-instances/${instanceId}/facilitators/${facilitatorId}`,{method:'DELETE'});
+  await refreshInstanceFacilitatorsModal();
 }
 
 function renderCourses(courses){

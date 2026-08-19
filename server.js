@@ -8515,6 +8515,28 @@ app.get('/api/admin/course-instances/:id/enrolments', auth.requireAuthApi(['admi
   try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — n facilitators per instance, assignable from the admin
+// side (Per said he'll do this part himself). GET/POST/DELETE rather
+// than one PATCH with a full list, matching the pattern already used for
+// lesson-file-refs elsewhere in this file — add/remove one at a time is
+// simpler and safer than reconciling a whole list against what's there.
+app.get('/api/admin/course-instances/:id/facilitators', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getFacilitatorsForInstance(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/course-instances/:id/facilitators', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (!db.getCourseInstance(req.params.id)) return res.status(404).json({ error: 'Instance not found.' });
+    const { facilitatorId } = req.body;
+    if (!facilitatorId) return res.status(400).json({ error: 'facilitatorId required.' });
+    db.assignFacilitatorToInstance(uuidv4(), req.params.id, facilitatorId);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/course-instances/:id/facilitators/:facilitatorId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.removeFacilitatorFromInstance(req.params.id, req.params.facilitatorId); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── Cohort live sessions ──
 app.get('/api/admin/course-instances/:id/sessions', auth.requireAuthApi(['admin']), (req, res) => {
@@ -8542,6 +8564,118 @@ app.patch('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (r
 app.delete('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteInstanceSession(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Facilitator-side course teaching (Per's request — allowing other
+// people to facilitate a course, not just Per's own 1:1 clinical work).
+// Everything below is scoped to instances this specific facilitator is
+// actually assigned to (see instance_facilitators / getInstancesForFacilitator
+// in db.js) — a facilitator can see every instance and student they're
+// assigned to, nothing they're not, admin always able to see everything
+// via the same routes (requireInstanceOwnedByFacilitator lets admin
+// through unconditionally, same pattern as requireClientOwnedByFacilitator
+// above for 1:1 clients).
+function requireInstanceOwnedByFacilitator(req, res, next) {
+  const instance = db.getCourseInstance(req.params.id);
+  if (!instance) return res.status(404).json({ error: 'Instance not found.' });
+  const isAssigned = db.isFacilitatorAssignedToInstance(req.user.id, instance.id);
+  if (req.user.role !== 'admin' && !isAssigned) return res.status(403).json({ error: 'You are not assigned to this course instance.' });
+  req.facilitatorInstance = instance;
+  next();
+}
+app.get('/api/facilitator/instances', auth.requireAuthApi(['facilitator','admin']), (req, res) => {
+  try { res.json(db.getInstancesForFacilitator(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/facilitator/instances/:id', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try {
+    const instance = req.facilitatorInstance;
+    const course = db.getCourse(instance.course_id);
+    res.json({ ...instance, course_title: course ? course.title : null, facilitators: db.getFacilitatorsForInstance(instance.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Roster — participants and their live progress. Reuses the exact same
+// getEnrolmentsForInstance the admin route above already calls; the only
+// difference here is the ownership gate.
+app.get('/api/facilitator/instances/:id/roster', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Content — the course's own lessons, same list a student sees, so a
+// facilitator can review exactly what students are working through.
+app.get('/api/facilitator/instances/:id/content', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try { res.json(db.getLessonsForCourse(req.facilitatorInstance.course_id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Sessions — reuses the exact same instance_sessions functions the admin
+// routes above already use (addInstanceSession/getSessionsForInstance/
+// updateInstanceSession/deleteInstanceSession), just facilitator-scoped.
+app.get('/api/facilitator/instances/:id/sessions', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try { res.json(db.getSessionsForInstance(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/facilitator/instances/:id/sessions', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try {
+    const { sessionNumber, title, scheduledAt, facilitatorNotes, handout } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
+    const id = uuidv4();
+    db.addInstanceSession(id, req.params.id, sessionNumber || 1, title.trim(), scheduledAt, facilitatorNotes, handout);
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// PATCH/DELETE take only the session's own id, not also its instance id —
+// ownership is checked by looking the session up first, then checking
+// ITS instance, rather than reusing requireInstanceOwnedByFacilitator
+// directly (which expects :id in the URL to already be an instance id).
+app.patch('/api/facilitator/instance-sessions/:id', auth.requireAuthApi(['facilitator','admin']), (req, res) => {
+  try {
+    const session = db.getInstanceSession(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (req.user.role !== 'admin' && !db.isFacilitatorAssignedToInstance(req.user.id, session.course_instance_id)) return res.status(403).json({ error: 'You are not assigned to this course instance.' });
+    const fieldMap = { title:'title', scheduledAt:'scheduled_at', facilitatorNotes:'facilitator_notes', handout:'handout' };
+    const fields = {};
+    Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
+    db.updateInstanceSession(req.params.id, fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/facilitator/instance-sessions/:id', auth.requireAuthApi(['facilitator','admin']), (req, res) => {
+  try {
+    const session = db.getInstanceSession(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found.' });
+    if (req.user.role !== 'admin' && !db.isFacilitatorAssignedToInstance(req.user.id, session.course_instance_id)) return res.status(403).json({ error: 'You are not assigned to this course instance.' });
+    db.deleteInstanceSession(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Student notes — a facilitator's own private notes on one participant
+// within this instance (separate from the clinical `sessions` table,
+// which is Per's own 1:1 client work and unrelated to a course).
+app.get('/api/facilitator/instances/:id/notes', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try { res.json(db.getNotesForInstance(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/facilitator/instances/:id/students/:userId/notes', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try { res.json(db.getNotesForStudentInInstance(req.params.id, req.params.userId)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/facilitator/instances/:id/students/:userId/notes', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try {
+    const note = (req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'Note text required.' });
+    // Admin acting here has no facilitator row of their own to attribute
+    // this to — falls back to the instance's first assigned facilitator
+    // so the note still has a real, valid facilitator_id rather than
+    // one that doesn't exist in the facilitators table.
+    let facilitatorId = req.user.id;
+    if (req.user.role === 'admin') {
+      const facs = db.getFacilitatorsForInstance(req.params.id);
+      facilitatorId = facs.length ? facs[0].id : null;
+      if (!facilitatorId) return res.status(400).json({ error: 'This instance has no facilitator assigned yet — assign one before adding notes.' });
+    }
+    db.addStudentNote(uuidv4(), req.params.id, req.params.userId, facilitatorId, note);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Quizzes ──
