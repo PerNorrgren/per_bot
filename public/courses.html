@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Courses — Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; justify-content:center; padding:20px 16px 56px; }
+    @media (max-width: 500px) { html, body { padding-left:0; padding-right:0; } }
+
+    .slideshow { position:fixed; inset:0; z-index:0; }
+    .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
+    .slide.active { opacity:1; }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.6); }
+
+    .panel { position:relative; z-index:2; width:100%; max-width:640px; display:flex; flex-direction:column; gap:22px; padding-top:8px; }
+
+    .back-link { display:inline-flex; align-items:center; gap:6px; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; text-decoration:none; transition:color 0.2s; }
+    .back-link:hover { color:rgba(180,230,200,0.7); }
+    .back-link svg { width:14px; height:14px; }
+
+    .page-wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:6px; }
+    .page-title { font-size:30px; color:rgba(255,255,255,0.92); font-weight:normal; margin-bottom:10px; }
+    .page-desc { font-size:15px; color:rgba(255,255,255,0.55); line-height:1.8; }
+
+    .instance-card { display:block; text-decoration:none; background:rgba(255,255,255,0.06); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:20px 22px; transition:border-color 0.2s, background 0.2s; }
+    .instance-card:hover { border-color:rgba(180,230,200,0.3); background:rgba(255,255,255,0.08); }
+    .instance-course { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.65); margin-bottom:6px; }
+    .instance-title { font-size:19px; color:rgba(255,255,255,0.9); margin-bottom:10px; }
+    .instance-meta { display:flex; flex-wrap:wrap; gap:14px; font-size:13px; color:rgba(255,255,255,0.5); }
+    .instance-meta-item { display:flex; align-items:center; gap:6px; margin-right:14px; }
+    .instance-meta-item:last-child { margin-right:0; }
+
+    .empty-note { text-align:center; font-size:14px; color:rgba(255,255,255,0.35); padding:40px 20px; }
+
+    .cta-card { text-align:center; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.18); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border-radius:16px; padding:24px; }
+    .cta-card h2 { font-size:18px; color:rgba(180,230,200,0.85); font-weight:normal; margin-bottom:8px; }
+    .cta-card p { font-size:13.5px; color:rgba(255,255,255,0.5); line-height:1.7; margin-bottom:14px; }
+    .cta-btn { display:inline-block; padding:12px 24px; border-radius:10px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); font-size:12.5px; letter-spacing:0.1em; text-transform:uppercase; text-decoration:none; transition:all 0.2s; font-family:'Georgia',serif; }
+    .cta-btn:hover { background:rgba(180,230,200,0.22); }
+
+    .loading { text-align:center; padding:40px; font-size:13px; color:rgba(255,255,255,0.25); }
+  </style>
+</head>
+<body>
+
+<div class="slideshow" id="slideshow"></div>
+<div class="veil"></div>
+
+<div class="panel">
+
+  <a class="back-link" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    Back
+  </a>
+
+  <div>
+    <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
+    <div class="page-title">Upcoming Courses</div>
+    <div class="page-desc">Practices that land and last, taught live, in a group, by someone who has actually lived through the work themselves.</div>
+  </div>
+
+  <div id="scheduleList" class="loading">Loading…</div>
+
+  <div class="cta-card">
+    <h2>Want to Teach a Course Like This?</h2>
+    <p>If you've spent real time with the practice yourself and want to offer it to others, I'd like to hear from you.</p>
+    <a class="cta-btn" href="/teaching-the-felt-way">Learn About Teaching With Us</a>
+  </div>
+
+</div>
+
+<script>
+  const slides = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+  ];
+  const ss = document.getElementById('slideshow');
+  const slideEls = slides.map((url, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    d.style.backgroundImage = `url('${url}')`;
+    ss.appendChild(d); return d;
+  });
+  let cur = 0;
+  setInterval(() => {
+    slideEls[cur].classList.remove('active');
+    cur = (cur + 1) % slideEls.length;
+    slideEls[cur].classList.add('active');
+  }, 9000);
+
+  function fmtDate(d) {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); }
+    catch(e) { return d; }
+  }
+
+  async function loadSchedule() {
+    const el = document.getElementById('scheduleList');
+    try {
+      const list = await (await fetch('/api/public/schedule')).json();
+      if (!Array.isArray(list) || !list.length) {
+        el.outerHTML = '<div class="empty-note">Nothing scheduled right now — check back soon.</div>';
+        return;
+      }
+      el.outerHTML = '<div style="display:flex;flex-direction:column;gap:14px" id="scheduleList">' + list.map(i => `
+        <a class="instance-card" href="/course-instance/${i.id}">
+          <div class="instance-course">${i.course_title}</div>
+          <div class="instance-title">${i.instance_title}</div>
+          <div class="instance-meta">
+            ${i.schedule_day ? `<span class="instance-meta-item">📅 ${i.schedule_day}${i.schedule_time ? ', ' + i.schedule_time : ''}</span>` : ''}
+            ${i.start_date ? `<span class="instance-meta-item">Starts ${fmtDate(i.start_date)}</span>` : ''}
+            ${i.facilitator_names ? `<span class="instance-meta-item">With ${i.facilitator_names}</span>` : ''}
+          </div>
+        </a>
+      `).join('') + '</div>';
+    } catch(e) {
+      el.textContent = 'Could not load the schedule right now — please try again.';
+    }
+  }
+  loadSchedule();
+</script>
+
+<script>window.TOMTE_PAGE = 'Courses';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>

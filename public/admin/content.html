@@ -1104,6 +1104,15 @@
         <div><label>End date</label><input type="date" id="instEnd"/></div>
       </div>
       <div><label>Capacity</label><input type="number" id="instCapacity" min="1" placeholder="Leave blank for unlimited"/></div>
+      <!-- Per's request — public course catalog/schedule page. Plain text
+           on purpose, not a day-of-week picker or a real timezone-aware
+           time — "Tuesdays" and "7:00pm GMT" cover the actual need (a
+           readable line on a public schedule) without the real
+           complexity a recurring, timezone-correct schedule would add. -->
+      <div class="modal-row">
+        <div><label>Schedule day <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown on the public course catalog)</span></label><input type="text" id="instScheduleDay" placeholder="e.g. Tuesdays"/></div>
+        <div><label>Schedule time</label><input type="text" id="instScheduleTime" placeholder="e.g. 7:00pm GMT"/></div>
+      </div>
     </div>
     <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
     <div><label>Stripe Price ID <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank to charge the amount above directly; paste a Price ID from Stripe to use a pre-created Price object instead, e.g. for cleaner reporting)</span></label><input type="text" id="instStripePriceId" placeholder="price_..."/></div>
@@ -3724,6 +3733,8 @@ function openNewInstance(){
   document.getElementById('instPrice').value='';
   document.getElementById('instStripePriceId').value='';
   document.getElementById('instStatus').value='draft';
+  document.getElementById('instScheduleDay').value='';
+  document.getElementById('instScheduleTime').value='';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
   openModal('instanceModal');
@@ -3743,6 +3754,8 @@ function editInstance(id){
   document.getElementById('instPrice').value=i.price_cents?(i.price_cents/100).toFixed(2):'';
   document.getElementById('instStripePriceId').value=i.stripe_price_id||'';
   document.getElementById('instStatus').value=i.status;
+  document.getElementById('instScheduleDay').value=i.schedule_day||'';
+  document.getElementById('instScheduleTime').value=i.schedule_time||'';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
   openModal('instanceModal');
@@ -3759,10 +3772,12 @@ async function saveInstance(){
   const priceCents=document.getElementById('instPrice').value?Math.round(parseFloat(document.getElementById('instPrice').value)*100):0;
   const stripePriceId=document.getElementById('instStripePriceId').value.trim()||null;
   const status=document.getElementById('instStatus').value;
+  const scheduleDay=document.getElementById('instScheduleDay').value.trim()||null;
+  const scheduleTime=document.getElementById('instScheduleTime').value.trim()||null;
   const err=document.getElementById('instErr');
   if(!courseId||!title){err.textContent='Course and title are required.';return;}
 
-  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status});
+  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status,scheduleDay,scheduleTime});
   const res=id
     ? await fetch(`/api/admin/course-instances/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body})
     : await fetch('/api/admin/course-instances',{method:'POST',headers:{'Content-Type':'application/json'},body});

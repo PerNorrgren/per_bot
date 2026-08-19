@@ -2323,6 +2323,25 @@ async function getDb() {
     "ALTER TABLE onboarding_tour_slides ADD COLUMN tour_id TEXT",
     "INSERT OR IGNORE INTO tours (id, key, name, sort_order) VALUES ('welcome', 'welcome', 'Welcome Tour', 0)",
     "UPDATE onboarding_tour_slides SET tour_id='welcome' WHERE tour_id IS NULL",
+    // Per's request — the public course catalog/schedule page and
+    // facilitator bio pages. public_profile is an explicit opt-in,
+    // separate from a course instance simply being open for enrolment
+    // (status='open', already meaningful elsewhere — see the public
+    // schedule query, which reuses that rather than adding a redundant
+    // instance-level flag) — a facilitator actively teaching an open
+    // instance doesn't necessarily want their photo and bio shown
+    // publicly by default; this has to be turned on for them.
+    // schedule_day/schedule_time are deliberately plain text ("Tuesdays",
+    // "7:00pm GMT") rather than a structured day-of-week enum or a real
+    // timezone-aware time — recurring-schedule and timezone handling is
+    // real complexity this doesn't need yet; free text covers the actual
+    // need (a readable line on a public schedule) without it.
+    "ALTER TABLE facilitators ADD COLUMN bio TEXT",
+    "ALTER TABLE facilitators ADD COLUMN credentials TEXT",
+    "ALTER TABLE facilitators ADD COLUMN photo_filename TEXT",
+    "ALTER TABLE facilitators ADD COLUMN public_profile INTEGER DEFAULT 0",
+    "ALTER TABLE course_instances ADD COLUMN schedule_day TEXT",
+    "ALTER TABLE course_instances ADD COLUMN schedule_time TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -2856,9 +2875,76 @@ function getAllAdmins() {
 }
 function getAllFacilitators(includeArchived=false) {
   if (includeArchived) {
-    return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role!='admin' ORDER BY name ASC");
+    return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role!='admin' ORDER BY name ASC");
   }
-  return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role='facilitator' ORDER BY name ASC");
+  return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role='facilitator' ORDER BY name ASC");
+}
+// Per's request — a facilitator's public bio-page content (photo,
+// credentials, bio text) and whether they've opted into having it shown
+// at all. Kept as its own function rather than folded into the generic
+// facilitator PATCH route, since photo upload needs its own multipart
+// handling (see the server route) separate from the plain-JSON fields.
+function updateFacilitatorProfile(id, { bio, credentials, photoFilename, publicProfile }) {
+  const sets = [];
+  const vals = [];
+  if (bio !== undefined) { sets.push('bio=?'); vals.push(bio); }
+  if (credentials !== undefined) { sets.push('credentials=?'); vals.push(credentials); }
+  if (photoFilename !== undefined) { sets.push('photo_filename=?'); vals.push(photoFilename); }
+  if (publicProfile !== undefined) { sets.push('public_profile=?'); vals.push(publicProfile ? 1 : 0); }
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE facilitators SET ${sets.join(', ')} WHERE id=?`, vals);
+  save();
+}
+// ── Public course catalog (Per's request) ── Deliberately separate from
+// every admin/facilitator-scoped function above — these three are the
+// only ones meant to ever be called from an unauthenticated public route,
+// so what they return is exactly and only what's safe to show anyone:
+// no email addresses, no internal status/pricing details beyond what's
+// meant to be public, and a facilitator only appears at all if they've
+// explicitly opted in (public_profile=1).
+function getPublicFacilitator(id) {
+  return queryOne(`SELECT id, name, bio, credentials, photo_filename FROM facilitators WHERE id=? AND public_profile=1`, [id]);
+}
+// One row per open instance, with every facilitator assigned to it
+// folded into a single comma-joined name list (GROUP_CONCAT) rather than
+// one row per facilitator — a schedule listing should show one line per
+// actual course meeting, not duplicate a row for each co-facilitator on
+// it. status='open' is the same "live and accepting enrolment" signal
+// already used elsewhere in this file (e.g. the Featured-courses check)
+// — no separate public-visibility flag needed at the instance level.
+function getPublicSchedule() {
+  return queryAll(`
+    SELECT ci.id, ci.title as instance_title, ci.start_date, ci.end_date, ci.schedule_day, ci.schedule_time,
+      c.id as course_id, c.title as course_title,
+      GROUP_CONCAT(DISTINCT f.name) as facilitator_names
+    FROM course_instances ci
+    JOIN courses c ON ci.course_id = c.id
+    LEFT JOIN instance_facilitators inf ON inf.course_instance_id = ci.id
+    LEFT JOIN facilitators f ON inf.facilitator_id = f.id AND f.public_profile = 1
+    WHERE ci.status = 'open'
+    GROUP BY ci.id
+    ORDER BY ci.start_date ASC
+  `);
+}
+function getPublicCourseOverview(id) {
+  return queryOne(`SELECT id, title, description FROM courses WHERE id=?`, [id]);
+}
+// Gated on status != 'draft' rather than status = 'open' only — a
+// facilitator or course page might reasonably link to a past ('closed')
+// instance as a real, honest reference point (this ran, here's when),
+// which is a legitimate thing to show publicly; an unfinished draft
+// admin hasn't set up yet is the only thing genuinely hidden here.
+function getPublicInstanceOverview(id) {
+  const instance = queryOne(`SELECT ci.*, c.title as course_title, c.description as course_description
+    FROM course_instances ci JOIN courses c ON ci.course_id = c.id
+    WHERE ci.id=? AND ci.status != 'draft'`, [id]);
+  if (!instance) return null;
+  const facilitators = queryAll(`
+    SELECT f.id, f.name, f.credentials, f.photo_filename FROM instance_facilitators inf
+    JOIN facilitators f ON inf.facilitator_id = f.id
+    WHERE inf.course_instance_id=? AND f.public_profile=1`, [id]);
+  return { ...instance, facilitators };
 }
 
 // ── Categories ──
@@ -3842,11 +3928,11 @@ function getLessonFileProgress(userId, lessonId) {
 }
 
 // ── Course instances ──
-function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status) {
+function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime) {
   getDbSync().run(
-    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft']
+    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status,schedule_day,schedule_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft', scheduleDay||null, scheduleTime||null]
   );
   save();
 }
@@ -3871,7 +3957,7 @@ function getAllCourseInstances(filters = {}) {
   return queryAll(sql, params);
 }
 function updateCourseInstance(id, fields) {
-  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status'];
+  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -8039,6 +8125,7 @@ module.exports = {
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,
+  updateFacilitatorProfile, getPublicFacilitator, getPublicSchedule, getPublicCourseOverview, getPublicInstanceOverview,
   addMessage, getMessageThread, getSessionThreadsForClient, getMessageById, editMessage, deleteMessage,
   markThreadRead, getUnreadMessageCountForFacilitator, getUnreadMessageCountForClient,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,

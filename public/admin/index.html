@@ -911,6 +911,28 @@
       <div><label>Name</label><input type="text" id="editFacName"/></div>
       <div><label>Email</label><input type="email" id="editFacEmail"/></div>
       <div class="modal-err" id="editFacErr"></div>
+      <!-- Per's request — public course catalog / facilitator bio pages.
+           Own bordered section, saved via its own button (saveFacProfile),
+           deliberately separate from name/email's own Save details button
+           above — the two are genuinely different edits (account details
+           vs. public-facing content) and there's no reason saving one
+           should require touching the other. -->
+      <div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:14px;margin-top:4px">
+        <div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:10px">Public bio page</div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55);margin-bottom:12px">
+          <input type="checkbox" id="editFacPublic"/>
+          Show this facilitator publicly (course catalog, bio page)
+        </label>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+          <img id="editFacPhotoPreview" src="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15);display:none"/>
+          <div style="flex:1">
+            <input type="file" id="editFacPhotoInput" accept="image/*" style="display:none" onchange="uploadFacPhoto()"/>
+            <button class="btn sm" onclick="document.getElementById('editFacPhotoInput').click()">Upload photo</button>
+          </div>
+        </div>
+        <div style="margin-bottom:10px"><label>Credentials <span style="font-weight:normal;color:rgba(255,255,255,0.3)">— a short line, e.g. "MBSR-trained, Bangor Certified"</span></label><input type="text" id="editFacCredentials"/></div>
+        <div><label>Bio</label><textarea id="editFacBio" rows="4" style="width:100%"></textarea></div>
+      </div>
       <div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:14px;margin-top:4px">
         <div style="font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.25);margin-bottom:10px">Password</div>
         <button class="btn warn" onclick="resetFacPassword()" style="width:100%;justify-content:center">Reset password &amp; send email</button>
@@ -918,6 +940,7 @@
       </div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('editFacModal')">Cancel</button>
+        <button class="btn" onclick="saveFacProfile()">Save bio page</button>
         <button class="modal-ok" onclick="saveEditFac()">Save details</button>
       </div>
     </div>
@@ -1277,7 +1300,52 @@
     document.getElementById('editFacName').value  = f.name;
     document.getElementById('editFacEmail').value = f.email;
     document.getElementById('editFacErr').textContent = '';
+    // Per's request — public bio-page fields, populated from the same
+    // _facData row (getAllFacilitators already returns these columns —
+    // see db.js).
+    document.getElementById('editFacPublic').checked = !!f.public_profile;
+    document.getElementById('editFacCredentials').value = f.credentials || '';
+    document.getElementById('editFacBio').value = f.bio || '';
+    const preview = document.getElementById('editFacPhotoPreview');
+    if (f.photo_filename) {
+      preview.src = f.photo_filename.includes('/') ? '/' + f.photo_filename : '/uploads/' + f.photo_filename;
+      preview.style.display = '';
+    } else {
+      preview.style.display = 'none';
+    }
     openModal('editFacModal');
+  }
+  // Per's request — the "Save bio page" button's own handler, separate
+  // from saveEditFac (name/email) above. Sends only the profile fields —
+  // the server route treats bio/credentials/publicProfile as its own
+  // branch, distinct from the name+email one, so this never touches
+  // account details.
+  async function saveFacProfile() {
+    const id = document.getElementById('editFacId').value;
+    const bio = document.getElementById('editFacBio').value.trim();
+    const credentials = document.getElementById('editFacCredentials').value.trim();
+    const publicProfile = document.getElementById('editFacPublic').checked;
+    await fetch(`/api/admin/facilitators/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ bio, credentials, publicProfile }) });
+    closeModal('editFacModal');
+    loadFacilitators();
+  }
+  async function uploadFacPhoto() {
+    const id = document.getElementById('editFacId').value;
+    const input = document.getElementById('editFacPhotoInput');
+    if (!input.files[0]) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const res = await fetch(`/api/admin/facilitators/${id}/photo`, { method:'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      const preview = document.getElementById('editFacPhotoPreview');
+      preview.src = data.url;
+      preview.style.display = '';
+    } else {
+      document.getElementById('editFacErr').textContent = data.error || 'Could not upload photo.';
+    }
+    input.value = '';
   }
   async function archiveSelectedFac() {
     const ids = [...facSel.sel]; if (!ids.length) return;

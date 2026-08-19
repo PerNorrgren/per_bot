@@ -1845,6 +1845,37 @@ app.get('/tomte-widget.js', (req, res) => { res.set('Cache-Control', 'no-store')
 app.get('/downloads/teaching-the-felt-way-guide.pdf', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'downloads', 'Teaching_With_Deeper_Mindfulness_Facilitator_Guide.pdf'));
 });
+// ── Public course catalog (Per's request) ── No auth on any of these
+// four — the whole point is reaching someone who isn't a member,
+// student, or facilitator yet. Each one calls a db function that already
+// does its own filtering for what's safe to show publicly (see the
+// comment on getPublicFacilitator/getPublicSchedule/etc. in db.js) — this
+// layer doesn't re-check anything, it trusts that filtering completely.
+app.get('/api/public/schedule', (req, res) => {
+  try { res.json(db.getPublicSchedule()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/public/courses/:id', (req, res) => {
+  try {
+    const course = db.getPublicCourseOverview(req.params.id);
+    if (!course) return res.status(404).json({ error: 'Not found.' });
+    res.json(course);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/public/instances/:id', (req, res) => {
+  try {
+    const instance = db.getPublicInstanceOverview(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...instance, facilitators: instance.facilitators.map(f => ({ ...f, photoUrl: f.photo_filename ? tomteImageUrl(f.photo_filename) : null })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/public/facilitators/:id', (req, res) => {
+  try {
+    const fac = db.getPublicFacilitator(req.params.id);
+    if (!fac) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...fac, photoUrl: fac.photo_filename ? tomteImageUrl(fac.photo_filename) : null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
 app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'bulk-import-sample.xlsx')));
 // Per Bot 17 fix: these two were missing entirely. This app has no
@@ -2352,7 +2383,7 @@ app.get('/api/admin/admins', auth.requireAuthApi(['admin']), (req, res) => {
   res.json(db.getAllAdmins());
 });
 app.patch('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), async (req, res) => {
-  const { name, email, action } = req.body;
+  const { name, email, action, bio, credentials, publicProfile } = req.body;
   if (action === 'archive')   { db.archiveFacilitator(req.params.id); return res.json({ ok: true }); }
   if (action === 'unarchive') { db.unarchiveFacilitator(req.params.id); return res.json({ ok: true }); }
   if (action === 'reset_password') {
@@ -2370,8 +2401,34 @@ app.patch('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), async (
     );
     return res.json({ ok: true, tempPassword });
   }
+  // Per's request — public bio-page fields, alongside the existing name/
+  // email path below rather than a separate route, since these are all
+  // just "edit this facilitator" from the same admin modal. Checked
+  // independently of name/email so this can be saved on its own (the
+  // bio form doesn't necessarily touch name/email at the same time).
+  if (bio !== undefined || credentials !== undefined || publicProfile !== undefined) {
+    db.updateFacilitatorProfile(req.params.id, { bio, credentials, publicProfile });
+    return res.json({ ok: true });
+  }
   if (name && email) { db.updateFacilitatorDetails(req.params.id, name.trim(), email.trim()); return res.json({ ok: true }); }
   res.status(400).json({ error: 'Invalid request.' });
+});
+// Per's request — a facilitator's public bio-page photo. Own route since
+// this needs multipart handling, unlike the plain-JSON fields just
+// above. Same R2-backed upload pattern as onboarding tour slides
+// (uploadTomteImageToR2/tomteImageUrl) — deliberately reused rather than
+// a parallel image-handling path.
+app.post('/api/admin/facilitators/:id/photo', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  if (!db.getFacilitatorById(req.params.id)) return res.status(404).json({ error: 'Facilitator not found.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.updateFacilitatorProfile(req.params.id, { photoFilename: stored });
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('facilitator photo upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
 });
 app.post('/api/admin/facilitators', auth.requireAuthApi(['admin']), async (req, res) => {
   const { name, email } = req.body;
@@ -8550,10 +8607,10 @@ app.get('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res
 });
 app.post('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status } = req.body;
+    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime } = req.body;
     if (!courseId || !title || !title.trim()) return res.status(400).json({ error: 'courseId and title are required.' });
     const id = uuidv4();
-    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status);
+    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8567,7 +8624,8 @@ app.get('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (req,
 app.patch('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const fieldMap = { mode:'mode', title:'title', startDate:'start_date', endDate:'end_date',
-      capacity:'capacity', priceCents:'price_cents', stripePriceId:'stripe_price_id', status:'status' };
+      capacity:'capacity', priceCents:'price_cents', stripePriceId:'stripe_price_id', status:'status',
+      scheduleDay:'schedule_day', scheduleTime:'schedule_time' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     db.updateCourseInstance(req.params.id, fields);
@@ -11983,6 +12041,18 @@ app.get('/membership/', (req, res) => res.sendFile(path.join(__dirname, 'public'
 // on first, which then leads into that same form as its call to action).
 app.get('/teaching-the-felt-way', (req, res) => res.sendFile(path.join(__dirname, 'public', 'teaching-the-felt-way.html')));
 app.get('/teaching-the-felt-way/', (req, res) => res.redirect('/teaching-the-felt-way'));
+// ── Public course catalog pages (Per's request) ── The student-facing
+// counterpart to Teaching The FELT Way above — a schedule listing, plus
+// three detail-page types, all genuinely public (no auth, same reasoning
+// as the API routes these call — see /api/public/* above). :id routes
+// serve one static HTML shell each; that shell's own client-side JS
+// reads the id straight off location.pathname and fetches the real data
+// itself, same pattern already used for e.g. openCourseDetail elsewhere
+// in this app, just for a logged-out audience.
+app.get('/courses', (req, res) => res.sendFile(path.join(__dirname, 'public', 'courses.html')));
+app.get('/courses/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'course-overview.html')));
+app.get('/course-instance/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'course-instance.html')));
+app.get('/facilitators/:id', (req, res) => res.sendFile(path.join(__dirname, 'public', 'facilitator-bio.html')));
 
 // ── App setup / identity settings (Path A: one deployment per facilitator/org) ──
 // Admin-only. Same page serves two purposes depending on setup_completed:

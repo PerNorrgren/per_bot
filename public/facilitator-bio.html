@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Facilitator — Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; justify-content:center; padding:20px 16px 56px; }
+    @media (max-width: 500px) { html, body { padding-left:0; padding-right:0; } }
+
+    .slideshow { position:fixed; inset:0; z-index:0; }
+    .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
+    .slide.active { opacity:1; }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.6); }
+
+    .panel { position:relative; z-index:2; width:100%; max-width:560px; display:flex; flex-direction:column; gap:22px; padding-top:8px; }
+
+    .back-link { display:inline-flex; align-items:center; gap:6px; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; text-decoration:none; transition:color 0.2s; }
+    .back-link:hover { color:rgba(180,230,200,0.7); }
+    .back-link svg { width:14px; height:14px; }
+
+    .profile-header { display:flex; flex-direction:column; align-items:center; text-align:center; gap:14px; }
+    .profile-photo { width:120px; height:120px; border-radius:50%; object-fit:cover; border:2px solid rgba(180,230,200,0.25); background:rgba(255,255,255,0.06); }
+    .profile-photo-placeholder { width:120px; height:120px; border-radius:50%; background:rgba(180,230,200,0.08); border:2px solid rgba(180,230,200,0.2); display:flex; align-items:center; justify-content:center; font-size:40px; color:rgba(180,230,200,0.5); }
+    .profile-name { font-size:26px; color:rgba(255,255,255,0.92); font-weight:normal; }
+    .profile-credentials { font-size:13.5px; color:rgba(180,230,200,0.65); }
+
+    .card { background:rgba(255,255,255,0.06); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:24px; }
+    .card p { font-size:14.5px; color:rgba(255,255,255,0.6); line-height:1.85; white-space:pre-wrap; }
+
+    .loading { text-align:center; padding:40px; font-size:13px; color:rgba(255,255,255,0.25); }
+  </style>
+</head>
+<body>
+
+<div class="slideshow" id="slideshow"></div>
+<div class="veil"></div>
+
+<div class="panel">
+
+  <a class="back-link" href="/courses">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    All courses
+  </a>
+
+  <div id="content" class="loading">Loading…</div>
+
+</div>
+
+<script>
+  const slides = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+  ];
+  const ss = document.getElementById('slideshow');
+  const slideEls = slides.map((url, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    d.style.backgroundImage = `url('${url}')`;
+    ss.appendChild(d); return d;
+  });
+  let cur = 0;
+  setInterval(() => {
+    slideEls[cur].classList.remove('active');
+    cur = (cur + 1) % slideEls.length;
+    slideEls[cur].classList.add('active');
+  }, 9000);
+
+  async function loadFacilitator() {
+    const id = location.pathname.split('/').pop();
+    const el = document.getElementById('content');
+    try {
+      const res = await fetch(`/api/public/facilitators/${id}`);
+      if (!res.ok) { el.innerHTML = '<div class="card"><p>This facilitator profile is not available.</p></div>'; return; }
+      const f = await res.json();
+      document.title = `${f.name} — Deeper Mindfulness`;
+      el.innerHTML = `
+        <div class="profile-header">
+          ${f.photoUrl ? `<img class="profile-photo" src="${f.photoUrl}"/>` : '<div class="profile-photo-placeholder">🧑</div>'}
+          <div>
+            <div class="profile-name">${f.name}</div>
+            ${f.credentials ? `<div class="profile-credentials">${f.credentials}</div>` : ''}
+          </div>
+        </div>
+        ${f.bio ? `<div class="card"><p>${f.bio}</p></div>` : ''}
+      `;
+    } catch(e) {
+      el.innerHTML = '<div class="card"><p>Something went wrong loading this profile — please try again.</p></div>';
+    }
+  }
+  loadFacilitator();
+</script>
+
+<script>window.TOMTE_PAGE = 'Facilitator Profile';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>

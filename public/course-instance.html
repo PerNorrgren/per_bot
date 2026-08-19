@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Course — Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; display:flex; justify-content:center; padding:20px 16px 56px; }
+    @media (max-width: 500px) { html, body { padding-left:0; padding-right:0; } }
+
+    .slideshow { position:fixed; inset:0; z-index:0; }
+    .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
+    .slide.active { opacity:1; }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.6); }
+
+    .panel { position:relative; z-index:2; width:100%; max-width:640px; display:flex; flex-direction:column; gap:22px; padding-top:8px; }
+
+    .back-link { display:inline-flex; align-items:center; gap:6px; color:rgba(255,255,255,0.3); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; text-decoration:none; transition:color 0.2s; }
+    .back-link:hover { color:rgba(180,230,200,0.7); }
+    .back-link svg { width:14px; height:14px; }
+
+    .page-wordmark { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.6); margin-bottom:6px; }
+    .page-title { font-size:28px; color:rgba(255,255,255,0.92); font-weight:normal; margin-bottom:6px; }
+    .page-subtitle { font-size:14px; color:rgba(255,255,255,0.4); }
+
+    .card { background:rgba(255,255,255,0.06); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:24px; }
+    .card h2 { font-size:15px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(180,230,200,0.6); font-weight:normal; margin-bottom:14px; }
+    .card p { font-size:14px; color:rgba(255,255,255,0.6); line-height:1.8; }
+
+    .meta-grid { display:flex; flex-direction:column; gap:12px; }
+    .meta-row { display:flex; gap:14px; font-size:14px; }
+    .meta-label { color:rgba(255,255,255,0.35); min-width:90px; flex-shrink:0; }
+    .meta-value { color:rgba(255,255,255,0.75); }
+
+    .facilitator-row { display:flex; align-items:center; gap:14px; text-decoration:none; padding:10px; border-radius:10px; transition:background 0.2s; }
+    .facilitator-row:hover { background:rgba(255,255,255,0.04); }
+    .facilitator-photo { width:52px; height:52px; border-radius:50%; object-fit:cover; border:1px solid rgba(255,255,255,0.15); flex-shrink:0; background:rgba(255,255,255,0.08); }
+    .facilitator-photo-placeholder { width:52px; height:52px; border-radius:50%; background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.2); display:flex; align-items:center; justify-content:center; font-size:18px; color:rgba(180,230,200,0.6); flex-shrink:0; }
+    .facilitator-name { font-size:15px; color:rgba(255,255,255,0.85); margin-bottom:2px; }
+    .facilitator-credentials { font-size:12px; color:rgba(255,255,255,0.4); }
+
+    .cta-card { text-align:center; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.18); }
+    .cta-card h2 { color:rgba(180,230,200,0.85); text-transform:none; letter-spacing:normal; font-size:18px; }
+    .cta-btn { display:inline-block; margin-top:6px; padding:14px 28px; border-radius:10px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); font-size:13px; letter-spacing:0.12em; text-transform:uppercase; text-decoration:none; transition:all 0.2s; font-family:'Georgia',serif; }
+    .cta-btn:hover { background:rgba(180,230,200,0.22); }
+
+    .loading { text-align:center; padding:40px; font-size:13px; color:rgba(255,255,255,0.25); }
+  </style>
+</head>
+<body>
+
+<div class="slideshow" id="slideshow"></div>
+<div class="veil"></div>
+
+<div class="panel">
+
+  <a class="back-link" href="/courses">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    All courses
+  </a>
+
+  <div id="content" class="loading">Loading…</div>
+
+</div>
+
+<script>
+  const slides = [
+    'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
+    'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
+    'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',
+  ];
+  const ss = document.getElementById('slideshow');
+  const slideEls = slides.map((url, i) => {
+    const d = document.createElement('div');
+    d.className = 'slide' + (i === 0 ? ' active' : '');
+    d.style.backgroundImage = `url('${url}')`;
+    ss.appendChild(d); return d;
+  });
+  let cur = 0;
+  setInterval(() => {
+    slideEls[cur].classList.remove('active');
+    cur = (cur + 1) % slideEls.length;
+    slideEls[cur].classList.add('active');
+  }, 9000);
+
+  function fmtDate(d) {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }); }
+    catch(e) { return d; }
+  }
+
+  async function loadInstance() {
+    const id = location.pathname.split('/').pop();
+    const el = document.getElementById('content');
+    try {
+      const res = await fetch(`/api/public/instances/${id}`);
+      if (!res.ok) { el.innerHTML = '<div class="card"><p>This course could not be found — it may have been removed or is not yet public.</p></div>'; return; }
+      const i = await res.json();
+      document.title = `${i.title} — ${i.course_title} — Deeper Mindfulness`;
+
+      const facilitatorsHtml = (i.facilitators || []).length ? i.facilitators.map(f => `
+        <a class="facilitator-row" href="/facilitators/${f.id}">
+          ${f.photoUrl ? `<img class="facilitator-photo" src="${f.photoUrl}"/>` : '<div class="facilitator-photo-placeholder">🧑</div>'}
+          <div>
+            <div class="facilitator-name">${f.name}</div>
+            ${f.credentials ? `<div class="facilitator-credentials">${f.credentials}</div>` : ''}
+          </div>
+        </a>
+      `).join('') : '<p style="font-size:13px;color:rgba(255,255,255,0.35);font-style:italic">Facilitator details coming soon.</p>';
+
+      el.innerHTML = `
+        <div>
+          <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
+          <div class="page-title">${i.title}</div>
+          <div class="page-subtitle">${i.course_title}</div>
+        </div>
+
+        <div class="card" style="margin-top:22px">
+          <h2>When</h2>
+          <div class="meta-grid">
+            ${i.schedule_day ? `<div class="meta-row"><div class="meta-label">Meets</div><div class="meta-value">${i.schedule_day}${i.schedule_time ? ', ' + i.schedule_time : ''}</div></div>` : ''}
+            ${i.start_date ? `<div class="meta-row"><div class="meta-label">Starts</div><div class="meta-value">${fmtDate(i.start_date)}</div></div>` : ''}
+            ${i.end_date ? `<div class="meta-row"><div class="meta-label">Ends</div><div class="meta-value">${fmtDate(i.end_date)}</div></div>` : ''}
+            ${i.status === 'closed' ? `<div class="meta-row"><div class="meta-label">Status</div><div class="meta-value">This intake has closed — see the schedule for what's currently open.</div></div>` : ''}
+          </div>
+        </div>
+
+        ${i.course_description ? `<div class="card"><h2>About This Course</h2><p>${i.course_description}</p></div>` : ''}
+
+        <div class="card">
+          <h2>Taught By</h2>
+          <div style="display:flex;flex-direction:column;gap:4px">${facilitatorsHtml}</div>
+        </div>
+
+        ${i.status === 'open' ? `
+        <div class="cta-card">
+          <h2>Ready to Join?</h2>
+          <p>Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
+          <a class="cta-btn" href="/register">Register</a>
+        </div>` : ''}
+      `;
+    } catch(e) {
+      el.innerHTML = '<div class="card"><p>Something went wrong loading this course — please try again.</p></div>';
+    }
+  }
+  loadInstance();
+</script>
+
+<script>window.TOMTE_PAGE = 'Course Instance';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>
