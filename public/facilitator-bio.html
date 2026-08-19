@@ -4,6 +4,11 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Facilitator — Deeper Mindfulness</title>
+  <meta name="description" content="A facilitator at Deeper Mindfulness."/>
+  <meta property="og:type" content="profile"/>
+  <meta property="og:title" content="A Facilitator at Deeper Mindfulness"/>
+  <meta property="og:description" content="Meet the people teaching at Deeper Mindfulness."/>
+  <meta name="twitter:card" content="summary"/>
   <link rel="icon" href="/favicon-dynamic"/>
   <link rel="apple-touch-icon" href="/favicon-dynamic"/>
   <link rel="manifest" href="/site.webmanifest"/>
@@ -80,6 +85,11 @@
       if (!res.ok) { el.innerHTML = '<div class="card"><p>This facilitator profile is not available.</p></div>'; return; }
       const f = await res.json();
       document.title = `${f.name} — Deeper Mindfulness`;
+      const descText = f.credentials ? `${f.name} — ${f.credentials}` : `Meet ${f.name} at Deeper Mindfulness.`;
+      document.querySelector('meta[name="description"]').setAttribute('content', descText);
+      document.querySelector('meta[property="og:title"]').setAttribute('content', f.name);
+      document.querySelector('meta[property="og:description"]').setAttribute('content', descText);
+      if (f.photoUrl) document.head.insertAdjacentHTML('beforeend', `<meta property="og:image" content="${location.origin}${f.photoUrl}"/>`);
       el.innerHTML = `
         <div class="profile-header">
           ${f.photoUrl ? `<img class="profile-photo" src="${f.photoUrl}"/>` : '<div class="profile-photo-placeholder">🧑</div>'}

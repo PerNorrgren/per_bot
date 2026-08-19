@@ -2430,6 +2430,35 @@ app.post('/api/admin/facilitators/:id/photo', auth.requireAuthApi(['admin']), up
     res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
   }
 });
+// ── Facilitator self-service (Per's request — "facilitators must be
+// self-sufficient and able to edit own information") ── Deliberately
+// separate from the admin routes above rather than reusing them with a
+// role check bolted on: these three never take an id param at all, they
+// always act on req.user.id — there is no way to construct a request
+// here that touches anyone else's profile, by design, not by a
+// permission check that could have a gap in it.
+app.get('/api/facilitator/profile', auth.requireAuthApi(['facilitator']), (req, res) => {
+  const fac = db.getFacilitatorById(req.user.id);
+  if (!fac) return res.status(404).json({ error: 'Not found.' });
+  res.json({ bio: fac.bio, credentials: fac.credentials, public_profile: fac.public_profile,
+    photoUrl: fac.photo_filename ? tomteImageUrl(fac.photo_filename) : null });
+});
+app.patch('/api/facilitator/profile', auth.requireAuthApi(['facilitator']), (req, res) => {
+  const { bio, credentials, publicProfile } = req.body;
+  db.updateFacilitatorProfile(req.user.id, { bio, credentials, publicProfile });
+  res.json({ ok: true });
+});
+app.post('/api/facilitator/profile/photo', auth.requireAuthApi(['facilitator']), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
+  try {
+    const stored = await uploadTomteImageToR2(req.file);
+    db.updateFacilitatorProfile(req.user.id, { photoFilename: stored });
+    res.json({ ok: true, url: tomteImageUrl(stored) });
+  } catch (e) {
+    console.error('facilitator self photo upload error:', e.message);
+    res.status(500).json({ error: 'Could not upload photo right now — please try again.' });
+  }
+});
 app.post('/api/admin/facilitators', auth.requireAuthApi(['admin']), async (req, res) => {
   const { name, email } = req.body;
   if (!name || !email) return res.status(400).json({ error: 'Name and email required.' });
@@ -11868,6 +11897,7 @@ app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => res.sendFile
 // registry below) rather than a bespoke page per report, so adding a new
 // report later is a data function + one registry entry, not a new page.
 app.get('/admin/reports',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
+app.get('/admin/pages',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'pages.html')));
 app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 
 // ── Legal document public pages ──

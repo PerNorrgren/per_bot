@@ -404,6 +404,18 @@
     <div style="margin:8px 12px 0;flex-shrink:0">
       <button id="resourcesBtn" onclick="openResourcesPanel()" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(180,230,200,0.18);background:rgba(180,230,200,0.05);color:rgba(180,230,200,0.65);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;font-family:Georgia,serif;transition:all 0.2s" onmouseover="this.style.background='rgba(180,230,200,0.1)'" onmouseout="this.style.background='rgba(180,230,200,0.05)'">📚 Resources</button>
     </div>
+    <!-- Per's request — facilitators must be self-sufficient editing
+         their own public bio/photo, not dependent on Per doing it for
+         them every time. Same fields as the admin version of this modal
+         (editFacModal in admin/index.html), reused here rather than
+         re-invented, but talking to dedicated facilitator-scoped routes
+         (see /api/facilitator/profile* in server.js) that always act on
+         the logged-in facilitator's own id — never takes an id param at
+         all, so there's no way this could accidentally (or otherwise)
+         touch anyone else's profile. -->
+    <div style="margin:8px 12px 0;flex-shrink:0">
+      <button id="myProfileBtn" onclick="openMyProfileModal()" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;font-family:Georgia,serif;transition:all 0.2s" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'">👤 My Profile</button>
+    </div>
     <!-- Per's request — allowing other people to facilitate a course,
          alongside Per's own existing 1:1 client work, which the sidebar
          below this point was entirely built around. Rather than mixing
@@ -1991,6 +2003,81 @@
   // ── Init ──
   loadClients();
   checkMySpace();
+  checkProfileOnboarding();
+
+  // Per's request — facilitators complete their own profile "as part of
+  // accepting being a facilitator." An empty bio is the signal for
+  // "hasn't done this yet" — no separate onboarding-flag column needed,
+  // since a facilitator with a genuinely empty bio and one who's simply
+  // never opened this modal are the same case either way. Opens the same
+  // modal My Profile itself uses, but with dismissible=false — Cancel is
+  // hidden and Save requires a non-empty bio (see saveMyProfile), so this
+  // can't just be dismissed on first login the way, say, an ordinary
+  // "welcome" notice could be. Everything past the bio itself — photo,
+  // credentials, going public at all — stays entirely their own choice.
+  async function checkProfileOnboarding() {
+    try {
+      const profile = await (await fetch('/api/facilitator/profile')).json();
+      if (!profile.bio || !profile.bio.trim()) {
+        openMyProfileModal(true);
+      }
+    } catch(e) { /* not worth blocking the rest of the page over */ }
+  }
+
+  async function openMyProfileModal(onboarding) {
+    const modal = document.getElementById('myProfileModal');
+    const title = document.getElementById('myProfileTitle');
+    const intro = document.getElementById('myProfileIntro');
+    const cancelBtn = document.getElementById('myProfileCancelBtn');
+    document.getElementById('myProfileErr').textContent = '';
+    if (onboarding) {
+      title.textContent = 'Welcome — Tell Us About You';
+      intro.textContent = 'Before you get started, a short bio for your profile. Everything else here — your photo, credentials, and whether any of this is shown publicly — is entirely your choice, and you can change it any time from "My Profile" in the sidebar.';
+      cancelBtn.style.display = 'none';
+    } else {
+      title.textContent = 'My Profile';
+      intro.textContent = 'This is what shows on your public bio page and the course catalog, if you choose to make it public.';
+      cancelBtn.style.display = '';
+    }
+    try {
+      const profile = await (await fetch('/api/facilitator/profile')).json();
+      document.getElementById('myProfileCredentials').value = profile.credentials || '';
+      document.getElementById('myProfileBio').value = profile.bio || '';
+      document.getElementById('myProfilePublic').checked = !!profile.public_profile;
+      const preview = document.getElementById('myProfilePhotoPreview');
+      const placeholder = document.getElementById('myProfilePhotoPlaceholder');
+      if (profile.photoUrl) { preview.src = profile.photoUrl; preview.style.display = ''; placeholder.style.display = 'none'; }
+      else { preview.style.display = 'none'; placeholder.style.display = ''; }
+    } catch(e) { /* leave fields blank if this fails, still usable */ }
+    modal.classList.add('visible');
+  }
+  async function saveMyProfile() {
+    const onboarding = document.getElementById('myProfileCancelBtn').style.display === 'none';
+    const bio = document.getElementById('myProfileBio').value.trim();
+    const credentials = document.getElementById('myProfileCredentials').value.trim();
+    const publicProfile = document.getElementById('myProfilePublic').checked;
+    const err = document.getElementById('myProfileErr');
+    if (onboarding && !bio) { err.textContent = 'A short bio is needed before you get started — even a sentence or two is fine.'; return; }
+    await fetch('/api/facilitator/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bio, credentials, publicProfile }) });
+    document.getElementById('myProfileModal').classList.remove('visible');
+  }
+  async function uploadMyProfilePhoto() {
+    const input = document.getElementById('myProfilePhotoInput');
+    if (!input.files[0]) return;
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const res = await fetch('/api/facilitator/profile/photo', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.ok) {
+      const preview = document.getElementById('myProfilePhotoPreview');
+      const placeholder = document.getElementById('myProfilePhotoPlaceholder');
+      preview.src = data.url; preview.style.display = ''; placeholder.style.display = 'none';
+    } else {
+      document.getElementById('myProfileErr').textContent = data.error || 'Could not upload photo.';
+    }
+    input.value = '';
+  }
 
   document.getElementById('mySpaceBtn').addEventListener('click', enterMySpace);
 
@@ -2032,6 +2119,38 @@
     <div class="resource-list" id="resourceList"><div style="padding:20px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px;font-style:italic">Loading…</div></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="document.getElementById('resourcesModal').classList.remove('visible')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — a facilitator's own bio-page editor. dismissible
+     defaults to true; the one-time onboarding call (checkProfileOnboarding
+     below) opens this same modal with dismissible=false instead, so it
+     can't be closed without at least a bio saved — everything else
+     (photo, credentials, going public at all) stays their own choice
+     either way. -->
+<div class="modal-overlay" id="myProfileModal">
+  <div class="modal">
+    <h3 id="myProfileTitle">My Profile</h3>
+    <p id="myProfileIntro" style="font-size:12.5px;color:rgba(255,255,255,0.4);margin:-10px 0 4px;line-height:1.6"></p>
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px">
+      <img id="myProfilePhotoPreview" src="" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15);display:none"/>
+      <div id="myProfilePhotoPlaceholder" style="width:64px;height:64px;border-radius:50%;background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.2);display:flex;align-items:center;justify-content:center;font-size:22px;color:rgba(180,230,200,0.5)">🧑</div>
+      <div>
+        <input type="file" id="myProfilePhotoInput" accept="image/*" style="display:none" onchange="uploadMyProfilePhoto()"/>
+        <button class="btn sm" onclick="document.getElementById('myProfilePhotoInput').click()">Upload photo</button>
+      </div>
+    </div>
+    <div><label>Credentials <span style="font-weight:normal;color:rgba(255,255,255,0.3)">— e.g. "MBSR-trained, Bangor Certified"</span></label><input type="text" id="myProfileCredentials"/></div>
+    <div><label>Bio</label><textarea id="myProfileBio" rows="5" style="width:100%" placeholder="A few sentences about you and how you came to this work."></textarea></div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.55);margin-top:2px">
+      <input type="checkbox" id="myProfilePublic"/>
+      Show my profile publicly (course catalog, my own bio page)
+    </label>
+    <div class="modal-err" id="myProfileErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" id="myProfileCancelBtn" onclick="document.getElementById('myProfileModal').classList.remove('visible')">Cancel</button>
+      <button class="modal-ok" onclick="saveMyProfile()">Save</button>
     </div>
   </div>
 </div>

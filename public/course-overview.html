@@ -4,6 +4,14 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Course — Deeper Mindfulness</title>
+  <!-- Per's request — see course-instance.html's identical comment: these
+       are the static fallback a crawler actually sees, since crawlers
+       don't run the JavaScript that personalizes the browser tab below. -->
+  <meta name="description" content="A course at Deeper Mindfulness."/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:title" content="A Course at Deeper Mindfulness"/>
+  <meta property="og:description" content="Practices that land and last, taught live, in a group."/>
+  <meta name="twitter:card" content="summary"/>
   <link rel="icon" href="/favicon-dynamic"/>
   <link rel="apple-touch-icon" href="/favicon-dynamic"/>
   <link rel="manifest" href="/site.webmanifest"/>
@@ -97,6 +105,12 @@
       const schedule = await scheduleRes.json();
       const instances = (Array.isArray(schedule) ? schedule : []).filter(i => i.course_id === id);
       document.title = `${course.title} — Deeper Mindfulness`;
+      if (course.description) {
+        const plain = course.description.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+        document.querySelector('meta[name="description"]').setAttribute('content', plain);
+        document.querySelector('meta[property="og:description"]').setAttribute('content', plain);
+      }
+      document.querySelector('meta[property="og:title"]').setAttribute('content', course.title);
 
       const instancesHtml = instances.length ? instances.map(i => `
         <a class="instance-card" href="/course-instance/${i.id}">
