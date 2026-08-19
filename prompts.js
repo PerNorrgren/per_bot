@@ -418,6 +418,39 @@ When someone describes being stressed, anxious, wound up, or otherwise names a s
 };
 
 
+// Per's request — the facilitator guide's own how-to content, so the
+// live companion and any 1:1-context conversation can actually answer
+// "how does the roster work" or "how do I use the teaching companion"
+// directly, not just point at a document. Deliberately the PRACTICAL
+// reference content only — roster/sessions/content/notes mechanics, how
+// the companion itself works, messaging, the FAQ — not the marketing
+// pitch prose from the actual guide (Teaching_With_Deeper_Mindfulness_
+// Facilitator_Guide.docx / the public Teaching The FELT Way page), since
+// persuasive framing isn't answerable content the way a mechanical
+// how-to is. Kept as its own constant, injected into both
+// FACILITATOR_SYSTEM_PROMPT and FACILITATOR_TEACHING_SYSTEM_PROMPT below
+// — a facilitator might reasonably ask "how do I..." in either context,
+// not only while actively teaching.
+const FACILITATOR_GUIDE_KNOWLEDGE = `
+HOW THE FACILITATOR WORKSPACE ACTUALLY WORKS (for answering "how do I..." questions):
+
+Getting assigned: Per creates the course and a specific instance (one intake, with its own dates and its own group of people) in admin, then assigns a facilitator to it. Any number of facilitators can be assigned to the same instance (co-facilitating), and any facilitator can be assigned to any number of instances. Once assigned, a "Courses" toggle appears next to "Clients" in the facilitator's own sidebar.
+
+The four tabs inside a course instance:
+- Roster — every enrolled student, their email, and their real progress (sessions completed, shown as a percentage from actual lesson_progress data, not just login activity). Each student has a Message button (opens a direct conversation, same screen as any 1:1 client) and a Notes button (adds a private note, visible only to facilitators on this instance).
+- Sessions — one card per session in the course. Each has an editable title, an optional scheduled date, a Handout box (visible to students — use it like a printed handout), and a private Notes box (visible only to the facilitator/s — never shown to students). Changes need the Save button on that card; nothing autosaves. New sessions are added via "+ Add session" at the bottom of the list.
+- Content — the course's own lessons, exactly as students see them, read-only reference.
+- Notes — every private note written about anyone in this course, most recent first, each one labelled with which facilitator wrote it (useful when co-facilitating).
+
+The live teaching companion: the same conversation panel used for 1:1 client work, reused for course teaching. A "Teaching right now" dropdown lets the facilitator pick which session they're covering — this pulls that session's own private Sessions-tab notes directly into the companion's context, so answers are grounded in what's actually being taught, not generic. Switching which session is selected, or switching between Clients and Courses mode, opens a fresh conversation (the visible chat clears) — deliberate, so answers from a previous session's context never bleed into a new one. The register toggle (Plain / Clinical / Technical) works exactly the same way here as it does for 1:1 work — the science never changes, only how it's said.
+
+Messaging: any student enrolled in a course a facilitator teaches can message that facilitator directly, and vice versa — the exact same conversation screen as 1:1 client work. A student's course relationship with a facilitator is entirely separate from any personal 1:1 coaching relationship they might also have with the same or a different facilitator — the two never merge.
+
+Full access: a facilitator is not restricted to only the course(s) they're assigned to teach — the whole library, every course, every piece of background material, is open to them.
+
+This grows: none of the above is specific to Finding Mindfulness — the same roster, sessions, companion, and messaging work identically for any future course the moment a facilitator is assigned to it.
+`;
+
 const FACILITATOR_SYSTEM_PROMPT = (fogLevel) => {
   const fogDescriptions = {
     6:  'Plain language. Short words. Short sentences. Write as you would speak to a friend. No jargon.',
@@ -430,7 +463,7 @@ const FACILITATOR_SYSTEM_PROMPT = (fogLevel) => {
 You support Per before, during, and after client sessions. You know the FELT·FIBRE framework completely — all eleven salience signals, the three priors (threat, isolation, inadequacy), fibre pathway design rules, the Moro Brake, inflammatory substrate, Reliance Gap, prior revision mechanics, sleep consolidation, and the extended architecture.
 
 ${FELT_FIBRE_CORE_KNOWLEDGE}
-
+${FACILITATOR_GUIDE_KNOWLEDGE}
 LANGUAGE REGISTER: ${fogDescriptions[fogLevel] || fogDescriptions[12]}
 
 YOUR ROLES:
@@ -480,6 +513,7 @@ const FACILITATOR_TEACHING_SYSTEM_PROMPT = (fogLevel, courseTitle, sessionTitle,
 You know the FELT·FIBRE framework completely — all eleven salience signals, the three priors (threat, isolation, inadequacy), fibre pathway design rules, the Moro Brake, inflammatory substrate, Reliance Gap, prior revision mechanics, sleep consolidation, and the extended architecture.
 
 ${FELT_FIBRE_CORE_KNOWLEDGE}
+${FACILITATOR_GUIDE_KNOWLEDGE}
 ${sessionNotes ? `\nTHIS SESSION'S OWN NOTES (written by the facilitator beforehand, private — not shown to participants):\n${sessionNotes}\n` : ''}
 LANGUAGE REGISTER: ${fogDescriptions[fogLevel] || fogDescriptions[12]}
 

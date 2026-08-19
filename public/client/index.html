@@ -6561,6 +6561,7 @@
         // than duplicated here.
         btn.textContent = item.linkType === 'course' ? 'Open course'
           : item.linkType === 'action' ? actionButtonLabel(item.linkId)
+          : item.linkType === 'url' ? 'Learn more'
           : 'Open';
         btn.dataset.linkType = item.linkType;
         btn.dataset.linkId = item.linkId;
@@ -6637,6 +6638,13 @@
       // after the colon is exactly the key openTour expects, same one
       // /api/onboarding-tour?key= reads server-side.
       if (id.startsWith('tour:') && typeof window.openTomteTour === 'function') { window.openTomteTour(id.slice(5)); return; }
+    }
+    // Per's request — a What's New item pointing at a genuinely external
+    // page (e.g. the new Teaching The FELT Way marketing page), not
+    // anything inside this app at all. Opens in a new tab rather than
+    // navigating the app away from under the person reading it.
+    if (type === 'url') {
+      window.open(id, '_blank', 'noopener');
     }
   }
   // Per's request — one place that knows how to open the install flow

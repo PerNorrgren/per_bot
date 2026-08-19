@@ -1835,6 +1835,16 @@ app.get('/brand-inject.js', (req, res) => res.sendFile(path.join(__dirname, 'pub
 // right now (the view-my-practices action fix two rounds back is what
 // surfaced this gap) as message-editor.js was when that fix was written.
 app.get('/tomte-widget.js', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(path.join(__dirname, 'public', 'tomte-widget.js')); });
+// Per's request — a genuinely public download, deliberately no auth check
+// at all, since the whole point is reaching someone who isn't a member or
+// facilitator yet (the "Teaching The FELT Way" page below, and any
+// What's New item that links here). No express.static() mount exists in
+// this app by design (see the note on that near the top of this file) —
+// every servable file needs its own explicit route, same reasoning as
+// tomte-widget.js just above.
+app.get('/downloads/teaching-the-felt-way-guide.pdf', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'downloads', 'Teaching_With_Deeper_Mindfulness_Facilitator_Guide.pdf'));
+});
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
 app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'bulk-import-sample.xlsx')));
 // Per Bot 17 fix: these two were missing entirely. This app has no
@@ -11966,6 +11976,13 @@ app.get('/membership',  (req, res) => res.sendFile(path.join(__dirname, 'public'
 app.get('/become-a-facilitator', (req, res) => res.sendFile(path.join(__dirname, 'public', 'become-a-facilitator.html')));
 app.get('/become-a-facilitator/', (req, res) => res.redirect('/become-a-facilitator'));
 app.get('/membership/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'membership.html')));
+// Per's request — the marketing/recruiting page, distinct from
+// become-a-facilitator.html above (that one's a narrow request form for
+// existing members; this one is the richer pitch page a genuinely
+// prospective facilitator — not a member, not logged in at all — lands
+// on first, which then leads into that same form as its call to action).
+app.get('/teaching-the-felt-way', (req, res) => res.sendFile(path.join(__dirname, 'public', 'teaching-the-felt-way.html')));
+app.get('/teaching-the-felt-way/', (req, res) => res.redirect('/teaching-the-felt-way'));
 
 // ── App setup / identity settings (Path A: one deployment per facilitator/org) ──
 // Admin-only. Same page serves two purposes depending on setup_completed:

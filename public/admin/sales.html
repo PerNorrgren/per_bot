@@ -352,6 +352,7 @@
               <option value="practice">A practice / book / poem</option>
               <option value="course">A course</option>
               <option value="action">Something in the app</option>
+              <option value="url">An outside page</option>
             </select>
             <div id="whatsNewLinkPracticePicker" style="flex:1;display:none"></div>
             <select id="whatsNewLinkCourse" style="flex:1;display:none"></select>
@@ -368,6 +369,12 @@
               <option value="install-app">Install the app (Add to Home Screen)</option>
               <option value="offline-help">Save something for offline use</option>
             </select>
+            <!-- Per's request — for something outside the app entirely,
+                 e.g. the new Teaching The FELT Way page. Opens in a new
+                 tab client-side (window.open) rather than navigating the
+                 app away, same reasoning as Sessions' own external-link
+                 handling elsewhere. -->
+            <input type="url" id="whatsNewLinkUrl" placeholder="https://…" style="flex:1;display:none"/>
           </div>
         </div>
         <label class="me-checkbox-row" style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.7)">
@@ -1302,6 +1309,7 @@
     document.getElementById('whatsNewLinkPracticePicker').style.display = type === 'practice' ? '' : 'none';
     document.getElementById('whatsNewLinkCourse').style.display = type === 'course' ? '' : 'none';
     document.getElementById('whatsNewLinkAction').style.display = type === 'action' ? '' : 'none';
+    document.getElementById('whatsNewLinkUrl').style.display = type === 'url' ? '' : 'none';
     if (type === 'practice' && !document.getElementById('whatsNewLinkPracticePicker').innerHTML) renderWhatsNewPracticePicker('');
     if (type === 'course' && !document.getElementById('whatsNewLinkCourse').options.length) populateWhatsNewCourseSelect('');
     if (type === 'action') populateWhatsNewActionOptions();
@@ -1449,6 +1457,7 @@
     document.getElementById('whatsNewLinkType').value = (item && item.link_type) || '';
     if (item && item.link_type === 'practice') renderWhatsNewPracticePicker(item.link_id || '');
     if (item && item.link_type === 'course') await populateWhatsNewCourseSelect(item.link_id || '');
+    if (item && item.link_type === 'url') document.getElementById('whatsNewLinkUrl').value = item.link_id || '';
     // action's own options (specifically the tour ones) are populated
     // asynchronously by onWhatsNewLinkTypeChange below — awaited here,
     // then the saved value set AFTER, since setting .value to an option
@@ -1466,7 +1475,12 @@
     const linkId = linkType === 'practice' ? getWhatsNewPracticeValue()
       : linkType === 'course' ? document.getElementById('whatsNewLinkCourse').value
       : linkType === 'action' ? document.getElementById('whatsNewLinkAction').value
+      : linkType === 'url' ? document.getElementById('whatsNewLinkUrl').value.trim()
       : null;
+    if (linkType === 'url' && linkId && !/^https?:\/\//i.test(linkId)) {
+      document.getElementById('whatsNewItemErr').textContent = 'The outside page link needs to start with http:// or https://';
+      return;
+    }
     let linkTitle = null;
     if (linkType === 'practice') {
       const input = document.querySelector('#whatsNewLinkPracticePicker .file-picker input');
@@ -1477,6 +1491,8 @@
     } else if (linkType === 'action') {
       const sel = document.getElementById('whatsNewLinkAction');
       linkTitle = sel && sel.selectedIndex > -1 ? sel.options[sel.selectedIndex].textContent : null;
+    } else if (linkType === 'url') {
+      linkTitle = linkId;
     }
     const body = MessageEditor.getInstance('whatsNewBody_rich').root.innerHTML;
     const plain = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
