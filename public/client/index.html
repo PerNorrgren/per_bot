@@ -3818,6 +3818,18 @@
       } else {
         await fetch(`/api/client/offline-marks/${fileId}`, { method: 'POST' });
         cacheFileForOffline(fileId);
+        // Per's request — the moment someone actually tries to use
+        // offline is a far more relevant point to suggest installing
+        // than the generic 5-second-after-load timer alone (still runs
+        // too, this is additive — see maybeShowInstallNudge's own
+        // setTimeout call further down this script). Safe to call from
+        // both places: the same INSTALL_NUDGE_KEY localStorage guard
+        // inside maybeShowInstallNudge means it still only ever actually
+        // shows once, whichever trigger reaches it first — this call is
+        // a no-op if the timer already got there, or if the app's
+        // already installed, or if there's genuinely nothing to offer
+        // yet on this browser.
+        maybeShowInstallNudge();
       }
     } catch (e) {
       // Roll back both together too — the request itself didn't go
