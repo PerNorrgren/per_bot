@@ -2776,6 +2776,40 @@ function getFacilitatorsForClient(clientId) {
 function isFacilitatorAssignedToClient(clientId, facilitatorId) {
   return !!queryOne(`SELECT 1 FROM client_facilitators WHERE client_id=? AND facilitator_id=?`, [clientId, facilitatorId]);
 }
+// Per's request — "students see and interact with their facilitator."
+// A second, separate route into the same question isFacilitatorAssignedToClient
+// answers above — that one is the 1:1 coaching relationship
+// (client_facilitators / users.facilitator_id); this one is "is this
+// person one of my facilitators because I'm enrolled in a course they
+// teach," via the instance_facilitators table built earlier. Deliberately
+// kept as its own function rather than folded into the first — the two
+// relationships are genuinely different things and can exist
+// independently of each other for the same two people.
+function isFacilitatorAssignedToStudentViaCourse(userId, facilitatorId) {
+  return !!queryOne(
+    `SELECT 1 FROM enrolments e
+     JOIN instance_facilitators inf ON e.course_instance_id = inf.course_instance_id
+     WHERE e.user_id=? AND inf.facilitator_id=? AND e.status='active'`,
+    [userId, facilitatorId]
+  );
+}
+// One row per distinct facilitator this student has via any active
+// course enrolment (not one row per course — GROUP_CONCAT folds multiple
+// courses with the same facilitator into a single readable list instead
+// of listing that facilitator two or three times over).
+function getCourseFacilitatorsForStudent(userId) {
+  return queryAll(
+    `SELECT f.id, f.name, GROUP_CONCAT(DISTINCT c.title) as course_titles
+     FROM enrolments e
+     JOIN instance_facilitators inf ON e.course_instance_id = inf.course_instance_id
+     JOIN facilitators f ON inf.facilitator_id = f.id
+     JOIN course_instances ci ON e.course_instance_id = ci.id
+     JOIN courses c ON ci.course_id = c.id
+     WHERE e.user_id=? AND e.status='active'
+     GROUP BY f.id
+     ORDER BY f.name ASC`, [userId]
+  );
+}
 function addClientFacilitator(clientId, facilitatorId) {
   getDbSync().run(`INSERT OR IGNORE INTO client_facilitators (id, client_id, facilitator_id) VALUES (?, ?, ?)`, [crypto.randomUUID(), clientId, facilitatorId]);
   save();
@@ -7998,6 +8032,7 @@ module.exports = {
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
   getFacilitatorsForClient, isFacilitatorAssignedToClient, addClientFacilitator, removeClientFacilitator,
+  isFacilitatorAssignedToStudentViaCourse, getCourseFacilitatorsForStudent,
   getSkin, getAllSkins, createSkin, updateSkin, deleteSkin, setUserSkin,
   setReferredBy, markReferralRewarded, createReferralEvent, getReferralEventsForReferrer,
   getUnseenReferralCount, markReferralEventsSeen,

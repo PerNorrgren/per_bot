@@ -5637,7 +5637,17 @@ function requireClientOwnedByFacilitator(req, res, next) {
   // Per Bot 19 fix: same gap as /api/clients/:id — only checked the legacy
   // single facilitator_id, wrongly blocking a facilitator assigned to this
   // client only via the newer client_facilitators table.
-  const isAssigned = client.facilitator_id === req.user.id || db.isFacilitatorAssignedToClient(client.id, req.user.id);
+  //
+  // Per's request — a third path added here: a facilitator who has no 1:1
+  // relationship with this person at all, only a course one (they're
+  // enrolled in something this facilitator teaches). Without this, a
+  // student messaging a course-only facilitator (see resolveClientFacilitatorId's
+  // own new branch) would send successfully from their side, but the
+  // facilitator's own inbox would 403 trying to open that exact thread —
+  // messages accepted into a black hole neither side could actually see.
+  const isAssigned = client.facilitator_id === req.user.id
+    || db.isFacilitatorAssignedToClient(client.id, req.user.id)
+    || db.isFacilitatorAssignedToStudentViaCourse(client.id, req.user.id);
   if (req.user.role !== 'admin' && !isAssigned) return res.status(403).json({ error: 'Access denied.' });
   req.messageClient = client;
   next();
@@ -5714,8 +5724,20 @@ app.get('/api/clients/:id/messages/unread-count', auth.requireAuthApi(['admin','
 // clients on day one.
 app.get('/api/client/facilitators', auth.requireAuthApi(['client']), (req, res) => {
   const real = db.getFacilitatorsForClient(req.user.id);
+  // Per's request — "students see and interact with their facilitator,"
+  // for a course as much as for 1:1 work. Merged into the same picker
+  // the Talk menu already renders, rather than a separate UI — a course
+  // facilitator is used exactly the same way (pick them, send a
+  // message), it's only where the relationship comes from that differs.
+  // De-duplicated by id: someone who happens to be both this student's
+  // 1:1 facilitator AND a course facilitator only needs to appear once.
+  const courseFacs = db.getCourseFacilitatorsForStudent(req.user.id);
+  const realIds = new Set(real.map(f => f.id));
+  const courseOnly = courseFacs.filter(f => !realIds.has(f.id))
+    .map(f => ({ id: f.id, name: `${f.name} (${f.course_titles})` }));
   const list = [{ id: 'talk', name: 'Talk', isTalk: true }]
-    .concat(real.map(f => ({ id: f.id, name: f.name, isTalk: false })));
+    .concat(real.map(f => ({ id: f.id, name: f.name, isTalk: false })))
+    .concat(courseOnly.map(f => ({ ...f, isTalk: false })));
   res.json(list);
 });
 // The Arc is deliberately ONE shared field (users.arc) regardless of how
@@ -5757,6 +5779,11 @@ function resolveClientFacilitatorId(me, requestedId) {
   if (!requestedId) return me.facilitator_id || null;
   if (requestedId === me.facilitator_id) return requestedId;
   if (db.isFacilitatorAssignedToClient(me.id, requestedId)) return requestedId;
+  // Per's request — a course facilitator is just as legitimate a
+  // recipient as a 1:1 one; this is the same check the facilitator side
+  // already relies on (isFacilitatorAssignedToInstance's underlying
+  // relationship, checked here from the student's own direction instead).
+  if (db.isFacilitatorAssignedToStudentViaCourse(me.id, requestedId)) return requestedId;
   return null;
 }
 

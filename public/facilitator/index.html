@@ -796,9 +796,25 @@
           ${r.completed_lessons}/${r.total_lessons} sessions<br>
           <span style="color:rgba(180,230,200,0.75)">${r.percent_complete}%</span>
         </div>
+        <button class="action-btn" style="font-size:10.5px;padding:5px 9px" onclick="messageStudentFromRoster('${r.user_id}','${(r.user_name||'').replace(/'/g,"\\'")}')">Message</button>
         <button class="action-btn" style="font-size:10.5px;padding:5px 9px" onclick="viewStudentNotes('${r.user_id}','${(r.user_name||'').replace(/'/g,"\\'")}')">Notes</button>
       </div>
     `).join('');
+  }
+  // Per's request — "students see and interact with their facilitator."
+  // The permission side of this (a course-only relationship, no 1:1
+  // client_facilitators row) is already handled server-side —
+  // requireClientOwnedByFacilitator now recognises it too — but there
+  // was no way to actually REACH that thread from this side of the app
+  // until now. Rather than building a second, parallel messaging UI
+  // inside the course workspace, this reuses the entire existing 1:1
+  // client messaging screen as-is (selectClient already works for any
+  // client id, whether or not they're a 1:1 relationship — it just
+  // fetches and renders) by switching modes and selecting them there.
+  function messageStudentFromRoster(userId, userName) {
+    switchFacMode('clients');
+    selectClient(userId, userName);
+    switchFacTab('messages');
   }
 
   async function loadInstSessions() {
