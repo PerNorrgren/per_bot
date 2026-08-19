@@ -538,14 +538,21 @@
       <!-- Per's request — a course instance's own workspace, parallel to
            the 1:1 client one above rather than folded into it (a roster
            of many people learning together isn't the same shape as one
-           person's arc). Shown instead of leftCol/rightCol when a course
+           person's arc). Shown instead of leftCol's content when a course
            is selected in Courses mode — see selectFacInstance below.
-           Real-time teaching co-pilot (asking the AI questions live,
-           digging into the science, mid-session) is flagged as a
-           deliberate next step, not built here yet — this first version
-           covers the roster, session notes/handouts, and course content
-           a facilitator needs before and after a live session. -->
+           rightCol (the conversation panel, further up) is reused as-is
+           for the live teaching co-pilot — same chat UI, same voice
+           input, different backend prompt (see openInstanceWs and
+           server.js's teaching branch). instTeachingSessionSelect lets
+           the facilitator say which session they're covering right now,
+           so the co-pilot has that session's own notes in context. -->
       <div class="left-col" id="instanceWorkspace" style="display:none;flex:1">
+        <div style="padding:12px 16px 0;flex-shrink:0">
+          <label style="font-size:10.5px;color:rgba(180,230,200,0.6);letter-spacing:0.06em;text-transform:uppercase;display:block;margin-bottom:5px">Teaching right now</label>
+          <select id="instTeachingSessionSelect" onchange="restartInstanceWs()" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:12.5px">
+            <option value="">General — no specific session selected</option>
+          </select>
+        </div>
         <div class="section-tabs" id="facInstanceTabs">
           <button class="section-tab active" data-tab="inst-roster" onclick="switchInstanceTab('roster')">Roster</button>
           <button class="section-tab" data-tab="inst-sessions" onclick="switchInstanceTab('sessions')">Sessions</button>
@@ -696,6 +703,16 @@
         document.getElementById('leftCol').style.display = '';
         document.getElementById('rightCol').style.display = '';
         document.getElementById('emptyState').style.display = 'none';
+        // Per's request — without this, switching modes with a client
+        // already selected left the shared ws connection pointed at
+        // whatever was open before (teaching mode, if that's where this
+        // toggle came from), silently routing client-mode messages into
+        // the wrong backend context. Reopening fresh here, the same way
+        // selectClient/selectFacInstance already do on first selection,
+        // makes every mode switch land on the right connection, not just
+        // the first one.
+        document.getElementById('conversation').innerHTML = '';
+        openWs(currentClientId);
       } else {
         document.getElementById('emptyState').style.display = '';
         document.getElementById('emptyState').textContent = 'Select a client from the sidebar';
@@ -705,7 +722,10 @@
       document.getElementById('rightCol').style.display = 'none';
       if (currentFacInstanceId) {
         document.getElementById('instanceWorkspace').style.display = 'flex';
+        document.getElementById('rightCol').style.display = '';
         document.getElementById('emptyState').style.display = 'none';
+        document.getElementById('conversation').innerHTML = '';
+        openInstanceWs(currentFacInstanceId, document.getElementById('instTeachingSessionSelect').value || null);
       } else {
         document.getElementById('emptyState').style.display = '';
         document.getElementById('emptyState').textContent = 'Select a course from the sidebar';
@@ -736,13 +756,27 @@
     currentFacInstanceTitle = title;
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('instanceWorkspace').style.display = 'flex';
+    document.getElementById('rightCol').style.display = '';
     document.querySelectorAll('#instanceList .client-item').forEach(el => el.classList.remove('active'));
     event?.currentTarget?.classList.add('active');
     switchInstanceTab('roster');
+    document.getElementById('conversation').innerHTML = '';
     loadInstRoster();
     loadInstSessions();
     loadInstContent();
     loadInstNotes();
+    openInstanceWs(id, null);
+  }
+
+  // Per's request — reopens the co-pilot connection with the newly
+  // picked session's own notes in context, and clears the visible
+  // conversation so it's obvious the context just changed rather than
+  // silently carrying on with stale session framing.
+  function restartInstanceWs() {
+    if (!currentFacInstanceId) return;
+    document.getElementById('conversation').innerHTML = '';
+    const sessionId = document.getElementById('instTeachingSessionSelect').value || null;
+    openInstanceWs(currentFacInstanceId, sessionId);
   }
 
   function switchInstanceTab(name) { switchFacTab('inst-' + name); }
@@ -772,6 +806,15 @@
     el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
     const sessions = await fetch(`/api/facilitator/instances/${currentFacInstanceId}/sessions`).then(r => r.json()).catch(() => []);
     const list = Array.isArray(sessions) ? sessions : [];
+    // Per's request — the "Teaching right now" picker above the tabs
+    // reads from this same fetch rather than a second one, so it's
+    // always in sync with the Sessions tab's own list. Preserves
+    // whatever was already selected, if it's still a valid session.
+    const picker = document.getElementById('instTeachingSessionSelect');
+    const prevSelected = picker.value;
+    picker.innerHTML = '<option value="">General — no specific session selected</option>' +
+      list.map(s => `<option value="${s.id}">${s.session_number}. ${s.title}</option>`).join('');
+    if (list.some(s => s.id === prevSelected)) picker.value = prevSelected;
     let h = list.map(s => `
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:12px 14px;margin-bottom:10px">
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
@@ -954,6 +997,37 @@
       if (msg.type === 'final_transcript') {
         addMessage('user', msg.text);
       }
+    };
+  }
+
+  // Per's request — the live teaching co-pilot. Deliberately its own
+  // function rather than a generalised version of openWs above (which
+  // has several 1:1-client-only message handlers — session_summary,
+  // arc_updated — that don't apply here and would need conditional-ing
+  // out): reuses the exact same shared ws variable, and the exact same
+  // addMessage/addExplanation/playAudio functions the client-mode
+  // conversation already uses, so the actual chat bubble UI is
+  // byte-for-byte identical between the two modes, just pointed at a
+  // different backend prompt (see server.js's teaching branch of the
+  // facilitatorWss upgrade handler).
+  function openInstanceWs(instanceId, sessionId) {
+    if (ws) { ws.close(); ws = null; }
+    let url = (location.protocol==='https:'?'wss':'ws')+'://'+location.host+
+      `?type=facilitator&instance=${instanceId}`;
+    if (sessionId) url += `&session=${sessionId}`;
+    ws = new WebSocket(url);
+
+    ws.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'response_text') addMessage('bot', msg.text);
+      if (msg.type === 'audio') {
+        if (document.getElementById('voiceOn')?.checked) await playAudio(msg.data);
+        document.getElementById('waveSmall').classList.remove('on');
+      }
+      if (msg.type === 'explanation') addExplanation(msg.text);
+      if (msg.type === 'listening_started') document.getElementById('micBtnSmall').classList.add('active');
+      if (msg.type === 'listening_stopped') document.getElementById('micBtnSmall').classList.remove('active');
+      if (msg.type === 'final_transcript') addMessage('user', msg.text);
     };
   }
 

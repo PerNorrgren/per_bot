@@ -8221,6 +8221,28 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
+  // Per's request — a second connection shape, alongside the existing
+  // ?client=CLIENT_ID one above: ?instance=INSTANCE_ID(&session=SESSION_ID),
+  // for live teaching-mode support rather than 1:1 client work. Ownership
+  // checked the same way every other facilitator-scoped instance route
+  // does (isFacilitatorAssignedToInstance, admin bypasses) — a facilitator
+  // can only open this for a course they're actually assigned to.
+  const instanceId = searchParams.get('instance');
+  if (instanceId) {
+    const instance = db.getCourseInstance(instanceId);
+    if (!instance) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
+    if (payload.role !== 'admin' && !db.isFacilitatorAssignedToInstance(payload.id, instanceId)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return;
+    }
+    const course = db.getCourse(instance.course_id);
+    const sessionId = searchParams.get('session');
+    const teachingSession = sessionId ? db.getInstanceSession(sessionId) : null;
+    facilitatorWss.handleUpgrade(req, socket, head, (ws) => {
+      facilitatorWss.emit('connection', ws, { facilitatorId: payload.id, facilitatorName: payload.name, teaching: { course, instance, session: teachingSession } });
+    });
+    return;
+  }
+
   const clientId = searchParams.get('client');
   const client = clientId ? db.getUser(clientId) : null;
   if (!client) {
@@ -8235,7 +8257,7 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 facilitatorWss.on('connection', (ws, ctx) => {
-  const { facilitatorId, client } = ctx;
+  const { facilitatorId, client, teaching } = ctx;
   let fogLevel = 12;
   let history = []; // { role: 'user'|'assistant', content: string } — this facilitator's own conversation, not the client's
 
@@ -8254,7 +8276,15 @@ facilitatorWss.on('connection', (ws, ctx) => {
 
   async function respond(userText, { explain = false } = {}) {
     try {
-      const systemPrompt = prompts.FACILITATOR_SYSTEM_PROMPT(fogLevel);
+      // Per's request — teaching mode uses a different system prompt
+      // (FACILITATOR_TEACHING_SYSTEM_PROMPT), reusing the exact same
+      // fogLevel plain/clinical/technical toggle rather than building a
+      // second one — it's already exactly the "simple plain language vs
+      // detailed academic" switch he asked for, just needed pointing at
+      // a new prompt.
+      const systemPrompt = teaching
+        ? prompts.FACILITATOR_TEACHING_SYSTEM_PROMPT(fogLevel, teaching.course?.title, teaching.session?.title, teaching.session?.facilitator_notes)
+        : prompts.FACILITATOR_SYSTEM_PROMPT(fogLevel);
       const promptText = explain
         ? `Explain to me: ${userText || 'what is happening clinically right now, based on what I have described so far.'}`
         : userText;
