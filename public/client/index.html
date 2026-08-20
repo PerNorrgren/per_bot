@@ -833,66 +833,64 @@
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
     /* Presentation slide viewer — reuses the EPUB reader's chrome
        styling so both feel like the same app. Real bugs Per hit and
-       reported directly, fixed here:
-       (1) the image box alone was being rotated+fixed-positioned,
-           stranding the controls bar in normal document flow behind/
-           away from the visible rotated content — now the WHOLE unit
-           (image + controls) rotates together as one flex-column block.
-       (2) turning the phone to real landscape correctly turned the
-           simulated rotation off, but a calc(100vh - 90px) guess at
-           the controls' height didn't account for real browser chrome
-           on an actual device (address bar, iOS home-indicator safe
-           area) — overflowed, forcing a pan to reach the controls.
-           Fixed with position:fixed;inset:0 pinning to the REAL
-           available viewport and flex:1 on the image area, so it
-           fills exactly whatever space is actually left regardless of
-           device chrome, with the controls locked to the bottom —
-           Per's own suggested fix, not a bigger magic number.
-       (3) slide changes were an instant jump, not a slide motion — two
-           stacked image layers now animate past each other via
-           translateX; because this lives INSIDE the already-rotated
-           parent, the same translateX motion automatically renders as
-           vertical motion on screen once rotated (CSS transforms
-           compose), so no separate rotated-case animation was needed.
-       Phone detection uses the SHORT edge (min(width,height) <= 480),
-       not just width — a landscape phone is wide but still has a small
-       short edge; a portrait tablet is narrow-ish but its short edge is
-       still large. Width-only would have wrongly caught tablets. */
+       reported directly, fixed here across several rounds — most
+       recently: Per reported the controls were INVISIBLE in both
+       orientations (only the outer X worked), despite testing showing
+       them rendering correctly in Chromium. The remaining suspect: the
+       controls lived INSIDE the rotated wrap (parent rotate(90deg),
+       then each button counter-rotated -90deg to read upright) —
+       compound/nested CSS transforms have a real history of rendering
+       bugs on WebKit specifically, which this sandbox has no way to
+       test directly. Rather than keep patching a fragile design,
+       removed it entirely: the control bar is now a SEPARATE element,
+       never rotated at all, positioned as its own plain fixed bar
+       along an edge — simpler, and removes the whole class of bug
+       regardless of whether that was really the exact cause.
+       Also: dvh/dvw (Per Bot 112) only work on iOS Safari 15.4+
+       (March 2022) — on an older device that CSS is silently invalid,
+       and the element would fall back to sizing itself by its own
+       content, which looks exactly like Per's "shrinks to what I
+       uploaded" report. Sizing is back to JS-computed pixel values
+       (broad support back much further), refreshed aggressively:
+       resize, orientationchange, visualViewport resize/scroll, AND a
+       short delayed re-check after opening to catch the overlay's own
+       opening transition settling. */
     .slide-viewer-rotate-wrap { display:flex; flex-direction:column; align-items:center; width:100%; }
     .slide-viewer-wrap { position:relative; overflow:hidden; width:100%; max-width:700px; height:70vh; }
     .slide-layer { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); will-change:transform; }
     .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
 
-    /* Phone in portrait — simulate landscape by rotating the whole
-       unit. Sized in CSS with dvh/dvw (dynamic viewport units), NOT
-       window.innerHeight/innerWidth applied once via JS — real mobile
-       Safari's address bar shows/hides as the person scrolls or
-       interacts, which changes the ACTUAL visible viewport after a
-       one-time JS measurement would already be stale. dvh/dvw track
-       the real, current visible viewport continuously, which is
-       exactly what this needed and couldn't get from a single JS
-       read. Explicit z-index keeps this below the outer close button
-       (.player-close-floating, z-index:501) so exiting always stays
-       reachable regardless of stacking edge cases across devices. */
+    .slide-viewer-rotate-wrap.auto-rotate,
+    .slide-viewer-rotate-wrap.landscape-maximize {
+      position:fixed; max-width:none; z-index:20;
+    }
     .slide-viewer-rotate-wrap.auto-rotate {
-      position:fixed; top:50%; left:50%; max-width:none; z-index:20;
-      width:var(--real-vh, 100dvh); height:var(--real-vw, 100dvw);
+      top:50%; left:50%;
       transform:translate(-50%,-50%) rotate(90deg);
     }
-    .slide-viewer-rotate-wrap.auto-rotate .slide-viewer-wrap { height:auto; flex:1; max-width:none; }
-    .slide-viewer-rotate-wrap.auto-rotate .reader-controls { max-width:none; width:100%; margin-top:8px; flex-shrink:0; }
-    /* The controls bar rotates in position along with everything else
-       (so it's genuinely visible, not stranded off-screen), but each
-       individual glyph/label is counter-rotated back upright so ‹ › and
-       the slide counter are actually readable rather than sideways. */
-    .slide-viewer-rotate-wrap.auto-rotate .reader-controls > * { transform:rotate(-90deg); }
-
-    .slide-viewer-rotate-wrap.landscape-maximize {
-      position:fixed; top:0; left:0; flex-direction:column; z-index:20;
-      width:var(--real-vw, 100dvw); height:var(--real-vh, 100dvh);
+    .slide-viewer-rotate-wrap.landscape-maximize { top:0; left:0; }
+    .slide-viewer-rotate-wrap.auto-rotate .slide-viewer-wrap,
+    .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap {
+      height:100%; flex:1; max-width:none;
     }
-    .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { flex:1; height:auto; max-width:none; width:100%; }
-    .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; flex-shrink:0; margin:0; padding:8px 0; }
+    .slide-viewer-rotate-wrap .reader-controls { display:none; }
+
+    /* The control bar: a completely separate, never-rotated element —
+       always upright, always simple. Positioned along the left edge
+       when the phone is in portrait (simulated landscape), or locked
+       to the bottom edge in real landscape (Per's own suggested
+       layout from an earlier round). */
+    .slide-fixed-controls {
+      position:fixed; display:flex; align-items:center; justify-content:space-between;
+      gap:10px; z-index:21; background:rgba(10,15,13,0.55); box-sizing:border-box;
+    }
+    .slide-fixed-controls.portrait-edge {
+      left:0; top:0; width:56px; flex-direction:column; padding:14px 0;
+    }
+    .slide-fixed-controls.landscape-edge {
+      left:0; bottom:0; height:56px; flex-direction:row; padding:0 14px;
+    }
+    .slide-fixed-controls[hidden] { display:none; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
@@ -4659,12 +4657,10 @@
   }
 
   // A phone held in portrait is the wrong shape for a 16:9 slide — this
-  // rotates the whole viewer (image AND controls together, as one
-  // block — Per caught a real bug where only the image was rotating,
-  // stranding the controls off-screen) to fill the screen as landscape,
-  // rather than asking the person to physically turn their phone (or
-  // relying on the Screen Orientation Lock API, which Safari on iOS has
-  // never implemented — silently a no-op there).
+  // rotates the whole viewer to fill the screen as landscape, rather
+  // than asking the person to physically turn their phone (or relying
+  // on the Screen Orientation Lock API, which Safari on iOS has never
+  // implemented — silently a no-op there).
   //
   // Uses the viewport's SHORT edge (min(width,height) <= 480) to decide
   // "is this a phone" regardless of which way it's held — width alone
@@ -4672,81 +4668,61 @@
   // large short edge), which has enough room that forcing a rotation
   // would do more harm than good.
   //
-  // Per also caught that turning the phone to real landscape correctly
-  // stopped the simulated rotation, but then fell back to the small
-  // default sizing (tuned for a portrait reading column) — landscape-
-  // maximize below fixes that, so it's never small either way: rotated
-  // simulation when portrait, maximized real layout when landscape.
-  // Re-checked on resize/orientationchange so physically rotating the
-  // phone while the viewer is open switches between the two correctly.
-  // Per also caught that turning the phone to real landscape correctly
-  // stopped the simulated rotation, but then fell back to the small
-  // default sizing (tuned for a portrait reading column) — landscape-
-  // maximize below fixes that, so it's never small either way: rotated
-  // simulation when portrait, maximized real layout when landscape.
-  // Re-checked on resize/orientationchange so physically rotating the
-  // phone while the viewer is open switches between the two correctly.
-  //
-  // Per also caught a "small screen with margin" symptom in landscape,
-  // and buttons not responding — this was the JS setting a fixed pixel
-  // width/height ONCE from window.innerHeight/innerWidth, which goes
-  // stale the moment real mobile Safari's address bar shows/hides
-  // (changing the actual visible viewport after the fact). Sizing now
-  // lives entirely in CSS via dvh/dvw (dynamic viewport units), which
-  // track the real current viewport continuously — this function only
-  // decides WHICH state applies, never computes pixel dimensions.
-  //
-  // Belt-and-suspenders on top of dvh/dvw: window.visualViewport is the
-  // most authoritative, immediately-updating source mobile Safari has
-  // for "what's actually visible right now" (built specifically to
-  // track the keyboard/toolbar in real time) — writing its live
-  // dimensions into CSS custom properties as a fallback covers any
-  // timing gap between a real device's address-bar transition and dvh
-  // catching up, without replacing dvh as the primary mechanism.
-  function updateRealViewportVars() {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    document.documentElement.style.setProperty('--real-vh', vv.height + 'px');
-    document.documentElement.style.setProperty('--real-vw', vv.width + 'px');
-  }
-  let _pptxViewportListenerAttached = false;
-  function ensurePptxViewportListener() {
-    if (_pptxViewportListenerAttached || !window.visualViewport) return;
-    window.visualViewport.addEventListener('resize', updateRealViewportVars);
-    window.visualViewport.addEventListener('scroll', updateRealViewportVars);
-    _pptxViewportListenerAttached = true;
-  }
-
+  // Sizing history worth knowing: Per Bot 107 used JS-computed pixel
+  // values applied once; Per Bot 112 switched to CSS dvh/dvw (dynamic
+  // viewport units) reasoning that a one-time JS measurement goes stale
+  // when mobile Safari's address bar shows/hides. But dvh/dvw only work
+  // on iOS Safari 15.4+ (March 2022) — on an older device that CSS is
+  // silently invalid and the element falls back to sizing itself by
+  // its own content, which looks exactly like Per's "shrinks to what I
+  // uploaded" report. Back to JS-computed pixels (far broader support),
+  // but refreshed aggressively this time: resize, orientationchange,
+  // visualViewport resize/scroll, AND a short delayed re-check after
+  // opening to catch the overlay's own opening transition settling —
+  // covering the staleness concern without depending on dvh at all.
   function applyPptxAutoRotate() {
     const rotateWrap = document.getElementById('slideViewerRotateWrap');
+    const controls = document.getElementById('slideFixedControls');
     if (!rotateWrap) return;
     const w = window.innerWidth, h = window.innerHeight;
     const isPhoneClass = Math.min(w, h) <= 480;
     const isPortrait = h > w;
 
     rotateWrap.classList.remove('auto-rotate', 'landscape-maximize');
+    rotateWrap.style.width = '';
+    rotateWrap.style.height = '';
+    if (controls) controls.classList.remove('portrait-edge', 'landscape-edge');
+    if (controls) controls.hidden = true;
 
     if (isPhoneClass && isPortrait) {
       rotateWrap.classList.add('auto-rotate');
+      rotateWrap.style.width = h + 'px';
+      rotateWrap.style.height = w + 'px';
+      if (controls) { controls.classList.add('portrait-edge'); controls.hidden = false; controls.style.height = h + 'px'; }
     } else if (isPhoneClass && !isPortrait) {
       rotateWrap.classList.add('landscape-maximize');
+      rotateWrap.style.width = w + 'px';
+      rotateWrap.style.height = h + 'px';
+      if (controls) { controls.classList.add('landscape-edge'); controls.hidden = false; controls.style.width = w + 'px'; }
     }
-    updateRealViewportVars();
   }
   let _pptxRotateListenerAttached = false;
   function ensurePptxRotateListener() {
     if (_pptxRotateListenerAttached) return;
     window.addEventListener('resize', applyPptxAutoRotate);
     window.addEventListener('orientationchange', applyPptxAutoRotate);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', applyPptxAutoRotate);
+      window.visualViewport.addEventListener('scroll', applyPptxAutoRotate);
+    }
     _pptxRotateListenerAttached = true;
   }
 
-  // Per's request — swipe instead of relying on the nav buttons, which
-  // are easy to miss (especially rotated into the corner of a portrait
-  // phone screen). Touch coordinates from the browser are always in
-  // real, unrotated screen space regardless of the CSS transform on the
-  // element — so which physical axis means "next" depends on whether
-  // the content is currently simulate-rotated.
+  // Per's request — swipe instead of relying on the nav buttons. Touch
+  // coordinates from the browser are always in real, unrotated screen
+  // space regardless of the CSS transform on the element — so which
+  // physical axis means "next" depends on whether the content is
+  // currently simulate-rotated.
   //
   // When rotated 90° clockwise: a point at the content's own right edge
   // (its "next" direction, since reading runs left-to-right) ends up at
@@ -4759,53 +4735,25 @@
   // (If this feels backwards in hand, both branches below are a single
   // sign flip to reverse.)
   //
-  // Per's follow-up report — swipe worked but the nav buttons stopped
-  // responding to taps once rotated. This is a known WebKit weak spot:
-  // a synthetic 'click' event fired after touchend on an element inside
-  // a transform:rotate() ancestor can hit-test against the WRONG
-  // position, since the rotated geometry isn't always accounted for
-  // correctly when the browser synthesizes that click. Swipe was
-  // unaffected because it reads raw touch coordinates directly, never
-  // depending on click synthesis at all — so the fix here does the
-  // same for taps: detect a tap explicitly (touchstart and touchend on
-  // the same interactive control, minimal movement) and invoke that
-  // control's action directly, rather than trusting the browser to
-  // synthesize the click correctly. preventDefault() on a confirmed tap
-  // stops the native synthetic click from ALSO firing afterward (which
-  // would otherwise double-advance the slide) — this requires
-  // {passive:false} below; touchstart/touchend at passive:false doesn't
-  // cost scroll performance the way touchmove would, since neither of
-  // these fires during an active scroll gesture.
+  // Per reported the nav buttons stopped responding to taps once
+  // rotated, AND separately reported them simply invisible in either
+  // orientation. The nav buttons are no longer inside this rotated
+  // element at all (see the separate #slideFixedControls bar built in
+  // openPptxSlideViewer below) — they're a plain, never-rotated element
+  // now, so they use ordinary onclick and don't need any special
+  // tap-vs-click handling here. This listener now only ever needs to
+  // detect swipes on the open image area.
   const PPTX_SWIPE_THRESHOLD = 40;
-  const PPTX_TAP_MOVE_TOLERANCE = 24;
-  let _pptxTouchStartX = 0, _pptxTouchStartY = 0, _pptxTouchStartTarget = null;
+  let _pptxTouchStartX = 0, _pptxTouchStartY = 0;
   function pptxTouchStart(e) {
     const t = e.changedTouches[0];
     _pptxTouchStartX = t.clientX;
     _pptxTouchStartY = t.clientY;
-    _pptxTouchStartTarget = t.target.closest('.reader-nav-btn, a.reader-nav-btn');
   }
   function pptxTouchEnd(e) {
     const t = e.changedTouches[0];
     const deltaX = t.clientX - _pptxTouchStartX;
     const deltaY = t.clientY - _pptxTouchStartY;
-    const endTarget = t.target.closest('.reader-nav-btn, a.reader-nav-btn');
-
-    // A tap: started and ended on the same control, barely moved.
-    // Handled explicitly rather than left to native click synthesis.
-    if (_pptxTouchStartTarget && _pptxTouchStartTarget === endTarget
-        && Math.abs(deltaX) < PPTX_TAP_MOVE_TOLERANCE && Math.abs(deltaY) < PPTX_TAP_MOVE_TOLERANCE) {
-      e.preventDefault();
-      if (endTarget.tagName === 'A') {
-        window.open(endTarget.href, '_blank', 'noopener');
-      } else if (endTarget.title === 'Previous slide') {
-        pptxPrevSlide();
-      } else if (endTarget.title === 'Next slide') {
-        pptxNextSlide();
-      }
-      return;
-    }
-
     const rotateWrap = document.getElementById('slideViewerRotateWrap');
     const isRotated = rotateWrap && rotateWrap.classList.contains('auto-rotate');
     if (isRotated) {
@@ -4847,21 +4795,25 @@
             <img class="slide-layer" id="slideImgA" alt="Slide">
             <img class="slide-layer" id="slideImgB" alt="Slide">
           </div>
-          <div class="reader-controls">
-            <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
-            <div class="slide-counter" id="slideCounter"></div>
-            <a class="reader-nav-btn" href="${url}" target="_blank" rel="noopener" title="Download presentation" style="display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
-            <button class="reader-nav-btn" onclick="pptxNextSlide()" title="Next slide">›</button>
-          </div>
+        </div>
+        <div class="slide-fixed-controls" id="slideFixedControls" hidden>
+          <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
+          <div class="slide-counter" id="slideCounter"></div>
+          <a class="reader-nav-btn" href="${url}" target="_blank" rel="noopener" title="Download presentation" style="display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+          <button class="reader-nav-btn" onclick="pptxNextSlide()" title="Next slide">›</button>
         </div>
       `;
       renderCurrentSlide();
       applyPptxAutoRotate();
       ensurePptxRotateListener();
-      ensurePptxViewportListener();
+      // A short delayed re-check — catches the overlay's own opening
+      // transition (opacity/visibility) settling into its final layout,
+      // which happens after this function returns and isn't itself a
+      // resize/orientationchange/visualViewport event.
+      setTimeout(applyPptxAutoRotate, 350);
       const rotateWrap = document.getElementById('slideViewerRotateWrap');
       rotateWrap.addEventListener('touchstart', pptxTouchStart, { passive: true });
-      rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: false });
+      rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: true });
     } catch (e) {
       mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this presentation — network error.</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
     }
