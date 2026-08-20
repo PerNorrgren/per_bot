@@ -182,7 +182,13 @@
         });
         const data = await res.json();
         if (data.redirect) {
-          window.location.href = data.redirect;
+          // Per's request — same reasoning as login.html's own next=
+          // handling: only honoured for a client-role redirect, so a
+          // crafted link can't redirect someone anywhere but their own
+          // client app.
+          const next = new URLSearchParams(location.search).get('next');
+          if (next && data.redirect === '/client/') { window.location.href = decodeURIComponent(next); }
+          else { window.location.href = data.redirect; }
         } else {
           err.textContent = data.error || 'Something went wrong.';
           btn.disabled = false; btn.textContent = 'Start my free trial';

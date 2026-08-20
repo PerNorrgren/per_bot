@@ -150,6 +150,11 @@
     const inviteEmail = urlParams.get('email') || '';
     const promoCode = urlParams.get('promoCode') || '';
     const srcTag = urlParams.get('src') || '';
+    // Per's request — instance-aware registration. Set from a
+    // course-instance page's own "Register" link (see course-instance.html)
+    // so the account created here lands enrolled in that exact course,
+    // not just signed up needing a second step to find it again.
+    const instanceId = urlParams.get('instance') || '';
     if (inviteEmail) {
       document.getElementById('email').value = inviteEmail;
       document.getElementById('email').readOnly = true;
@@ -263,7 +268,7 @@
       const res  = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined, promoCode: promoCode || undefined, source: srcTag || undefined })
+        body: JSON.stringify({ name, email: email.toLowerCase(), password, language, consent, marketingOptIn, inviteToken: inviteToken || undefined, skinSlug: window.__skinSlug || undefined, ref: refCode || undefined, promoCode: promoCode || undefined, source: srcTag || undefined, instanceId: instanceId || undefined })
       });
       const data = await res.json();
 

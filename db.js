@@ -458,6 +458,22 @@ async function getDb() {
     FOREIGN KEY (facilitator_id) REFERENCES facilitators(id)
   )`);
 
+  // ── Session reminders sent ── (Per's request — 3 days / 1 day / 1 hour
+  // before a session, with a real link into the app). One row per
+  // (session, enrolment, reminder type) that has actually gone out — the
+  // UNIQUE constraint is what makes this safe against a cron overlap or
+  // restart sending the same reminder twice, not just application-level
+  // care in the sending code. reminder_type is one of '3day'/'1day'/
+  // '1hour', matching the three message types in MESSAGE_TYPE_REGISTRY.
+  db.run(`CREATE TABLE IF NOT EXISTS session_reminders_sent (
+    id TEXT PRIMARY KEY,
+    instance_session_id TEXT NOT NULL,
+    enrolment_id TEXT NOT NULL,
+    reminder_type TEXT NOT NULL,
+    sent_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(instance_session_id, enrolment_id, reminder_type)
+  )`);
+
   // ── Quizzes ── (Per Bot 5 follow-on — basic quiz support from the start)
   // One quiz per lesson, optional. question_type: 'single_choice' |
   // 'multi_choice' | 'true_false' — the three basic types for v1.
@@ -4308,6 +4324,33 @@ function getSessionsForInstance(courseInstanceId) {
 // instance id) can still look up which instance it belongs to, for the
 // ownership check every facilitator-scoped session route needs.
 function getInstanceSession(id) { return queryOne('SELECT * FROM instance_sessions WHERE id=?', [id]); }
+// Per's request — session reminders. Sessions with a real scheduled_at
+// in the future, across every open cohort instance — the cron job
+// filters this down further by how close each one actually is to now.
+// Kept as a plain "give me every upcoming session with a real date" call
+// rather than baking a specific time-window into the query itself, so
+// the three reminder types (3day/1day/1hour) can all share this one
+// query and just apply their own threshold in JS.
+function getUpcomingSessionsWithScheduledTime() {
+  return queryAll(`
+    SELECT s.*, ci.status as instance_status, ci.title as instance_title, c.title as course_title
+    FROM instance_sessions s
+    JOIN course_instances ci ON s.course_instance_id = ci.id
+    JOIN courses c ON ci.course_id = c.id
+    WHERE s.scheduled_at IS NOT NULL AND s.scheduled_at != '' AND ci.status = 'open'
+  `);
+}
+function hasSentSessionReminder(sessionId, enrolmentId, reminderType) {
+  return !!queryOne('SELECT 1 FROM session_reminders_sent WHERE instance_session_id=? AND enrolment_id=? AND reminder_type=?', [sessionId, enrolmentId, reminderType]);
+}
+function markSessionReminderSent(id, sessionId, enrolmentId, reminderType) {
+  // INSERT OR IGNORE — the UNIQUE constraint on the table means a
+  // duplicate attempt (e.g. two overlapping cron runs) is a harmless
+  // no-op rather than an error, same pattern used throughout this file
+  // for other join/tracking tables.
+  getDbSync().run('INSERT OR IGNORE INTO session_reminders_sent (id, instance_session_id, enrolment_id, reminder_type) VALUES (?,?,?,?)', [id, sessionId, enrolmentId, reminderType]);
+  save();
+}
 function updateInstanceSession(id, fields) {
   const allowed = ['title','scheduled_at','facilitator_notes','handout'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
@@ -7655,6 +7698,17 @@ const MESSAGE_TYPE_REGISTRY = {
   // runs on the built-in default in emailSaversFailureResolved until/
   // unless he edits it via Comms.
   savers_failure_resolved: { label: 'Savers \u2014 Payment failure, resolved', subjectCol: 'savers_failure_resolved_subject', bodyCol: 'savers_failure_resolved_body', formatCol: 'savers_failure_resolved_format', extraCols: {} },
+  // Per's request — course enrolment confirmation and the three session
+  // reminders, registered here so they're admin-editable via Comms
+  // exactly like every type above, not hardcoded strings living only in
+  // server.js. No legacy app_config column for any of these four (none
+  // existed before this feature) — same situation as
+  // savers_failure_resolved just above, so they simply start with zero
+  // versions and run on their built-in defaults until/unless edited.
+  enrolment_confirmed:    { label: 'Course enrolment confirmed',       subjectCol: 'enrolment_confirmed_subject',    bodyCol: 'enrolment_confirmed_body',    formatCol: 'enrolment_confirmed_format',    extraCols: {} },
+  session_reminder_3day:  { label: 'Session reminder \u2014 3 days before', subjectCol: 'session_reminder_3day_subject',  bodyCol: 'session_reminder_3day_body',  formatCol: 'session_reminder_3day_format',  extraCols: {} },
+  session_reminder_1day:  { label: 'Session reminder \u2014 1 day before',  subjectCol: 'session_reminder_1day_subject',  bodyCol: 'session_reminder_1day_body',  formatCol: 'session_reminder_1day_format',  extraCols: {} },
+  session_reminder_1hour: { label: 'Session reminder \u2014 1 hour before', subjectCol: 'session_reminder_1hour_subject', bodyCol: 'session_reminder_1hour_body', formatCol: 'session_reminder_1hour_format', extraCols: {} },
 };
 
 function isKnownMessageType(type) { return Object.prototype.hasOwnProperty.call(MESSAGE_TYPE_REGISTRY, type); }
@@ -8178,6 +8232,7 @@ module.exports = {
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
   addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession,
+  getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent,
   // Student notes
   addStudentNote, getNotesForStudentInInstance, getNotesForInstance,
   getFacilitatorsForInstance, getInstancesForFacilitator, isFacilitatorAssignedToInstance, assignFacilitatorToInstance, removeFacilitatorFromInstance,

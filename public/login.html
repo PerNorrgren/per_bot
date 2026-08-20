@@ -249,7 +249,15 @@
         btn.disabled = false;
         btn.textContent = 'Sign in';
       } else if (data.redirect) {
-        window.location.href = data.redirect;
+        // Per's request — a reminder email needs to "open the app to the
+        // course page," which for someone not already logged in means
+        // surviving the login step first. ?next= is only ever honoured
+        // for a client-role login (data.redirect === '/client/') — never
+        // for admin/facilitator, so a crafted link can't redirect someone
+        // into a different area than their actual role.
+        const next = new URLSearchParams(location.search).get('next');
+        if (next && data.redirect === '/client/') { window.location.href = decodeURIComponent(next); }
+        else { window.location.href = data.redirect; }
       } else {
         errorEl.textContent = data.error || 'Something went wrong.';
         btn.disabled = false;

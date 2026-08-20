@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -218,6 +218,27 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
+  // ── Session reminders (Per's request) — every 15 minutes ── 3 days /
+  // 1 day / 1 hour before a scheduled cohort session. Runs this often
+  // specifically so the 1-hour tier stays reasonably tight — an hourly
+  // check could miss that window by up to 59 minutes either way; the
+  // real duplicate-prevention is the UNIQUE constraint on
+  // session_reminders_sent (see db.js), not this interval choice, so
+  // running it frequently costs nothing beyond the extra query.
+  cron.schedule('*/15 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendDueSessionReminders();
+      if (result.sentCount > 0 || result.errorCount > 0) {
+        console.log('[cron] session reminders:', JSON.stringify(result));
+      }
+      record('session_reminders', result.errorCount > 0 ? 'partial' : 'ok', JSON.stringify(result), result.errors?.length ? result.errors.join('; ') : null, t0);
+    } catch (e) {
+      console.error('[cron] session reminders failed:', e.message);
+      record('session_reminders', 'failed', null, e.message, t0);
+    }
+  });
+
   // ── Stale chat session sweep — every 10 minutes ──
   // Only logged to cron_log when it actually did something, same as the
   // console.log below — otherwise 10-minute runs would flood the report
@@ -246,7 +267,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };
