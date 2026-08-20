@@ -4714,17 +4714,54 @@
   // swipe-left-for-next convention.
   // (If this feels backwards in hand, both branches below are a single
   // sign flip to reverse.)
+  //
+  // Per's follow-up report — swipe worked but the nav buttons stopped
+  // responding to taps once rotated. This is a known WebKit weak spot:
+  // a synthetic 'click' event fired after touchend on an element inside
+  // a transform:rotate() ancestor can hit-test against the WRONG
+  // position, since the rotated geometry isn't always accounted for
+  // correctly when the browser synthesizes that click. Swipe was
+  // unaffected because it reads raw touch coordinates directly, never
+  // depending on click synthesis at all — so the fix here does the
+  // same for taps: detect a tap explicitly (touchstart and touchend on
+  // the same interactive control, minimal movement) and invoke that
+  // control's action directly, rather than trusting the browser to
+  // synthesize the click correctly. preventDefault() on a confirmed tap
+  // stops the native synthetic click from ALSO firing afterward (which
+  // would otherwise double-advance the slide) — this requires
+  // {passive:false} below; touchstart/touchend at passive:false doesn't
+  // cost scroll performance the way touchmove would, since neither of
+  // these fires during an active scroll gesture.
   const PPTX_SWIPE_THRESHOLD = 40;
-  let _pptxTouchStartX = 0, _pptxTouchStartY = 0;
+  const PPTX_TAP_MOVE_TOLERANCE = 10;
+  let _pptxTouchStartX = 0, _pptxTouchStartY = 0, _pptxTouchStartTarget = null;
   function pptxTouchStart(e) {
     const t = e.changedTouches[0];
     _pptxTouchStartX = t.clientX;
     _pptxTouchStartY = t.clientY;
+    _pptxTouchStartTarget = t.target.closest('.reader-nav-btn, a.reader-nav-btn');
   }
   function pptxTouchEnd(e) {
     const t = e.changedTouches[0];
     const deltaX = t.clientX - _pptxTouchStartX;
     const deltaY = t.clientY - _pptxTouchStartY;
+    const endTarget = t.target.closest('.reader-nav-btn, a.reader-nav-btn');
+
+    // A tap: started and ended on the same control, barely moved.
+    // Handled explicitly rather than left to native click synthesis.
+    if (_pptxTouchStartTarget && _pptxTouchStartTarget === endTarget
+        && Math.abs(deltaX) < PPTX_TAP_MOVE_TOLERANCE && Math.abs(deltaY) < PPTX_TAP_MOVE_TOLERANCE) {
+      e.preventDefault();
+      if (endTarget.tagName === 'A') {
+        window.open(endTarget.href, '_blank', 'noopener');
+      } else if (endTarget.title === 'Previous slide') {
+        pptxPrevSlide();
+      } else if (endTarget.title === 'Next slide') {
+        pptxNextSlide();
+      }
+      return;
+    }
+
     const rotateWrap = document.getElementById('slideViewerRotateWrap');
     const isRotated = rotateWrap && rotateWrap.classList.contains('auto-rotate');
     if (isRotated) {
@@ -4779,7 +4816,7 @@
       ensurePptxRotateListener();
       const rotateWrap = document.getElementById('slideViewerRotateWrap');
       rotateWrap.addEventListener('touchstart', pptxTouchStart, { passive: true });
-      rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: true });
+      rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: false });
     } catch (e) {
       mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this presentation — network error.</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
     }
