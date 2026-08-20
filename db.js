@@ -3199,6 +3199,15 @@ function markLibraryFileConverted(id, epubFilename, originalPdfFilename) {
     [epubFilename, 'application/epub+zip', 'r2', originalPdfFilename, id]);
   save();
 }
+// Per's request — bulk reconversion of everything already converted
+// before the Per Bot 113 header/footer/masthead-stripping fix, so those
+// documents self-heal instead of permanently carrying the old, unstripped
+// content baked into their stored epub. Small dedicated function, same
+// reasoning as markLibraryFileConverted just above — a one-thing query,
+// not a generic filter param bolted onto getLibraryFiles.
+function getConvertedPdfLibraryFiles() {
+  return queryAll("SELECT id, title, filename, original_pdf_filename FROM library_files WHERE file_type='application/epub+zip' AND original_pdf_filename IS NOT NULL AND original_pdf_filename != ''");
+}
 // Per's request — replace a file's actual content in place, keeping the
 // same id (and so every lesson-file-ref, course association, and
 // progress record pointing at it) rather than the existing delete-and-
@@ -8277,7 +8286,7 @@ module.exports = {
   // Library
   addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, replaceLibraryFileSlides, getLibraryFileSlides, deleteLibraryFileSlides, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
-  renameLibraryFile, markLibraryFileConverted, replaceLibraryFileContent, deleteLibraryFile, archiveLibraryFile, getFileUsage,
+  renameLibraryFile, markLibraryFileConverted, getConvertedPdfLibraryFiles, replaceLibraryFileContent, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,

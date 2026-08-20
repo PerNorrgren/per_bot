@@ -4721,15 +4721,15 @@
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (f && f.accessible === false) { showUpgradeNotice(f.title); return; }
-    // Per's request — on mobile, a PDF that hasn't been converted to
-    // EPUB yet gets converted right now, on the spot, rather than
-    // needing to wait for a re-upload — most of the library predates the
-    // upload-time conversion feature entirely. Desktop is deliberately
-    // untouched here: the plain PDF-in-an-iframe view already works fine
-    // there (Per's own words) — this whole flow exists only to fix the
-    // specific mobile problem, not to force every PDF through conversion
-    // regardless of whether it's actually needed.
-    if (f && f.file_type === 'application/pdf' && !f.original_pdf_filename && window.innerWidth <= 480) {
+    // Per originally asked for this only on mobile — the plain PDF-in-
+    // an-iframe view was fine on desktop at the time. Per's later
+    // report: the raw PDF's own running header, page number, and the
+    // FELT · FIBRE masthead were showing up as unwanted clutter at the
+    // top of every page, on desktop specifically — that's exactly the
+    // plain-iframe path bypassing the header/footer/masthead-stripping
+    // this conversion does. No longer scoped to phone-width; converts
+    // (and strips) everywhere now.
+    if (f && f.file_type === 'application/pdf' && !f.original_pdf_filename) {
       const converted = await convertPdfOnDemand(f);
       // Success updates file_type locally so the isEpub check further
       // down this same function correctly takes the epub path; a failed
