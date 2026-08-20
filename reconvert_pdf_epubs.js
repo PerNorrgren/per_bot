@@ -1,4 +1,7 @@
 // ── reconvert_pdf_epubs.js ──
+// (Redeploy trigger — Railway's build scheduler stalled on the previous
+// push and was cancelled before it ever built; this comment gives
+// deploy.sh a real change to commit so a fresh build gets queued.)
 // One-off migration, run once by hand: reconverts every PDF-to-EPUB
 // library file with the CURRENT conversion logic (Per Bot 113's
 // running-header/footer + FELT · FIBRE masthead stripping, and anything
