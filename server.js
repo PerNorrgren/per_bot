@@ -9592,6 +9592,66 @@ app.get('/api/content/library/:id/original-pdf-url', auth.requireAuthApi(['clien
   }
 });
 
+// Per's request — on-demand conversion, the moment someone on mobile
+// opens a PDF that predates the upload-time conversion feature (most of
+// the library, at this point). Same access check as playback-url above,
+// since converting still means reading the file's own bytes.
+app.post('/api/content/library/:id/convert-to-epub', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+
+    // Already converted (this exact file, or a near-simultaneous request
+    // for it that finished first) — a real no-op, not an error, so a
+    // double-tap or two people opening the same file at once doesn't do
+    // the conversion work twice.
+    if (file.file_type === 'application/epub+zip') return res.json({ ok: true, alreadyConverted: true });
+    if (file.file_type !== 'application/pdf') return res.status(400).json({ error: 'This file is not a PDF.' });
+
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Conversion is not available right now — please try again later.' });
+
+    let pdfBuffer;
+    if (file.storage_type === 'r2') {
+      const obj = await media.getPublicObject(file.filename);
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      pdfBuffer = Buffer.concat(chunks);
+    } else {
+      pdfBuffer = fs.readFileSync(path.join(__dirname, 'uploads', file.filename));
+    }
+
+    const epubBuffer = await convertPdfToEpub(pdfBuffer, file.title, brand().name);
+    if (!epubBuffer) return res.status(422).json({ error: 'This document could not be converted — it may be a scanned PDF without readable text.' });
+
+    const epubKey = `library-epubs/${uuidv4()}.epub`;
+    await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+
+    // Preserve the original for the Download PDF option — if it's
+    // already an R2 key (the common case at this point), reuse it
+    // directly rather than uploading a duplicate copy; a legacy
+    // disk-stored file gets a real, stable R2 home for the first time
+    // here, same as it would have on a fresh upload.
+    let originalPdfKey = file.filename;
+    if (file.storage_type !== 'r2') {
+      originalPdfKey = `library-pdfs/${uuidv4()}.pdf`;
+      await media.putObject(originalPdfKey, pdfBuffer, 'application/pdf');
+    }
+
+    db.markLibraryFileConverted(file.id, epubKey, originalPdfKey);
+    res.json({ ok: true, originalPdfFilename: originalPdfKey });
+  } catch (e) {
+    console.error('[convert-to-epub on-demand] failed:', e.message);
+    res.status(500).json({ error: 'Conversion failed — please try again.' });
+  }
+});
+
 // Per Bot 16 — shared by the quick text editor, and the mojibake
 // scan/fix below, so both read and write the underlying file the exact
 // same way regardless of which storage backend it's actually on.

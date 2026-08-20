@@ -3142,6 +3142,20 @@ function updateLibraryFile(id, fields) {
 function renameLibraryFile(id, filename) {
   getDbSync().run('UPDATE library_files SET filename=? WHERE id=?', [filename, id]); save();
 }
+// Per's request — on-demand PDF-to-EPUB conversion, the moment someone
+// on mobile actually opens a PDF that predates the upload-time
+// conversion feature (most of the library, at this point). Small
+// dedicated function, matching renameLibraryFile just above, rather than
+// adding these four fields to updateLibraryFile's own allowed-fields
+// list — this app has a real history of a PATCH route silently dropping
+// fields because they weren't added to a whitelist like that one; a
+// function that just does exactly this one thing has no such list to
+// forget to update.
+function markLibraryFileConverted(id, epubFilename, originalPdfFilename) {
+  getDbSync().run('UPDATE library_files SET filename=?, file_type=?, storage_type=?, original_pdf_filename=? WHERE id=?',
+    [epubFilename, 'application/epub+zip', 'r2', originalPdfFilename, id]);
+  save();
+}
 function archiveLibraryFile(id, archived) {
   getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]); save();
 }
@@ -8207,7 +8221,7 @@ module.exports = {
   // Library
   addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
-  renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
+  renameLibraryFile, markLibraryFileConverted, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,

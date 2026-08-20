@@ -4522,9 +4522,59 @@
     document.getElementById('readerTocPanel')?.classList.remove('open');
   }
 
+  // Per's request — the loading state while an on-demand PDF-to-EPUB
+  // conversion runs. Reuses the same yin-yang spinner already used for
+  // button-loading feedback (YY_SPINNER_SVG, setBtnLoading) rather than
+  // a second spinner design, just sized up and centered for a full-panel
+  // moment instead of a small inline one. Returns the server's success
+  // payload (or null on any failure) — openContentFile above decides
+  // what to do with either outcome, this function's only job is running
+  // the conversion and showing something sensible while it does.
+  async function convertPdfOnDemand(f) {
+    const overlayEl = document.getElementById('playerOverlay');
+    const mediaEl = document.getElementById('playerMedia');
+    overlayEl.classList.remove('video-mode');
+    overlayEl.classList.add('reader-mode', 'visible');
+    document.getElementById('fullscreenBtn').style.display = 'none';
+    document.getElementById('playerTitle').textContent = f.title;
+    document.getElementById('playerText').innerHTML = '';
+    mediaEl.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;padding:0 30px;text-align:center">
+        ${YY_SPINNER_SVG.replace('class="btn-spinner"', 'class="btn-spinner" style="width:48px;height:48px"')}
+        <div style="font-size:14.5px;color:rgba(255,255,255,0.6)">Getting this ready to read — one moment…</div>
+      </div>
+    `;
+    try {
+      const res = await fetch(`/api/content/library/${f.id}/convert-to-epub`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async function openContentFile(f) {
     if (typeof f === 'string') f = JSON.parse(f);
     if (f && f.accessible === false) { showUpgradeNotice(f.title); return; }
+    // Per's request — on mobile, a PDF that hasn't been converted to
+    // EPUB yet gets converted right now, on the spot, rather than
+    // needing to wait for a re-upload — most of the library predates the
+    // upload-time conversion feature entirely. Desktop is deliberately
+    // untouched here: the plain PDF-in-an-iframe view already works fine
+    // there (Per's own words) — this whole flow exists only to fix the
+    // specific mobile problem, not to force every PDF through conversion
+    // regardless of whether it's actually needed.
+    if (f && f.file_type === 'application/pdf' && !f.original_pdf_filename && window.innerWidth <= 480) {
+      const converted = await convertPdfOnDemand(f);
+      // Success updates file_type locally so the isEpub check further
+      // down this same function correctly takes the epub path; a failed
+      // conversion (e.g. a scanned PDF with no real text layer) leaves f
+      // untouched, and everything below falls through to the exact same
+      // plain-PDF iframe view that already worked before this feature
+      // existed — never a dead end, just not the nicer path this time.
+      if (converted) f = { ...f, file_type: 'application/epub+zip', original_pdf_filename: converted.originalPdfFilename };
+    }
     // Per Bot 24 — was mpPlay(f); return here, which only ever surfaced
     // the lightweight bottom mini-player bar — no seek control, and (for
     // a one-to-one facilitator-assigned file specifically) it read as
