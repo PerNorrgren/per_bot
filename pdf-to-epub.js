@@ -34,6 +34,25 @@ function mostCommon(arr) {
 // detected by font size (cross-checked against the PDF's own real
 // bookmarks when present), consecutive same-size nearby lines merged
 // back into real paragraphs, bold/italic preserved.
+//
+// Per's report — running headers/footers (a repeated header line and a
+// page number, present on every page of the source PDF as page
+// furniture) were leaking into the converted book as real reading
+// content, appearing at the top of the very first chapter. Two
+// heuristics strip these before the heading/paragraph merge runs:
+// (1) identical text appearing near the top or bottom edge of 2+
+// DIFFERENT pages is almost certainly a running header/footer, not
+// real content that happens to repeat; (2) a lone short numeral near a
+// page edge (a page number) is stripped unconditionally, since an
+// incrementing "1", "2", "3"... would never be caught by the identical-
+// text check above despite obviously being the same kind of thing.
+// Also per Per's direct request — the FELT · FIBRE masthead is
+// constant across every document this app converts and should never
+// appear in the reading content, stripped unconditionally by a
+// normalized match (tolerant of the middot/spacing sometimes splitting
+// across separate text runs during PDF extraction) rather than relying
+// on the repeated-across-pages check, since a single-page document
+// would never trigger that check at all.
 function structuredHtmlFromPdftohtmlXml(xml) {
   const outlineMatches = [...xml.matchAll(/<item page="\d+">([^<]*)<\/item>/g)];
   const outlineTexts = new Set(outlineMatches.map(m => m[1].trim()));
@@ -46,19 +65,75 @@ function structuredHtmlFromPdftohtmlXml(xml) {
   if (!sizeValues.length) return null; // no text layer at all — likely scanned/image-only
   const bodySize = mostCommon(sizeValues);
 
-  const blocks = [];
-  for (const m of xml.matchAll(/<text top="(\d+)"[^>]*font="(\d+)"[^>]*>([\s\S]*?)<\/text>/g)) {
-    const top = parseInt(m[1], 10);
-    const size = fontSizes[m[2]] || bodySize;
-    let content = m[3]
+  // Single pass over the xml, tracking which <page> section (and that
+  // page's own height, for the edge-zone check below) each <text> run
+  // belongs to — the plain per-<text> regex used before this had no
+  // page awareness at all, which running-header detection needs.
+  const pageBlocks = [];
+  let currentPage = 0, currentPageHeight = 0;
+  const walkRe = /<page number="(\d+)"[^>]*height="(\d+)"[^>]*>|<text top="(\d+)"[^>]*font="(\d+)"[^>]*>([\s\S]*?)<\/text>/g;
+  let m;
+  while ((m = walkRe.exec(xml))) {
+    if (m[1] !== undefined) {
+      currentPage = parseInt(m[1], 10);
+      currentPageHeight = parseInt(m[2], 10);
+      continue;
+    }
+    const top = parseInt(m[3], 10);
+    const size = fontSizes[m[4]] || bodySize;
+    let content = m[5]
       .replace(/<b>/g, '<strong>').replace(/<\/b>/g, '</strong>')
       .replace(/<i>/g, '<em>').replace(/<\/i>/g, '</em>')
       .trim();
     if (!content) continue;
     const plainText = content.replace(/<[^>]+>/g, '').trim();
     if (!plainText) continue;
-    blocks.push({ top, size, content, plainText });
+    pageBlocks.push({ page: currentPage, top, size, content, plainText, pageHeight: currentPageHeight });
   }
+  if (!pageBlocks.length) return null;
+
+  const EDGE_RATIO = 0.15; // top/bottom 15% of the page — where running headers/footers live
+  const edgeTextPages = {}; // plainText -> Set of distinct page numbers seen at an edge
+  for (const b of pageBlocks) {
+    if (!b.pageHeight) continue;
+    const ratio = b.top / b.pageHeight;
+    if (ratio < EDGE_RATIO || ratio > 1 - EDGE_RATIO) {
+      (edgeTextPages[b.plainText] || (edgeTextPages[b.plainText] = new Set())).add(b.page);
+    }
+  }
+  const runningHeaderTexts = new Set(
+    Object.entries(edgeTextPages).filter(([, pages]) => pages.size >= 2).map(([text]) => text)
+  );
+  const isLonePageNumber = (text) => /^(page\s*)?\d{1,4}$/i.test(text.trim());
+
+  // FELT · FIBRE often splits across 2-3 separate <text> runs during PDF
+  // extraction — confirmed directly against a real generated PDF: the
+  // middot glyph frequently lands on its own run at a different font
+  // size than the surrounding letters, so the ordinary same-size
+  // paragraph-merge later in this function never rejoins them. Checked
+  // as a sliding window over consecutive blocks' normalized text
+  // instead of a single-block match, so "FELT" / "·" / "FIBRE" as three
+  // separate blocks are all still caught and removed together.
+  const feltFibreIndices = new Set();
+  for (let i = 0; i < pageBlocks.length; i++) {
+    for (let windowSize = 1; windowSize <= 3 && i + windowSize <= pageBlocks.length; windowSize++) {
+      const window = pageBlocks.slice(i, i + windowSize);
+      const combined = window.map(b => b.plainText).join('').toLowerCase().replace(/[^a-z]/g, '');
+      if (combined === 'feltfibre') {
+        for (let offset = 0; offset < windowSize; offset++) feltFibreIndices.add(i + offset);
+        break;
+      }
+    }
+  }
+
+  const blocks = pageBlocks.filter((b, i) => {
+    const ratio = b.pageHeight ? b.top / b.pageHeight : 0.5;
+    const atEdge = ratio < EDGE_RATIO || ratio > 1 - EDGE_RATIO;
+    if (runningHeaderTexts.has(b.plainText)) return false;
+    if (atEdge && isLonePageNumber(b.plainText)) return false;
+    if (feltFibreIndices.has(i)) return false;
+    return true;
+  });
   if (!blocks.length) return null;
 
   // Merge consecutive same-size nearby lines into real paragraphs.

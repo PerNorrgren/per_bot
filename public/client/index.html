@@ -876,7 +876,7 @@
        reachable regardless of stacking edge cases across devices. */
     .slide-viewer-rotate-wrap.auto-rotate {
       position:fixed; top:50%; left:50%; max-width:none; z-index:20;
-      width:100dvh; height:100dvw;
+      width:var(--real-vh, 100dvh); height:var(--real-vw, 100dvw);
       transform:translate(-50%,-50%) rotate(90deg);
     }
     .slide-viewer-rotate-wrap.auto-rotate .slide-viewer-wrap { height:auto; flex:1; max-width:none; }
@@ -888,7 +888,8 @@
     .slide-viewer-rotate-wrap.auto-rotate .reader-controls > * { transform:rotate(-90deg); }
 
     .slide-viewer-rotate-wrap.landscape-maximize {
-      position:fixed; top:0; left:0; width:100dvw; height:100dvh; flex-direction:column; z-index:20;
+      position:fixed; top:0; left:0; flex-direction:column; z-index:20;
+      width:var(--real-vw, 100dvw); height:var(--real-vh, 100dvh);
     }
     .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { flex:1; height:auto; max-width:none; width:100%; }
     .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; flex-shrink:0; margin:0; padding:8px 0; }
@@ -4694,6 +4695,28 @@
   // lives entirely in CSS via dvh/dvw (dynamic viewport units), which
   // track the real current viewport continuously — this function only
   // decides WHICH state applies, never computes pixel dimensions.
+  //
+  // Belt-and-suspenders on top of dvh/dvw: window.visualViewport is the
+  // most authoritative, immediately-updating source mobile Safari has
+  // for "what's actually visible right now" (built specifically to
+  // track the keyboard/toolbar in real time) — writing its live
+  // dimensions into CSS custom properties as a fallback covers any
+  // timing gap between a real device's address-bar transition and dvh
+  // catching up, without replacing dvh as the primary mechanism.
+  function updateRealViewportVars() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    document.documentElement.style.setProperty('--real-vh', vv.height + 'px');
+    document.documentElement.style.setProperty('--real-vw', vv.width + 'px');
+  }
+  let _pptxViewportListenerAttached = false;
+  function ensurePptxViewportListener() {
+    if (_pptxViewportListenerAttached || !window.visualViewport) return;
+    window.visualViewport.addEventListener('resize', updateRealViewportVars);
+    window.visualViewport.addEventListener('scroll', updateRealViewportVars);
+    _pptxViewportListenerAttached = true;
+  }
+
   function applyPptxAutoRotate() {
     const rotateWrap = document.getElementById('slideViewerRotateWrap');
     if (!rotateWrap) return;
@@ -4708,6 +4731,7 @@
     } else if (isPhoneClass && !isPortrait) {
       rotateWrap.classList.add('landscape-maximize');
     }
+    updateRealViewportVars();
   }
   let _pptxRotateListenerAttached = false;
   function ensurePptxRotateListener() {
@@ -4834,6 +4858,7 @@
       renderCurrentSlide();
       applyPptxAutoRotate();
       ensurePptxRotateListener();
+      ensurePptxViewportListener();
       const rotateWrap = document.getElementById('slideViewerRotateWrap');
       rotateWrap.addEventListener('touchstart', pptxTouchStart, { passive: true });
       rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: false });
