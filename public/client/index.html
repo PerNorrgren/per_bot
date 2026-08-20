@@ -864,11 +864,19 @@
     .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
 
     /* Phone in portrait — simulate landscape by rotating the whole
-       unit. Sized to the viewport's own swapped dimensions (set via JS)
-       so it fills the real screen edge-to-edge post-rotation, not just
-       spinning in place at its original wrong-aspect-ratio size. */
+       unit. Sized in CSS with dvh/dvw (dynamic viewport units), NOT
+       window.innerHeight/innerWidth applied once via JS — real mobile
+       Safari's address bar shows/hides as the person scrolls or
+       interacts, which changes the ACTUAL visible viewport after a
+       one-time JS measurement would already be stale. dvh/dvw track
+       the real, current visible viewport continuously, which is
+       exactly what this needed and couldn't get from a single JS
+       read. Explicit z-index keeps this below the outer close button
+       (.player-close-floating, z-index:501) so exiting always stays
+       reachable regardless of stacking edge cases across devices. */
     .slide-viewer-rotate-wrap.auto-rotate {
-      position:fixed; top:50%; left:50%; max-width:none;
+      position:fixed; top:50%; left:50%; max-width:none; z-index:20;
+      width:100dvh; height:100dvw;
       transform:translate(-50%,-50%) rotate(90deg);
     }
     .slide-viewer-rotate-wrap.auto-rotate .slide-viewer-wrap { height:auto; flex:1; max-width:none; }
@@ -880,7 +888,7 @@
     .slide-viewer-rotate-wrap.auto-rotate .reader-controls > * { transform:rotate(-90deg); }
 
     .slide-viewer-rotate-wrap.landscape-maximize {
-      position:fixed; inset:0; flex-direction:column;
+      position:fixed; top:0; left:0; width:100dvw; height:100dvh; flex-direction:column; z-index:20;
     }
     .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { flex:1; height:auto; max-width:none; width:100%; }
     .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; flex-shrink:0; margin:0; padding:8px 0; }
@@ -4670,6 +4678,22 @@
   // simulation when portrait, maximized real layout when landscape.
   // Re-checked on resize/orientationchange so physically rotating the
   // phone while the viewer is open switches between the two correctly.
+  // Per also caught that turning the phone to real landscape correctly
+  // stopped the simulated rotation, but then fell back to the small
+  // default sizing (tuned for a portrait reading column) — landscape-
+  // maximize below fixes that, so it's never small either way: rotated
+  // simulation when portrait, maximized real layout when landscape.
+  // Re-checked on resize/orientationchange so physically rotating the
+  // phone while the viewer is open switches between the two correctly.
+  //
+  // Per also caught a "small screen with margin" symptom in landscape,
+  // and buttons not responding — this was the JS setting a fixed pixel
+  // width/height ONCE from window.innerHeight/innerWidth, which goes
+  // stale the moment real mobile Safari's address bar shows/hides
+  // (changing the actual visible viewport after the fact). Sizing now
+  // lives entirely in CSS via dvh/dvw (dynamic viewport units), which
+  // track the real current viewport continuously — this function only
+  // decides WHICH state applies, never computes pixel dimensions.
   function applyPptxAutoRotate() {
     const rotateWrap = document.getElementById('slideViewerRotateWrap');
     if (!rotateWrap) return;
@@ -4678,13 +4702,9 @@
     const isPortrait = h > w;
 
     rotateWrap.classList.remove('auto-rotate', 'landscape-maximize');
-    rotateWrap.style.width = '';
-    rotateWrap.style.height = '';
 
     if (isPhoneClass && isPortrait) {
       rotateWrap.classList.add('auto-rotate');
-      rotateWrap.style.width = h + 'px';
-      rotateWrap.style.height = w + 'px';
     } else if (isPhoneClass && !isPortrait) {
       rotateWrap.classList.add('landscape-maximize');
     }
@@ -4733,7 +4753,7 @@
   // cost scroll performance the way touchmove would, since neither of
   // these fires during an active scroll gesture.
   const PPTX_SWIPE_THRESHOLD = 40;
-  const PPTX_TAP_MOVE_TOLERANCE = 10;
+  const PPTX_TAP_MOVE_TOLERANCE = 24;
   let _pptxTouchStartX = 0, _pptxTouchStartY = 0, _pptxTouchStartTarget = null;
   function pptxTouchStart(e) {
     const t = e.changedTouches[0];
