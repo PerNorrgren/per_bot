@@ -4698,19 +4698,35 @@
       rotateWrap.classList.add('auto-rotate');
       rotateWrap.style.width = h + 'px';
       rotateWrap.style.height = w + 'px';
-      if (controls) { controls.classList.add('portrait-edge'); controls.hidden = false; controls.style.height = h + 'px'; }
+      if (controls) { controls.classList.add('portrait-edge'); controls.hidden = false; controls.style.height = Math.max(0, h - 28) + 'px'; controls.style.top = '14px'; }
     } else if (isPhoneClass && !isPortrait) {
       rotateWrap.classList.add('landscape-maximize');
       rotateWrap.style.width = w + 'px';
       rotateWrap.style.height = h + 'px';
-      if (controls) { controls.classList.add('landscape-edge'); controls.hidden = false; controls.style.width = w + 'px'; }
+      if (controls) { controls.classList.add('landscape-edge'); controls.hidden = false; controls.style.width = Math.max(0, w - 28) + 'px'; controls.style.left = '14px'; controls.style.bottom = '10px'; }
+    } else {
+      if (controls) controls.hidden = true;
     }
   }
   let _pptxRotateListenerAttached = false;
   function ensurePptxRotateListener() {
     if (_pptxRotateListenerAttached) return;
     window.addEventListener('resize', applyPptxAutoRotate);
-    window.addEventListener('orientationchange', applyPptxAutoRotate);
+    // Real mobile Safari has a well-documented quirk: window.innerWidth/
+    // innerHeight can report STALE, pre-rotation values for a brief
+    // moment right when 'orientationchange' fires, before Safari's own
+    // rotation animation and toolbar settling finishes. Measuring
+    // immediately (as the old code did) can compute against the WRONG
+    // (old) dimensions — this plausibly explains landscape sizing being
+    // wrong regardless of which CSS sizing mechanism was used, since
+    // none of the earlier fixes addressed WHEN the measurement happens.
+    // Call immediately (harmless if already correct) AND again after
+    // short delays to catch it once Safari has actually settled.
+    window.addEventListener('orientationchange', () => {
+      applyPptxAutoRotate();
+      setTimeout(applyPptxAutoRotate, 150);
+      setTimeout(applyPptxAutoRotate, 500);
+    });
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', applyPptxAutoRotate);
       window.visualViewport.addEventListener('scroll', applyPptxAutoRotate);
