@@ -414,6 +414,20 @@
     <div id="sec_savers_failure_final" style="margin-top:12px"></div>
   </div>
 
+  <!-- Course messages (Per's request) — confirmation fires the moment a
+       free enrolment succeeds (see attemptEnrolUser in server.js); the
+       three reminders fire on a 15-minute cron check as each session
+       gets close (see sendDueSessionReminders), each one only once per
+       person per session, however many times the check re-runs. -->
+  <div>
+    <div class="section-label">Course Messages</div>
+    <div style="padding:0 0 4px" class="modal-note">Enrolment confirmation fires immediately on a successful free enrolment. The three reminders fire automatically as each cohort session's own scheduled date/time (set by the facilitator, in the course's Sessions tab) gets close — 3 days before, 1 day before, and 1 hour before. {{course_link}} in any of these opens the app straight to that course, signing in first if needed.</div>
+    <div id="sec_enrolment_confirmed" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_3day" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_1day" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_1hour" style="margin-top:12px"></div>
+  </div>
+
   <!-- Funnel report (Per Bot 18) -->
   <div>
     <div class="section-label">Funnel</div>
@@ -1793,6 +1807,18 @@
   // sends come back naturally against the real active version instead).
   const TRIAL_SEQ_TYPES = ['trial_day3', 'trial_day7', 'trial_day10', 'trial_day14'];
   const SAVERS_TYPES = ['savers_cancel_day0', 'savers_cancel_grace0', 'savers_cancel_mid', 'savers_cancel_final', 'savers_failure_day0', 'savers_failure_mid', 'savers_failure_final'];
+  // Per's request — course enrolment confirmation and the three session
+  // reminders. course_link is genuinely custom to these four (not part
+  // of the default token set every other type gets) — it's only ever
+  // built when a courseInstanceId is passed into buildMessageTokens (see
+  // server.js), which only these four ever do, so it's listed as an
+  // extraToken on all four rather than assumed available.
+  const COURSE_MESSAGE_TYPES = {
+    enrolment_confirmed:    [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{instance_title}}', label: 'This intake/instance name' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
+    session_reminder_3day:  [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
+    session_reminder_1day:  [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
+    session_reminder_1hour: [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
+  };
   function initVersionSections() {
     TRIAL_SEQ_TYPES.forEach(type => {
       MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type);
@@ -1804,6 +1830,9 @@
       // itself has actually ended.
       const opts = type === 'savers_cancel_day0' ? { extraTokens: [{ value: '{{period_end}}', label: 'Real term end date' }] } : {};
       MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type, opts);
+    });
+    Object.entries(COURSE_MESSAGE_TYPES).forEach(([type, extraTokens]) => {
+      MessageEditor.renderVersionSection(document.getElementById(`sec_${type}`), type, { extraTokens });
     });
   }
 </script>

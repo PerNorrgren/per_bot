@@ -160,15 +160,46 @@
         </div>
 
         ${i.status === 'open' ? `
-        <div class="cta-card">
+        <div class="cta-card" id="ctaCard">
           <h2>Ready to Join?</h2>
-          <p>Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
-          <a class="cta-btn" href="/register">Register</a>
+          <p id="ctaText">Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
+          <a class="cta-btn" id="ctaBtn" href="/register?instance=${i.id}">Register</a>
         </div>` : ''}
       `;
+      // Per's request — instance-aware registration. If the visitor is
+      // already logged in (e.g. clicked this link from a reminder email
+      // while signed in on this device), sending them through /register
+      // would just fail with "an account already exists" — check first,
+      // and if they're already a client, enrol them directly instead.
+      if (i.status === 'open') checkAlreadyLoggedIn(id);
     } catch(e) {
       el.innerHTML = '<div class="card"><p>Something went wrong loading this course — please try again.</p></div>';
     }
+  }
+  async function checkAlreadyLoggedIn(instanceId) {
+    try {
+      const res = await fetch('/api/account');
+      if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register button as-is
+      document.getElementById('ctaText').textContent = "You're logged in — enrol below and you'll find this course in your library right away.";
+      const btn = document.getElementById('ctaBtn');
+      btn.textContent = 'Enrol Now';
+      btn.removeAttribute('href');
+      btn.style.cursor = 'pointer';
+      btn.onclick = async () => {
+        btn.textContent = 'Enrolling…';
+        try {
+          const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: instanceId }) });
+          const data = await r.json();
+          if (data.requiresPayment) { location.href = data.checkoutUrl; return; }
+          if (data.ok) { location.href = `/client/?course=${instanceId}`; return; }
+          document.getElementById('ctaText').textContent = data.error || 'Something went wrong — please try again.';
+          btn.textContent = 'Enrol Now';
+        } catch(e) {
+          document.getElementById('ctaText').textContent = 'Something went wrong — please try again.';
+          btn.textContent = 'Enrol Now';
+        }
+      };
+    } catch(e) { /* not logged in — leave the Register button as-is */ }
   }
   loadInstance();
 </script>

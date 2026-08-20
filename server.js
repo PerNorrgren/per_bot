@@ -584,7 +584,21 @@ function buildMessageTokens(user, opts = {}) {
   const expiryDate = rawExpiry
     ? new Date(rawExpiry).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
     : '';
-  return { name: user.name || 'there', invite_link: inviteLink, expiry_date: expiryDate, ...(opts.extra || {}) };
+  // Per's request — a reminder/confirmation email needs a link that
+  // "opens the app to the course page," which for someone not currently
+  // logged in means surviving login/join first (see the next= handling
+  // added to login.html and join.html). Deliberately reuses the exact
+  // same hasLogin branch already computed above for inviteLink, rather
+  // than a second parallel link-building path — the only difference is
+  // appending next= pointing at the course.
+  let courseLink = null;
+  if (opts.courseInstanceId) {
+    const nextParam = encodeURIComponent(`/client/?course=${opts.courseInstanceId}`);
+    courseLink = hasLogin
+      ? `${APP_URL}/login?email=${encodeURIComponent(user.email || '')}&next=${nextParam}`
+      : `${APP_URL}/join/${db.ensureInviteToken(user.id)}${linkQuery}${linkQuery ? '&' : '?'}next=${nextParam}`;
+  }
+  return { name: user.name || 'there', invite_link: inviteLink, expiry_date: expiryDate, ...(courseLink ? { course_link: courseLink } : {}), ...(opts.extra || {}) };
 }
 
 // Per Bot 19 — generalizes the newsletter test-send's "if this address is
@@ -1278,6 +1292,52 @@ function emailSaversFailureResolved(user, override) {
 
 If you already went looking for somewhere to update a card, sorry for the runaround — nothing was actually needed after all.`,
     {}, override);
+}
+
+// Per's request — course enrolment confirmation and the three session
+// reminders (3 days / 1 day / 1 hour before), plus a genuine "opens the
+// app to the course page" link. sendCourseEmail is the course-specific
+// sibling of sendSaversEmail above — same resolveMessageContent/
+// fillTemplate/renderMessageBody pipeline, so these are just as
+// admin-editable via Comms as every Savers type, only the closing CTA
+// differs (a link straight to the course, not a membership-options link).
+async function sendCourseEmail(user, type, defaultSubject, defaultBody, extraTokens, courseInstanceId, override) {
+  const b = brand();
+  const tokens = buildMessageTokens(user, { extra: extraTokens, courseInstanceId });
+  const content = resolveMessageContent(type, { subject: defaultSubject, body: defaultBody }, override);
+  const subject = fillTemplate(content.subject, tokens);
+  const body = fillTemplate(content.body, tokens);
+  return sendEmail(user.email, subject,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      ${renderMessageBody(body, content.format)}
+      <p style="font-size:14px;line-height:1.7"><a href="${tokens.course_link}" style="color:#2d6a4f">Open your course →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name}</p>
+    </div>`
+  );
+}
+function emailEnrolmentConfirmed(user, courseTitle, instanceTitle, courseInstanceId, override) {
+  return sendCourseEmail(user, 'enrolment_confirmed', `You're confirmed — {{course_title}}`,
+    `You're all set for {{course_title}} — {{instance_title}}.
+
+We'll send you a couple of reminders as your first session gets closer. In the meantime, everything you need is already waiting for you in the app.`,
+    { course_title: courseTitle, instance_title: instanceTitle }, courseInstanceId, override);
+}
+function emailSessionReminder3Day(user, courseTitle, sessionTitle, sessionDateStr, courseInstanceId, override) {
+  return sendCourseEmail(user, 'session_reminder_3day', `{{course_title}} — starting in 3 days`,
+    `Just a heads up — {{session_title}} is coming up on {{session_date}}.`,
+    { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
+}
+function emailSessionReminder1Day(user, courseTitle, sessionTitle, sessionDateStr, courseInstanceId, override) {
+  return sendCourseEmail(user, 'session_reminder_1day', `{{course_title}} — tomorrow`,
+    `{{session_title}} is tomorrow, {{session_date}}.`,
+    { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
+}
+function emailSessionReminder1Hour(user, courseTitle, sessionTitle, sessionDateStr, courseInstanceId, override) {
+  return sendCourseEmail(user, 'session_reminder_1hour', `{{course_title}} — starting in about an hour`,
+    `{{session_title}} starts in about an hour, at {{session_date}}.`,
+    { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
 }
 
 // Per Bot 18 — fires when a manually-honoured membership period (set by
@@ -2273,6 +2333,35 @@ app.post('/api/register', async (req, res) => {
     const token = auth.createToken({ role: 'client', id, name: name.trim(), email: emailLower });
     res.cookie(auth.COOKIE_NAME, token, auth.COOKIE_OPTIONS);
     try { db.logLogin(id, 'client', 'register'); } catch(e) { console.error('[login_log] failed:', e.message); }
+
+    // Per's request — instance-aware registration. Someone arriving from
+    // a course-instance page's "Register" button should land enrolled,
+    // not just signed up needing a second step to find and join the same
+    // course again. Reuses attemptEnrolUser exactly as-is (skin/tier
+    // checks, capacity, payment-or-free branch, confirmation email) —
+    // the same function the in-app Enrol button itself calls — rather
+    // than a second implementation here.
+    const { instanceId } = req.body;
+    if (instanceId) {
+      try {
+        const newUser = db.getUser(id);
+        const enrolResult = await attemptEnrolUser(newUser, instanceId);
+        if (enrolResult.requiresPayment) {
+          // Priced instance — straight to Stripe rather than the app, same
+          // as the in-app Enrol button's own requiresPayment handling.
+          return res.json({ redirect: enrolResult.checkoutUrl });
+        }
+        // Free enrol succeeded, already enrolled, or a soft error (e.g.
+        // cohort just filled up) — any of these, land them in the app on
+        // the course itself via the same deep-link the reminder emails
+        // use, rather than the generic welcome screen. A soft error here
+        // isn't worth failing the whole registration over — the account
+        // itself was created successfully either way.
+        return res.json({ redirect: `/client/?justLoggedIn=1&course=${instanceId}` });
+      } catch(e) {
+        console.error('[post-register enrol]', e.message);
+      }
+    }
     res.json({ redirect: '/client/?justLoggedIn=1' });
   } catch(e) {
     console.error('register error:', e);
@@ -3237,6 +3326,76 @@ function ensureEnrolmentForStaffPreview(userId, instanceId) {
   return db.getEnrolmentForUserAndInstance(userId, instanceId);
 }
 
+// Per's request — instance-aware registration needs this exact same
+// enrol logic (skin/tier checks, capacity, payment-or-free branch)
+// available from two places: the direct in-app "Enrol" button below, and
+// the post-registration auto-enrol path in /api/register further down.
+// Pulled out into its own function so both call one real implementation
+// rather than risk two copies quietly drifting apart over time.
+async function attemptEnrolUser(user, courseInstanceId) {
+  const instance = db.getCourseInstance(courseInstanceId);
+  if (!instance) return { error: 'Course instance not found.', status: 404 };
+  if (instance.status !== 'open') return { error: 'This course is not currently open for enrolment.', status: 400 };
+
+  const course = db.getCourse(instance.course_id);
+  if (course?.access_status === 'locked') return { error: 'This course is not currently available.', status: 403 };
+  if (course?.access_status === 'hidden') return { error: 'Course instance not found.', status: 404 };
+
+  const existing = db.getEnrolmentForUserAndInstance(user.id, courseInstanceId);
+  if (existing) return { ok: true, enrolmentId: existing.id, note: 'Already enrolled.' };
+
+  if (instance.mode === 'cohort' && instance.capacity) {
+    const currentCount = db.getEnrolmentsForInstance(courseInstanceId).length;
+    if (currentCount >= instance.capacity) return { error: 'This cohort is full.', status: 400 };
+  }
+
+  if (instance.course_skin_id && instance.course_skin_id !== user?.skin_id) {
+    return { error: 'This course is not available on your account.', status: 403 };
+  }
+  if (course?.required_tier !== null && course?.required_tier !== undefined && (user?.member_tier || 0) < course.required_tier) {
+    return { error: 'This course requires a higher membership tier.', status: 403 };
+  }
+  const isMember = (user.member_tier || 0) >= 1;
+
+  if (!isMember && instance.price_cents > 0) {
+    if (!stripe) return { error: "Payment isn't set up yet — please check back soon.", status: 503 };
+    try {
+      let customerId = user.stripe_customer_id || null;
+      if (!customerId) {
+        const customer = await stripe.customers.create({ email: user.email, name: user.name, metadata: { user_id: user.id } });
+        customerId = customer.id;
+        db.setMemberTier(user.id, user.member_tier || 0, null, null, customerId, null);
+      }
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        payment_method_types: ['card'],
+        line_items: [instance.stripe_price_id
+          ? { price: instance.stripe_price_id, quantity: 1 }
+          : { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 }
+        ],
+        mode: 'payment',
+        success_url: `${APP_URL}/client/?enrolled=1`,
+        cancel_url:  `${APP_URL}/client/?enrolled=0`,
+        metadata: { type: 'course_enrolment', user_id: user.id, course_instance_id: courseInstanceId },
+        client_reference_id: user.id,
+      });
+      return { ok: true, requiresPayment: true, checkoutUrl: session.url };
+    } catch(e) {
+      console.error('[stripe course checkout]', e.message);
+      return { error: 'Could not start checkout. Please try again.', status: 500 };
+    }
+  }
+
+  const id = uuidv4();
+  db.createEnrolment(id, user.id, courseInstanceId, 'free', 0, null);
+  // Per's request — confirmation email, a real registered message type
+  // (see MESSAGE_TYPE_REGISTRY's enrolment_confirmed), fired here so
+  // every path into a free enrolment gets it identically.
+  try { await emailEnrolmentConfirmed(user, course.title, instance.title, courseInstanceId); }
+  catch(e) { console.error('[enrolment confirmation email]', e.message); }
+  return { ok: true, enrolmentId: id };
+}
+
 // Enrol — free immediately for Members regardless of instance price; for
 // Explorers, free instances enrol immediately too, but a priced instance
 // requires payment first (Stripe integration is the next build — this
@@ -3246,80 +3405,10 @@ app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) 
   try {
     const { courseInstanceId } = req.body;
     if (!courseInstanceId) return res.status(400).json({ error: 'courseInstanceId is required.' });
-    const instance = db.getCourseInstance(courseInstanceId);
-    if (!instance) return res.status(404).json({ error: 'Course instance not found.' });
-    if (instance.status !== 'open') return res.status(400).json({ error: 'This course is not currently open for enrolment.' });
-
-    const course = db.getCourse(instance.course_id);
-    // Per Bot 16 — same reasoning as the skin-restriction check just below:
-    // block a direct API call too, not just hide the enrol button, so a
-    // locked/hidden course can't be enrolled in by hitting the endpoint
-    // directly even if it never showed up (hidden) or showed as locked.
-    if (course?.access_status === 'locked') return res.status(403).json({ error: 'This course is not currently available.' });
-    if (course?.access_status === 'hidden') return res.status(404).json({ error: 'Course instance not found.' });
-
-    const existing = db.getEnrolmentForUserAndInstance(req.user.id, courseInstanceId);
-    if (existing) return res.json({ ok: true, enrolmentId: existing.id, note: 'Already enrolled.' });
-
-    if (instance.mode === 'cohort' && instance.capacity) {
-      const currentCount = db.getEnrolmentsForInstance(courseInstanceId).length;
-      if (currentCount >= instance.capacity) return res.status(400).json({ error: 'This cohort is full.' });
-    }
-
     const user = db.getUser(req.user.id);
-    // Per Bot 33l — same skin-restriction check as the course list, applied
-    // here too so a restricted course can't be enrolled in by a direct API
-    // call even if it never showed up in that person's list.
-    if (instance.course_skin_id && instance.course_skin_id !== user?.skin_id) {
-      return res.status(403).json({ error: 'This course is not available on your account.' });
-    }
-    // Per Bot 18 — same reasoning again for tier gating: block the direct
-    // call too, not just the listing. Doesn't apply if they're already
-    // enrolled (handled above, this only runs for a fresh enrol).
-    if (course?.required_tier !== null && course?.required_tier !== undefined && (user?.member_tier || 0) < course.required_tier) {
-      return res.status(403).json({ error: 'This course requires a higher membership tier.' });
-    }
-    const isMember = (user.member_tier || 0) >= 1;
-
-    // Explorer + priced instance → real payment required. Rather than just
-    // blocking, start a Stripe Checkout session and hand back the URL so the
-    // client can redirect straight there — same one-off "payment" mode
-    // already used for lifetime membership (see /api/membership/checkout).
-    if (!isMember && instance.price_cents > 0) {
-      if (!stripe) return res.status(503).json({ error: 'Payment isn\'t set up yet — please check back soon.' });
-      try {
-        let customerId = user.stripe_customer_id || null;
-        if (!customerId) {
-          const customer = await stripe.customers.create({ email: user.email, name: user.name, metadata: { user_id: user.id } });
-          customerId = customer.id;
-          db.setMemberTier(user.id, user.member_tier || 0, null, null, customerId, null);
-        }
-        const session = await stripe.checkout.sessions.create({
-          customer: customerId,
-          payment_method_types: ['card'],
-          // Ad-hoc one-time price built inline — course instances don't need
-          // a Stripe Price object pre-created for every price point, unless
-          // stripe_price_id was explicitly set (e.g. to reuse a shared price).
-          line_items: [instance.stripe_price_id
-            ? { price: instance.stripe_price_id, quantity: 1 }
-            : { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 }
-          ],
-          mode: 'payment',
-          success_url: `${APP_URL}/client/?enrolled=1`,
-          cancel_url:  `${APP_URL}/client/?enrolled=0`,
-          metadata: { type: 'course_enrolment', user_id: user.id, course_instance_id: courseInstanceId },
-          client_reference_id: user.id,
-        });
-        return res.json({ ok: true, requiresPayment: true, checkoutUrl: session.url });
-      } catch(e) {
-        console.error('[stripe course checkout]', e.message);
-        return res.status(500).json({ error: 'Could not start checkout. Please try again.' });
-      }
-    }
-
-    const id = uuidv4();
-    db.createEnrolment(id, req.user.id, courseInstanceId, 'free', 0, null);
-    res.json({ ok: true, enrolmentId: id });
+    const result = await attemptEnrolUser(user, courseInstanceId);
+    if (result.error) return res.status(result.status || 500).json({ error: result.error });
+    res.json(result);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -13604,6 +13693,52 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
 // Guarded by IS_STAGING same as the manual endpoint below, and by
 // last_sent_date so a slow run or an extra cron tick within the same
 // hour never double-sends the same occurrence.
+// Per's request — session reminders, 3 days / 1 day / 1 hour before.
+// Deliberately "has this already been sent" rather than a narrow time
+// window, so this is robust against whatever the actual cron interval
+// turns out to be: a session crosses into a threshold once, gets its
+// reminder, gets recorded, and the UNIQUE constraint on
+// session_reminders_sent (see db.js) is the real backstop against a
+// duplicate even if two runs overlap — this JS-level check is a
+// courtesy that avoids the wasted work of even attempting to send
+// twice, not the actual safety mechanism.
+async function sendDueSessionReminders() {
+  if (IS_STAGING) return { skipped: 'staging' };
+  const REMINDER_TYPES = [
+    { type: '3day', thresholdMs: 3 * 24 * 60 * 60 * 1000, emailFn: emailSessionReminder3Day },
+    { type: '1day', thresholdMs: 1 * 24 * 60 * 60 * 1000, emailFn: emailSessionReminder1Day },
+    { type: '1hour', thresholdMs: 60 * 60 * 1000, emailFn: emailSessionReminder1Hour },
+  ];
+  const now = new Date();
+  const sessions = db.getUpcomingSessionsWithScheduledTime();
+  let sentCount = 0;
+  const errors = [];
+  for (const session of sessions) {
+    const sessionDate = new Date(session.scheduled_at);
+    if (isNaN(sessionDate.getTime())) continue; // malformed date — skip rather than crash the whole run
+    const msUntil = sessionDate.getTime() - now.getTime();
+    if (msUntil <= 0) continue; // already happened
+    for (const { type, thresholdMs, emailFn } of REMINDER_TYPES) {
+      if (msUntil > thresholdMs) continue; // not close enough yet for this reminder tier
+      const enrolments = db.getEnrolmentsForInstance(session.course_instance_id);
+      for (const enrolment of enrolments) {
+        if (db.hasSentSessionReminder(session.id, enrolment.id, type)) continue;
+        try {
+          const user = db.getUser(enrolment.user_id);
+          if (!user) continue;
+          const sessionDateStr = sessionDate.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+          await emailFn(user, session.course_title, session.title, sessionDateStr, session.course_instance_id);
+          db.markSessionReminderSent(uuidv4(), session.id, enrolment.id, type);
+          sentCount++;
+        } catch(e) {
+          errors.push(`${session.id}/${enrolment.id}/${type}: ${e.message}`);
+        }
+      }
+    }
+  }
+  return { sentCount, errorCount: errors.length, errors: errors.slice(0, 10) };
+}
+
 async function sendDueScheduledMessages() {
   if (IS_STAGING) return { skipped: 'staging' };
   const now = new Date();
@@ -13844,7 +13979,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

@@ -848,7 +848,7 @@
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
           <div style="font-size:14px;color:rgba(255,255,255,0.25);min-width:20px">${s.session_number}</div>
           <input type="text" value="${(s.title||'').replace(/"/g,'&quot;')}" id="facsesstitle-${s.id}" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:7px 9px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:13px"/>
-          <input type="text" value="${(s.scheduled_at||'').replace(/"/g,'&quot;')}" id="facsessdate-${s.id}" placeholder="Scheduled" style="width:150px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:7px 9px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:12px"/>
+          <input type="datetime-local" value="${s.scheduled_at ? s.scheduled_at.slice(0,16) : ''}" id="facsessdate-${s.id}" style="width:190px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:7px 9px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:12px"/>
         </div>
         <label style="font-size:10.5px;color:rgba(255,255,255,0.35);letter-spacing:0.05em;text-transform:uppercase">Handout — visible to students</label>
         <textarea id="facsesshandout-${s.id}" rows="2" style="width:100%;margin:4px 0 10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:12.5px">${s.handout||''}</textarea>
@@ -869,9 +869,20 @@
     loadInstSessions();
   }
   async function saveFacSession(id) {
+    // Per's request — a real datetime now, not free text, so reminders can
+    // actually compute "3 days before" etc. Stored as-is from the
+    // datetime-local input (no timezone conversion) — this app doesn't
+    // currently handle multiple timezones anywhere, so the value typed
+    // here and the server clock comparing against it later are both
+    // implicitly the same "local" time. Genuine multi-timezone support
+    // would need real handling on both ends; flagged as a known
+    // simplification, not an oversight, matching how schedule_day/
+    // schedule_time were already deliberately kept as plain display text
+    // rather than timezone-aware.
+    const dtVal = document.getElementById(`facsessdate-${id}`).value;
     await fetch(`/api/facilitator/instance-sessions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       title: document.getElementById(`facsesstitle-${id}`).value.trim(),
-      scheduledAt: document.getElementById(`facsessdate-${id}`).value.trim() || null,
+      scheduledAt: dtVal ? dtVal + ':00' : null,
       handout: document.getElementById(`facsesshandout-${id}`).value,
       facilitatorNotes: document.getElementById(`facsessnotes-${id}`).value,
     })});
