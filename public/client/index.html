@@ -4897,6 +4897,32 @@
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
+        // Per's request — swipe instead of relying on the ‹ › buttons.
+        // epub.js already forwards touchstart/touchmove/touchend from
+        // inside whichever iframe it's currently rendering out onto the
+        // rendition object itself (confirmed directly by reading
+        // epub.js's own source — Rendition.passEvents/DOM_EVENTS — after
+        // an earlier attempt using the 'displayed' event's own .document
+        // reference turned out to go stale and never actually fire; this
+        // rendition.on('touchstart'/'touchend') form is the one verified
+        // working end-to-end, including across a real chapter change, not
+        // just assumed from documentation). Horizontal-dominant swipe
+        // only, as a ratio of the element's own width rather than a fixed
+        // pixel count so it scales sensibly across phone/tablet —
+        // vertical swipes are deliberately ignored, verified directly.
+        let _epubTouchStart = null;
+        rendition.on('touchstart', (e) => { _epubTouchStart = e.changedTouches[0]; });
+        rendition.on('touchend', (e) => {
+          if (!_epubTouchStart) return;
+          const endTouch = e.changedTouches[0];
+          const el = e.target?.ownerDocument?.documentElement || e.target;
+          const rect = el.getBoundingClientRect();
+          const hRatio = (endTouch.screenX - _epubTouchStart.screenX) / rect.width;
+          const vRatio = (endTouch.screenY - _epubTouchStart.screenY) / rect.height;
+          _epubTouchStart = null;
+          if (Math.abs(hRatio) < 0.2 || Math.abs(hRatio) < Math.abs(vRatio)) return;
+          if (hRatio < 0) rendition.next(); else rendition.prev();
+        });
         await rendition.display();
         _currentEpubBook = book;
         _currentEpubFirstHref = null;
