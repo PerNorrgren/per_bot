@@ -832,23 +832,35 @@
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
     /* Presentation slide viewer — reuses the EPUB reader's chrome
-       styling so both feel like the same app. Two real bugs Per hit
-       and reported directly fixed here:
+       styling so both feel like the same app. Real bugs Per hit and
+       reported directly, fixed here:
        (1) the image box alone was being rotated+fixed-positioned,
            stranding the controls bar in normal document flow behind/
            away from the visible rotated content — now the WHOLE unit
            (image + controls) rotates together as one flex-column block.
        (2) turning the phone to real landscape correctly turned the
-           simulated rotation off, but then fell back to the small
-           default 70vh sizing (tuned for a portrait reading column) —
-           now maximizes instead, so it's never small either way.
+           simulated rotation off, but a calc(100vh - 90px) guess at
+           the controls' height didn't account for real browser chrome
+           on an actual device (address bar, iOS home-indicator safe
+           area) — overflowed, forcing a pan to reach the controls.
+           Fixed with position:fixed;inset:0 pinning to the REAL
+           available viewport and flex:1 on the image area, so it
+           fills exactly whatever space is actually left regardless of
+           device chrome, with the controls locked to the bottom —
+           Per's own suggested fix, not a bigger magic number.
+       (3) slide changes were an instant jump, not a slide motion — two
+           stacked image layers now animate past each other via
+           translateX; because this lives INSIDE the already-rotated
+           parent, the same translateX motion automatically renders as
+           vertical motion on screen once rotated (CSS transforms
+           compose), so no separate rotated-case animation was needed.
        Phone detection uses the SHORT edge (min(width,height) <= 480),
        not just width — a landscape phone is wide but still has a small
        short edge; a portrait tablet is narrow-ish but its short edge is
        still large. Width-only would have wrongly caught tablets. */
     .slide-viewer-rotate-wrap { display:flex; flex-direction:column; align-items:center; width:100%; }
-    .slide-viewer-wrap { display:flex; align-items:center; justify-content:center; overflow:hidden; width:100%; max-width:700px; height:70vh; }
-    .slide-viewer-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+    .slide-viewer-wrap { position:relative; overflow:hidden; width:100%; max-width:700px; height:70vh; }
+    .slide-layer { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); will-change:transform; }
     .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
 
     /* Phone in portrait — simulate landscape by rotating the whole
@@ -867,13 +879,11 @@
        the slide counter are actually readable rather than sideways. */
     .slide-viewer-rotate-wrap.auto-rotate .reader-controls > * { transform:rotate(-90deg); }
 
-    /* Phone actually turned to real landscape — viewport is already
-       the right shape, no CSS rotation needed, just stop using the
-       portrait-tuned small default and fill the available height. */
-    .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { height:calc(100vh - 90px); max-width:none; width:100%; }
-    .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; }
-    .slide-viewer-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
-    .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
+    .slide-viewer-rotate-wrap.landscape-maximize {
+      position:fixed; inset:0; flex-direction:column;
+    }
+    .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { flex:1; height:auto; max-width:none; width:100%; }
+    .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; flex-shrink:0; margin:0; padding:8px 0; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
@@ -4572,19 +4582,71 @@
   // reader-controls chrome as the EPUB reader.
   let _currentSlides = [];
   let _currentSlideIndex = 0;
+  // Which of the two stacked <img> layers is currently the visible/
+  // active one — Per's request for a real sliding motion between
+  // slides instead of an instant jump needed two layers (one exiting,
+  // one entering) animating past each other, not just swapping one
+  // <img>'s src in place.
+  let _pptxActiveLayer = 'A';
 
-  function renderCurrentSlide() {
-    const img = document.getElementById('slideViewerImg');
+  // direction: 'next' | 'prev' | undefined. undefined means the
+  // initial load — shows the first slide with no animation at all,
+  // since there's nothing to slide FROM yet.
+  function renderCurrentSlide(direction) {
+    const imgA = document.getElementById('slideImgA');
+    const imgB = document.getElementById('slideImgB');
     const counter = document.getElementById('slideCounter');
-    if (!img || !_currentSlides.length) return;
-    img.src = _currentSlides[_currentSlideIndex];
+    if (!imgA || !_currentSlides.length) return;
+    const active = _pptxActiveLayer === 'A' ? imgA : imgB;
+    const incoming = _pptxActiveLayer === 'A' ? imgB : imgA;
+
+    if (!direction) {
+      active.src = _currentSlides[_currentSlideIndex];
+      active.style.transition = 'none';
+      active.style.transform = 'translateX(0)';
+      active.style.zIndex = '2';
+      incoming.style.transition = 'none';
+      incoming.style.transform = 'translateX(100%)';
+      incoming.style.zIndex = '1';
+      counter.textContent = `${_currentSlideIndex + 1} / ${_currentSlides.length}`;
+      return;
+    }
+
+    // 'next' slides the new content in from the right, pushing the
+    // current slide off to the left — 'prev' mirrors that. Because
+    // this whole viewer lives inside the already-rotated parent when
+    // auto-rotate is active, this plain translateX motion automatically
+    // renders as vertical motion on screen once rotated (CSS transforms
+    // compose) — no separate animation was needed for that case.
+    const enterFrom = direction === 'next' ? '100%' : '-100%';
+    const exitTo = direction === 'next' ? '-100%' : '100%';
+
+    incoming.src = _currentSlides[_currentSlideIndex];
+    incoming.style.transition = 'none';
+    incoming.style.transform = `translateX(${enterFrom})`;
+    incoming.style.zIndex = '2';
+    active.style.zIndex = '1';
+    // Force a reflow so the browser actually paints the starting
+    // position above before the transition below is allowed to
+    // animate — without this the browser can coalesce both style
+    // changes into one and skip the animation entirely.
+    void incoming.offsetWidth;
+
+    incoming.style.transition = 'transform 320ms ease';
+    active.style.transition = 'transform 320ms ease';
+    requestAnimationFrame(() => {
+      incoming.style.transform = 'translateX(0)';
+      active.style.transform = `translateX(${exitTo})`;
+    });
+
     counter.textContent = `${_currentSlideIndex + 1} / ${_currentSlides.length}`;
+    _pptxActiveLayer = _pptxActiveLayer === 'A' ? 'B' : 'A';
   }
   function pptxNextSlide() {
-    if (_currentSlideIndex < _currentSlides.length - 1) { _currentSlideIndex++; renderCurrentSlide(); }
+    if (_currentSlideIndex < _currentSlides.length - 1) { _currentSlideIndex++; renderCurrentSlide('next'); }
   }
   function pptxPrevSlide() {
-    if (_currentSlideIndex > 0) { _currentSlideIndex--; renderCurrentSlide(); }
+    if (_currentSlideIndex > 0) { _currentSlideIndex--; renderCurrentSlide('prev'); }
   }
 
   // A phone held in portrait is the wrong shape for a 16:9 slide — this
@@ -4697,10 +4759,12 @@
       }
       _currentSlides = data.slides;
       _currentSlideIndex = 0;
+      _pptxActiveLayer = 'A';
       mediaEl.innerHTML = `
         <div class="slide-viewer-rotate-wrap" id="slideViewerRotateWrap">
           <div class="slide-viewer-wrap" id="slideViewerWrap">
-            <img class="slide-viewer-img" id="slideViewerImg" alt="Slide">
+            <img class="slide-layer" id="slideImgA" alt="Slide">
+            <img class="slide-layer" id="slideImgB" alt="Slide">
           </div>
           <div class="reader-controls">
             <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
