@@ -3156,6 +3156,19 @@ function markLibraryFileConverted(id, epubFilename, originalPdfFilename) {
     [epubFilename, 'application/epub+zip', 'r2', originalPdfFilename, id]);
   save();
 }
+// Per's request — replace a file's actual content in place, keeping the
+// same id (and so every lesson-file-ref, course association, and
+// progress record pointing at it) rather than the existing delete-and-
+// re-upload workaround, which loses all of that. Deliberately clears
+// original_pdf_filename to null unconditionally (not just when a new
+// value isn't supplied) — a stale reference to the PREVIOUS file's
+// original PDF left behind on a brand new, unrelated file would be a
+// real, confusing bug, not a harmless leftover.
+function replaceLibraryFileContent(id, filename, fileType, fileSize, originalName, storageType, originalPdfFilename) {
+  getDbSync().run('UPDATE library_files SET filename=?, file_type=?, file_size=?, original_name=?, storage_type=?, original_pdf_filename=? WHERE id=?',
+    [filename, fileType, fileSize || 0, originalName, storageType || 'r2', originalPdfFilename || null, id]);
+  save();
+}
 function archiveLibraryFile(id, archived) {
   getDbSync().run('UPDATE library_files SET archived=? WHERE id=?', [archived ? 1 : 0, id]); save();
 }
@@ -8221,7 +8234,7 @@ module.exports = {
   // Library
   addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
-  renameLibraryFile, markLibraryFileConverted, deleteLibraryFile, archiveLibraryFile, getFileUsage,
+  renameLibraryFile, markLibraryFileConverted, replaceLibraryFileContent, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,

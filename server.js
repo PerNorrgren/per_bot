@@ -10180,6 +10180,58 @@ app.patch('/api/content/library/:id', auth.requireAuthApi(['admin']), (req, res)
 });
 app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, res) => res.json(db.getFileUsage(req.params.id)));
 
+// Per's request — replace a file's actual content in place, from a
+// lesson's own file list, without the existing delete-and-re-upload
+// workaround losing every course/lesson association and progress record
+// pointing at it. Reuses the exact same PDF-auto-convert-on-upload logic
+// already built for a fresh upload (see /api/content/library above) —
+// a replacement PDF gets converted to EPUB exactly the same way a newly
+// uploaded one does, rather than a second, separately-maintained copy of
+// that logic that could quietly drift out of sync with it over time.
+app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
+
+    let mainFilename, mainContentType = req.file.mimetype, originalPdfKey = null;
+    const newBuffer = fs.readFileSync(req.file.path);
+
+    if (req.file.mimetype === 'application/pdf' && media.isConfigured()) {
+      try {
+        const epubBuffer = await convertPdfToEpub(newBuffer, file.title, brand().name);
+        if (epubBuffer) {
+          const epubKey = `library-epubs/${uuidv4()}.epub`;
+          const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
+          await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+          await media.putObject(pdfKey, newBuffer, 'application/pdf');
+          mainFilename = epubKey;
+          mainContentType = 'application/epub+zip';
+          originalPdfKey = pdfKey;
+        }
+      } catch (e) {
+        console.error('[replace-file pdf conversion]', e.message);
+      }
+    }
+    if (!mainFilename) {
+      // Not a PDF, or conversion wasn't viable (e.g. a scanned PDF with
+      // no real text layer) — stored as-is, same as any other plain
+      // library upload.
+      if (!media.isConfigured()) { fs.unlink(req.file.path, () => {}); return res.status(503).json({ error: 'File storage is not available right now — please try again later.' }); }
+      const ext = path.extname(req.file.originalname) || '';
+      mainFilename = `library-files/${uuidv4()}${ext}`;
+      await media.putObject(mainFilename, newBuffer, req.file.mimetype);
+    }
+    fs.unlink(req.file.path, () => {});
+
+    db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[replace-file]', e.message);
+    res.status(500).json({ error: 'Could not replace this file — please try again.' });
+  }
+});
+
 // ── Content tagging (Per Bot 14) — the library_file_tags table and its
 // db.js functions have existed since Per Bot 13 (built for reusing the
 // audio-playlist theme vocabulary across content types) but nothing ever

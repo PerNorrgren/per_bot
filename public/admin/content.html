@@ -967,7 +967,22 @@
 
 <!-- Course Detail Modal -->
 <div class="modal-overlay" id="courseDetailModal">
-  <div class="modal" style="max-width:660px">
+  <!-- Per's request — this modal specifically, since it's the one with
+       genuinely dense rows (drag handle, title, rename, replace,
+       mandatory/free-preview checkboxes, move-to dropdown, remove — all
+       in one row per file) that a fixed 660px squeezes together on a
+       real desktop window. min(92vw, 1100px) scales with the actual
+       window instead, capped so it doesn't become uncomfortably wide on
+       an ultra-wide monitor. Two sibling modals (Quiz, Playlist Detail)
+       share this same fixed-660px pattern and likely have the same
+       issue, but weren't part of what Per reported — left alone rather
+       than changed without being asked.
+  -->
+  <div class="modal" style="max-width:min(92vw, 1100px)">
+    <!-- Per's request — the shared hidden input replaceLessonFile/
+         onLessonFileReplaceSelected use; see those two functions for why
+         one shared input rather than one per file row. -->
+    <input type="file" id="lessonFileReplaceInput" style="display:none" onchange="onLessonFileReplaceSelected(this)"/>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
       <h3 id="cdTitle" style="margin:0"></h3>
       <button class="btn sm" onclick="cancelCourseDetail()" title="Cancel">✕ Cancel</button>
@@ -1375,6 +1390,15 @@ function escHtml(s){
 // the row that was clicked; everything else (PDF, doc, image) opens in a
 // new tab since there's no sensible inline player for those here.
 async function toggleLessonFilePreview(refId, fileId, fileType) {
+  // Per's request — a converted PDF's file_type is now application/epub+zip,
+  // and no browser can render that inline the way a plain window.open
+  // already worked for a PDF — the browser just downloads it, which on
+  // several setups then opens the OS's own file explorer/Downloads
+  // folder to show the download, exactly what Per saw. Same fix already
+  // built and working for the general library list's own Open button
+  // (openFile/openEpubPreview) — reused directly here rather than a
+  // second epub-preview implementation.
+  if (fileType === 'application/epub+zip') { openEpubPreview(fileId); return; }
   const existingId = 'lfPreview-' + refId;
   const existing = document.getElementById(existingId);
   if (existing) { existing.remove(); return; }
@@ -2774,7 +2798,16 @@ async function openEpubPreview(id) {
     if (!res.ok || !data.url) { document.getElementById('epErr').textContent = data.error || 'Could not load this book.'; return; }
     document.getElementById('epBox').innerHTML = '';
     if (_epPreviewBook) { _epPreviewBook.destroy(); _epPreviewBook = null; }
-    const book = data.epubReaderUrl ? ePub(data.epubReaderUrl) : ePub(data.url);
+    // Per's request — same fix already proven in the client reader for
+    // exactly this shape of bug: a plain signed R2 URL carries a query
+    // string (?X-Amz-...), so it doesn't literally end in ".epub" the
+    // way epub.js's own auto-detection expects — without forcing
+    // openAs:'epub' here too, it can misread the URL as a directory of
+    // loose files to fetch one at a time rather than a single packed
+    // archive to download and unzip. Only the lazy-loading resource-
+    // proxy case (epubReaderUrl set) is a genuine directory lookup and
+    // needs to be left alone.
+    const book = data.epubReaderUrl ? ePub(data.epubReaderUrl) : ePub(data.url, { openAs: 'epub' });
     const rendition = book.renderTo('epBox', { width: '100%', height: '100%', flow: 'paginated' });
     // Per Bot 16 — forces a consistent, legible light page (dark text on
     // a warm off-white background) regardless of what the source book's
@@ -4195,6 +4228,7 @@ async function openCourseDetail(courseId){
           <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
           <span style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLessonFilePreview('${f.ref_id}','${f.id}','${f.file_type||''}')" title="Click to open/play">${ficon(f.file_type)} ${f.title}</span>
           <button onclick="event.stopPropagation();renameLessonFile('${f.id}','${f.title.replace(/'/g,"\\'")}')" title="Rename — this is what students see everywhere, including the lesson list" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:12px;padding:2px 4px">✏️</button>
+          <button onclick="event.stopPropagation();replaceLessonFile('${f.id}')" title="Replace this file's content — everything already using it (course, quiz, progress) stays pointed at it" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:12px;padding:2px 4px">🔄</button>
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>
@@ -4532,6 +4566,31 @@ async function renameLessonFile(fileId, currentTitle){
   const newTitle = await appPrompt('New name for this file — this is what students see everywhere, including in this lesson list.', currentTitle, 'Rename file');
   if (!newTitle || !newTitle.trim() || newTitle.trim() === currentTitle) return;
   await fetch(`/api/content/library/${fileId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:newTitle.trim()})});
+  openCourseDetail(curCourseId);
+}
+// Per's request — replace a file's actual content right from its own
+// row in a lesson, rather than the existing delete-then-re-upload-then-
+// re-add-to-course-and-quiz workaround, which loses every one of those
+// associations along the way. A single shared hidden <input>, not one
+// per row, tracking which file was clicked via _lessonFileReplaceTarget
+// — simpler than managing N inputs for N rows, and this only ever
+// serves one click at a time anyway.
+let _lessonFileReplaceTarget = null;
+function replaceLessonFile(fileId){
+  _lessonFileReplaceTarget = fileId;
+  document.getElementById('lessonFileReplaceInput').click();
+}
+async function onLessonFileReplaceSelected(input){
+  const newFile = input.files[0];
+  const fileId = _lessonFileReplaceTarget;
+  input.value = ''; // reset so choosing the exact same file a second time still fires 'change'
+  if (!newFile || !fileId) return;
+  if (!(await appConfirm(`Replace this file with "${newFile.name}"? The course, quiz, and everyone's progress all stay pointed at it — only the content changes.`))) return;
+  const fd = new FormData();
+  fd.append('file', newFile);
+  const res = await fetch(`/api/content/library/${fileId}/replace-file`,{method:'POST',body:fd});
+  const data = await res.json();
+  if (!res.ok || !data.ok) { await appAlert(data.error || 'Could not replace this file.'); return; }
   openCourseDetail(curCourseId);
 }
 // Per's request — move a file straight to a different lesson in the same
