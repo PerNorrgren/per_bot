@@ -119,9 +119,24 @@ async function convertPdfToEpub(pdfBuffer, title, author) {
     // not just a workaround. Verified directly against a real converted
     // file's own content.opf before trusting this: without beforeToc,
     // the spine read toc-then-content; with it, content-then-toc.
+    // prependChapterTitles:false — a second bug Per hit and reported
+    // directly, with a screenshot: epub-gen-memory also auto-inserts its
+    // own <h1> using the chapter title — the file's full title, exactly
+    // the long, underscore-filled name this whole feature exists to get
+    // away from — ABOVE the real content's own already-correctly-
+    // extracted first heading. For a short title this was barely
+    // noticeable (harmless, if redundant); for the long titles this app
+    // actually has, rendered at real heading size, it overflowed and
+    // visually collided with the body text below it. The extracted
+    // content already carries its own real heading from the source
+    // PDF's own actual first heading — this second, auto-inserted one is
+    // pure duplication, never a genuine loss of information. Verified by
+    // rebuilding with a genuinely long title matching Per's real
+    // scenario and confirming the chapter's own XHTML no longer contains
+    // it — body now starts directly with the real extracted content.
     const buffer = await epub(
       { title: title || 'Document', author: author || 'Deeper Mindfulness' },
-      [{ title: title || 'Document', content: html, beforeToc: true }]
+      [{ title: title || 'Document', content: html, beforeToc: true, prependChapterTitles: false }]
     );
     return buffer;
   } catch (e) {
