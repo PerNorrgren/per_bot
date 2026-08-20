@@ -19,7 +19,14 @@ FROM node:20-bookworm-slim
 # Debian's standard ffmpeg package reliably bundles ffprobe as part of
 # the same package — this is the ordinary, well-established way most
 # people get both binaries, not a special case.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+#
+# poppler-utils (Per's request) — provides pdftohtml, used by
+# pdf-to-epub.js to convert lesson PDFs into real, reflowable EPUBs on
+# upload, replacing the broken image-in-an-iframe mobile reading
+# experience for those files. Same reasoning as ffmpeg just above: a
+# standard Debian package via plain apt-get, not a Nixpacks-specific
+# workaround.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

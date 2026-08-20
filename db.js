@@ -2358,6 +2358,14 @@ async function getDb() {
     "ALTER TABLE facilitators ADD COLUMN public_profile INTEGER DEFAULT 0",
     "ALTER TABLE course_instances ADD COLUMN schedule_day TEXT",
     "ALTER TABLE course_instances ADD COLUMN schedule_time TEXT",
+    // Per's request — PDF-to-EPUB conversion on upload. When a PDF gets
+    // converted, filename/file_type on this row point at the generated
+    // EPUB (so the existing reader picks it up automatically, no client
+    // change needed there) — original_pdf_filename separately holds the
+    // real original PDF's own R2 key, for the "Download PDF" option.
+    // NULL for every file that was never a PDF, or a PDF that failed
+    // conversion and is still being served as the PDF itself.
+    "ALTER TABLE library_files ADD COLUMN original_pdf_filename TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3001,6 +3009,15 @@ function addLibraryFile(id, title, description, filename, originalName, fileType
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
+// Per's request — records which original PDF a converted EPUB came
+// from. Called once, right after a successful conversion, rather than
+// added as a 16th positional argument to addLibraryFile above — that
+// function already has fifteen, several call sites, and no real need
+// to touch any of them just to support the one new, optional case.
+function setLibraryFileOriginalPdf(id, pdfFilename) {
+  getDbSync().run('UPDATE library_files SET original_pdf_filename=? WHERE id=?', [pdfFilename, id]);
+  save();
+}
 
 // ── Poem audio (Per Bot 25) ── setPoemAudio is called after a fresh
 // synthesis (or an admin's manual upload/replace) to record the new
@@ -8188,7 +8205,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
+  addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,

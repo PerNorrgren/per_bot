@@ -31,6 +31,7 @@ const auth       = require('./auth');
 const prompts    = require('./prompts');
 const { startCronJobs } = require('./cron');
 const media      = require('./media');
+const { convertPdfToEpub } = require('./pdf-to-epub');
 const sms        = require('./sms');
 
 // ── Config ──
@@ -9223,7 +9224,7 @@ app.delete('/api/admin/library/chapters/:chapterId', auth.requireAuthApi(['admin
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('file'), (req, res) => {
+app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const { title, categoryId, subcategoryId, visibility } = req.body;
     if (!title || !categoryId) return res.status(400).json({ error: 'Missing required fields.' });
@@ -9254,12 +9255,38 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // Path A — R2 upload already completed client-side; just save the reference.
     if (req.body.r2Key) {
       const id = uuidv4();
+      const uploadedContentType = req.body.contentType || 'application/octet-stream';
+      // Per's request — PDF-to-EPUB conversion on upload. Attempted only
+      // when R2 is actually configured (matches the same "legacy
+      // fallback if not" reasoning as uploadTomteImageToR2 elsewhere) —
+      // and wrapped so any failure here just falls through to storing
+      // the PDF exactly as before, never blocks the upload itself.
+      let mainFilename = req.body.r2Key, mainContentType = uploadedContentType, originalPdfKey = null;
+      if (uploadedContentType === 'application/pdf' && media.isConfigured()) {
+        try {
+          const pdfObj = await media.getPublicObject(req.body.r2Key);
+          const chunks = [];
+          for await (const chunk of pdfObj.Body) chunks.push(chunk);
+          const pdfBuffer = Buffer.concat(chunks);
+          const epubBuffer = await convertPdfToEpub(pdfBuffer, title.trim(), brand().name);
+          if (epubBuffer) {
+            const epubKey = `library-epubs/${uuidv4()}.epub`;
+            await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+            mainFilename = epubKey;
+            mainContentType = 'application/epub+zip';
+            originalPdfKey = req.body.r2Key; // already in R2 — no re-upload needed
+          }
+        } catch (e) {
+          console.error('[pdf-to-epub] Path A conversion attempt failed, falling back to PDF:', e.message);
+        }
+      }
       db.addLibraryFile(
-        id, title.trim(), req.body.description || '', req.body.r2Key, req.body.originalName || req.body.r2Key,
-        req.body.contentType || 'application/octet-stream', parseInt(req.body.fileSize) || 0,
+        id, title.trim(), req.body.description || '', mainFilename, req.body.originalName || req.body.r2Key,
+        mainContentType, parseInt(req.body.fileSize) || 0,
         categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource,
         contentKind, externalLink, assignedClientId
       );
+      if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
       tags.forEach(t => db.addFileTag(id, t));
       return res.json({ id });
     }
@@ -9267,7 +9294,27 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
     // Path B — legacy direct-to-disk upload, kept for now so nothing breaks mid-migration.
     if (!req.file) return res.status(400).json({ error: 'No file provided.' });
     const id = uuidv4();
-    db.addLibraryFile(id, title.trim(), req.body.description || '', req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, categoryId, subcategoryId || null, visibility || 'client', 'disk', facilitatorResource, contentKind, externalLink, assignedClientId);
+    let mainFilename = req.file.filename, mainStorageType = 'disk', mainContentType = req.file.mimetype, originalPdfKey = null;
+    if (req.file.mimetype === 'application/pdf' && media.isConfigured()) {
+      try {
+        const pdfBuffer = fs.readFileSync(req.file.path);
+        const epubBuffer = await convertPdfToEpub(pdfBuffer, title.trim(), brand().name);
+        if (epubBuffer) {
+          const epubKey = `library-epubs/${uuidv4()}.epub`;
+          const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
+          await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+          await media.putObject(pdfKey, pdfBuffer, 'application/pdf');
+          mainFilename = epubKey;
+          mainStorageType = 'r2';
+          mainContentType = 'application/epub+zip';
+          originalPdfKey = pdfKey;
+        }
+      } catch (e) {
+        console.error('[pdf-to-epub] Path B conversion attempt failed, falling back to PDF:', e.message);
+      }
+    }
+    db.addLibraryFile(id, title.trim(), req.body.description || '', mainFilename, req.file.originalname, mainContentType, req.file.size, categoryId, subcategoryId || null, visibility || 'client', mainStorageType, facilitatorResource, contentKind, externalLink, assignedClientId);
+    if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
     tags.forEach(t => db.addFileTag(id, t));
     res.json({ id });
   } catch (e) {
@@ -9515,6 +9562,32 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     res.json({ url: `/uploads/${file.filename}`, expiresIn: null });
   } catch (e) {
     console.error('playback-url error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Per's request — "Download PDF" alongside the converted EPUB a
+// PDF-to-EPUB conversion produces. Same exact access-check as
+// playback-url just above (a person needs to be allowed to read this
+// file at all before they can download its original), just resolving
+// original_pdf_filename instead of filename.
+app.get('/api/content/library/:id/original-pdf-url', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (!file.original_pdf_filename) return res.status(404).json({ error: 'No original PDF for this file.' });
+
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+
+    const url = await media.getPlaybackUrl(file.original_pdf_filename);
+    res.json({ url, expiresIn: 600 });
+  } catch (e) {
+    console.error('original-pdf-url error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

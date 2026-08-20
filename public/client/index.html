@@ -4489,6 +4489,22 @@
     if (_currentEpubFirstHref) _currentEpubRendition.display(_currentEpubFirstHref);
     else _currentEpubRendition.display();
   }
+  // Per's request — the original PDF stays downloadable when a lesson
+  // document was auto-converted to EPUB for readability, since the
+  // converted version deliberately loses visual styling (colored/bordered
+  // callout boxes) even though headings, bold, and italic all carry
+  // through fine. Opens in a new tab rather than navigating away from
+  // the reader itself.
+  async function downloadOriginalPdf(fileId) {
+    try {
+      const res = await fetch(`/api/content/library/${fileId}/original-pdf-url`);
+      const data = await res.json();
+      if (!res.ok || !data.url) { appAlert(data.error || 'Could not open the original PDF right now.'); return; }
+      window.open(data.url, '_blank');
+    } catch (e) {
+      appAlert('Could not open the original PDF right now.');
+    }
+  }
   function renderEpubToc() {
     const panel = document.getElementById('readerTocPanel');
     if (!panel) return;
@@ -4602,6 +4618,7 @@
             <button class="reader-font-btn" onclick="epubFontSize(-1)" title="Smaller text">A-</button>
             <button class="reader-font-btn" onclick="epubFontSize(1)" title="Larger text">A+</button>
           </div>
+          ${f.original_pdf_filename ? `<button class="reader-nav-btn" onclick="downloadOriginalPdf('${f.id}')" title="Download the original PDF">⬇</button>` : ''}
           <button class="reader-nav-btn" onclick="epubNextPage()" title="Next page">›</button>
         </div>
       `;
