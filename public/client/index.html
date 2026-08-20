@@ -831,6 +831,25 @@
     .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
+    /* Presentation slide viewer — reuses .reader-box/.reader-controls
+       sizing/chrome from the EPUB reader just above so both feel like
+       the same app, not two different viewers bolted together.
+       auto-rotate is added by JS (applyPptxAutoRotate), never by a
+       plain CSS media query alone — a phone in portrait should show
+       landscape slides rotated to fill the screen, but a phone the
+       person has ALREADY turned to landscape must not be rotated
+       again, and a tablet/desktop in portrait has enough room that
+       forcing a rotation would do more harm than good. The width/height
+       swap (window.innerHeight/innerWidth) is what makes the rotated
+       box actually fill the portrait viewport edge-to-edge instead of
+       just spinning in place at its original, wrong-aspect-ratio size. */
+    .slide-viewer-wrap { display:flex; align-items:center; justify-content:center; overflow:hidden; margin:0 auto; width:100%; height:70vh; }
+    .slide-viewer-wrap.auto-rotate {
+      position:fixed; top:50%; left:50%; max-width:none;
+      transform:translate(-50%,-50%) rotate(90deg);
+    }
+    .slide-viewer-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+    .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
@@ -4530,6 +4549,100 @@
   // payload (or null on any failure) — openContentFile above decides
   // what to do with either outcome, this function's only job is running
   // the conversion and showing something sensible while it does.
+  // ── Presentation slide viewer ── Per's request — pptx files were
+  // falling into the generic "Open document" download link since
+  // browsers can't render them inline. Each slide is a pre-converted
+  // image (see pptx-to-slides.js); this just pages through them, same
+  // reader-box/reader-controls chrome as the EPUB reader.
+  let _currentSlides = [];
+  let _currentSlideIndex = 0;
+
+  function renderCurrentSlide() {
+    const img = document.getElementById('slideViewerImg');
+    const counter = document.getElementById('slideCounter');
+    if (!img || !_currentSlides.length) return;
+    img.src = _currentSlides[_currentSlideIndex];
+    counter.textContent = `${_currentSlideIndex + 1} / ${_currentSlides.length}`;
+  }
+  function pptxNextSlide() {
+    if (_currentSlideIndex < _currentSlides.length - 1) { _currentSlideIndex++; renderCurrentSlide(); }
+  }
+  function pptxPrevSlide() {
+    if (_currentSlideIndex > 0) { _currentSlideIndex--; renderCurrentSlide(); }
+  }
+
+  // A phone held in portrait is the wrong shape for a 16:9 slide — this
+  // rotates the viewer itself to fill the screen as landscape, rather
+  // than asking the person to physically turn their phone (or relying
+  // on the Screen Orientation Lock API, which Safari on iOS has never
+  // implemented — silently a no-op there, so this couldn't depend on
+  // it). Only kicks in on a narrow viewport that's ALSO taller than it
+  // is wide — a phone actually already turned to landscape, or a
+  // tablet/desktop in portrait with room to spare, are both left alone.
+  // Re-checked on resize/orientationchange so physically rotating the
+  // phone while the viewer is open correctly turns this back off.
+  function applyPptxAutoRotate() {
+    const wrap = document.getElementById('slideViewerWrap');
+    if (!wrap) return;
+    const isNarrowPortrait = window.innerWidth <= 480 && window.innerHeight > window.innerWidth;
+    if (isNarrowPortrait) {
+      wrap.classList.add('auto-rotate');
+      wrap.style.width = window.innerHeight + 'px';
+      wrap.style.height = window.innerWidth + 'px';
+    } else {
+      wrap.classList.remove('auto-rotate');
+      wrap.style.width = '';
+      wrap.style.height = '';
+    }
+  }
+  let _pptxRotateListenerAttached = false;
+  function ensurePptxRotateListener() {
+    if (_pptxRotateListenerAttached) return;
+    window.addEventListener('resize', applyPptxAutoRotate);
+    window.addEventListener('orientationchange', applyPptxAutoRotate);
+    _pptxRotateListenerAttached = true;
+  }
+
+  async function openPptxSlideViewer(f, url) {
+    const mediaEl = document.getElementById('playerMedia');
+    // Loading state while the first-time conversion runs (a real deck
+    // takes a few seconds, not instant) — same spinner already used for
+    // the PDF-to-EPUB on-demand wait, so this doesn't introduce a
+    // second loading-state design.
+    mediaEl.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;padding:0 30px;text-align:center">
+        ${YY_SPINNER_SVG.replace('class="btn-spinner"', 'class="btn-spinner" style="width:48px;height:48px"')}
+        <div style="font-size:14.5px;color:rgba(255,255,255,0.6)">Getting this ready to view — one moment…</div>
+      </div>
+    `;
+    try {
+      const res = await fetch(`/api/content/library/${f.id}/slides`);
+      const data = await res.json();
+      if (!res.ok || !data.slides || !data.slides.length) {
+        mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">${data.error || 'Could not open this presentation.'}</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
+        return;
+      }
+      _currentSlides = data.slides;
+      _currentSlideIndex = 0;
+      mediaEl.innerHTML = `
+        <div class="reader-box slide-viewer-wrap" id="slideViewerWrap">
+          <img class="slide-viewer-img" id="slideViewerImg" alt="Slide">
+        </div>
+        <div class="reader-controls">
+          <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
+          <div class="slide-counter" id="slideCounter"></div>
+          <a class="reader-nav-btn" href="${url}" target="_blank" rel="noopener" title="Download presentation" style="display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+          <button class="reader-nav-btn" onclick="pptxNextSlide()" title="Next slide">›</button>
+        </div>
+      `;
+      renderCurrentSlide();
+      applyPptxAutoRotate();
+      ensurePptxRotateListener();
+    } catch (e) {
+      mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this presentation — network error.</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
+    }
+  }
+
   async function convertPdfOnDemand(f) {
     const overlayEl = document.getElementById('playerOverlay');
     const mediaEl = document.getElementById('playerMedia');
@@ -4759,8 +4872,10 @@
       } catch {
         mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
       }
+    } else if (f.file_type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+      await openPptxSlideViewer(f, url);
     } else {
-      // Other document types (docx, pptx, etc.) — browsers generally can't render these
+      // Other document types (docx, etc.) — browsers generally can't render these
       // inline, so offer a direct open/download link rather than a blank frame.
       mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
     }

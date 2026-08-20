@@ -32,6 +32,7 @@ const prompts    = require('./prompts');
 const { startCronJobs } = require('./cron');
 const media      = require('./media');
 const { convertPdfToEpub } = require('./pdf-to-epub');
+const { convertPptxToSlides } = require('./pptx-to-slides');
 const sms        = require('./sms');
 
 // ── Config ──
@@ -9224,6 +9225,33 @@ app.delete('/api/admin/library/chapters/:chapterId', auth.requireAuthApi(['admin
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+// Shared by all three call sites (upload Path A, upload Path B, and the
+// on-demand/reconvert endpoint below) so the actual convert-upload-store
+// sequence exists in exactly one place. Returns the slide count on
+// success, or null on any failure — never throws, same conservative
+// contract as convertPdfToEpub itself, since a failed conversion must
+// never break the upload or the on-demand request that triggered it.
+async function convertAndStorePptxSlides(fileId, pptxBuffer) {
+  if (!media.isConfigured()) return null;
+  try {
+    const slides = await convertPptxToSlides(pptxBuffer);
+    if (!slides || !slides.length) return null;
+    const keys = [];
+    for (const slide of slides) {
+      const key = `library-slides/${fileId}/slide-${slide.slideNumber}.jpg`;
+      await media.putObject(key, slide.buffer, 'image/jpeg');
+      keys.push(key);
+    }
+    db.replaceLibraryFileSlides(fileId, keys);
+    return keys.length;
+  } catch (e) {
+    console.error('[pptx-to-slides] convertAndStorePptxSlides failed:', e.message);
+    return null;
+  }
+}
+
 app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const { title, categoryId, subcategoryId, visibility } = req.body;
@@ -9280,6 +9308,22 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
           console.error('[pdf-to-epub] Path A conversion attempt failed, falling back to PDF:', e.message);
         }
       }
+      // Presentations — unlike the PDF case above, the pptx itself stays
+      // as the main stored file (mainFilename/mainContentType untouched);
+      // this only adds the slide-image rows the reader checks for. Also
+      // wrapped so a conversion failure never blocks the upload — the
+      // file still saves as a plain pptx, same "Open document" link as
+      // before this feature existed.
+      if (uploadedContentType === PPTX_MIME && media.isConfigured()) {
+        try {
+          const pptxObj = await media.getPublicObject(req.body.r2Key);
+          const chunks = [];
+          for await (const chunk of pptxObj.Body) chunks.push(chunk);
+          await convertAndStorePptxSlides(id, Buffer.concat(chunks));
+        } catch (e) {
+          console.error('[pptx-to-slides] Path A conversion attempt failed, falling back to raw pptx:', e.message);
+        }
+      }
       db.addLibraryFile(
         id, title.trim(), req.body.description || '', mainFilename, req.body.originalName || req.body.r2Key,
         mainContentType, parseInt(req.body.fileSize) || 0,
@@ -9311,6 +9355,13 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
         }
       } catch (e) {
         console.error('[pdf-to-epub] Path B conversion attempt failed, falling back to PDF:', e.message);
+      }
+    }
+    if (req.file.mimetype === PPTX_MIME && media.isConfigured()) {
+      try {
+        await convertAndStorePptxSlides(id, fs.readFileSync(req.file.path));
+      } catch (e) {
+        console.error('[pptx-to-slides] Path B conversion attempt failed, falling back to raw pptx:', e.message);
       }
     }
     db.addLibraryFile(id, title.trim(), req.body.description || '', mainFilename, req.file.originalname, mainContentType, req.file.size, categoryId, subcategoryId || null, visibility || 'client', mainStorageType, facilitatorResource, contentKind, externalLink, assignedClientId);
@@ -9671,6 +9722,81 @@ app.post('/api/content/library/:id/convert-to-epub', auth.requireAuthApi(['clien
     res.json({ ok: true, originalPdfFilename: originalPdfKey });
   } catch (e) {
     console.error('[convert-to-epub on-demand] failed:', e.message);
+    res.status(500).json({ error: 'Conversion failed — please try again.' });
+  }
+});
+
+// Same access-check shape as playback-url throughout this file. Returns
+// presigned URLs for every slide of a converted presentation, in order.
+// If this pptx hasn't been converted yet (most of the library, at this
+// point — same situation the PDF-to-EPUB on-demand endpoint exists
+// for), converts it right now rather than requiring a re-upload, then
+// returns the fresh URLs — one request handles both the already-
+// converted and not-yet-converted cases, so the client doesn't need to
+// know which one it's getting.
+app.get('/api/content/library/:id/slides', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (file.file_type !== PPTX_MIME) return res.status(400).json({ error: 'This file is not a presentation.' });
+
+    const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
+    const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
+    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+      ? !file.archived
+      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
+    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+
+    let slides = db.getLibraryFileSlides(file.id);
+    if (!slides.length) {
+      if (!media.isConfigured()) return res.status(503).json({ error: 'Conversion is not available right now — please try again later.' });
+      let pptxBuffer;
+      if (file.storage_type === 'r2') {
+        const obj = await media.getPublicObject(file.filename);
+        const chunks = [];
+        for await (const chunk of obj.Body) chunks.push(chunk);
+        pptxBuffer = Buffer.concat(chunks);
+      } else {
+        pptxBuffer = fs.readFileSync(path.join(__dirname, 'uploads', file.filename));
+      }
+      const count = await convertAndStorePptxSlides(file.id, pptxBuffer);
+      if (!count) return res.status(422).json({ error: 'This presentation could not be converted.' });
+      slides = db.getLibraryFileSlides(file.id);
+    }
+
+    const urls = await Promise.all(slides.map(s => media.getPlaybackUrl(s.image_key)));
+    res.json({ slides: urls, count: urls.length });
+  } catch (e) {
+    console.error('[pptx slides] failed:', e.message);
+    res.status(500).json({ error: 'Could not load this presentation — please try again.' });
+  }
+});
+
+// Admin-only forced reconvert — same reasoning as convert-to-epub's own
+// force flag: a bug fix in the conversion logic itself can't retroactively
+// fix decks already converted under the old, broken behaviour, so this
+// exists to redo one on request rather than requiring a re-upload.
+app.post('/api/content/library/:id/convert-to-slides', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (file.file_type !== PPTX_MIME) return res.status(400).json({ error: 'This file is not a presentation.' });
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Conversion is not available right now — please try again later.' });
+
+    let pptxBuffer;
+    if (file.storage_type === 'r2') {
+      const obj = await media.getPublicObject(file.filename);
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      pptxBuffer = Buffer.concat(chunks);
+    } else {
+      pptxBuffer = fs.readFileSync(path.join(__dirname, 'uploads', file.filename));
+    }
+    const count = await convertAndStorePptxSlides(file.id, pptxBuffer);
+    if (!count) return res.status(422).json({ error: 'This presentation could not be converted.' });
+    res.json({ ok: true, count });
+  } catch (e) {
+    console.error('[convert-to-slides] failed:', e.message);
     res.status(500).json({ error: 'Conversion failed — please try again.' });
   }
 });

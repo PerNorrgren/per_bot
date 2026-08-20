@@ -255,6 +255,27 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_chapters_file ON library_file_chapters(file_id, sort_order)`);
 
+  // ── Presentation slides (pptx-to-slides feature) ── Per's request —
+  // a presentation's actual content IS its visual layout, so converting
+  // to EPUB (the PDF path) would be the wrong tool; each slide becomes
+  // an image instead, stored here in order, same shape as
+  // library_file_chapters just above (one row per sub-unit of a file).
+  // library_files itself is untouched — filename/file_type keep
+  // pointing at the original .pptx (unlike the PDF-to-EPUB conversion,
+  // which swaps the main file), since there's no single converted file
+  // to swap to, only an ordered set of images. The reader checks this
+  // table's presence, not file_type, to decide whether to show the
+  // slide viewer.
+  db.run(`CREATE TABLE IF NOT EXISTS library_file_slides (
+    id TEXT PRIMARY KEY,
+    file_id TEXT NOT NULL,
+    slide_number INTEGER NOT NULL,
+    image_key TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (file_id) REFERENCES library_files(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_slides_file ON library_file_slides(file_id, slide_number)`);
+
   // ── Playback resume position (Per Bot 46) ── Per file per person —
   // works for any audio file, not just audiobooks specifically, though
   // audiobooks are the case where it actually matters (nobody needs to
@@ -3016,6 +3037,28 @@ function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE
 // to touch any of them just to support the one new, optional case.
 function setLibraryFileOriginalPdf(id, pdfFilename) {
   getDbSync().run('UPDATE library_files SET original_pdf_filename=? WHERE id=?', [pdfFilename, id]);
+  save();
+}
+
+// ── Presentation slides ── replaceLibraryFileSlides is called once,
+// right after a successful pptx-to-slides conversion (or a forced
+// reconvert) — deletes any existing rows for this file first so a
+// reconvert can never leave stale slides mixed in with fresh ones if
+// the new deck has fewer slides than the old conversion did.
+function replaceLibraryFileSlides(fileId, imageKeys) {
+  const db2 = getDbSync();
+  db2.run('DELETE FROM library_file_slides WHERE file_id=?', [fileId]);
+  imageKeys.forEach((key, i) => {
+    db2.run('INSERT INTO library_file_slides (id, file_id, slide_number, image_key) VALUES (?,?,?,?)',
+      [crypto.randomUUID(), fileId, i + 1, key]);
+  });
+  save();
+}
+function getLibraryFileSlides(fileId) {
+  return queryAll('SELECT * FROM library_file_slides WHERE file_id=? ORDER BY slide_number', [fileId]);
+}
+function deleteLibraryFileSlides(fileId) {
+  getDbSync().run('DELETE FROM library_file_slides WHERE file_id=?', [fileId]);
   save();
 }
 
@@ -8232,7 +8275,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
+  addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, replaceLibraryFileSlides, getLibraryFileSlides, deleteLibraryFileSlides, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, markLibraryFileConverted, replaceLibraryFileContent, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,

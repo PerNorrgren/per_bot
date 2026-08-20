@@ -26,7 +26,17 @@ FROM node:20-bookworm-slim
 # experience for those files. Same reasoning as ffmpeg just above: a
 # standard Debian package via plain apt-get, not a Nixpacks-specific
 # workaround.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg poppler-utils \
+#
+# libreoffice-impress (Per's request) — pptx-to-slides.js uses this for
+# `soffice --headless --convert-to pdf` on uploaded presentations, then
+# poppler-utils (already above) rasterizes each page to a slide image.
+# Deliberately libreoffice-impress rather than the full libreoffice
+# meta-package: pulls in libreoffice-core and libreoffice-draw as real
+# dependencies regardless, but skips Writer/Calc/Base, which this app
+# has no use for. Still a genuinely large package — this will make the
+# NEXT Railway build noticeably slower than usual (a full image rebuild,
+# same as when ffmpeg was first added), not a quick redeploy.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg poppler-utils libreoffice-impress \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
