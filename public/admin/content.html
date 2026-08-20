@@ -1092,7 +1092,8 @@
 
 <!-- Quiz Modal — Per Bot 5 follow-on, one quiz per lesson -->
 <div class="modal-overlay" id="quizModal">
-  <div class="modal wide" style="max-width:660px">
+  <!-- Per's request — same fix as courseDetailModal, applied here too. -->
+  <div class="modal wide" style="max-width:min(92vw, 1100px)">
     <h3 id="qmTitle">Quiz</h3>
     <input type="hidden" id="qmLessonId"/>
     <input type="hidden" id="qmQuizId"/>
@@ -1202,7 +1203,8 @@
 
 <!-- Playlist Detail Modal -->
 <div class="modal-overlay" id="playlistDetailModal">
-  <div class="modal" style="max-width:660px">
+  <!-- Per's request — same fix as courseDetailModal/quizModal, applied here too. -->
+  <div class="modal" style="max-width:min(92vw, 1100px)">
     <h3 id="pdTitle"></h3>
     <div id="pdTracks" style="margin-bottom:14px"></div>
     <div><label>Add tracks from library</label>
