@@ -10710,6 +10710,12 @@ const ADMIN_SCRIPTS = [
     description: "Adds the 68 poems from Per's Poems_for_the_Soul.docx that aren't already in the library (51 of the 119 in the document were already there). Lands in Writing > Poems at Member visibility. Safe to re-run — checks titles against the live library each time.",
     module: './import_poems',
   },
+  {
+    id: 'reconvert-pdf-epubs',
+    label: 'Reconvert already-converted PDFs',
+    description: "Reconverts every PDF that was turned into an EPUB before the running-header/footer and FELT · FIBRE masthead stripping fix existed, so they self-heal instead of permanently keeping the old unstripped content. Safe to re-run.",
+    module: './reconvert_pdf_epubs',
+  },
   // Add future one-time scripts here: { id, label, description, module }.
   // The module just needs to export async runImport(log) — see either
   // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
