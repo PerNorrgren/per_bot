@@ -4962,31 +4962,57 @@
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
         // Per's request — swipe instead of relying on the ‹ › buttons.
-        // epub.js already forwards touchstart/touchmove/touchend from
-        // inside whichever iframe it's currently rendering out onto the
-        // rendition object itself (confirmed directly by reading
-        // epub.js's own source — Rendition.passEvents/DOM_EVENTS — after
-        // an earlier attempt using the 'displayed' event's own .document
-        // reference turned out to go stale and never actually fire; this
-        // rendition.on('touchstart'/'touchend') form is the one verified
-        // working end-to-end, including across a real chapter change, not
-        // just assumed from documentation). Horizontal-dominant swipe
-        // only, as a ratio of the element's own width rather than a fixed
-        // pixel count so it scales sensibly across phone/tablet —
-        // vertical swipes are deliberately ignored, verified directly.
+        // epub.js renders book content inside its OWN iframe (for
+        // sandboxing) — a plain listener on the outer #readerBox div
+        // would only catch touches on the thin margin around that
+        // iframe, not the actual book text most swipes land on. Traced
+        // through epub.js's own source (Contents.triggerEvent →
+        // Rendition.passEvents → triggerViewEvent) to confirm
+        // rendition.on('touchstart'/'touchend', ...) genuinely forwards
+        // the real native TouchEvent out of the iframe — this is the
+        // documented, correct mechanism, not a guess.
+        //
+        // clientX/clientY throughout, not screenX/screenY — screenX/Y
+        // are physical-screen-absolute coordinates, and mixing those
+        // with a bounding rect measured from the IFRAME's own internal
+        // document (a different coordinate space entirely) is a real
+        // mismatch that can misfire depending on browser/OS specifics.
+        // clientX/Y stays consistently viewport-relative on both ends.
         let _epubTouchStart = null;
-        rendition.on('touchstart', (e) => { _epubTouchStart = e.changedTouches[0]; });
-        rendition.on('touchend', (e) => {
+        function epubHandleSwipeEnd(endX, endY) {
           if (!_epubTouchStart) return;
-          const endTouch = e.changedTouches[0];
-          const el = e.target?.ownerDocument?.documentElement || e.target;
-          const rect = el.getBoundingClientRect();
-          const hRatio = (endTouch.screenX - _epubTouchStart.screenX) / rect.width;
-          const vRatio = (endTouch.screenY - _epubTouchStart.screenY) / rect.height;
+          const dx = endX - _epubTouchStart.x;
+          const dy = endY - _epubTouchStart.y;
           _epubTouchStart = null;
-          if (Math.abs(hRatio) < 0.2 || Math.abs(hRatio) < Math.abs(vRatio)) return;
+          const box = document.getElementById('readerBox');
+          const width = box ? box.getBoundingClientRect().width : window.innerWidth;
+          const hRatio = dx / width;
+          if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return; // vertical-dominant or too short — not a page-turn gesture
           if (hRatio < 0) rendition.next(); else rendition.prev();
+        }
+        rendition.on('touchstart', (e) => {
+          const t = e.changedTouches && e.changedTouches[0];
+          if (t) _epubTouchStart = { x: t.clientX, y: t.clientY };
         });
+        rendition.on('touchend', (e) => {
+          const t = e.changedTouches && e.changedTouches[0];
+          if (t) epubHandleSwipeEnd(t.clientX, t.clientY);
+        });
+        // Defense-in-depth fallback on the outer wrapper itself — covers
+        // the margin/padding area around the iframe, and means a swipe
+        // still works even in the unlikely case epub.js's own forwarding
+        // doesn't fire for some browser-specific reason.
+        const readerBoxEl = document.getElementById('readerBox');
+        if (readerBoxEl) {
+          readerBoxEl.addEventListener('touchstart', (e) => {
+            const t = e.changedTouches[0];
+            _epubTouchStart = { x: t.clientX, y: t.clientY };
+          }, { passive: true });
+          readerBoxEl.addEventListener('touchend', (e) => {
+            const t = e.changedTouches[0];
+            epubHandleSwipeEnd(t.clientX, t.clientY);
+          }, { passive: true });
+        }
         await rendition.display();
         _currentEpubBook = book;
         _currentEpubFirstHref = null;
