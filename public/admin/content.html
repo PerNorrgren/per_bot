@@ -4194,6 +4194,7 @@ async function openCourseDetail(courseId){
             style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border-radius:6px;padding:6px 10px;font-size:12px;color:rgba(255,255,255,0.55)">
           <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
           <span style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLessonFilePreview('${f.ref_id}','${f.id}','${f.file_type||''}')" title="Click to open/play">${ficon(f.file_type)} ${f.title}</span>
+          <button onclick="event.stopPropagation();renameLessonFile('${f.id}','${f.title.replace(/'/g,"\\'")}')" title="Rename — this is what students see everywhere, including the lesson list" style="background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:12px;padding:2px 4px">✏️</button>
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>
@@ -4514,6 +4515,23 @@ async function saveLesson(){
 
 async function rmLessonFile(refId){
   await fetch(`/api/content/lesson-file-refs/${refId}`,{method:'DELETE'});
+  openCourseDetail(curCourseId);
+}
+// Per's request — a quick rename right from the lesson file list, for
+// exactly the case the automatic display cleanup (the shared-prefix
+// stripping added a couple of rounds back) can't help with: a
+// single-file lesson has no sibling to compare against, so nothing gets
+// stripped, and a long underscore-filled name shows in full. This edits
+// the same title field used everywhere the file's name is shown — the
+// lesson list here, the client-side chooser, the library list — reusing
+// the existing PATCH /api/content/library/:id route rather than a
+// second title-editing path; the fuller Edit File modal elsewhere still
+// covers the original filename too, if that's ever genuinely what needs
+// changing rather than the display title.
+async function renameLessonFile(fileId, currentTitle){
+  const newTitle = await appPrompt('New name for this file — this is what students see everywhere, including in this lesson list.', currentTitle, 'Rename file');
+  if (!newTitle || !newTitle.trim() || newTitle.trim() === currentTitle) return;
+  await fetch(`/api/content/library/${fileId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:newTitle.trim()})});
   openCourseDetail(curCourseId);
 }
 // Per's request — move a file straight to a different lesson in the same
