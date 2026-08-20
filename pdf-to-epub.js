@@ -105,9 +105,23 @@ async function convertPdfToEpub(pdfBuffer, title, author) {
     if (!html || !html.trim()) return null; // no usable text layer — likely a scanned PDF
 
     const epub = require('epub-gen-memory').default;
+    // beforeToc:true — a real bug Per hit and reported directly: without
+    // this, epub-gen-memory unconditionally puts its own generated
+    // table-of-contents page FIRST in the spine, ahead of the actual
+    // chapter, regardless of chapter count. For a single-chapter document
+    // (every one of these conversions, always exactly one chapter) that
+    // meant opening on a near-empty "table of contents with one line"
+    // instead of the real content, with navigating past it apparently
+    // broken too. This app already has its own proper table of contents
+    // (the ☰ button, built from the epub's real navigation data) — the
+    // generated toc.xhtml page is pure redundancy here even positioned
+    // correctly, so putting the real content first is strictly better,
+    // not just a workaround. Verified directly against a real converted
+    // file's own content.opf before trusting this: without beforeToc,
+    // the spine read toc-then-content; with it, content-then-toc.
     const buffer = await epub(
       { title: title || 'Document', author: author || 'Deeper Mindfulness' },
-      [{ title: title || 'Document', content: html }]
+      [{ title: title || 'Document', content: html, beforeToc: true }]
     );
     return buffer;
   } catch (e) {

@@ -9601,12 +9601,29 @@ app.post('/api/content/library/:id/convert-to-epub', auth.requireAuthApi(['clien
     const file = db.getLibraryFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'Not found.' });
 
-    // Already converted (this exact file, or a near-simultaneous request
-    // for it that finished first) — a real no-op, not an error, so a
-    // double-tap or two people opening the same file at once doesn't do
-    // the conversion work twice.
-    if (file.file_type === 'application/epub+zip') return res.json({ ok: true, alreadyConverted: true });
-    if (file.file_type !== 'application/pdf') return res.status(400).json({ error: 'This file is not a PDF.' });
+    // Per's request — force:true reconverts a file that's already an
+    // epub, reading from its preserved original PDF (original_pdf_filename)
+    // rather than the no-op path below. Needed the moment a real bug was
+    // found in the conversion itself (wrong spine order) — anything
+    // already converted before that fix has the broken structure
+    // permanently baked into its stored epub, and the plain "already
+    // converted, nothing to do" check below would otherwise mean it can
+    // never self-heal, even after the underlying code is fixed. Admin-
+    // only: this replaces a file everyone's already reading, not
+    // something to trigger from a normal open.
+    const force = !!(req.body && req.body.force);
+    if (force && req.user.role !== 'admin') return res.status(403).json({ error: 'Only admin can force a reconversion.' });
+    if (file.file_type === 'application/epub+zip' && force && !file.original_pdf_filename) {
+      return res.status(400).json({ error: 'No original PDF on file for this item — cannot reconvert.' });
+    }
+    // Already converted, and not a forced reconvert (this exact file, or
+    // a near-simultaneous request for it that finished first) — a real
+    // no-op, not an error, so a double-tap or two people opening the
+    // same file at once doesn't do the conversion work twice.
+    if (file.file_type === 'application/epub+zip' && !force) return res.json({ ok: true, alreadyConverted: true });
+    if (file.file_type !== 'application/pdf' && file.file_type !== 'application/epub+zip') {
+      return res.status(400).json({ error: 'This file is not a PDF.' });
+    }
 
     const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
     const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
@@ -9617,14 +9634,20 @@ app.post('/api/content/library/:id/convert-to-epub', auth.requireAuthApi(['clien
 
     if (!media.isConfigured()) return res.status(503).json({ error: 'Conversion is not available right now — please try again later.' });
 
+    // A force-reconvert always reads original_pdf_filename, which every
+    // conversion path (upload, on-demand) always puts in R2 regardless
+    // of the file's own storage_type — the plain, not-yet-converted
+    // case below is the only one that still needs the disk fallback.
+    const isReconvert = file.file_type === 'application/epub+zip';
+    const pdfSourceKey = isReconvert ? file.original_pdf_filename : file.filename;
     let pdfBuffer;
-    if (file.storage_type === 'r2') {
-      const obj = await media.getPublicObject(file.filename);
+    if (isReconvert || file.storage_type === 'r2') {
+      const obj = await media.getPublicObject(pdfSourceKey);
       const chunks = [];
       for await (const chunk of obj.Body) chunks.push(chunk);
       pdfBuffer = Buffer.concat(chunks);
     } else {
-      pdfBuffer = fs.readFileSync(path.join(__dirname, 'uploads', file.filename));
+      pdfBuffer = fs.readFileSync(path.join(__dirname, 'uploads', pdfSourceKey));
     }
 
     const epubBuffer = await convertPdfToEpub(pdfBuffer, file.title, brand().name);
@@ -9633,13 +9656,13 @@ app.post('/api/content/library/:id/convert-to-epub', auth.requireAuthApi(['clien
     const epubKey = `library-epubs/${uuidv4()}.epub`;
     await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
 
-    // Preserve the original for the Download PDF option — if it's
-    // already an R2 key (the common case at this point), reuse it
-    // directly rather than uploading a duplicate copy; a legacy
-    // disk-stored file gets a real, stable R2 home for the first time
-    // here, same as it would have on a fresh upload.
-    let originalPdfKey = file.filename;
-    if (file.storage_type !== 'r2') {
+    // Preserve the original for the Download PDF option — a reconvert
+    // already has a stable R2 original (pdfSourceKey itself), so it's
+    // simply reused rather than re-uploaded; otherwise same reasoning as
+    // before: reuse an already-R2 key directly, or give a legacy disk
+    // file a real R2 home for the first time here.
+    let originalPdfKey = isReconvert ? pdfSourceKey : file.filename;
+    if (!isReconvert && file.storage_type !== 'r2') {
       originalPdfKey = `library-pdfs/${uuidv4()}.pdf`;
       await media.putObject(originalPdfKey, pdfBuffer, 'application/pdf');
     }

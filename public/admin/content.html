@@ -1703,6 +1703,7 @@ function renderLibList(files){
         ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
+        ${f.original_pdf_filename ? `<button class="btn sm" onclick="reconvertPdfFile('${f.id}')" title="Re-run the PDF-to-EPUB conversion from the original PDF">↻ Reconvert</button>` : ''}
         <button class="btn sm danger" onclick="delFile('${f.id}')">Delete</button>
       </span>
     </div>
@@ -3517,6 +3518,23 @@ async function delFile(id){
   const f=allFiles.find(x=>x.id===id);
   if(!(await appConfirm(`Delete "${f?.title}"? Removes from courses/playlists too.`)))return;
   await fetch(`/api/content/library/${id}`,{method:'DELETE'});
+  loadAll();
+}
+// Per's request — a real bug found in production (a wrong spine order
+// putting the auto-generated table of contents before the actual
+// chapter, causing broken navigation) meant fixing the conversion code
+// itself wasn't enough on its own — anything already converted before
+// the fix has the broken structure permanently baked into its stored
+// epub file, and the on-demand conversion route deliberately treats an
+// already-epub file as done, so it would never self-heal. This button
+// re-runs the conversion from the original PDF still on file, forcing
+// past that "already converted" check.
+async function reconvertPdfFile(id){
+  const f=allFiles.find(x=>x.id===id);
+  if(!(await appConfirm(`Re-convert "${f?.title}" from its original PDF? This replaces the current EPUB version.`)))return;
+  const res=await fetch(`/api/content/library/${id}/convert-to-epub`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})});
+  const data=await res.json();
+  if(!res.ok||!data.ok){await appAlert(data.error||'Could not reconvert this file.');return;}
   loadAll();
 }
 async function toggleFileFeatured(id,featured){
