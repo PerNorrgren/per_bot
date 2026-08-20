@@ -820,8 +820,17 @@
        below, which has its own fixed height and manages its own internal
        pagination/scroll regardless of what the outer overlay does. */
     .player-overlay.reader-mode { justify-content:flex-start; overflow-y:auto; }
+    /* pptx and epub each handle their own navigation (swipe, or epub.js's
+       internal paging) and never need the outer overlay itself to be a
+       scroll target — reader-mode's overflow-y:auto above is for plain
+       long-text articles, which still need it. touch-action:none stops
+       the browser from treating any touch inside the overlay as the
+       start of a native scroll/pan gesture, which was competing with —
+       and on a real device, winning against — both swipe gestures and
+       taps on the floating close button. */
+    .player-overlay.no-outer-scroll { overflow-y:hidden; touch-action:none; }
     .player-overlay.reader-mode .player-text { display:none; }
-    .reader-box { width:100%; max-width:700px; height:70vh; background:#fdfaf3; border-radius:10px; margin:0 auto; }
+    .reader-box { width:100%; max-width:700px; height:70vh; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; }
     .reader-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; max-width:700px; margin:10px auto 0; }
     .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
     .reader-font-btns { display:flex; gap:6px; }
@@ -849,7 +858,7 @@
        reliably across every round, so that's the only navigation
        here, plus the player's existing close button (untouched,
        unrelated to any of this). */
-    .slide-viewer-wrap { position:relative; width:100%; max-width:700px; height:70vh; display:flex; align-items:center; justify-content:center; touch-action:pan-y; margin:0 auto; }
+    .slide-viewer-wrap { position:relative; width:100%; max-width:700px; height:70vh; display:flex; align-items:center; justify-content:center; touch-action:none; margin:0 auto; }
     .slide-layer { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); will-change:transform; }
     /* A real physical landscape rotation (short screen height) gets more
        of that height and width via a plain CSS media query — no JS, no
@@ -872,7 +881,7 @@
        most of the space. This one is pinned to a corner regardless of
        video size, so there's always something reachable without relying
        on scrolling, fullscreen quirks, or the browser's own back button. */
-    .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; }
+    .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; touch-action:none; }
     .player-overlay.video-mode .player-close-floating, .player-overlay.reader-mode .player-close-floating { display:flex; }
     /* Per Bot 15c — the floating close button is position:fixed, independent
        of the title's own layout, so a long title centered edge-to-edge could
@@ -4668,6 +4677,7 @@
       _currentSlides = data.slides;
       _currentSlideIndex = 0;
       _pptxActiveLayer = 'A';
+      document.getElementById('playerOverlay').classList.add('no-outer-scroll');
       mediaEl.innerHTML = `
         <div class="slide-viewer-wrap" id="slideViewerWrap">
           <img class="slide-layer" id="slideImgA" alt="Slide">
@@ -4775,6 +4785,19 @@
     // failure already identified and fixed for video-mode, just never
     // extended to plain document reading.
     overlayEl.classList.toggle('reader-mode', type === 'document');
+    // Per's real-device reports: pptx and epub content each handle their
+    // OWN navigation (swipe, or epub.js's internal paging) — but reader-
+    // mode's overflow-y:auto (needed for plain long-text articles, which
+    // this same class also covers) let the outer overlay itself become a
+    // native scroll/pan target. On a real touchscreen, a touch meant as a
+    // swipe or a tap on the floating close button could get reinterpreted
+    // as "start scrolling the overlay" instead — matching exactly what
+    // Per described: the screen panning during a swipe, and the close
+    // button becoming unresponsive in landscape. Reset here on every
+    // open so it never leaks from a previous file's content type; set
+    // specifically for pptx/epub below once each of those is confirmed
+    // as what's actually being opened.
+    overlayEl.classList.remove('no-outer-scroll');
     overlayEl.classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = type === 'video' ? '' : 'none';
 
@@ -4858,8 +4881,30 @@
         // the one case that's actually supposed to work that way.
         const book = ePub(epubSrc, epubReaderUrl ? {} : { openAs: 'epub' });
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
+        document.getElementById('playerOverlay').classList.add('no-outer-scroll');
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
+        // Per reported swipe still not working on the real device despite
+        // this mechanism testing correctly in Chromium (Per Bot 110).
+        // New theory, and a real fix rather than another guess: epub.js
+        // renders each page inside its OWN iframe, with its own document —
+        // if THAT document's own touch-action allows native scrolling/
+        // panning, iOS Safari can consume a touch gesture as "start
+        // scrolling this iframe" before ever forwarding a clean
+        // touchstart/touchend pair back out to the rendition listeners
+        // below. Chromium's touch handling doesn't reproduce this
+        // specific competition the same way, which is exactly why it
+        // could test correctly there and still fail on a real iPhone.
+        // epub.js's own Contents class exposes addStylesheetRules()
+        // precisely for injecting CSS into that inner document — used
+        // here via the 'content' hook, which fires once per rendered
+        // section/page, so this applies to every page turned to, not
+        // just the first.
+        rendition.hooks.content.register((contents) => {
+          contents.addStylesheetRules({
+            'html, body': { 'touch-action': 'none' }
+          });
+        });
         // Per's request — swipe instead of relying on the ‹ › buttons.
         // epub.js renders book content inside its OWN iframe (for
         // sandboxing) — a plain listener on the outer #readerBox div
