@@ -831,23 +831,47 @@
     .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
-    /* Presentation slide viewer — reuses .reader-box/.reader-controls
-       sizing/chrome from the EPUB reader just above so both feel like
-       the same app, not two different viewers bolted together.
-       auto-rotate is added by JS (applyPptxAutoRotate), never by a
-       plain CSS media query alone — a phone in portrait should show
-       landscape slides rotated to fill the screen, but a phone the
-       person has ALREADY turned to landscape must not be rotated
-       again, and a tablet/desktop in portrait has enough room that
-       forcing a rotation would do more harm than good. The width/height
-       swap (window.innerHeight/innerWidth) is what makes the rotated
-       box actually fill the portrait viewport edge-to-edge instead of
-       just spinning in place at its original, wrong-aspect-ratio size. */
-    .slide-viewer-wrap { display:flex; align-items:center; justify-content:center; overflow:hidden; margin:0 auto; width:100%; height:70vh; }
-    .slide-viewer-wrap.auto-rotate {
+    /* Presentation slide viewer — reuses the EPUB reader's chrome
+       styling so both feel like the same app. Two real bugs Per hit
+       and reported directly fixed here:
+       (1) the image box alone was being rotated+fixed-positioned,
+           stranding the controls bar in normal document flow behind/
+           away from the visible rotated content — now the WHOLE unit
+           (image + controls) rotates together as one flex-column block.
+       (2) turning the phone to real landscape correctly turned the
+           simulated rotation off, but then fell back to the small
+           default 70vh sizing (tuned for a portrait reading column) —
+           now maximizes instead, so it's never small either way.
+       Phone detection uses the SHORT edge (min(width,height) <= 480),
+       not just width — a landscape phone is wide but still has a small
+       short edge; a portrait tablet is narrow-ish but its short edge is
+       still large. Width-only would have wrongly caught tablets. */
+    .slide-viewer-rotate-wrap { display:flex; flex-direction:column; align-items:center; width:100%; }
+    .slide-viewer-wrap { display:flex; align-items:center; justify-content:center; overflow:hidden; width:100%; max-width:700px; height:70vh; }
+    .slide-viewer-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+    .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
+
+    /* Phone in portrait — simulate landscape by rotating the whole
+       unit. Sized to the viewport's own swapped dimensions (set via JS)
+       so it fills the real screen edge-to-edge post-rotation, not just
+       spinning in place at its original wrong-aspect-ratio size. */
+    .slide-viewer-rotate-wrap.auto-rotate {
       position:fixed; top:50%; left:50%; max-width:none;
       transform:translate(-50%,-50%) rotate(90deg);
     }
+    .slide-viewer-rotate-wrap.auto-rotate .slide-viewer-wrap { height:auto; flex:1; max-width:none; }
+    .slide-viewer-rotate-wrap.auto-rotate .reader-controls { max-width:none; width:100%; margin-top:8px; flex-shrink:0; }
+    /* The controls bar rotates in position along with everything else
+       (so it's genuinely visible, not stranded off-screen), but each
+       individual glyph/label is counter-rotated back upright so ‹ › and
+       the slide counter are actually readable rather than sideways. */
+    .slide-viewer-rotate-wrap.auto-rotate .reader-controls > * { transform:rotate(-90deg); }
+
+    /* Phone actually turned to real landscape — viewport is already
+       the right shape, no CSS rotation needed, just stop using the
+       portrait-tuned small default and fill the available height. */
+    .slide-viewer-rotate-wrap.landscape-maximize .slide-viewer-wrap { height:calc(100vh - 90px); max-width:none; width:100%; }
+    .slide-viewer-rotate-wrap.landscape-maximize .reader-controls { max-width:none; width:100%; }
     .slide-viewer-img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
     .slide-counter { color:rgba(255,255,255,0.75); font-size:13px; min-width:56px; text-align:center; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
@@ -4541,19 +4565,11 @@
     document.getElementById('readerTocPanel')?.classList.remove('open');
   }
 
-  // Per's request — the loading state while an on-demand PDF-to-EPUB
-  // conversion runs. Reuses the same yin-yang spinner already used for
-  // button-loading feedback (YY_SPINNER_SVG, setBtnLoading) rather than
-  // a second spinner design, just sized up and centered for a full-panel
-  // moment instead of a small inline one. Returns the server's success
-  // payload (or null on any failure) — openContentFile above decides
-  // what to do with either outcome, this function's only job is running
-  // the conversion and showing something sensible while it does.
   // ── Presentation slide viewer ── Per's request — pptx files were
   // falling into the generic "Open document" download link since
   // browsers can't render them inline. Each slide is a pre-converted
   // image (see pptx-to-slides.js); this just pages through them, same
-  // reader-box/reader-controls chrome as the EPUB reader.
+  // reader-controls chrome as the EPUB reader.
   let _currentSlides = [];
   let _currentSlideIndex = 0;
 
@@ -4572,27 +4588,43 @@
   }
 
   // A phone held in portrait is the wrong shape for a 16:9 slide — this
-  // rotates the viewer itself to fill the screen as landscape, rather
-  // than asking the person to physically turn their phone (or relying
-  // on the Screen Orientation Lock API, which Safari on iOS has never
-  // implemented — silently a no-op there, so this couldn't depend on
-  // it). Only kicks in on a narrow viewport that's ALSO taller than it
-  // is wide — a phone actually already turned to landscape, or a
-  // tablet/desktop in portrait with room to spare, are both left alone.
+  // rotates the whole viewer (image AND controls together, as one
+  // block — Per caught a real bug where only the image was rotating,
+  // stranding the controls off-screen) to fill the screen as landscape,
+  // rather than asking the person to physically turn their phone (or
+  // relying on the Screen Orientation Lock API, which Safari on iOS has
+  // never implemented — silently a no-op there).
+  //
+  // Uses the viewport's SHORT edge (min(width,height) <= 480) to decide
+  // "is this a phone" regardless of which way it's held — width alone
+  // would wrongly catch a portrait tablet (~768-834px wide, but with a
+  // large short edge), which has enough room that forcing a rotation
+  // would do more harm than good.
+  //
+  // Per also caught that turning the phone to real landscape correctly
+  // stopped the simulated rotation, but then fell back to the small
+  // default sizing (tuned for a portrait reading column) — landscape-
+  // maximize below fixes that, so it's never small either way: rotated
+  // simulation when portrait, maximized real layout when landscape.
   // Re-checked on resize/orientationchange so physically rotating the
-  // phone while the viewer is open correctly turns this back off.
+  // phone while the viewer is open switches between the two correctly.
   function applyPptxAutoRotate() {
-    const wrap = document.getElementById('slideViewerWrap');
-    if (!wrap) return;
-    const isNarrowPortrait = window.innerWidth <= 480 && window.innerHeight > window.innerWidth;
-    if (isNarrowPortrait) {
-      wrap.classList.add('auto-rotate');
-      wrap.style.width = window.innerHeight + 'px';
-      wrap.style.height = window.innerWidth + 'px';
-    } else {
-      wrap.classList.remove('auto-rotate');
-      wrap.style.width = '';
-      wrap.style.height = '';
+    const rotateWrap = document.getElementById('slideViewerRotateWrap');
+    if (!rotateWrap) return;
+    const w = window.innerWidth, h = window.innerHeight;
+    const isPhoneClass = Math.min(w, h) <= 480;
+    const isPortrait = h > w;
+
+    rotateWrap.classList.remove('auto-rotate', 'landscape-maximize');
+    rotateWrap.style.width = '';
+    rotateWrap.style.height = '';
+
+    if (isPhoneClass && isPortrait) {
+      rotateWrap.classList.add('auto-rotate');
+      rotateWrap.style.width = h + 'px';
+      rotateWrap.style.height = w + 'px';
+    } else if (isPhoneClass && !isPortrait) {
+      rotateWrap.classList.add('landscape-maximize');
     }
   }
   let _pptxRotateListenerAttached = false;
@@ -4601,6 +4633,47 @@
     window.addEventListener('resize', applyPptxAutoRotate);
     window.addEventListener('orientationchange', applyPptxAutoRotate);
     _pptxRotateListenerAttached = true;
+  }
+
+  // Per's request — swipe instead of relying on the nav buttons, which
+  // are easy to miss (especially rotated into the corner of a portrait
+  // phone screen). Touch coordinates from the browser are always in
+  // real, unrotated screen space regardless of the CSS transform on the
+  // element — so which physical axis means "next" depends on whether
+  // the content is currently simulate-rotated.
+  //
+  // When rotated 90° clockwise: a point at the content's own right edge
+  // (its "next" direction, since reading runs left-to-right) ends up at
+  // the physical BOTTOM of the screen; the left/"previous" edge ends up
+  // at the physical TOP. So dragging a finger toward the bottom of the
+  // real screen reveals what's next, same as dragging toward the top
+  // reveals what's previous — vertical axis, not horizontal, while
+  // rotated. When not rotated, this is the ordinary horizontal
+  // swipe-left-for-next convention.
+  // (If this feels backwards in hand, both branches below are a single
+  // sign flip to reverse.)
+  const PPTX_SWIPE_THRESHOLD = 40;
+  let _pptxTouchStartX = 0, _pptxTouchStartY = 0;
+  function pptxTouchStart(e) {
+    const t = e.changedTouches[0];
+    _pptxTouchStartX = t.clientX;
+    _pptxTouchStartY = t.clientY;
+  }
+  function pptxTouchEnd(e) {
+    const t = e.changedTouches[0];
+    const deltaX = t.clientX - _pptxTouchStartX;
+    const deltaY = t.clientY - _pptxTouchStartY;
+    const rotateWrap = document.getElementById('slideViewerRotateWrap');
+    const isRotated = rotateWrap && rotateWrap.classList.contains('auto-rotate');
+    if (isRotated) {
+      if (Math.abs(deltaY) > PPTX_SWIPE_THRESHOLD && Math.abs(deltaY) > Math.abs(deltaX)) {
+        if (deltaY > 0) pptxNextSlide(); else pptxPrevSlide();
+      }
+    } else {
+      if (Math.abs(deltaX) > PPTX_SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (deltaX < 0) pptxNextSlide(); else pptxPrevSlide();
+      }
+    }
   }
 
   async function openPptxSlideViewer(f, url) {
@@ -4625,19 +4698,24 @@
       _currentSlides = data.slides;
       _currentSlideIndex = 0;
       mediaEl.innerHTML = `
-        <div class="reader-box slide-viewer-wrap" id="slideViewerWrap">
-          <img class="slide-viewer-img" id="slideViewerImg" alt="Slide">
-        </div>
-        <div class="reader-controls">
-          <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
-          <div class="slide-counter" id="slideCounter"></div>
-          <a class="reader-nav-btn" href="${url}" target="_blank" rel="noopener" title="Download presentation" style="display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
-          <button class="reader-nav-btn" onclick="pptxNextSlide()" title="Next slide">›</button>
+        <div class="slide-viewer-rotate-wrap" id="slideViewerRotateWrap">
+          <div class="slide-viewer-wrap" id="slideViewerWrap">
+            <img class="slide-viewer-img" id="slideViewerImg" alt="Slide">
+          </div>
+          <div class="reader-controls">
+            <button class="reader-nav-btn" onclick="pptxPrevSlide()" title="Previous slide">‹</button>
+            <div class="slide-counter" id="slideCounter"></div>
+            <a class="reader-nav-btn" href="${url}" target="_blank" rel="noopener" title="Download presentation" style="display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+            <button class="reader-nav-btn" onclick="pptxNextSlide()" title="Next slide">›</button>
+          </div>
         </div>
       `;
       renderCurrentSlide();
       applyPptxAutoRotate();
       ensurePptxRotateListener();
+      const rotateWrap = document.getElementById('slideViewerRotateWrap');
+      rotateWrap.addEventListener('touchstart', pptxTouchStart, { passive: true });
+      rotateWrap.addEventListener('touchend', pptxTouchEnd, { passive: true });
     } catch (e) {
       mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this presentation — network error.</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
     }
