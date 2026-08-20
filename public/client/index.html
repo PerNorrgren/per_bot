@@ -7837,6 +7837,46 @@
     _inChooserView = true;
     _showingNowPlaying = false;
     document.getElementById('playerTitle').textContent = lesson.title;
+    // Per's request — long, underscore-filled auto-generated titles
+    // (from a bulk upload's own filename, per the screenshot he sent —
+    // "Finding_Mindfulness_Reference_Reference_Facilitator_Glossary")
+    // display badly on mobile. Rather than requiring an exact course-
+    // name string to strip (fragile — the actual prefix varies, and one
+    // even doubles up on its own), this finds whatever's genuinely
+    // shared across every file's title *within this one lesson* and
+    // strips just that — self-contained, no assumptions about what the
+    // shared text actually says. Only ever touches the display label
+    // built below, never f.title itself, since dayOf() a few lines up
+    // still needs the real, untouched title to find "Day N" in it.
+    const cleanedTitles = (() => {
+      const normalize = (s) => (s || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+      const normalized = sorted.map(f => normalize(f.title));
+      let sharedPrefix = '';
+      if (sorted.length > 1) {
+        const wordLists = normalized.map(t => t.split(' '));
+        const minLen = Math.min(...wordLists.map(w => w.length));
+        const prefixWords = [];
+        for (let i = 0; i < minLen; i++) {
+          const word = wordLists[0][i];
+          if (word && wordLists.every(w => w[i] && w[i].toLowerCase() === word.toLowerCase())) prefixWords.push(word);
+          else break;
+        }
+        sharedPrefix = prefixWords.join(' ');
+      }
+      const map = new Map();
+      sorted.forEach((f, i) => {
+        let t = normalized[i];
+        if (sharedPrefix && t.toLowerCase().startsWith(sharedPrefix.toLowerCase())) {
+          t = t.slice(sharedPrefix.length).trim();
+        }
+        // Collapses an immediately-repeated word run — the specific
+        // "Reference Reference X" doubling from the screenshot, and
+        // anything shaped the same way.
+        t = t.replace(/\b(\S+)(\s+\1\b)+/gi, '$1');
+        map.set(f, t || normalized[i]); // never let a title end up blank
+      });
+      return map;
+    })();
     // Per Bot 15k — names the actual previous lesson rather than a generic
     // "the previous lesson", when we know which course/lesson order this is
     // (cached from the last openCourseDetail call).
@@ -7854,7 +7894,7 @@
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
           const locked = lessonLocked || f.locked;
-          const label = `${isVideo(f) ? '🎬 Watch' : isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${f.title}`;
+          const label = `${isVideo(f) ? '🎬 Watch' : isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${cleanedTitles.get(f)}`;
           const tick = f.opened
             ? '<span class="chooser-tick">✓</span>'
             : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');
