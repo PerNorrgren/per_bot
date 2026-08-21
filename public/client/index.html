@@ -5033,68 +5033,45 @@
   // the several places the player overlay can open — the button is
   // always in the DOM (just display:none when not needed), so keeping
   // it correctly positioned at all times costs nothing.
-  // Per's screenshot showed this affecting ORDINARY buttons too — Next,
-  // Close, list rows, the offline toggle — not just the individually
-  // position:fixed close button and Tomte. That ruled out a per-element
-  // fix: those ordinary buttons aren't position:fixed themselves, so
-  // they must be inheriting the same offset from a shared ancestor.
-  // .panel (position:fixed; inset:0) wraps literally everything in the
-  // app — if IT is subject to the same landscape paint-vs-touch
-  // mismatch (see syncPlayerCloseButtonPosition's comment below for the
-  // full mechanism), every descendant positioned relative to it via
-  // normal flow or position:absolute (which is exactly how the lesson
-  // chooser, its buttons, and its rows are laid out) would inherit that
-  // one offset uniformly — matching exactly what Per described. Fixing
-  // .panel's own actual position/size from visualViewport should
-  // cascade-correct all of that at once, rather than needing a
-  // per-element patch for every button in the app.
-  function syncPanelToVisualViewport() {
-    const panel = document.querySelector('.panel');
-    const vv = window.visualViewport;
-    if (!panel || !vv) return;
-    panel.style.position = 'fixed';
-    panel.style.left = vv.offsetLeft + 'px';
-    panel.style.top = vv.offsetTop + 'px';
-    panel.style.width = vv.width + 'px';
-    panel.style.height = vv.height + 'px';
-    panel.style.right = 'auto';
-    panel.style.bottom = 'auto';
+  // Per's diagnostic numbers found the REAL bug, and it was different
+  // from every theory this session had tried so far. On rotating to
+  // landscape: window.scrollY / documentElement.scrollTop were both
+  // -62, and visualViewport's offsetTop matched it exactly. A negative
+  // scroll position is never legitimate — it's the signature of iOS
+  // Safari's elastic "rubber-band" overscroll bounce getting stuck
+  // rather than settling back to 0, which can happen across an
+  // orientation change even with overflow:hidden on html/body (that
+  // CSS prevents ONGOING scrolling, but doesn't retroactively undo one
+  // momentary bounce during the reflow itself). The previous fix here
+  // (syncPanelToVisualViewport, now removed) read that same -62 and
+  // treated it as a legitimate toolbar-height offset to compensate for
+  // by moving .panel and the close button up by the same amount —
+  // which wasn't a fix at all, just relocating the same bug onto those
+  // elements, and explains why it never actually resolved anything.
+  // This also finally explains Per's discovered workaround: closing a
+  // lesson and declining the "mark complete?" dialog happened to
+  // trigger a re-render that incidentally reset scroll along the way —
+  // nothing to do with any element-repositioning fix from earlier
+  // rounds. The real, direct fix: force scroll back to a sane (0,0)
+  // whenever this can occur, rather than trying to compensate for it.
+  function resetStuckScrollPosition() {
+    if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+    if (document.documentElement.scrollTop !== 0) document.documentElement.scrollTop = 0;
+    if (document.body.scrollTop !== 0) document.body.scrollTop = 0;
   }
+  window.addEventListener('resize', resetStuckScrollPosition);
+  window.addEventListener('orientationchange', resetStuckScrollPosition);
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncPanelToVisualViewport);
-    window.visualViewport.addEventListener('scroll', syncPanelToVisualViewport);
+    window.visualViewport.addEventListener('resize', resetStuckScrollPosition);
   }
-  window.addEventListener('resize', syncPanelToVisualViewport);
-  document.addEventListener('DOMContentLoaded', syncPanelToVisualViewport);
-  syncPanelToVisualViewport();
-  // Per found the fix above only actually took effect after a very
-  // specific, roundabout sequence — closing a lesson and declining the
-  // "mark complete?" dialog — after which everything "expanded" and
-  // worked correctly from then on. That's consistent with the fix's
-  // own logic being right (once a genuine resize event fires, it
-  // corrects everything) but the trigger it depends on not happening
-  // early enough: Safari's own toolbar/chrome doesn't always finish
-  // settling into its final state by the time this first runs at page
-  // load, and ordinary in-app navigation (opening a list, a file,
-  // closing a view) doesn't fire a real window/visualViewport resize
-  // at all, since nothing about the actual browser viewport changes
-  // during that — only that one dialog interaction happened to
-  // coincide with Safari actually finishing its transition. Rather
-  // than depend on any one specific action to coincide with that
-  // moment, retry the measurement several times after load to catch
-  // the settling whenever it actually happens.
-  [100, 300, 600, 1000, 2000].forEach(delay => setTimeout(syncPanelToVisualViewport, delay));
-
-  // Temporary diagnostic (Per Bot 123) — three attempts at the landscape
-  // touch-offset bug (individual buttons, the .panel container, retry
-  // timing) haven't resolved it, and continuing to guess blindly isn't
-  // productive without real numbers from the actual device. This
-  // surfaces exactly what the browser reports at the moment the bug is
-  // visible, via appAlert (dialogs.js) — chosen specifically because
-  // Per's own screenshots show that dialog rendering and responding
-  // correctly even while the bug is active, so it's a reliable way to
-  // get a readable snapshot back rather than guessing at another CSS
-  // fix. Safe to remove once this is solved.
+  resetStuckScrollPosition();
+  // A rotation's own reflow can trigger the bounce slightly after these
+  // events fire, not always precisely on them — a short retry series
+  // catches it whenever it actually settles, same reasoning as the
+  // delayed-retry approach tried earlier for a different (wrong)
+  // mechanism, but now applied to the fix that actually addresses the
+  // real cause.
+  [50, 150, 300, 600, 1000].forEach(delay => setTimeout(resetStuckScrollPosition, delay));
   function showLayoutDiagnostics() {
     const vv = window.visualViewport;
     const panel = document.querySelector('.panel');
@@ -5123,38 +5100,10 @@
     appAlert(lines.join('\n'), 'Layout diagnostics');
   }
 
-  function syncPlayerCloseButtonPosition() {
-    const btn = document.querySelector('.player-close-floating');
-    const vv = window.visualViewport;
-    if (!btn || !vv) return;
-    const MARGIN = 16;
-    // Fixed, known size from this button's own CSS (width:40px), not
-    // read via offsetWidth — the button is display:none until the
-    // overlay first opens, and offsetWidth reads 0 for a hidden
-    // element, which would compute a wrong position that could persist
-    // until the next resize/scroll event happened to fire.
-    const BTN_SIZE = 40;
-    const x = vv.offsetLeft + vv.width - MARGIN - BTN_SIZE;
-    const y = vv.offsetTop + MARGIN;
-    btn.style.left = x + 'px';
-    btn.style.top = y + 'px';
-    btn.style.right = 'auto';
-  }
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', syncPlayerCloseButtonPosition);
-    window.visualViewport.addEventListener('scroll', syncPlayerCloseButtonPosition);
-  }
-  window.addEventListener('resize', syncPlayerCloseButtonPosition);
-  document.addEventListener('DOMContentLoaded', syncPlayerCloseButtonPosition);
-  syncPlayerCloseButtonPosition();
-
   function closePlayerOverlay() {
-    // Extra insurance alongside the retry series in
-    // syncPanelToVisualViewport's own setup — closing something is one
-    // of the actions Per found correlated with Safari finally settling
-    // its toolbar state, so re-checking here costs nothing and might
-    // catch it sooner than the next scheduled retry would.
-    syncPanelToVisualViewport();
+    // Same reasoning as the retry series above — closing something is a
+    // reasonable moment to double-check scroll hasn't gotten stuck.
+    resetStuckScrollPosition();
     // Mid-lesson, closing an individual file (not the chooser list itself)
     // — go back to the list rather than leaving the lesson. Cleanup below
     // still runs first (stop video, exit fullscreen) since that's needed
@@ -8158,7 +8107,7 @@
     openLesson(nextLessonId);
   }
   function openLessonChooser(lesson, files, lessonLocked) {
-    syncPanelToVisualViewport();
+    resetStuckScrollPosition();
     // Preserve whatever lock state was already known (from the initial API
     // response) across re-renders that don't pass it explicitly — e.g. the
     // reopen-after-closing-a-file calls elsewhere only pass (lesson, files).
