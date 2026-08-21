@@ -849,6 +849,22 @@
        and on a real device, winning against — both swipe gestures and
        taps on the floating close button. */
     .player-overlay.no-outer-scroll { overflow-y:hidden; touch-action:none; }
+    /* Per's request — the pptx slide (and this applies just as well to
+       epub) was rendering much smaller than it needed to, for two
+       separate reasons stacking together: the base .player-overlay's
+       32px padding on every side (sized for shorter content like a
+       video or a plain document, where some breathing room reads fine),
+       and .player-media's own max-width:520px cap, which video-mode
+       already gets its own override for but pptx/epub never did. On a
+       landscape phone with genuinely limited height to begin with,
+       every one of those pixels was direct trade against the actual
+       slide. Tightened padding and dropped the width cap specifically
+       for this mode — video-mode and plain reader-mode content are
+       untouched, since they don't have the same "make this literally as
+       big as possible" need a presentation slide does. */
+    .player-overlay.no-outer-scroll { padding:10px; gap:8px; }
+    .player-overlay.no-outer-scroll .player-media { max-width:none; }
+    .player-overlay.no-outer-scroll .player-title { font-size:14px; margin-top:0; }
     /* Per's reports (pptx: slide cut off at the bottom in landscape,
        Tomte/close button unresponsive there; epub: nav buttons pushed
        below the visible screen in landscape) traced to the same root
@@ -914,7 +930,7 @@
        orientationchange listener — Swiper handles resize/orientation
        internally, and the shell below just fills whatever height the
        flex layout above (.player-media) actually gives it. */
-    .pptx-swiper-shell { position:relative; width:100%; max-width:700px; margin:0 auto; }
+    .pptx-swiper-shell { position:relative; width:100%; margin:0 auto; }
     .pptx-swiper { width:100%; height:100%; border-radius:8px; overflow:hidden; }
     .pptx-swiper .swiper-slide { display:flex; align-items:center; justify-content:center; background:transparent; }
     .pptx-swiper .swiper-slide img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
@@ -4648,7 +4664,15 @@
         return;
       }
       document.getElementById('playerOverlay').classList.add('no-outer-scroll');
-      const slidesHtml = data.slides.map(src => `<div class="swiper-slide"><img src="${src}" alt="Slide"></div>`).join('');
+      // Per's request — zoom, for reading small text on a slide. Using
+      // Swiper's own built-in Zoom module (already bundled in the same
+      // swiper-bundle.min.js loaded for the base viewer) rather than
+      // hand-rolling pinch/double-tap detection — same reasoning as the
+      // original swipe rebuild: this is a well-tested mechanism on real
+      // devices, not something to reimplement from scratch. Its
+      // required markup wraps each slide's image in a
+      // swiper-zoom-container div.
+      const slidesHtml = data.slides.map(src => `<div class="swiper-slide"><div class="swiper-zoom-container"><img src="${src}" alt="Slide"></div></div>`).join('');
       mediaEl.innerHTML = `
         <div class="pptx-swiper-shell">
           <div class="pptx-swiper" id="pptxSwiper">
@@ -4665,6 +4689,7 @@
         // that kept losing to real WebKit gesture-recognition quirks
         // this sandbox's Chromium testing couldn't reproduce.
         threshold: 8,
+        zoom: { maxRatio: 4, minRatio: 1 },
         on: {
           slideChange(sw) {
             const counter = document.getElementById('slideCounter');
@@ -5072,33 +5097,6 @@
   // mechanism, but now applied to the fix that actually addresses the
   // real cause.
   [50, 150, 300, 600, 1000].forEach(delay => setTimeout(resetStuckScrollPosition, delay));
-  function showLayoutDiagnostics() {
-    const vv = window.visualViewport;
-    const panel = document.querySelector('.panel');
-    const closeBtn = document.querySelector('.player-close-floating');
-    const nextBtn = document.querySelector('#playerMedia button, #playerMedia .reader-nav-btn');
-    const rect = (el) => {
-      if (!el) return 'n/a';
-      const r = el.getBoundingClientRect();
-      return `x:${Math.round(r.x)} y:${Math.round(r.y)} w:${Math.round(r.width)} h:${Math.round(r.height)}`;
-    };
-    const lines = [
-      `window.innerW/H: ${window.innerWidth} / ${window.innerHeight}`,
-      `visualViewport w/h: ${vv ? Math.round(vv.width) : 'n/a'} / ${vv ? Math.round(vv.height) : 'n/a'}`,
-      `visualViewport offsetLeft/Top: ${vv ? Math.round(vv.offsetLeft) : 'n/a'} / ${vv ? Math.round(vv.offsetTop) : 'n/a'}`,
-      `visualViewport scale: ${vv ? vv.scale : 'n/a'}`,
-      `window.scrollX/Y: ${window.scrollX} / ${window.scrollY}`,
-      `documentElement.scrollTop: ${document.documentElement.scrollTop}`,
-      `body.scrollTop: ${document.body.scrollTop}`,
-      `devicePixelRatio: ${window.devicePixelRatio}`,
-      `orientation: ${screen.orientation ? screen.orientation.type : 'n/a'}`,
-      `.panel rect: ${rect(panel)}`,
-      `.panel computed left/top: ${panel ? getComputedStyle(panel).left : 'n/a'} / ${panel ? getComputedStyle(panel).top : 'n/a'}`,
-      `close button rect: ${rect(closeBtn)}`,
-      `first list button rect: ${rect(nextBtn)}`,
-    ];
-    appAlert(lines.join('\n'), 'Layout diagnostics');
-  }
 
   function closePlayerOverlay() {
     // Same reasoning as the retry series above — closing something is a
@@ -8178,7 +8176,6 @@
       ? `<div style="background:rgba(255,210,140,0.08); border:1px solid rgba(255,210,140,0.25); border-radius:10px; padding:10px 14px; margin-bottom:10px; font-size:13px; color:rgba(255,220,170,0.9)">${lockedBannerText}</div>${descHtml}`
       : descHtml + "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
-      <button type="button" onclick="showLayoutDiagnostics()" style="width:100%;margin-bottom:8px;background:rgba(230,175,90,0.12);border:1px solid rgba(230,175,90,0.35);border-radius:8px;color:rgba(240,200,140,0.95);font-family:Georgia,serif;font-size:12px;padding:7px;cursor:pointer">🔧 Diagnostics (temporary — tap if things look off)</button>
       ${!lessonLocked ? `<button type="button" onclick="markWholeLessonOffline('${lesson.id}', this)" style="width:100%;margin-bottom:12px;background:rgba(140,190,230,0.1);border:1px solid rgba(140,190,230,0.3);border-radius:8px;color:rgba(160,200,235,0.9);font-family:Georgia,serif;font-size:12.5px;padding:9px;cursor:pointer">⬇ Mark whole lesson offline</button>` : ''}
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
