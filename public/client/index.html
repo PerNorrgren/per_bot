@@ -5067,6 +5067,23 @@
   window.addEventListener('resize', syncPanelToVisualViewport);
   document.addEventListener('DOMContentLoaded', syncPanelToVisualViewport);
   syncPanelToVisualViewport();
+  // Per found the fix above only actually took effect after a very
+  // specific, roundabout sequence — closing a lesson and declining the
+  // "mark complete?" dialog — after which everything "expanded" and
+  // worked correctly from then on. That's consistent with the fix's
+  // own logic being right (once a genuine resize event fires, it
+  // corrects everything) but the trigger it depends on not happening
+  // early enough: Safari's own toolbar/chrome doesn't always finish
+  // settling into its final state by the time this first runs at page
+  // load, and ordinary in-app navigation (opening a list, a file,
+  // closing a view) doesn't fire a real window/visualViewport resize
+  // at all, since nothing about the actual browser viewport changes
+  // during that — only that one dialog interaction happened to
+  // coincide with Safari actually finishing its transition. Rather
+  // than depend on any one specific action to coincide with that
+  // moment, retry the measurement several times after load to catch
+  // the settling whenever it actually happens.
+  [100, 300, 600, 1000, 2000].forEach(delay => setTimeout(syncPanelToVisualViewport, delay));
 
   function syncPlayerCloseButtonPosition() {
     const btn = document.querySelector('.player-close-floating');
@@ -5094,6 +5111,12 @@
   syncPlayerCloseButtonPosition();
 
   function closePlayerOverlay() {
+    // Extra insurance alongside the retry series in
+    // syncPanelToVisualViewport's own setup — closing something is one
+    // of the actions Per found correlated with Safari finally settling
+    // its toolbar state, so re-checking here costs nothing and might
+    // catch it sooner than the next scheduled retry would.
+    syncPanelToVisualViewport();
     // Mid-lesson, closing an individual file (not the chooser list itself)
     // — go back to the list rather than leaving the lesson. Cleanup below
     // still runs first (stop video, exit fullscreen) since that's needed
@@ -8097,6 +8120,7 @@
     openLesson(nextLessonId);
   }
   function openLessonChooser(lesson, files, lessonLocked) {
+    syncPanelToVisualViewport();
     // Preserve whatever lock state was already known (from the initial API
     // response) across re-renders that don't pass it explicitly — e.g. the
     // reopen-after-closing-a-file calls elsewhere only pass (lesson, files).
