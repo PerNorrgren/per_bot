@@ -61,14 +61,20 @@
        floating card rather than a full-screen app. Real installed apps
        (and this one, once someone's actually using it day to day) don't
        do that — edge to edge is the expectation. Scoped to genuinely
-       phone-width screens only; the existing tablet/desktop breakpoints
+       phone-sized screens only; the existing tablet/desktop breakpoints
        above are untouched, since a floating centred card makes sense
        once there's real background space either side to fill.
        env(safe-area-inset-*) keeps the header clear of the notch/status
        bar and the bottom nav clear of the home-indicator strip on
        notched phones — without it, flush-to-edge would put real content
-       under both. */
-    @media (max-width: 500px) {
+       under both.
+       Originally max-width only, which is exactly backwards in
+       landscape — the SAME physical phone has a wide viewport there, so
+       the rule silently never applied and Per could still see a border.
+       Matching max-height too catches a phone in either orientation,
+       since one dimension or the other is always the short/phone-sized
+       one regardless of which way it's held. */
+    @media (max-width: 500px), (max-height: 500px) {
       .panel { padding:0; }
       .glass {
         max-width:100%; border-radius:0;
@@ -974,6 +980,14 @@
     .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
     .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
     .player-btns { display:flex; gap:10px; }
+    /* Per found a THIRD close mechanism, not just the floating X and the
+       new one in reader-controls — this plain text "Close" button (plus
+       the hidden-by-default fullscreen toggle beside it) was its own
+       unconditional row below player-media on every content type. pptx
+       has its own floating close button; epub now has one built into
+       reader-controls — neither needs this extra row eating more height
+       on a screen where landscape especially has little to spare. */
+    .player-overlay.no-outer-scroll .player-btns { display:none; }
     .player-media { width:100%; max-width:520px; }
     .player-media video { width:100%; max-height:50vh; border-radius:10px; background:#000; }
     .player-media iframe { width:100%; height:50vh; border:none; border-radius:10px; background:#fff; }
