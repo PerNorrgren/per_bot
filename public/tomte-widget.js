@@ -700,6 +700,22 @@
     // not available.
     function viewportWidth() { return window.visualViewport ? window.visualViewport.width : window.innerWidth; }
     function viewportHeight() { return window.visualViewport ? window.visualViewport.height : window.innerHeight; }
+    // Per found this precisely: in landscape, the actual touch target
+    // sits a consistent ~10mm below where the fab is visibly painted —
+    // impossible to tap, impossible to start a drag on. This is a
+    // documented real iOS Safari quirk: position:fixed with plain
+    // right/bottom CSS can be PAINTED relative to a viewport that
+    // doesn't quite match the one touch coordinates are hit-tested
+    // against, specifically when the browser's own toolbar behaves
+    // differently in landscape. visualViewport.offsetLeft/offsetTop is
+    // Apple's own documented way to account for exactly this gap —
+    // this codebase was already using visualViewport.width/height for
+    // clamping drag bounds, just not offsetLeft/offsetTop, and was
+    // leaving the un-dragged default position to plain CSS right/bottom
+    // (the one case Per was actually hitting) rather than running it
+    // through the same explicit-positioning path as a dragged fab.
+    function viewportOffsetLeft() { return window.visualViewport ? window.visualViewport.offsetLeft : 0; }
+    function viewportOffsetTop() { return window.visualViewport ? window.visualViewport.offsetTop : 0; }
     function loadFabPos() {
       try {
         const saved = JSON.parse(localStorage.getItem('tomte_fab_pos') || 'null');
@@ -718,7 +734,16 @@
     }
     function restoreFabPos() {
       const saved = loadFabPos();
-      if (!saved) return; // leave default CSS right/bottom spot untouched
+      if (!saved) {
+        // No drag yet — explicitly compute the default bottom-right
+        // spot from the visual viewport's own bounds (offsetLeft/Top
+        // included), instead of leaving it to plain CSS right/bottom,
+        // which is exactly the path with the paint/touch mismatch.
+        const x = viewportOffsetLeft() + viewportWidth() - fab.offsetWidth - FAB_MARGIN;
+        const y = viewportOffsetTop() + viewportHeight() - fab.offsetHeight - FAB_MARGIN;
+        applyFabPos({ x, y });
+        return;
+      }
       const x = clampNum(saved.x, FAB_MARGIN, viewportWidth() - fab.offsetWidth - FAB_MARGIN);
       const y = clampNum(saved.y, FAB_MARGIN, viewportHeight() - fab.offsetHeight - FAB_MARGIN);
       applyFabPos({ x, y });

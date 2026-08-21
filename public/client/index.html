@@ -4996,6 +4996,48 @@
       closePlayerOverlay();
     }
   });
+  // Per found this precisely: in landscape, the actual touch target for
+  // the floating close button sits a consistent ~10mm below where it's
+  // visibly painted — the button LOOKS like it's at top:16px;right:16px,
+  // but taps only register well below that. This is a documented real
+  // iOS Safari quirk: plain CSS position:fixed can be PAINTED relative
+  // to a viewport that doesn't quite match the one touch coordinates
+  // are hit-tested against, specifically when the browser's own toolbar
+  // behaves differently in landscape. window.visualViewport is Apple's
+  // own documented way to account for exactly this gap — explicitly
+  // computing the button's position from it (offsetLeft/offsetTop
+  // included) and setting it directly, rather than trusting the
+  // browser's native position:fixed resolution under this edge case,
+  // keeps what's painted and what's tappable in agreement. Runs
+  // globally on load/resize/scroll rather than being hooked to each of
+  // the several places the player overlay can open — the button is
+  // always in the DOM (just display:none when not needed), so keeping
+  // it correctly positioned at all times costs nothing.
+  function syncPlayerCloseButtonPosition() {
+    const btn = document.querySelector('.player-close-floating');
+    const vv = window.visualViewport;
+    if (!btn || !vv) return;
+    const MARGIN = 16;
+    // Fixed, known size from this button's own CSS (width:40px), not
+    // read via offsetWidth — the button is display:none until the
+    // overlay first opens, and offsetWidth reads 0 for a hidden
+    // element, which would compute a wrong position that could persist
+    // until the next resize/scroll event happened to fire.
+    const BTN_SIZE = 40;
+    const x = vv.offsetLeft + vv.width - MARGIN - BTN_SIZE;
+    const y = vv.offsetTop + MARGIN;
+    btn.style.left = x + 'px';
+    btn.style.top = y + 'px';
+    btn.style.right = 'auto';
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncPlayerCloseButtonPosition);
+    window.visualViewport.addEventListener('scroll', syncPlayerCloseButtonPosition);
+  }
+  window.addEventListener('resize', syncPlayerCloseButtonPosition);
+  document.addEventListener('DOMContentLoaded', syncPlayerCloseButtonPosition);
+  syncPlayerCloseButtonPosition();
+
   function closePlayerOverlay() {
     // Mid-lesson, closing an individual file (not the chooser list itself)
     // — go back to the list rather than leaving the lesson. Cleanup below
