@@ -794,8 +794,28 @@
     .pl-delete-confirm { font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6; }
 
 
-    .player-overlay { display:none; position:absolute; inset:0; z-index:10; background:rgba(10,15,13,0.94); backdrop-filter:blur(12px); border-radius:22px; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:32px; }
+    .player-overlay { display:none; position:absolute; inset:0; z-index:10; background:rgba(10,15,13,0.94); backdrop-filter:blur(12px); border-radius:22px; flex-direction:column; align-items:center; justify-content:flex-start; gap:20px; padding:32px; overflow-y:auto; -webkit-overflow-scrolling:touch; }
     .player-overlay.visible { display:flex; }
+    /* justify-content:flex-start + overflow-y:auto above (Per Bot 121) —
+       this base rule is what the lesson chooser (and any other plain
+       content list) uses; video-mode/reader-mode below already had
+       their own copies of this exact fix for the same reason. Per's
+       report on the lesson-chooser screen specifically (touches landing
+       on the row above the one visually tapped, in landscape only) was
+       something the earlier position:fixed/visualViewport fix for the
+       close button and Tomte couldn't explain, because neither the
+       chooser's CLOSE button nor its list rows are position:fixed at
+       all — they're plain, normal-flow content. What they DO share
+       with every other screen this session: unconstrained content that
+       can genuinely exceed a short landscape viewport's real height,
+       previously with justify-content:center and no overflow property
+       at all, silently extending past the overlay's own bounds with no
+       proper resolution. A real, native overflow:auto scroll is a
+       state iOS Safari's touch/scroll coordinate handling is built to
+       manage consistently — leaving content to silently overflow with
+       no scroll mechanism at all is exactly the kind of undefined
+       condition where visual position and touch position have room to
+       drift apart the way Per described. */
     /* Video specifically breaks out of the 500px glass shell — a phone-app-card width is
        right for chat and lists, but wrong for video, which should use real screen space
        on desktop. .video-mode overrides position/sizing to cover the full viewport instead
