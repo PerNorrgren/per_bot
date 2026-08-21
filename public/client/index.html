@@ -891,7 +891,7 @@
     .player-overlay.no-outer-scroll .player-media .reader-box,
     .player-overlay.no-outer-scroll .player-media .pptx-swiper-shell { flex:1; min-height:0; }
     .player-overlay.reader-mode .player-text { display:none; }
-    .reader-box { width:100%; max-width:700px; height:100%; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; position:relative; }
+    .reader-box { width:100%; max-width:700px; height:100%; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; position:relative; transition:opacity 140ms ease; }
     /* Per Bot 119 — epub swipe never worked on a real device despite the
        underlying rendition.on('touchstart'/'touchend', ...) forwarding
        mechanism testing correctly in Chromium (Per Bot 110) and even
@@ -4584,8 +4584,47 @@
       btn.disabled = false;
     }
   }
-  function epubNextPage() { if (_currentEpubRendition) _currentEpubRendition.next(); }
-  function epubPrevPage() { if (_currentEpubRendition) _currentEpubRendition.prev(); }
+  function epubNextPage() { epubTurnPage(() => _currentEpubRendition && _currentEpubRendition.next()); }
+  function epubPrevPage() { epubTurnPage(() => _currentEpubRendition && _currentEpubRendition.prev()); }
+  // Per's request — page turns felt like an instant swap rather than a
+  // swipe, with no motion at all. epub.js's paginated flow snaps
+  // between pages with no transition of its own, and — since each page
+  // is a real reflowed text layout, not an image — a true sliding
+  // animation isn't something epub.js supports out of the box the way
+  // an image-based slide can. A brief opacity fade is a lighter-weight
+  // way to give SOME felt motion on the turn without fighting that,
+  // wrapped around whichever navigation actually fires (rendition.next/
+  // prev both return Promises that resolve once the new page has
+  // actually rendered, so the fade back in happens right when there's
+  // real content to show, not on a fixed guessed delay).
+  function epubTurnPage(navFn) {
+    const box = document.getElementById('readerBox');
+    if (box) box.style.opacity = '0.35';
+    const result = navFn();
+    if (result && result.then) {
+      result.then(() => { if (box) box.style.opacity = '1'; });
+    } else if (box) {
+      box.style.opacity = '1';
+    }
+  }
+  // Per found this precisely, and it's a real bug: rotating landscape
+  // then back to portrait leaves the reader showing two truncated
+  // half-page columns instead of properly reflowing to one. epub.js's
+  // paginated flow picks its own column count (one vs two) based on the
+  // container's width at the moment it renders, and — like the pptx
+  // viewer had — never re-checks that on its own when the container's
+  // size later changes; a landscape phone is wide enough that epub.js
+  // reasonably chose two columns, and rotating back to portrait never
+  // told it the container is narrow again. epub.js's own
+  // rendition.resize() (documented, not a guess) re-measures the actual
+  // current container and re-lays-out accordingly — called with no
+  // arguments so it reads the container's real current size rather than
+  // a value that could itself go stale.
+  function epubHandleResize() {
+    if (_currentEpubRendition) _currentEpubRendition.resize();
+  }
+  window.addEventListener('resize', epubHandleResize);
+  window.addEventListener('orientationchange', epubHandleResize);
   function epubFontSize(delta) {
     if (!_currentEpubRendition) return;
     _epubFontPct = Math.max(70, Math.min(200, _epubFontPct + delta * 15));
@@ -4915,15 +4954,49 @@
           const width = box ? box.getBoundingClientRect().width : window.innerWidth;
           const hRatio = dx / width;
           if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return; // vertical-dominant or too short — not a page-turn gesture
-          if (hRatio < 0) rendition.next(); else rendition.prev();
+          if (hRatio < 0) epubTurnPage(() => rendition.next()); else epubTurnPage(() => rendition.prev());
+        }
+        // Per's request — pinch to zoom, in addition to the A-/A+
+        // buttons. Text doesn't scale visually the way an image does —
+        // "zoom" here means font size, same as the buttons, just driven
+        // by the pinch gesture instead. Applied once at the end of the
+        // gesture rather than live during the pinch: each font-size
+        // change triggers a real reflow of the paginated content, which
+        // is expensive enough that doing it continuously on every
+        // touchmove would be janky rather than smooth.
+        let _epubPinchStartDist = null;
+        let _epubPinchStartPct = 100;
+        function touchDist(t0, t1) {
+          const dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
+          return Math.sqrt(dx * dx + dy * dy);
         }
         const swipeCaptureEl = document.getElementById('epubSwipeCapture');
         if (swipeCaptureEl) {
           swipeCaptureEl.addEventListener('touchstart', (e) => {
-            const t = e.changedTouches[0];
-            _epubTouchStart = { x: t.clientX, y: t.clientY };
+            if (e.touches.length === 2) {
+              _epubPinchStartDist = touchDist(e.touches[0], e.touches[1]);
+              _epubPinchStartPct = _epubFontPct;
+              _epubTouchStart = null; // a pinch is not also a swipe
+            } else {
+              const t = e.changedTouches[0];
+              _epubTouchStart = { x: t.clientX, y: t.clientY };
+            }
           }, { passive: true });
           swipeCaptureEl.addEventListener('touchend', (e) => {
+            if (_epubPinchStartDist && e.touches.length < 2) {
+              // Last two-finger distance is gone once a finger lifts —
+              // changedTouches still has both points on the touchend
+              // that ends the pinch, which is enough to compute the
+              // final ratio.
+              if (e.changedTouches.length === 2) {
+                const endDist = touchDist(e.changedTouches[0], e.changedTouches[1]);
+                const ratio = endDist / _epubPinchStartDist;
+                _epubFontPct = Math.max(70, Math.min(200, Math.round(_epubPinchStartPct * ratio)));
+                rendition.themes.fontSize(_epubFontPct + '%');
+              }
+              _epubPinchStartDist = null;
+              return;
+            }
             const t = e.changedTouches[0];
             epubHandleSwipeEnd(t.clientX, t.clientY);
           }, { passive: true });
