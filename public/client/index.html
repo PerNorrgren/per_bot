@@ -829,8 +829,48 @@
        and on a real device, winning against — both swipe gestures and
        taps on the floating close button. */
     .player-overlay.no-outer-scroll { overflow-y:hidden; touch-action:none; }
+    /* Per's reports (pptx: slide cut off at the bottom in landscape,
+       Tomte/close button unresponsive there; epub: nav buttons pushed
+       below the visible screen in landscape) traced to the same root
+       cause: .player-media and its children (.reader-box, the old
+       slide-viewer-wrap) were sized with plain vh percentages, with no
+       awareness of how much space the title bar above them or the
+       controls below them actually needed. On a short landscape-phone
+       viewport, title + 70vh reader content + controls can genuinely
+       add up to MORE than 100% of the available height — the excess
+       either gets clipped (hiding the bottom of the slide, or pushing
+       the controls below the visible area) or, worse, still occupies
+       real layout space that can end up sitting where a fixed element
+       like the close button visually appears, plausibly explaining why
+       taps there stopped registering. Making .player-media an actual
+       constrained flex column — title/controls take exactly the space
+       their content needs (flex-shrink:0), the reader area gets
+       "whatever's left" (flex:1; min-height:0, the property that lets
+       a flex child shrink below its content's natural size instead of
+       forcing an overflow) — means the total can never exceed the
+       real available height, on any viewport, without needing to
+       predict its size in vh at all. */
+    .player-overlay.no-outer-scroll .player-media { display:flex; flex-direction:column; flex:1; min-height:0; width:100%; align-items:stretch; }
+    .player-overlay.no-outer-scroll .player-media > * { flex-shrink:0; }
+    .player-overlay.no-outer-scroll .player-media .reader-box,
+    .player-overlay.no-outer-scroll .player-media .pptx-swiper-shell { flex:1; min-height:0; }
     .player-overlay.reader-mode .player-text { display:none; }
-    .reader-box { width:100%; max-width:700px; height:70vh; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; }
+    .reader-box { width:100%; max-width:700px; height:100%; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; position:relative; }
+    /* Per Bot 119 — epub swipe never worked on a real device despite the
+       underlying rendition.on('touchstart'/'touchend', ...) forwarding
+       mechanism testing correctly in Chromium (Per Bot 110) and even
+       after directly injecting touch-action:none inside epub.js's own
+       iframe (Per Bot 115). Different approach, not another patch on
+       the same one: capture the swipe gesture entirely in the PARENT
+       document, on a plain transparent div positioned over the reader,
+       so it never has to cross into the iframe — and therefore can't
+       be affected by whatever real WebKit-specific iframe touch quirk
+       kept defeating every previous attempt. inset:0 covers exactly
+       the reader-box beneath it (which is position:relative, set
+       above, precisely so this has something to size itself against).
+       Sits above the iframe (z-index) but below the reader-controls
+       row and the floating close button (both outside this box). */
+    .epub-swipe-capture { position:absolute; inset:0; z-index:5; touch-action:none; background:transparent; }
     .reader-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; max-width:700px; margin:10px auto 0; }
     .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
     .reader-font-btns { display:flex; gap:6px; }
@@ -840,34 +880,25 @@
     .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
-    /* Presentation slide viewer. After several rounds fighting CSS
-       rotation simulation (forcing the image to rotate 90deg on a
-       portrait phone to look "landscape"), Per's own call: stop
-       simulating rotation at all. Every bug this viewer has had —
-       controls invisible, sizing wrong, taps not registering, the
-       close button seeming unresponsive — traced back to that one
-       rotation transform and the position:fixed/JS-sizing machinery
-       needed to make content live inside it. Plain, ordinary layout
-       instead: the image sits in normal flow, sized with object-fit
-       so it fills whatever space is actually available, and the
-       browser handles real device rotation on its own the way it
-       handles every other web page — no transform, no fixed
-       positioning, no JS-computed pixel dimensions, no
-       orientationchange listener needed at all. Per's own call too:
-       no on-screen nav buttons — swipe was the one thing that worked
-       reliably across every round, so that's the only navigation
-       here, plus the player's existing close button (untouched,
-       unrelated to any of this). */
-    .slide-viewer-wrap { position:relative; width:100%; max-width:700px; height:70vh; display:flex; align-items:center; justify-content:center; touch-action:none; margin:0 auto; }
-    .slide-layer { position:absolute; inset:0; margin:auto; max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); will-change:transform; }
-    /* A real physical landscape rotation (short screen height) gets more
-       of that height and width via a plain CSS media query — no JS, no
-       window.innerWidth reads, so nothing here can be stale or racy the
-       way the old orientationchange-driven sizing was. */
-    @media (orientation:landscape) and (max-height:500px) {
-      .slide-viewer-wrap { height:88vh; max-width:94vw; }
-    }
-    .slide-counter { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:rgba(255,255,255,0.7); font-size:12.5px; background:rgba(10,15,13,0.5); padding:3px 10px; border-radius:10px; }
+    /* Presentation slide viewer — rebuilt on Swiper.js (Per Bot 119)
+       after a hand-rolled touchstart/touchend implementation kept
+       hitting real-device-only WebKit quirks across many rounds that
+       never reproduced in this sandbox's Chromium testing: taps not
+       registering under a CSS rotation, swipe silently not firing,
+       native page-panning competing with the gesture. Swiper is a
+       widely-used library that's already been tested against exactly
+       this class of real-device touch/gesture bug — rather than keep
+       guessing at WebKit behavior I can't directly observe, this trades
+       that guesswork for code already proven correct on real phones.
+       No CSS rotation, no JS-computed pixel dimensions, no
+       orientationchange listener — Swiper handles resize/orientation
+       internally, and the shell below just fills whatever height the
+       flex layout above (.player-media) actually gives it. */
+    .pptx-swiper-shell { position:relative; width:100%; max-width:700px; margin:0 auto; }
+    .pptx-swiper { width:100%; height:100%; border-radius:8px; overflow:hidden; }
+    .pptx-swiper .swiper-slide { display:flex; align-items:center; justify-content:center; background:transparent; }
+    .pptx-swiper .swiper-slide img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
+    .slide-counter { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:rgba(255,255,255,0.7); font-size:12.5px; background:rgba(10,15,13,0.5); padding:3px 10px; border-radius:10px; z-index:2; pointer-events:none; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
@@ -974,6 +1005,13 @@
        reading the zip container; must load before epub.js itself. -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+  <!-- Presentation slide viewer (Per Bot 119) — Swiper.js, replacing a
+       hand-rolled touch implementation that kept failing on real
+       devices in ways this sandbox's Chromium testing couldn't catch.
+       Bundle build (CSS+JS in one each) so this works as plain script
+       tags, no module bundler needed for the rest of this page. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
 </head>
 <body>
 <script>
@@ -4562,98 +4600,13 @@
   // ── Presentation slide viewer ── Per's request — pptx files were
   // falling into the generic "Open document" download link since
   // browsers can't render them inline. Each slide is a pre-converted
-  // image (see pptx-to-slides.js); this just pages through them, same
-  // reader-controls chrome as the EPUB reader.
-  let _currentSlides = [];
-  let _currentSlideIndex = 0;
-  // Which of the two stacked <img> layers is currently the visible/
-  // active one — Per's request for a real sliding motion between
-  // slides instead of an instant jump needed two layers (one exiting,
-  // one entering) animating past each other, not just swapping one
-  // <img>'s src in place.
-  let _pptxActiveLayer = 'A';
-
-  // direction: 'next' | 'prev' | undefined. undefined means the
-  // initial load — shows the first slide with no animation at all,
-  // since there's nothing to slide FROM yet.
-  function renderCurrentSlide(direction) {
-    const imgA = document.getElementById('slideImgA');
-    const imgB = document.getElementById('slideImgB');
-    const counter = document.getElementById('slideCounter');
-    if (!imgA || !_currentSlides.length) return;
-    const active = _pptxActiveLayer === 'A' ? imgA : imgB;
-    const incoming = _pptxActiveLayer === 'A' ? imgB : imgA;
-
-    if (!direction) {
-      active.src = _currentSlides[_currentSlideIndex];
-      active.style.transition = 'none';
-      active.style.transform = 'translateX(0)';
-      active.style.zIndex = '2';
-      incoming.style.transition = 'none';
-      incoming.style.transform = 'translateX(100%)';
-      incoming.style.zIndex = '1';
-      counter.textContent = `${_currentSlideIndex + 1} / ${_currentSlides.length}`;
-      return;
-    }
-
-    // 'next' slides the new content in from the right, pushing the
-    // current slide off to the left — 'prev' mirrors that.
-    const enterFrom = direction === 'next' ? '100%' : '-100%';
-    const exitTo = direction === 'next' ? '-100%' : '100%';
-
-    incoming.src = _currentSlides[_currentSlideIndex];
-    incoming.style.transition = 'none';
-    incoming.style.transform = `translateX(${enterFrom})`;
-    incoming.style.zIndex = '2';
-    active.style.zIndex = '1';
-    // Force a reflow so the browser actually paints the starting
-    // position above before the transition below is allowed to
-    // animate — without this the browser can coalesce both style
-    // changes into one and skip the animation entirely.
-    void incoming.offsetWidth;
-
-    incoming.style.transition = 'transform 320ms ease';
-    active.style.transition = 'transform 320ms ease';
-    requestAnimationFrame(() => {
-      incoming.style.transform = 'translateX(0)';
-      active.style.transform = `translateX(${exitTo})`;
-    });
-
-    counter.textContent = `${_currentSlideIndex + 1} / ${_currentSlides.length}`;
-    _pptxActiveLayer = _pptxActiveLayer === 'A' ? 'B' : 'A';
-  }
-  function pptxNextSlide() {
-    if (_currentSlideIndex < _currentSlides.length - 1) { _currentSlideIndex++; renderCurrentSlide('next'); }
-  }
-  function pptxPrevSlide() {
-    if (_currentSlideIndex > 0) { _currentSlideIndex--; renderCurrentSlide('prev'); }
-  }
-
-  // Per's own call, after several rounds fighting the rotation
-  // simulation: stop simulating rotation. No CSS transform, no
-  // position:fixed, no JS-computed pixel dimensions, no
-  // orientationchange listener — the image just sits in normal page
-  // flow sized by object-fit, and a real physical rotation of the
-  // phone reflows it the way any ordinary web page would, which the
-  // browser already handles correctly on its own. Swipe is the only
-  // navigation (the one thing that worked reliably through every
-  // earlier round); the existing player close button handles exit,
-  // untouched and unrelated to any of this.
-  const PPTX_SWIPE_THRESHOLD = 40;
-  let _pptxTouchStartX = 0, _pptxTouchStartY = 0;
-  function pptxTouchStart(e) {
-    const t = e.changedTouches[0];
-    _pptxTouchStartX = t.clientX;
-    _pptxTouchStartY = t.clientY;
-  }
-  function pptxTouchEnd(e) {
-    const t = e.changedTouches[0];
-    const deltaX = t.clientX - _pptxTouchStartX;
-    const deltaY = t.clientY - _pptxTouchStartY;
-    if (Math.abs(deltaX) > PPTX_SWIPE_THRESHOLD && Math.abs(deltaX) > Math.abs(deltaY)) {
-      if (deltaX < 0) pptxNextSlide(); else pptxPrevSlide();
-    }
-  }
+  // image (see pptx-to-slides.js). Rebuilt on Swiper.js (Per Bot 119)
+  // after a hand-rolled version kept hitting real-device-only WebKit
+  // touch bugs across many rounds — see the CSS comment above
+  // .pptx-swiper-shell for the full reasoning. Swiper owns all touch/
+  // swipe/resize handling now; this just feeds it slide URLs and reads
+  // back which one is showing for the counter text.
+  let _pptxSwiper = null;
 
   async function openPptxSlideViewer(f, url) {
     const mediaEl = document.getElementById('playerMedia');
@@ -4674,21 +4627,31 @@
         mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">${data.error || 'Could not open this presentation.'}</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
         return;
       }
-      _currentSlides = data.slides;
-      _currentSlideIndex = 0;
-      _pptxActiveLayer = 'A';
       document.getElementById('playerOverlay').classList.add('no-outer-scroll');
+      const slidesHtml = data.slides.map(src => `<div class="swiper-slide"><img src="${src}" alt="Slide"></div>`).join('');
       mediaEl.innerHTML = `
-        <div class="slide-viewer-wrap" id="slideViewerWrap">
-          <img class="slide-layer" id="slideImgA" alt="Slide">
-          <img class="slide-layer" id="slideImgB" alt="Slide">
-          <div class="slide-counter" id="slideCounter"></div>
+        <div class="pptx-swiper-shell">
+          <div class="pptx-swiper" id="pptxSwiper">
+            <div class="swiper-wrapper">${slidesHtml}</div>
+          </div>
+          <div class="slide-counter" id="slideCounter">1 / ${data.slides.length}</div>
         </div>
       `;
-      renderCurrentSlide();
-      const wrap = document.getElementById('slideViewerWrap');
-      wrap.addEventListener('touchstart', pptxTouchStart, { passive: true });
-      wrap.addEventListener('touchend', pptxTouchEnd, { passive: true });
+      if (_pptxSwiper) { _pptxSwiper.destroy(true, true); _pptxSwiper = null; }
+      _pptxSwiper = new Swiper('#pptxSwiper', {
+        speed: 320,
+        // Swiper's own touch handling — this is the whole point of the
+        // rebuild, replacing hand-rolled touchstart/touchend detection
+        // that kept losing to real WebKit gesture-recognition quirks
+        // this sandbox's Chromium testing couldn't reproduce.
+        threshold: 8,
+        on: {
+          slideChange(sw) {
+            const counter = document.getElementById('slideCounter');
+            if (counter) counter.textContent = `${sw.activeIndex + 1} / ${data.slides.length}`;
+          }
+        }
+      });
     } catch (e) {
       mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">Could not open this presentation — network error.</div><a class="doc-link" href="${url}" target="_blank" rel="noopener" style="margin-top:14px">Download instead</a>`;
     }
@@ -4835,7 +4798,9 @@
       // genuine pagination and adjustable text size, not a page-image
       // imitation of it.
       mediaEl.innerHTML = `
-        <div id="readerBox" class="reader-box"></div>
+        <div id="readerBox" class="reader-box">
+          <div id="epubSwipeCapture" class="epub-swipe-capture"></div>
+        </div>
         <div id="readerTocPanel" class="reader-toc-panel"></div>
         <div class="reader-controls">
           <button class="reader-nav-btn" onclick="epubPrevPage()" title="Previous page">‹</button>
@@ -4884,44 +4849,17 @@
         document.getElementById('playerOverlay').classList.add('no-outer-scroll');
         _epubFontPct = 100;
         rendition.themes.fontSize(_epubFontPct + '%');
-        // Per reported swipe still not working on the real device despite
-        // this mechanism testing correctly in Chromium (Per Bot 110).
-        // New theory, and a real fix rather than another guess: epub.js
-        // renders each page inside its OWN iframe, with its own document —
-        // if THAT document's own touch-action allows native scrolling/
-        // panning, iOS Safari can consume a touch gesture as "start
-        // scrolling this iframe" before ever forwarding a clean
-        // touchstart/touchend pair back out to the rendition listeners
-        // below. Chromium's touch handling doesn't reproduce this
-        // specific competition the same way, which is exactly why it
-        // could test correctly there and still fail on a real iPhone.
-        // epub.js's own Contents class exposes addStylesheetRules()
-        // precisely for injecting CSS into that inner document — used
-        // here via the 'content' hook, which fires once per rendered
-        // section/page, so this applies to every page turned to, not
-        // just the first.
-        rendition.hooks.content.register((contents) => {
-          contents.addStylesheetRules({
-            'html, body': { 'touch-action': 'none' }
-          });
-        });
-        // Per's request — swipe instead of relying on the ‹ › buttons.
-        // epub.js renders book content inside its OWN iframe (for
-        // sandboxing) — a plain listener on the outer #readerBox div
-        // would only catch touches on the thin margin around that
-        // iframe, not the actual book text most swipes land on. Traced
-        // through epub.js's own source (Contents.triggerEvent →
-        // Rendition.passEvents → triggerViewEvent) to confirm
-        // rendition.on('touchstart'/'touchend', ...) genuinely forwards
-        // the real native TouchEvent out of the iframe — this is the
-        // documented, correct mechanism, not a guess.
-        //
-        // clientX/clientY throughout, not screenX/screenY — screenX/Y
-        // are physical-screen-absolute coordinates, and mixing those
-        // with a bounding rect measured from the IFRAME's own internal
-        // document (a different coordinate space entirely) is a real
-        // mismatch that can misfire depending on browser/OS specifics.
-        // clientX/Y stays consistently viewport-relative on both ends.
+        // Per Bot 119 — see the .epub-swipe-capture CSS comment above for
+        // the full reasoning. This listens on a plain div in the PARENT
+        // document, never inside epub.js's iframe, so it can't be
+        // affected by whatever real WebKit-specific iframe touch quirk
+        // defeated every previous attempt (cross-iframe forwarding via
+        // rendition.on('touchstart'/'touchend'), then injecting
+        // touch-action:none inside the iframe itself — both tested
+        // correctly in this sandbox's Chromium, both still reported
+        // broken on the real device). clientX/clientY throughout, both
+        // ends now genuinely in the same coordinate space since there's
+        // no iframe boundary being crossed at all.
         let _epubTouchStart = null;
         function epubHandleSwipeEnd(endX, endY) {
           if (!_epubTouchStart) return;
@@ -4934,25 +4872,13 @@
           if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return; // vertical-dominant or too short — not a page-turn gesture
           if (hRatio < 0) rendition.next(); else rendition.prev();
         }
-        rendition.on('touchstart', (e) => {
-          const t = e.changedTouches && e.changedTouches[0];
-          if (t) _epubTouchStart = { x: t.clientX, y: t.clientY };
-        });
-        rendition.on('touchend', (e) => {
-          const t = e.changedTouches && e.changedTouches[0];
-          if (t) epubHandleSwipeEnd(t.clientX, t.clientY);
-        });
-        // Defense-in-depth fallback on the outer wrapper itself — covers
-        // the margin/padding area around the iframe, and means a swipe
-        // still works even in the unlikely case epub.js's own forwarding
-        // doesn't fire for some browser-specific reason.
-        const readerBoxEl = document.getElementById('readerBox');
-        if (readerBoxEl) {
-          readerBoxEl.addEventListener('touchstart', (e) => {
+        const swipeCaptureEl = document.getElementById('epubSwipeCapture');
+        if (swipeCaptureEl) {
+          swipeCaptureEl.addEventListener('touchstart', (e) => {
             const t = e.changedTouches[0];
             _epubTouchStart = { x: t.clientX, y: t.clientY };
           }, { passive: true });
-          readerBoxEl.addEventListener('touchend', (e) => {
+          swipeCaptureEl.addEventListener('touchend', (e) => {
             const t = e.changedTouches[0];
             epubHandleSwipeEnd(t.clientX, t.clientY);
           }, { passive: true });
@@ -5081,6 +5007,7 @@
     overlayEl.classList.remove('video-mode');
     overlayEl.classList.remove('reader-mode');
     if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; _currentEpubRendition = null; _epubToc = []; _currentEpubFirstHref = null; }
+    if (_pptxSwiper) { _pptxSwiper.destroy(true, true); _pptxSwiper = null; }
     document.getElementById('fullscreenBtn').style.display = 'none';
     document.getElementById('fullscreenBtn').textContent = 'Full screen';
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
