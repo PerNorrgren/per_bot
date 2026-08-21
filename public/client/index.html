@@ -950,6 +950,17 @@
        on scrolling, fullscreen quirks, or the browser's own back button. */
     .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; touch-action:none; }
     .player-overlay.video-mode .player-close-floating, .player-overlay.reader-mode .player-close-floating { display:flex; }
+    /* Per's request — the epub reader had two separate rows for exit:
+       the floating X up top, and the actual reading controls (prev/toc/
+       font/next) down at the bottom, on a screen where landscape
+       already has limited height to spare. The reader-controls row now
+       includes its own × button (see the reader-controls markup), so
+       the separate floating one is redundant here specifically — hidden
+       just for epub (not pptx, which has no button row of its own at
+       all and still needs the floating close button as its only way
+       out), reclaiming that whole row of height for the reader-controls
+       and reader-box below. */
+    .player-overlay.epub-reader-active .player-close-floating { display:none; }
     /* Per Bot 15c — the floating close button is position:fixed, independent
        of the title's own layout, so a long title centered edge-to-edge could
        run straight under/through it on a narrow screen — exactly the
@@ -4625,10 +4636,42 @@
   }
   window.addEventListener('resize', epubHandleResize);
   window.addEventListener('orientationchange', epubHandleResize);
+  // Per found a second real symptom of the same underlying timing issue
+  // Per Bot 124 dealt with for scroll position: a wide blank band
+  // appearing in landscape, cutting off real text. Likely cause: the
+  // resize/orientationchange event above can fire before the CSS flex
+  // layout (reader-box's height:100% within its flex-column parent) has
+  // actually finished reflowing to its final size — epub.js's resize()
+  // then measures a stale height and lays out pages against it, leaving
+  // a mismatch between what it rendered for and what's actually visible
+  // once the layout genuinely settles a moment later. Same fix as
+  // before: a short delayed retry, catching the real final size rather
+  // than trusting the first measurement taken.
+  function epubHandleResizeDelayed() {
+    [50, 150, 300].forEach(delay => setTimeout(epubHandleResize, delay));
+  }
+  window.addEventListener('resize', epubHandleResizeDelayed);
+  window.addEventListener('orientationchange', epubHandleResizeDelayed);
+  // Per's request — remember the font size chosen last time, rather
+  // than always starting back at 100%. One shared save point used
+  // everywhere _epubFontPct changes (the buttons here, and the pinch
+  // gesture below), so there's only one place this can drift out of
+  // sync with what's actually applied.
+  function epubSaveFontPct() {
+    try { localStorage.setItem('epub_font_pct', String(_epubFontPct)); } catch (e) {}
+  }
+  function epubLoadFontPct() {
+    try {
+      const saved = parseInt(localStorage.getItem('epub_font_pct'), 10);
+      if (saved && saved >= 70 && saved <= 200) return saved;
+    } catch (e) {}
+    return 100;
+  }
   function epubFontSize(delta) {
     if (!_currentEpubRendition) return;
     _epubFontPct = Math.max(70, Math.min(200, _epubFontPct + delta * 15));
     _currentEpubRendition.themes.fontSize(_epubFontPct + '%');
+    epubSaveFontPct();
   }
   // "Back to the beginning" — jumps to the first real table-of-contents
   // entry rather than display() with no argument, since some books'
@@ -4845,6 +4888,7 @@
     // specifically for pptx/epub below once each of those is confirmed
     // as what's actually being opened.
     overlayEl.classList.remove('no-outer-scroll');
+    overlayEl.classList.remove('epub-reader-active');
     overlayEl.classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = type === 'video' ? '' : 'none';
 
@@ -4896,6 +4940,7 @@
           </div>
           ${f.original_pdf_filename ? `<button class="reader-nav-btn" onclick="downloadOriginalPdf('${f.id}')" title="Download the original PDF">⬇</button>` : ''}
           <button class="reader-nav-btn" onclick="epubNextPage()" title="Next page">›</button>
+          <button class="reader-nav-btn" onclick="closePlayerOverlay()" title="Close">&times;</button>
         </div>
       `;
       try {
@@ -4930,8 +4975,8 @@
         // the one case that's actually supposed to work that way.
         const book = ePub(epubSrc, epubReaderUrl ? {} : { openAs: 'epub' });
         const rendition = book.renderTo('readerBox', { width: '100%', height: '100%', flow: 'paginated' });
-        document.getElementById('playerOverlay').classList.add('no-outer-scroll');
-        _epubFontPct = 100;
+        document.getElementById('playerOverlay').classList.add('no-outer-scroll', 'epub-reader-active');
+        _epubFontPct = epubLoadFontPct();
         rendition.themes.fontSize(_epubFontPct + '%');
         // Per Bot 119 — see the .epub-swipe-capture CSS comment above for
         // the full reasoning. This listens on a plain div in the PARENT
@@ -5011,6 +5056,7 @@
                 const ratio = _epubPinchLastDist / _epubPinchStartDist;
                 _epubFontPct = Math.max(70, Math.min(200, Math.round(_epubPinchStartPct * ratio)));
                 rendition.themes.fontSize(_epubFontPct + '%');
+                epubSaveFontPct();
                 _epubPinchStartDist = null;
                 _epubPinchLastDist = null;
               }
@@ -5203,6 +5249,7 @@
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.remove('video-mode');
     overlayEl.classList.remove('reader-mode');
+    overlayEl.classList.remove('epub-reader-active');
     if (_currentEpubBook) { _currentEpubBook.destroy(); _currentEpubBook = null; _currentEpubRendition = null; _epubToc = []; _currentEpubFirstHref = null; }
     if (_pptxSwiper) { _pptxSwiper.destroy(true, true); _pptxSwiper = null; }
     document.getElementById('fullscreenBtn').style.display = 'none';
