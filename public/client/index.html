@@ -5033,6 +5033,41 @@
   // the several places the player overlay can open — the button is
   // always in the DOM (just display:none when not needed), so keeping
   // it correctly positioned at all times costs nothing.
+  // Per's screenshot showed this affecting ORDINARY buttons too — Next,
+  // Close, list rows, the offline toggle — not just the individually
+  // position:fixed close button and Tomte. That ruled out a per-element
+  // fix: those ordinary buttons aren't position:fixed themselves, so
+  // they must be inheriting the same offset from a shared ancestor.
+  // .panel (position:fixed; inset:0) wraps literally everything in the
+  // app — if IT is subject to the same landscape paint-vs-touch
+  // mismatch (see syncPlayerCloseButtonPosition's comment below for the
+  // full mechanism), every descendant positioned relative to it via
+  // normal flow or position:absolute (which is exactly how the lesson
+  // chooser, its buttons, and its rows are laid out) would inherit that
+  // one offset uniformly — matching exactly what Per described. Fixing
+  // .panel's own actual position/size from visualViewport should
+  // cascade-correct all of that at once, rather than needing a
+  // per-element patch for every button in the app.
+  function syncPanelToVisualViewport() {
+    const panel = document.querySelector('.panel');
+    const vv = window.visualViewport;
+    if (!panel || !vv) return;
+    panel.style.position = 'fixed';
+    panel.style.left = vv.offsetLeft + 'px';
+    panel.style.top = vv.offsetTop + 'px';
+    panel.style.width = vv.width + 'px';
+    panel.style.height = vv.height + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncPanelToVisualViewport);
+    window.visualViewport.addEventListener('scroll', syncPanelToVisualViewport);
+  }
+  window.addEventListener('resize', syncPanelToVisualViewport);
+  document.addEventListener('DOMContentLoaded', syncPanelToVisualViewport);
+  syncPanelToVisualViewport();
+
   function syncPlayerCloseButtonPosition() {
     const btn = document.querySelector('.player-close-floating');
     const vv = window.visualViewport;
