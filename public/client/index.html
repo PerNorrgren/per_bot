@@ -891,7 +891,7 @@
     .player-overlay.no-outer-scroll .player-media .reader-box,
     .player-overlay.no-outer-scroll .player-media .pptx-swiper-shell { flex:1; min-height:0; }
     .player-overlay.reader-mode .player-text { display:none; }
-    .reader-box { width:100%; max-width:700px; height:100%; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; position:relative; transition:opacity 140ms ease; }
+    .reader-box { width:100%; max-width:700px; height:100%; background:#fdfaf3; border-radius:10px; margin:0 auto; touch-action:none; position:relative; transition:opacity 220ms ease; }
     /* Per Bot 119 — epub swipe never worked on a real device despite the
        underlying rendition.on('touchstart'/'touchend', ...) forwarding
        mechanism testing correctly in Chromium (Per Bot 110) and even
@@ -4964,7 +4964,21 @@
         // change triggers a real reflow of the paginated content, which
         // is expensive enough that doing it continuously on every
         // touchmove would be janky rather than smooth.
+        //
+        // Real bug in the first version of this, caught by Per actually
+        // trying it: touchend does NOT reliably deliver both fingers of
+        // a pinch together in changedTouches — real multi-touch endings
+        // lift one finger at a time, each as its OWN touchend event with
+        // only that one finger in changedTouches, so a check requiring
+        // both points in one changedTouches array essentially never
+        // matched. Track the live distance continuously via touchmove
+        // instead (both touches are still present mid-gesture, so
+        // e.touches[0]/[1] reads correctly there), and use whatever the
+        // LAST known two-finger distance was once a finger actually
+        // lifts — that's the real end-of-pinch measurement, just read
+        // from the right event.
         let _epubPinchStartDist = null;
+        let _epubPinchLastDist = null;
         let _epubPinchStartPct = 100;
         function touchDist(t0, t1) {
           const dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
@@ -4975,6 +4989,7 @@
           swipeCaptureEl.addEventListener('touchstart', (e) => {
             if (e.touches.length === 2) {
               _epubPinchStartDist = touchDist(e.touches[0], e.touches[1]);
+              _epubPinchLastDist = _epubPinchStartDist;
               _epubPinchStartPct = _epubFontPct;
               _epubTouchStart = null; // a pinch is not also a swipe
             } else {
@@ -4982,19 +4997,23 @@
               _epubTouchStart = { x: t.clientX, y: t.clientY };
             }
           }, { passive: true });
+          swipeCaptureEl.addEventListener('touchmove', (e) => {
+            if (_epubPinchStartDist && e.touches.length === 2) {
+              _epubPinchLastDist = touchDist(e.touches[0], e.touches[1]);
+            }
+          }, { passive: true });
           swipeCaptureEl.addEventListener('touchend', (e) => {
-            if (_epubPinchStartDist && e.touches.length < 2) {
-              // Last two-finger distance is gone once a finger lifts —
-              // changedTouches still has both points on the touchend
-              // that ends the pinch, which is enough to compute the
-              // final ratio.
-              if (e.changedTouches.length === 2) {
-                const endDist = touchDist(e.changedTouches[0], e.changedTouches[1]);
-                const ratio = endDist / _epubPinchStartDist;
+            if (_epubPinchStartDist) {
+              if (e.touches.length < 2) {
+                // The pinch has ended (fewer than 2 fingers remain) —
+                // apply using the last distance actually measured
+                // during the gesture, not whatever's in this event.
+                const ratio = _epubPinchLastDist / _epubPinchStartDist;
                 _epubFontPct = Math.max(70, Math.min(200, Math.round(_epubPinchStartPct * ratio)));
                 rendition.themes.fontSize(_epubFontPct + '%');
+                _epubPinchStartDist = null;
+                _epubPinchLastDist = null;
               }
-              _epubPinchStartDist = null;
               return;
             }
             const t = e.changedTouches[0];
