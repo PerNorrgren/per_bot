@@ -5085,6 +5085,44 @@
   // the settling whenever it actually happens.
   [100, 300, 600, 1000, 2000].forEach(delay => setTimeout(syncPanelToVisualViewport, delay));
 
+  // Temporary diagnostic (Per Bot 123) — three attempts at the landscape
+  // touch-offset bug (individual buttons, the .panel container, retry
+  // timing) haven't resolved it, and continuing to guess blindly isn't
+  // productive without real numbers from the actual device. This
+  // surfaces exactly what the browser reports at the moment the bug is
+  // visible, via appAlert (dialogs.js) — chosen specifically because
+  // Per's own screenshots show that dialog rendering and responding
+  // correctly even while the bug is active, so it's a reliable way to
+  // get a readable snapshot back rather than guessing at another CSS
+  // fix. Safe to remove once this is solved.
+  function showLayoutDiagnostics() {
+    const vv = window.visualViewport;
+    const panel = document.querySelector('.panel');
+    const closeBtn = document.querySelector('.player-close-floating');
+    const nextBtn = document.querySelector('#playerMedia button, #playerMedia .reader-nav-btn');
+    const rect = (el) => {
+      if (!el) return 'n/a';
+      const r = el.getBoundingClientRect();
+      return `x:${Math.round(r.x)} y:${Math.round(r.y)} w:${Math.round(r.width)} h:${Math.round(r.height)}`;
+    };
+    const lines = [
+      `window.innerW/H: ${window.innerWidth} / ${window.innerHeight}`,
+      `visualViewport w/h: ${vv ? Math.round(vv.width) : 'n/a'} / ${vv ? Math.round(vv.height) : 'n/a'}`,
+      `visualViewport offsetLeft/Top: ${vv ? Math.round(vv.offsetLeft) : 'n/a'} / ${vv ? Math.round(vv.offsetTop) : 'n/a'}`,
+      `visualViewport scale: ${vv ? vv.scale : 'n/a'}`,
+      `window.scrollX/Y: ${window.scrollX} / ${window.scrollY}`,
+      `documentElement.scrollTop: ${document.documentElement.scrollTop}`,
+      `body.scrollTop: ${document.body.scrollTop}`,
+      `devicePixelRatio: ${window.devicePixelRatio}`,
+      `orientation: ${screen.orientation ? screen.orientation.type : 'n/a'}`,
+      `.panel rect: ${rect(panel)}`,
+      `.panel computed left/top: ${panel ? getComputedStyle(panel).left : 'n/a'} / ${panel ? getComputedStyle(panel).top : 'n/a'}`,
+      `close button rect: ${rect(closeBtn)}`,
+      `first list button rect: ${rect(nextBtn)}`,
+    ];
+    appAlert(lines.join('\n'), 'Layout diagnostics');
+  }
+
   function syncPlayerCloseButtonPosition() {
     const btn = document.querySelector('.player-close-floating');
     const vv = window.visualViewport;
@@ -8191,6 +8229,7 @@
       ? `<div style="background:rgba(255,210,140,0.08); border:1px solid rgba(255,210,140,0.25); border-radius:10px; padding:10px 14px; margin-bottom:10px; font-size:13px; color:rgba(255,220,170,0.9)">${lockedBannerText}</div>${descHtml}`
       : descHtml + "Choose how you'd like to experience this:";
     document.getElementById('playerMedia').innerHTML = `
+      <button type="button" onclick="showLayoutDiagnostics()" style="width:100%;margin-bottom:8px;background:rgba(230,175,90,0.12);border:1px solid rgba(230,175,90,0.35);border-radius:8px;color:rgba(240,200,140,0.95);font-family:Georgia,serif;font-size:12px;padding:7px;cursor:pointer">🔧 Diagnostics (temporary — tap if things look off)</button>
       ${!lessonLocked ? `<button type="button" onclick="markWholeLessonOffline('${lesson.id}', this)" style="width:100%;margin-bottom:12px;background:rgba(140,190,230,0.1);border:1px solid rgba(140,190,230,0.3);border-radius:8px;color:rgba(160,200,235,0.9);font-family:Georgia,serif;font-size:12.5px;padding:9px;cursor:pointer">⬇ Mark whole lesson offline</button>` : ''}
       <div class="lesson-chooser-list">
         ${sorted.map((f, i) => {
