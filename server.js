@@ -11150,6 +11150,16 @@ app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
     if (!courseId || lessonNumber === undefined || lessonNumber === null || lessonNumber === '' || !title) {
       return res.status(400).json({ error: 'Missing fields.' });
     }
+    // Per's report — a wrong-course file upload ended up creating a
+    // second lesson with the same number as one that already existed,
+    // silently, with nothing catching it. Lesson numbers only make
+    // sense as unique within their own course (two different courses
+    // can each have their own "Session 7"), so the check is scoped per
+    // courseId, not global.
+    const dupe = db.getLessonsForCourse(courseId).find(l => l.lesson_number === parseInt(lessonNumber));
+    if (dupe) {
+      return res.status(400).json({ error: `This course already has a Session ${lessonNumber} — "${dupe.title}". Use a different number, or open that existing lesson to add files to it instead.` });
+    }
     const lessonId = uuidv4();
     db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client', accessStatus || 'visible');
     if (fileIds?.length) {
@@ -11179,6 +11189,16 @@ app.patch('/api/content/lessons/:id', auth.requireAuthApi(['admin']), (req, res)
     // 0 into 1. Only fall back to 1 when parseInt actually failed (NaN).
     const parsedNumber = parseInt(lessonNumber);
     const finalLessonNumber = Number.isNaN(parsedNumber) ? 1 : parsedNumber;
+    // Same duplicate-number guard as create, above — scoped to this
+    // lesson's own course, and excluding itself (renaming a lesson to
+    // the number it already has isn't a duplicate).
+    const lesson = db.getLesson(req.params.id);
+    if (lesson) {
+      const dupe = db.getLessonsForCourse(lesson.course_id).find(l => l.id !== req.params.id && l.lesson_number === finalLessonNumber);
+      if (dupe) {
+        return res.status(400).json({ error: `This course already has a Session ${finalLessonNumber} — "${dupe.title}". Use a different number.` });
+      }
+    }
     db.updateLesson(req.params.id, finalLessonNumber, title.trim(), description, visibility || 'client', accessStatus || 'visible');
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }

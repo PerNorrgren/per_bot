@@ -781,7 +781,7 @@
      Read-only, no TOC/font controls — this is for "did the upload work,
      does it look right", not a full reading experience (that's the client
      app's job). -->
-<div class="modal-overlay" id="epubPreviewModal">
+<div class="modal-overlay" id="epubPreviewModal" style="z-index:200">
   <div class="modal" style="max-width:520px">
     <h3 id="epTitle">Book preview</h3>
     <div style="display:flex;gap:8px;margin-bottom:6px">
@@ -4591,6 +4591,25 @@ async function saveLesson(){
   }
 
   if(!title||!num){err.textContent='Number and title required.';return;}
+
+  // Per's report — a duplicate lesson number got created silently
+  // during a wrong-course upload, with nothing catching it at the time.
+  // Quick check before submitting, scoped to this course, so the person
+  // gets the same warning immediately rather than only after a round
+  // trip (the server enforces the same rule regardless, as the real
+  // safeguard — this is just the fast path for the common case).
+  try {
+    const courseLessons = await fetch(`/api/content/courses/${courseId}/lessons`).then(r=>r.json());
+    const dupe = courseLessons.find(l => l.id !== editingLessonId && l.lesson_number === parseInt(num));
+    if (dupe) {
+      err.textContent = `This course already has a Session ${num} — "${dupe.title}". Use a different number, or open that existing lesson to add files to it instead.`;
+      return;
+    }
+  } catch (e) {
+    // If this check itself fails to load, don't block saving on it —
+    // the server-side check below still catches a real duplicate.
+    console.error('[saveLesson] duplicate-number pre-check failed', e);
+  }
 
   if(editingLessonId){
     const res=await fetch(`/api/content/lessons/${editingLessonId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
