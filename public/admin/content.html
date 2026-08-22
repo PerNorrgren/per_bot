@@ -2163,6 +2163,31 @@ function cleanUpTitleFromFilename(raw) {
   name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   return name;
 }
+// Per's request — course files (his naming convention: "<Programme
+// name> - Session N <description>", e.g.
+// "FELT_-_Finding_Calm_Session_7_Daily_Top-up_4min.mp3") were defaulting
+// to the full underscore-filled filename as the upload title. The
+// course and lesson already show the programme name, so it doesn't need
+// repeating in every file title — but Per still wants the session
+// number visible at a glance, as a quick check he's attached the file
+// to the right lesson. When a Session/Day/Lesson number is found
+// anywhere in the filename, the default title becomes just that (e.g.
+// "Session 7"); everything else — programme name, description, run
+// time — is dropped. Falls back to the plain extension-stripped,
+// underscore-cleaned name when no such number is present, so this never
+// makes a non-course upload (a meditation, a poem, a blog post) worse.
+// Only ever sets the *default* — the title field stays a normal
+// editable text input either way.
+function deriveUploadTitle(rawName) {
+  let name = rawName.replace(/\.[^.]+$/, ''); // strip extension
+  name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  const m = name.match(/\b(Session|Day|Lesson)\s*0*(\d+)\b/i);
+  if (m) {
+    const label = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    return `${label} ${m[2]}`;
+  }
+  return name;
+}
 async function cleanUpAbChapterTitles(){
   const rows = document.querySelectorAll('#abChapterTable [data-chapter-id]');
   for (const row of rows) {
@@ -2674,7 +2699,7 @@ function renderQ(){
     <div class="upload-item" style="flex-wrap:wrap;gap:6px">
       <span style="font-size:16px">${ficon(it.file.type)}</span>
       <div class="upload-item-name" style="flex:1;min-width:0">
-        <input type="text" value="${it.file.name.replace(/\.[^.]+$/,'')}" onchange="upQueue[${i}].customTitle=this.value"
+        <input type="text" value="${it.customTitle !== undefined ? it.customTitle : deriveUploadTitle(it.file.name)}" onchange="upQueue[${i}].customTitle=this.value"
           style="background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.78);font-size:12px;font-family:Georgia,serif;outline:none;width:100%;padding:2px 0"/>
         <div style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:2px">${fsize(it.file.size)}${inferredLabel}</div>
         ${progressBar}
@@ -2687,7 +2712,7 @@ function renderQ(){
 }
 
 async function uploadOneFile(it, cat, sub) {
-  const title = it.customTitle || it.file.name.replace(/\.[^.]+$/,'');
+  const title = it.customTitle || deriveUploadTitle(it.file.name);
   const facResource = document.getElementById('upFacResource').checked;
 
   // Step 1: ask the server for a presigned R2 upload URL.
