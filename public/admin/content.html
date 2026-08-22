@@ -1378,7 +1378,13 @@ document.addEventListener('click', e => {
   loadPeopleNavBadge();
 
 function ficon(t=''){
-  if(t.includes('audio')||t.includes('mp3')||t.includes('mpeg'))return'🎵';
+  // Per's report — the single musical-note emoji (🎵) renders as a
+  // mostly black/dark glyph on Apple systems by design (full-color
+  // emoji ignore CSS `color`, so no amount of styling fixes that the
+  // way it did for the pencil/replace icon buttons elsewhere). Swapped
+  // for headphones, which has real color and contrast against a dark
+  // background on every platform this app is actually used on.
+  if(t.includes('audio')||t.includes('mp3')||t.includes('mpeg'))return'🎧';
   if(t.includes('video')||t.includes('mp4'))return'🎬';
   if(t.includes('epub'))return'📖';
   if(t.includes('pdf'))return'📕';
