@@ -10686,40 +10686,15 @@ app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['adm
 // process restarts; that's an acceptable trade for not needing a new DB
 // table just to remember button-click history.
 const ADMIN_SCRIPTS = [
-  {
-    id: 'meditation-tags-import',
-    label: 'Meditation tags import (Aug 2026 batch)',
-    description: 'Applies the confirmed theme tags to the August meditation upload batch (156 files). Safe to re-run.',
-    module: './apply_meditation_tags',
-  },
-  {
-    id: 'tag-casing-cleanup',
-    label: 'Tag casing cleanup',
-    description: "Merges tag casing variants (e.g. 'Grounding'/'grounding') into a single lowercase tag, across the whole library. Safe to re-run.",
-    module: './cleanup_tag_casing',
-  },
-  {
-    id: 'set-practices-member-visibility',
-    label: 'Set all practices to Member visibility',
-    description: "Sets every meditation/practice library file (except one-to-one assigned ones) to Member visibility, as a baseline to then hand-pick some down to Explorer. Safe to re-run.",
-    module: './set_practices_member_visibility',
-  },
-  {
-    id: 'import-poems-for-the-soul',
-    label: 'Import Poems for the Soul (68 new)',
-    description: "Adds the 68 poems from Per's Poems_for_the_Soul.docx that aren't already in the library (51 of the 119 in the document were already there). Lands in Writing > Poems at Member visibility. Safe to re-run — checks titles against the live library each time.",
-    module: './import_poems',
-  },
-  {
-    id: 'reconvert-pdf-epubs',
-    label: 'Reconvert already-converted PDFs',
-    description: "Reconverts every PDF that was turned into an EPUB before the running-header/footer and FELT · FIBRE masthead stripping fix existed, so they self-heal instead of permanently keeping the old unstripped content. Safe to re-run.",
-    module: './reconvert_pdf_epubs',
-  },
-  // Add future one-time scripts here: { id, label, description, module }.
-  // The module just needs to export async runImport(log) — see either
-  // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
-  // themselves, as the template.
+  // Per's cleanup — the five scripts that used to live here
+  // (meditation-tags-import, tag-casing-cleanup,
+  // set-practices-member-visibility, import-poems-for-the-soul,
+  // reconvert-pdf-epubs) have all completed their one-time job and were
+  // removed, along with their .js files and any manifest data, in the
+  // same round this comment was added. Add future one-time scripts
+  // here: { id, label, description, module }. The module just needs to
+  // export async runImport(log) — see git history for the removed
+  // entries above as a template if needed.
 ];
 const adminScriptJobs = {}; // id -> job, live progress during THIS process's lifetime only
 
