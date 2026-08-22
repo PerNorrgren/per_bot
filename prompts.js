@@ -294,13 +294,22 @@ ${CLIENT_HAPPINESS_MEANING_CONTEXT}`;
 // wrong or dead number here is a real safety issue, not a cosmetic one.
 // Always appended to every session regardless of language state, so Talk
 // is never left improvising a number from memory.
+//
+// Deep sweep — the Portuguese entry ("Linha 1411") was verified against
+// current search results and does not correspond to any real, dialable
+// national crisis number in Portugal; nothing in extensive corroborated
+// results (gov.pt, sns24.gov.pt, multiple hospital/university pages) shows
+// it existing. The real, official, 24/7 national line is SNS 24 —
+// 808 24 24 24, option 4 for psychological counselling, run by the
+// Portuguese National Health Service. Every other entry here was also
+// re-verified this same pass and confirmed current and correct.
 const CRISIS_RESOURCES = {
   en: 'Samaritans — call 116 123, free, 24/7 (UK and Ireland)',
   nl: '113 Zelfmoordpreventie — bel 113, gratis, 24/7 (chat via 113.nl als je buiten Nederland bent)',
   de: 'TelefonSeelsorge — call 0800 111 0 111, free, 24/7',
   fr: '3114 — numéro national de prévention du suicide, gratuit, 24/7',
   es: 'Línea 024 — atención a la conducta suicida, gratuita, 24/7',
-  pt: 'Linha 1411 — Linha Nacional de Prevenção do Suicídio, gratuita, 24/7',
+  pt: 'SNS 24 — call 808 24 24 24 and select option 4 for psychological counselling, free, 24/7 (National Health Service)',
 };
 const CLIENT_CRISIS_RESOURCES = (languageCode) => {
   const resource = CRISIS_RESOURCES[languageCode] || CRISIS_RESOURCES.en;

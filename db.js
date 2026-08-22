@@ -5310,14 +5310,6 @@ function getSessionsForClient(clientId) {
 function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
 }
-// Per Bot 18 — self-guided Talk sessions save as type='self' with no
-// facilitator_id (see the addSession call right after a Talk session
-// generates its summary). A facilitator-led session is a different type
-// and shouldn't count here — this is specifically about whether the
-// person has used the self-serve Talk feature, not sessions generally.
-function hasEverUsedTalk(userId) {
-  return !!queryOne("SELECT 1 FROM sessions WHERE client_id=? AND type='self' LIMIT 1", [userId]);
-}
 
 // ── Content shares (Per Bot 22) ── Admin (or later, facilitator) sharing
 // specific library files with specific people — see content_shares table
@@ -6836,7 +6828,16 @@ function pruneLoginLog() {
 // (right below) already inserts THIS session's own row before the
 // system prompt gets built each turn — without excluding it, a
 // brand-new first-timer would immediately see their own just-started
-// session and conclude they'd used Talk before.
+// session and conclude they'd used Talk before. excludeSessionId is
+// optional — the Tomte "try Talk" tip condition calls this with just a
+// userId, which is fine: an empty string never matches a real session
+// id, so the exclusion is simply a no-op there.
+//
+// Deep sweep — this used to silently coexist with a second, completely
+// different function also named hasEverUsedTalk (checking the older
+// sessions table's type='self' rows instead of talk_sessions). Since
+// this one was declared later in the file, it always silently won at
+// runtime — the other definition was 100% dead code, removed.
 function hasEverUsedTalk(userId, excludeSessionId) {
   return !!queryOne(`SELECT 1 as x FROM talk_sessions WHERE user_id=? AND id != ? LIMIT 1`, [userId, excludeSessionId || '']);
 }

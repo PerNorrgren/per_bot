@@ -1342,26 +1342,20 @@ function emailSessionReminder1Hour(user, courseTitle, sessionTitle, sessionDateS
     { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
 }
 
-// Per Bot 18 — fires when a manually-honoured membership period (set by
-// hand in People admin, not tied to any Stripe subscription — the
-// carried-over-legacy-member case) actually runs out. Distinct from
-// both the trial sequence (that's a brand new trial ending) and Savers
-// (that's a real Stripe subscription lapsing) — this is specifically
-// "the free time we gave you has now been used up."
-async function emailMembershipHonouredEnded(user) {
-  const b = brand();
-  return sendEmail(user.email, `Your access has come to an end`,
-    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
-      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">The membership time we carried over for you has now come to an end. Your account is on the free Explorer tier — your history's still there, and so is the free content.</p>
-      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">If you'd like full access again, you're welcome to subscribe whenever suits — no rush, and nothing about picking it back up later is complicated.</p>
-      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
-      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
-      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
-    </div>`
-  );
-}
+// Deep sweep — removed emailMembershipHonouredEnded here (Per Bot 18):
+// "fires when a manually-honoured membership period (set by hand in
+// People admin, not tied to any Stripe subscription) actually runs
+// out." It was never actually called anywhere, and tracing why turned
+// up the real reason: sweepExpiredMemberships/checkTrialExpiry in
+// db.js (redesigned at Per Bot 21) already treats a manually-honoured
+// member_expires_at lapsing exactly the same as a real Stripe
+// cancellation — same 14-day Savers grace sequence, same mid/final
+// emails (see startSaversGrace, 'cancellation'). This function was the
+// original one-shot notification from before that redesign unified
+// both paths; it was simply never removed once superseded. Reviving it
+// now would either duplicate emailSaversCancelFinal's message or
+// bypass the intentional 14-day grace window — the right fix was
+// deleting it, not wiring it up.
 
 const SAVERS_MID_SENDERS = { cancellation: emailSaversCancelMid, payment_failure: emailSaversFailureMid };
 const SAVERS_FINAL_SENDERS = { cancellation: emailSaversCancelFinal, payment_failure: emailSaversFailureFinal };
