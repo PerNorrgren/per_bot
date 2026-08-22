@@ -1192,6 +1192,52 @@
     label('.ql-columns-3', '3 col', 'Insert three side-by-side columns');
     label('.ql-ai-polish', '✨ AI Help', opts.aiPolishTooltip || 'Suggest an improved version of the whole message');
 
+    // Per's report — pasting text, or clicking an alignment/format
+    // button, was jumping the whole modal back to its top, forcing a
+    // scroll back down to find the edit again. Root cause: Quill's own
+    // selection-tracking scrolls whatever it thinks the page's
+    // scrolling container is to keep the cursor visible after a paste
+    // or format change, but was never told this editor actually lives
+    // inside a scrollable modal — so it ends up resetting that modal's
+    // own scroll position as a side effect. Rather than depend on
+    // identifying Quill's exact internal container (fragile across
+    // Quill versions/instances), this snapshots the real, visible
+    // scroll position right before the action starts and puts it back
+    // a few times as the DOM settles afterward — works no matter which
+    // element actually got scrolled.
+    const guardScroller = (() => {
+      let node = mountEl.parentElement;
+      while (node && node !== document.body) {
+        const style = window.getComputedStyle(node);
+        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) return node;
+        node = node.parentElement;
+      }
+      return document.scrollingElement || document.documentElement;
+    })();
+    function guardScrollPosition() {
+      const docEl = document.scrollingElement || document.documentElement;
+      const savedTop = guardScroller.scrollTop;
+      const savedDocTop = docEl.scrollTop;
+      const restore = () => {
+        if (guardScroller.scrollTop !== savedTop) guardScroller.scrollTop = savedTop;
+        if (docEl !== guardScroller && docEl.scrollTop !== savedDocTop) docEl.scrollTop = savedDocTop;
+      };
+      // Several passes across the next few frames/ticks — Quill's own
+      // scroll correction sometimes lands a beat after the paste/format
+      // itself, not synchronously with it.
+      requestAnimationFrame(restore);
+      requestAnimationFrame(() => requestAnimationFrame(restore));
+      setTimeout(restore, 50);
+      setTimeout(restore, 200);
+    }
+    // mousedown (not click) so this fires — and takes its snapshot —
+    // before Quill's own toolbar click handling runs at all.
+    toolbarEl.addEventListener('mousedown', guardScrollPosition, true);
+    // Capture phase, registered ahead of the paste handlers below, so
+    // the snapshot happens before anything (ours or Quill's own default
+    // paste handling) starts changing the document.
+    q.root.addEventListener('paste', guardScrollPosition, true);
+
     // Tracks the last image clicked anywhere in the editor, including
     // inside a columns-block cell — see linkSelectedImage above for why
     // this has to work independently of Quill's own selection tracking.
