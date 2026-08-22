@@ -10701,6 +10701,12 @@ const ADMIN_SCRIPTS = [
   // here: { id, label, description, module }. The module just needs to
   // export async runImport(log) — see git history for the removed
   // entries above as a template if needed.
+  {
+    id: 'bulk-convert-pdfs-to-epub',
+    label: 'Convert all PDFs to readable books',
+    description: 'Converts every PDF still sitting in the library as a plain PDF into the proper readable book format, all at once — the same conversion an upload (or a student\'s first open) already does automatically, just run eagerly across everything that predates that feature instead of waiting for someone to happen to open each one.',
+    module: './bulk_convert_pdfs_to_epub',
+  },
 ];
 const adminScriptJobs = {}; // id -> job, live progress during THIS process's lifetime only
 
