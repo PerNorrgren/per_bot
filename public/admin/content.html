@@ -1374,6 +1374,7 @@ document.addEventListener('click', e => {
 function ficon(t=''){
   if(t.includes('audio')||t.includes('mp3')||t.includes('mpeg'))return'🎵';
   if(t.includes('video')||t.includes('mp4'))return'🎬';
+  if(t.includes('epub'))return'📖';
   if(t.includes('pdf'))return'📕';
   if(t.includes('image'))return'🖼️';
   if(t.includes('word')||t.includes('document'))return'📝';
@@ -1408,14 +1409,38 @@ async function toggleLessonFilePreview(refId, fileId, fileType) {
   if (!row) return;
   const isAudio = fileType.includes('audio') || fileType.includes('mpeg');
   const isVideo = fileType.includes('video') || fileType.includes('mp4');
+  // Per's report — clicking a lesson file sometimes did nothing at all:
+  // no error, no new tab, nothing in the console. Root cause: for a
+  // plain (non-audio/video) file this used to call window.open() only
+  // *after* an awaited fetch — on some setups the browser no longer
+  // treats that as "triggered by a real click" by the time the await
+  // resolves, so the tab gets silently blocked as a popup. Browsers
+  // don't log blocked popups as errors, hence nothing in the console
+  // either — exactly the symptom Per saw. Fix: open the blank tab
+  // synchronously, right here inside the real click, then point that
+  // already-open tab at the real URL once it's known. If something
+  // goes wrong instead, the blank tab is closed again and the actual
+  // error is shown and logged, rather than silently swallowed.
+  let preopened = null;
+  if (!isAudio && !isVideo) preopened = window.open('', '_blank');
   let url;
   try {
     const res = await fetch(`/api/content/library/${fileId}/playback-url`);
     const data = await res.json();
+    if (!res.ok || !data.url) {
+      console.error('[toggleLessonFilePreview] playback-url failed', res.status, data);
+      if (preopened) preopened.close();
+      appAlert(data.error || `Could not open this file (server said ${res.status}).`);
+      return;
+    }
     url = data.url;
-  } catch(e) { /* falls through to the no-url error below */ }
-  if (!url) { alert('Could not load that file right now.'); return; }
-  if (!isAudio && !isVideo) { window.open(url, '_blank'); return; }
+  } catch (e) {
+    console.error('[toggleLessonFilePreview] network error', e);
+    if (preopened) preopened.close();
+    appAlert('Could not reach the server to open this file — check your connection and try again.');
+    return;
+  }
+  if (!isAudio && !isVideo) { if (preopened) preopened.location = url; else window.open(url, '_blank'); return; }
   const wrap = document.createElement('div');
   wrap.id = existingId;
   wrap.style.cssText = 'padding:4px 10px 6px 28px';
@@ -2793,15 +2818,24 @@ async function uploadOneFile(it, cat, sub) {
 // uploaded since the R2 migration.
 async function openFile(id, fileType) {
   if (fileType === 'application/epub+zip') { openEpubPreview(id); return; }
+  // Same popup-blocking fix as toggleLessonFilePreview above — open the
+  // tab synchronously inside the real click, then point it at the real
+  // URL once known, so an await in between never risks a silently
+  // blocked, invisible "nothing happened" click.
+  const preopened = window.open('', '_blank');
   try {
     const res = await fetch(`/api/content/library/${id}/playback-url`);
     const data = await res.json();
     if (!res.ok || !data.url) {
-      appAlert(data.error || 'Could not open this file.');
+      console.error('[openFile] playback-url failed', res.status, data);
+      preopened.close();
+      appAlert(data.error || `Could not open this file (server said ${res.status}).`);
       return;
     }
-    window.open(data.url, '_blank');
-  } catch {
+    preopened.location = data.url;
+  } catch (e) {
+    console.error('[openFile] network error', e);
+    preopened.close();
     appAlert('Could not open this file — network error.');
   }
 }
@@ -4615,9 +4649,31 @@ async function onLessonFileReplaceSelected(input){
   if (!(await appConfirm(`Replace this file with "${newFile.name}"? The course, quiz, and everyone's progress all stay pointed at it — only the content changes.`))) return;
   const fd = new FormData();
   fd.append('file', newFile);
-  const res = await fetch(`/api/content/library/${fileId}/replace-file`,{method:'POST',body:fd});
-  const data = await res.json();
-  if (!res.ok || !data.ok) { await appAlert(data.error || 'Could not replace this file.'); return; }
+  let data;
+  try {
+    const res = await fetch(`/api/content/library/${fileId}/replace-file`,{method:'POST',body:fd});
+    data = await res.json();
+    if (!res.ok || !data.ok) {
+      console.error('[onLessonFileReplaceSelected] replace-file failed', res.status, data);
+      await appAlert(data.error || `Could not replace this file (server said ${res.status}).`);
+      return;
+    }
+  } catch (e) {
+    // Per's report — this used to give no feedback at all if the
+    // request itself failed (a thrown exception here, e.g. res.json()
+    // choking on a non-JSON error response, was never caught — it just
+    // silently died with nothing shown and nothing logged). Now it's
+    // always either a clear success message or a clear error, never
+    // silence either way.
+    console.error('[onLessonFileReplaceSelected] network error', e);
+    await appAlert('Could not reach the server to replace this file — check your connection and try again.');
+    return;
+  }
+  // Per's request — explicit confirmation either way, since a silent
+  // refresh looked identical to nothing having happened at all.
+  await appAlert(data.converted
+    ? 'Replaced — the new file is converted and ready to read.'
+    : 'Replaced — the new file is stored and ready to open.');
   openCourseDetail(curCourseId);
 }
 // Per's request — move a file straight to a different lesson in the same

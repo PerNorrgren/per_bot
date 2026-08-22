@@ -10351,7 +10351,13 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
     fs.unlink(req.file.path, () => {});
 
     db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
-    res.json({ ok: true });
+    // Per's report — replacing a file gave no feedback either way,
+    // success or failure, so a real failure (e.g. the PDF-to-EPUB
+    // conversion above silently falling back to storing the file as-is)
+    // looked identical to nothing happening at all. converted tells the
+    // client which actually occurred, so it can say so plainly instead
+    // of just going quiet.
+    res.json({ ok: true, converted: mainContentType === 'application/epub+zip' });
   } catch (e) {
     console.error('[replace-file]', e.message);
     res.status(500).json({ error: 'Could not replace this file — please try again.' });
