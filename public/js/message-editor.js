@@ -1205,7 +1205,18 @@
     // scroll position right before the action starts and puts it back
     // a few times as the DOM settles afterward — works no matter which
     // element actually got scrolled.
-    const guardScroller = (() => {
+    //
+    // First attempt at this cached the scroll container once, at mount
+    // time — and still jumped. Cause: the modal often isn't tall enough
+    // to actually be scrollable yet at the moment the editor mounts
+    // (empty/short content, or the overlay markup hasn't finished
+    // layout), so scrollHeight <= clientHeight at that instant and
+    // detection silently fell through to the wrong element (the
+    // document), which was never the thing actually jumping. Fixed by
+    // finding the real scrollable ancestor freshly every time a
+    // paste/click happens, when the modal is definitely visible, sized,
+    // and (if there's enough content) already scrolled.
+    function findScrollableAncestor() {
       let node = mountEl.parentElement;
       while (node && node !== document.body) {
         const style = window.getComputedStyle(node);
@@ -1213,14 +1224,15 @@
         node = node.parentElement;
       }
       return document.scrollingElement || document.documentElement;
-    })();
+    }
     function guardScrollPosition() {
+      const scroller = findScrollableAncestor();
       const docEl = document.scrollingElement || document.documentElement;
-      const savedTop = guardScroller.scrollTop;
+      const savedTop = scroller.scrollTop;
       const savedDocTop = docEl.scrollTop;
       const restore = () => {
-        if (guardScroller.scrollTop !== savedTop) guardScroller.scrollTop = savedTop;
-        if (docEl !== guardScroller && docEl.scrollTop !== savedDocTop) docEl.scrollTop = savedDocTop;
+        if (scroller.scrollTop !== savedTop) scroller.scrollTop = savedTop;
+        if (docEl !== scroller && docEl.scrollTop !== savedDocTop) docEl.scrollTop = savedDocTop;
       };
       // Several passes across the next few frames/ticks — Quill's own
       // scroll correction sometimes lands a beat after the paste/format
