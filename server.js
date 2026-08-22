@@ -5874,20 +5874,58 @@ async function uploadMessageAttachmentToR2(buffer, mimeType, originalName) {
   return key;
 }
 
+// ── R2 upload — Step 1: presigned PUT URL for a message attachment
+// (either direction — facilitator-to-client or client-to-facilitator
+// share the same key shape and the same risk this fixes). Same
+// reasoning as every other presign-upload route in this audit pass: a
+// real attachment (a voice note, a photo, occasionally a short video)
+// uploading straight through this Node server risked Railway's hard
+// 5-minute request ceiling on a slow connection, with zero upload
+// progress shown either. Auth only requires being logged in as either
+// role — the actual send still goes through the real per-role route
+// below, which does the real ownership/assignment checks; this step
+// only ever hands back a one-time write URL to a fresh, unguessable
+// key, nothing sensitive. ──
+app.post('/api/messages/presign-upload', auth.requireAuthApi(['admin','facilitator','client']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
+    const key = `message-${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType || 'application/octet-stream');
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('messages presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/clients/:id/messages/upload', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
   const facilitatorId = req.messageClient.facilitator_id || req.user.id;
-  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
-  try {
-    const buffer = fs.readFileSync(req.file.path);
-    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
-    fs.unlink(req.file.path, () => {});
-  } catch (e) {
-    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+  let storedFilename, originalName;
+  if (req.body.r2Key) {
+    // Fast path — browser already uploaded directly to R2 via the
+    // presign route above.
+    storedFilename = req.body.r2Key;
+    originalName = req.body.originalName || req.body.r2Key;
+  } else if (req.file) {
+    // Legacy fallback — presign failed, or an older client.
+    storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+    originalName = req.file.originalname;
+    try {
+      const buffer = fs.readFileSync(req.file.path);
+      storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+      fs.unlink(req.file.path, () => {});
+    } catch (e) {
+      console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+    }
+  } else {
+    return res.status(400).json({ error: 'No file received.' });
   }
   const msg = db.addMessage(uuidv4(), req.params.id, facilitatorId, session_id || null, 'facilitator', req.user.id,
-    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
+    content_type || 'attachment', content || '', storedFilename, originalName);
   notifyClientOfMessage(req.messageClient, msg);
   res.json(msg);
 });
@@ -6015,18 +6053,26 @@ app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.sing
   const me = db.getUser(req.user.id);
   const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
   if (!facilitatorId) return res.status(400).json({ error: 'No facilitator assigned yet.' });
-  if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
-  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
-  try {
-    const buffer = fs.readFileSync(req.file.path);
-    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
-    fs.unlink(req.file.path, () => {});
-  } catch (e) {
-    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+  let storedFilename, originalName;
+  if (req.body.r2Key) {
+    storedFilename = req.body.r2Key;
+    originalName = req.body.originalName || req.body.r2Key;
+  } else if (req.file) {
+    storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+    originalName = req.file.originalname;
+    try {
+      const buffer = fs.readFileSync(req.file.path);
+      storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+      fs.unlink(req.file.path, () => {});
+    } catch (e) {
+      console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
+    }
+  } else {
+    return res.status(400).json({ error: 'No file received.' });
   }
   const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id,
-    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
+    content_type || 'attachment', content || '', storedFilename, originalName);
   res.json(msg);
 });
 app.patch('/api/my/messages/read', auth.requireAuthApi(['client']), (req, res) => {
@@ -7024,10 +7070,45 @@ app.get('/api/admin/poems', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json({ rows: db.getPoemsForAdmin() }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ── R2 upload — Step 1: presigned PUT URL for a manually-uploaded poem
+// narration. Per's audit — same reasoning as every other route in this
+// pass: a real recording uploading straight through this Node server
+// risked Railway's 5-minute request ceiling on a slow connection, with
+// no upload progress shown either. ──
+app.post('/api/admin/poems/:id/audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const key = `poem-audio/${file.id}-${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('poem audio presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/poems/:id/audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+
+    // Path A: the upload already happened directly to R2 (see
+    // presign-upload above); this just confirms the key is real.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith(`poem-audio/${file.id}-`)) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      db.setPoemAudio(file.id, key, 'manual');
+      return res.json({ ok: true });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client.
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!(req.file.mimetype || '').startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
@@ -9432,10 +9513,45 @@ app.get('/newsletter-images/:key', async (req, res) => {
 // private, ownership-checked storage model instead (see
 // /api/journal/:id/audio-url for that existing pattern), which is a
 // separate decision Per hasn't made yet for embedded media specifically.
+// ── R2 upload — Step 1: get a presigned PUT URL for newsletter audio.
+// Per's audit — same fix as newsletter-videos below, applied here too:
+// this was the one inconsistency in the pass that added presigned
+// direct-to-R2 uploads to video but never got around to audio, despite
+// audio (a full guided practice recording, easily tens of MB) having
+// exactly the same risk — browser → Node → R2 double transfer, exposed
+// to Railway's 5-minute request limit. ──
+app.post('/api/admin/newsletter-audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const key = `newsletter-audio/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('newsletter-audio presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/newsletter-audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!media.isConfigured()) return res.status(400).json({ error: 'Audio storage (R2) is not configured on this deployment.' });
+
+    // Path A: the upload already happened directly to R2 (see
+    // presign-upload above); this just confirms the key is real and
+    // returns the public URL, no file bytes touch this server at all.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('newsletter-audio/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      return res.json({ url: `${APP_URL}/newsletter-audio/${encodeURIComponent(key.replace('newsletter-audio/', ''))}` });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client.
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.file.mimetype.startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Only audio files are supported here.' });
@@ -10314,26 +10430,79 @@ app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, 
 // a replacement PDF gets converted to EPUB exactly the same way a newly
 // uploaded one does, rather than a second, separately-maintained copy of
 // that logic that could quietly drift out of sync with it over time.
+// ── R2 upload — Step 1: presigned PUT URL for replacing a file's
+// content in place. Same reasoning and pattern as
+// /api/content/library/presign-upload above — a big replacement
+// (a long audiobook chapter, a large PDF) uploading straight through
+// this Node server risked the same Railway 5-minute hard request
+// ceiling documented at the audiobook-chapter-combining route further
+// up, and gave no real upload progress either. ──
+app.post('/api/content/library/:id/replace-file/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    const ext = path.extname(filename);
+    const key = `library/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType || 'application/octet-stream');
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('replace-file presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'Not found.' });
-    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
 
-    let mainFilename, mainContentType = req.file.mimetype, originalPdfKey = null;
-    const newBuffer = fs.readFileSync(req.file.path);
+    // Two ways content can arrive here: the new fast path (browser
+    // already uploaded directly to R2 via the presign route above —
+    // req.body.r2Key present, no multipart file), or the legacy
+    // fallback (presign failed, or an older client — req.file present,
+    // same as before). Either way, the actual bytes are needed once,
+    // in memory, for the PDF-conversion check below.
+    let uploadedContentType, uploadedOriginalName, uploadedSize, newBuffer;
+    if (req.body.r2Key) {
+      uploadedContentType = req.body.contentType || 'application/octet-stream';
+      uploadedOriginalName = req.body.originalName || req.body.r2Key;
+      const obj = await media.getPublicObject(req.body.r2Key);
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      newBuffer = Buffer.concat(chunks);
+      uploadedSize = newBuffer.length;
+    } else if (req.file) {
+      uploadedContentType = req.file.mimetype;
+      uploadedOriginalName = req.file.originalname;
+      newBuffer = fs.readFileSync(req.file.path);
+      uploadedSize = req.file.size;
+    } else {
+      return res.status(400).json({ error: 'No file provided.' });
+    }
 
-    if (req.file.mimetype === 'application/pdf' && media.isConfigured()) {
+    let mainFilename, mainContentType, originalPdfKey = null;
+
+    if (uploadedContentType === 'application/pdf' && media.isConfigured()) {
       try {
         const epubBuffer = await convertPdfToEpub(newBuffer, file.title, brand().name);
         if (epubBuffer) {
           const epubKey = `library-epubs/${uuidv4()}.epub`;
-          const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
           await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
-          await media.putObject(pdfKey, newBuffer, 'application/pdf');
           mainFilename = epubKey;
           mainContentType = 'application/epub+zip';
-          originalPdfKey = pdfKey;
+          // Fast path: the original PDF is already sitting in R2 under
+          // the presigned key — reuse it directly rather than
+          // re-uploading the exact same bytes a second time. Legacy
+          // path: it only ever lived on local disk, so it needs its
+          // first real R2 upload here.
+          originalPdfKey = req.body.r2Key || null;
+          if (!originalPdfKey) {
+            const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
+            await media.putObject(pdfKey, newBuffer, 'application/pdf');
+            originalPdfKey = pdfKey;
+          }
         }
       } catch (e) {
         console.error('[replace-file pdf conversion]', e.message);
@@ -10343,14 +10512,25 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
       // Not a PDF, or conversion wasn't viable (e.g. a scanned PDF with
       // no real text layer) — stored as-is, same as any other plain
       // library upload.
-      if (!media.isConfigured()) { fs.unlink(req.file.path, () => {}); return res.status(503).json({ error: 'File storage is not available right now — please try again later.' }); }
-      const ext = path.extname(req.file.originalname) || '';
-      mainFilename = `library-files/${uuidv4()}${ext}`;
-      await media.putObject(mainFilename, newBuffer, req.file.mimetype);
+      if (!media.isConfigured()) {
+        if (req.file) fs.unlink(req.file.path, () => {});
+        return res.status(503).json({ error: 'File storage is not available right now — please try again later.' });
+      }
+      if (req.body.r2Key) {
+        // Already sitting in R2 under the presigned key — reuse it
+        // directly as the permanent library key, no re-upload needed.
+        mainFilename = req.body.r2Key;
+        mainContentType = uploadedContentType;
+      } else {
+        const ext = path.extname(uploadedOriginalName) || '';
+        mainFilename = `library-files/${uuidv4()}${ext}`;
+        mainContentType = uploadedContentType;
+        await media.putObject(mainFilename, newBuffer, uploadedContentType);
+      }
     }
-    fs.unlink(req.file.path, () => {});
+    if (req.file) fs.unlink(req.file.path, () => {});
 
-    db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
+    db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, uploadedSize, uploadedOriginalName, 'r2', originalPdfKey);
     // Per's report — replacing a file gave no feedback either way,
     // success or failure, so a real failure (e.g. the PDF-to-EPUB
     // conversion above silently falling back to storing the file as-is)

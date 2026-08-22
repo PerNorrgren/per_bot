@@ -674,6 +674,36 @@
     }
   }
 
+  // Per's audit — same fix as the client-side messages panel: message
+  // attachments were uploading straight through this Node server,
+  // risking Railway's hard 5-minute request ceiling on a slow
+  // connection with a real file, and no real upload progress shown
+  // either. Falls back to the raw file the old way if the presigned
+  // path fails for any reason, so a message can always still be sent.
+  async function uploadMessageFileToR2(file, onProgress) {
+    try {
+      const presignRes = await fetch('/api/messages/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type })
+      });
+      if (!presignRes.ok) return null;
+      const { uploadUrl, key } = await presignRes.json();
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+        xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+        xhr.send(file);
+      });
+      return { key };
+    } catch (e) {
+      console.error('[uploadMessageFileToR2] presigned upload failed, falling back to legacy path', e);
+      return null;
+    }
+  }
+
   // ── Rich editor (Per Bot 25) — thin shim over the shared MessageEditor
   // module (message-editor.js), which is also what Journal, course
   // descriptions, and every message composer use. Per: "we should only
@@ -1336,7 +1366,15 @@
       fd.append('client_id', currentClientId);
       fd.append('session_id', _msgSessionId || '');
       fd.append('content_type', 'attachment');
-      fd.append('file', file);
+      const uploaded = await uploadMessageFileToR2(file, (pct) => setBtnLoading(btn, true, `${pct}%`));
+      if (uploaded) {
+        fd.append('r2Key', uploaded.key);
+        fd.append('originalName', file.name);
+        fd.append('contentType', file.type || 'application/octet-stream');
+        fd.append('fileSize', file.size);
+      } else {
+        fd.append('file', file);
+      }
       await fetch(`/api/clients/${currentClientId}/messages/upload`, { method: 'POST', body: fd });
       await loadMessages();
     } finally { setBtnLoading(btn, false); e.target.value = ''; }
@@ -1428,11 +1466,20 @@
     // Extension needs to match the blob's actual type now that it's no
     // longer hardcoded to webm — see the fix note on toggleRecording above.
     const ext = _msgRecordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const noteFile = new File([_msgRecordedBlob], `${_msgRecordingKind}-note.${ext}`, { type: _msgRecordedBlob.type });
     const fd = new FormData();
     fd.append('client_id', currentClientId);
     fd.append('session_id', _msgSessionId || '');
     fd.append('content_type', _msgRecordingKind);
-    fd.append('file', _msgRecordedBlob, `${_msgRecordingKind}-note.${ext}`);
+    const uploaded = await uploadMessageFileToR2(noteFile);
+    if (uploaded) {
+      fd.append('r2Key', uploaded.key);
+      fd.append('originalName', noteFile.name);
+      fd.append('contentType', noteFile.type || 'application/octet-stream');
+      fd.append('fileSize', noteFile.size);
+    } else {
+      fd.append('file', noteFile);
+    }
     discardRecordedNote();
     await fetch(`/api/clients/${currentClientId}/messages/upload`, { method: 'POST', body: fd });
     await loadMessages();

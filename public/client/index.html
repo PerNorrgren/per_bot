@@ -1950,6 +1950,39 @@
     }
   }
 
+  // Per's audit — message attachments (a voice note, a photo,
+  // occasionally a short video) were uploading straight through this
+  // Node server, same risk as every other route fixed in this pass: a
+  // slow connection on a real file could hit Railway's hard 5-minute
+  // request ceiling, with no real upload progress shown either. Tries
+  // the same presigned-direct-to-R2 pattern already proven for the
+  // library upload elsewhere in the app first; returns null (and the
+  // caller falls back to sending the raw file the old way) if that
+  // fails for any reason, so a message can still always be sent.
+  async function uploadMessageFileToR2(file, onProgress) {
+    try {
+      const presignRes = await fetch('/api/messages/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type })
+      });
+      if (!presignRes.ok) return null;
+      const { uploadUrl, key } = await presignRes.json();
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+        xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+        xhr.send(file);
+      });
+      return { key };
+    } catch (e) {
+      console.error('[uploadMessageFileToR2] presigned upload failed, falling back to legacy path', e);
+      return null;
+    }
+  }
+
   // ── Rich editor (Per Bot 25) — thin shim over the shared
   // MessageEditor module (message-editor.js), which is also what every
   // message-composer field in the app already uses. Per: "we should only
@@ -2415,8 +2448,16 @@
       const fd = new FormData();
       fd.append('session_id', _cmsgSessionId || '');
       fd.append('content_type', 'attachment');
-      fd.append('file', file);
       fd.append('facilitatorId', _activeFacilitatorId);
+      const uploaded = await uploadMessageFileToR2(file, (pct) => setBtnLoading(btn, true, `${pct}%`));
+      if (uploaded) {
+        fd.append('r2Key', uploaded.key);
+        fd.append('originalName', file.name);
+        fd.append('contentType', file.type || 'application/octet-stream');
+        fd.append('fileSize', file.size);
+      } else {
+        fd.append('file', file);
+      }
       await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
       await loadCmsgMessages();
     } finally { setBtnLoading(btn, false); e.target.value = ''; }
@@ -2510,11 +2551,20 @@
     // file extension) hand it back mislabeled, right back to the same
     // broken-playback problem this was fixing.
     const ext = _cmsgRecordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const noteFile = new File([_cmsgRecordedBlob], `${_cmsgRecordingKind}-note.${ext}`, { type: _cmsgRecordedBlob.type });
     const fd = new FormData();
     fd.append('session_id', _cmsgSessionId || '');
     fd.append('content_type', _cmsgRecordingKind);
-    fd.append('file', _cmsgRecordedBlob, `${_cmsgRecordingKind}-note.${ext}`);
     fd.append('facilitatorId', _activeFacilitatorId);
+    const uploaded = await uploadMessageFileToR2(noteFile);
+    if (uploaded) {
+      fd.append('r2Key', uploaded.key);
+      fd.append('originalName', noteFile.name);
+      fd.append('contentType', noteFile.type || 'application/octet-stream');
+      fd.append('fileSize', noteFile.size);
+    } else {
+      fd.append('file', noteFile);
+    }
     discardCmsgRecordedNote();
     await fetch('/api/my/messages/upload', { method: 'POST', body: fd });
     await loadCmsgMessages();

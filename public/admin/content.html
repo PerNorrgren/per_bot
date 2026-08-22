@@ -4310,7 +4310,7 @@ async function openCourseDetail(courseId){
           <span style="cursor:grab;color:rgba(255,255,255,0.3);font-size:14px;padding:0 2px;user-select:none" title="Drag to reorder">☰</span>
           <span style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLessonFilePreview('${f.ref_id}','${f.id}','${f.file_type||''}')" title="Click to open/play">${ficon(f.file_type)} ${f.title}</span>
           <button onclick="event.stopPropagation();renameLessonFile('${f.id}','${f.title.replace(/'/g,"\\'")}')" title="Rename — this is what students see everywhere, including the lesson list" style="background:none;border:none;color:rgba(255,255,255,0.75);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color='rgba(255,255,255,1)'" onmouseout="this.style.color='rgba(255,255,255,0.75)'">✏️</button>
-          <button onclick="event.stopPropagation();replaceLessonFile('${f.id}')" title="Replace this file's content — everything already using it (course, quiz, progress) stays pointed at it" style="background:none;border:none;color:rgba(255,255,255,0.75);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color='rgba(255,255,255,1)'" onmouseout="this.style.color='rgba(255,255,255,0.75)'">🔄</button>
+          <button onclick="event.stopPropagation();replaceLessonFile('${f.id}',this)" title="Replace this file's content — everything already using it (course, quiz, progress) stays pointed at it" style="background:none;border:none;color:rgba(255,255,255,0.75);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color='rgba(255,255,255,1)'" onmouseout="this.style.color='rgba(255,255,255,0.75)'">🔄</button>
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:rgba(255,255,255,0.35);cursor:pointer" title="Required to mark the lesson complete">
             <input type="checkbox" ${f.mandatory?'checked':''} onchange="toggleFileMandatory('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> mandatory
           </label>
@@ -4677,21 +4677,70 @@ async function renameLessonFile(fileId, currentTitle){
 // — simpler than managing N inputs for N rows, and this only ever
 // serves one click at a time anyway.
 let _lessonFileReplaceTarget = null;
-function replaceLessonFile(fileId){
+let _lessonFileReplaceButton = null;
+function replaceLessonFile(fileId, btnEl){
   _lessonFileReplaceTarget = fileId;
+  _lessonFileReplaceButton = btnEl || null;
   document.getElementById('lessonFileReplaceInput').click();
 }
 async function onLessonFileReplaceSelected(input){
   const newFile = input.files[0];
   const fileId = _lessonFileReplaceTarget;
+  const btn = _lessonFileReplaceButton;
   input.value = ''; // reset so choosing the exact same file a second time still fires 'change'
   if (!newFile || !fileId) return;
   if (!(await appConfirm(`Replace this file with "${newFile.name}"? The course, quiz, and everyone's progress all stay pointed at it — only the content changes.`))) return;
-  const fd = new FormData();
-  fd.append('file', newFile);
+
+  const originalBtnHtml = btn ? btn.innerHTML : null;
+  const setProgress = (label) => { if (btn) { btn.disabled = true; btn.innerHTML = label; } };
+  const restoreBtn = () => { if (btn) { btn.disabled = false; btn.innerHTML = originalBtnHtml; } };
+
   let data;
   try {
-    const res = await fetch(`/api/content/library/${fileId}/replace-file`,{method:'POST',body:fd});
+    // Per's audit — this used to send the raw file straight through
+    // this Node server via FormData/multer, same risk as every other
+    // route fixed in this pass: a big replacement (a long audiobook
+    // chapter, a large PDF) could hit Railway's hard 5-minute request
+    // ceiling, and gave no real upload progress either. Now matches
+    // the same presigned-direct-to-R2 pattern already proven in
+    // uploadOneFile above — Step 1: ask for a presigned URL.
+    setProgress('…');
+    const presignRes = await fetch(`/api/content/library/${fileId}/replace-file/presign-upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: newFile.name, contentType: newFile.type })
+    });
+
+    let confirmFd;
+    if (presignRes.ok) {
+      const { uploadUrl, key } = await presignRes.json();
+      // Step 2: browser uploads directly to R2, never through Express —
+      // no size ceiling here, and real progress via XHR upload events.
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', newFile.type || 'application/octet-stream');
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) setProgress(`${Math.round((e.loaded / e.total) * 100)}%`); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+        xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+        xhr.send(newFile);
+      });
+      setProgress('⏳');
+      confirmFd = new FormData();
+      confirmFd.append('r2Key', key);
+      confirmFd.append('originalName', newFile.name);
+      confirmFd.append('contentType', newFile.type || 'application/octet-stream');
+      confirmFd.append('fileSize', newFile.size);
+    } else {
+      // R2 not configured, or presign failed for some other reason —
+      // fall back to the legacy direct-through-Express path so
+      // replacing still works during any migration hiccup.
+      setProgress('⏳');
+      confirmFd = new FormData();
+      confirmFd.append('file', newFile);
+    }
+
+    const res = await fetch(`/api/content/library/${fileId}/replace-file`,{method:'POST',body:confirmFd});
     data = await res.json();
     if (!res.ok || !data.ok) {
       console.error('[onLessonFileReplaceSelected] replace-file failed', res.status, data);
@@ -4708,6 +4757,8 @@ async function onLessonFileReplaceSelected(input){
     console.error('[onLessonFileReplaceSelected] network error', e);
     await appAlert('Could not reach the server to replace this file — check your connection and try again.');
     return;
+  } finally {
+    restoreBtn();
   }
   // Per's request — explicit confirmation either way, since a silent
   // refresh looked identical to nothing having happened at all.
@@ -5421,12 +5472,38 @@ async function onPoemAudioFileChosen() {
   const file = input.files[0];
   input.value = '';
   if (!file || !_poemAudioUploadTargetId) return;
-  const fd = new FormData();
-  fd.append('file', file);
   try {
-    const res = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio`, { method: 'POST', body: fd });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Could not upload audio.');
+    // Per's audit — a manually-uploaded poem narration was routing
+    // straight through this Node server, same risk as every other
+    // route fixed in this pass. Same presigned-direct-to-R2 pattern
+    // already proven for the general library upload, falls back to the
+    // old server-relayed path if presigning fails for any reason.
+    const presignRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio/presign-upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
+    });
+    let confirmRes;
+    if (presignRes.ok) {
+      const { uploadUrl, key } = await presignRes.json();
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'audio/mpeg');
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+        xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+        xhr.send(file);
+      });
+      confirmRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: key }),
+      });
+    } else {
+      const fd = new FormData();
+      fd.append('file', file);
+      confirmRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio`, { method: 'POST', body: fd });
+    }
+    const data = await confirmRes.json();
+    if (!confirmRes.ok || !data.ok) throw new Error(data.error || 'Could not upload audio.');
     loadPoemsAdmin();
   } catch (e) {
     appAlert(e.message || 'Could not upload audio for this poem right now.');

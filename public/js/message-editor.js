@@ -736,6 +736,44 @@
     input.click();
   }
 
+  // Per's audit — same fix as uploadVideoDirectToR2 above: newsletter
+  // audio (a full guided practice recording, easily tens of MB) was
+  // routing browser → Node → R2, exposed to Railway's 5-minute request
+  // limit, with the added risk that a big audio file has no real
+  // ceiling either. Presign → PUT straight to R2 → tiny confirm call
+  // with just the key. Falls back to the old server-relayed path if
+  // presigning fails for any reason. Uses XHR (not fetch) for the PUT
+  // specifically so real upload progress can be shown inline at the
+  // cursor while it's happening, not just a static "Uploading…" label.
+  async function uploadAudioDirectToR2(file, onProgress) {
+    try {
+      const presignRes = await fetch('/api/admin/newsletter-audio/presign-upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok || !presignData.uploadUrl) throw new Error(presignData.error || 'Could not start upload.');
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', presignData.uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'audio/mpeg');
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100)); };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error('Upload to storage failed.'));
+        xhr.onerror = () => reject(new Error('Upload to storage failed.'));
+        xhr.send(file);
+      });
+      const confirmRes = await fetch('/api/admin/newsletter-audio', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: presignData.key }),
+      });
+      const confirmData = await confirmRes.json();
+      if (!confirmRes.ok || !confirmData.url) throw new Error(confirmData.error || 'Could not confirm upload.');
+      return confirmData.url;
+    } catch (e) {
+      // Legacy fallback — routes through the server, same as before this change.
+      return uploadFileGetUrl('/api/admin/newsletter-audio', file);
+    }
+  }
   // Per Bot 25 — audio upload, same shape as uploadImageIntoEditor above:
   // atomic embed rather than something editable inline, so a plain
   // insertEmbed at the cursor (no in-cell/columns handling — an audio
@@ -744,28 +782,28 @@
     const input = document.createElement('input');
     input.type = 'file'; input.accept = 'audio/*';
     const range = q.getSelection(true) || { index: q.getLength() };
+    let labelLen = 'Uploading audio…'.length;
     q.insertText(range.index, 'Uploading audio…');
+    const setLabel = (text) => {
+      q.deleteText(range.index, labelLen);
+      q.insertText(range.index, text);
+      labelLen = text.length;
+    };
     input.onchange = async () => {
       const file = input.files[0];
-      if (!file) { q.deleteText(range.index, 'Uploading audio…'.length); return; }
-      const formData = new FormData();
-      formData.append('file', file);
+      if (!file) { q.deleteText(range.index, labelLen); return; }
+      let url;
       try {
-        const res = await fetch('/api/admin/newsletter-audio', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (!data.url) {
-          q.deleteText(range.index, 'Uploading audio…'.length);
-          window.appAlert(data.error || 'Could not upload audio.');
-          return;
-        }
-        q.deleteText(range.index, 'Uploading audio…'.length);
-        q.insertEmbed(range.index, 'audioBlock', data.url);
-        if (range.index + 1 >= q.getLength() - 1) q.insertText(range.index + 1, ' ');
-        q.setSelection(range.index + 1);
+        url = await uploadAudioDirectToR2(file, (pct) => setLabel(`Uploading audio… ${pct}%`));
       } catch (e) {
-        q.deleteText(range.index, 'Uploading audio…'.length);
-        window.appAlert('Network error — could not upload audio.');
+        q.deleteText(range.index, labelLen);
+        window.appAlert(e.message || 'Could not upload audio.');
+        return;
       }
+      q.deleteText(range.index, labelLen);
+      q.insertEmbed(range.index, 'audioBlock', url);
+      if (range.index + 1 >= q.getLength() - 1) q.insertText(range.index + 1, ' ');
+      q.setSelection(range.index + 1);
     };
     input.click();
   }
