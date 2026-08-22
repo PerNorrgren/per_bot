@@ -2218,10 +2218,19 @@ function cleanUpTitleFromFilename(raw) {
 function deriveUploadTitle(rawName) {
   let name = rawName.replace(/\.[^.]+$/, ''); // strip extension
   name = name.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-  const m = name.match(/\b(Session|Day|Lesson)\s*0*(\d+)\b/i);
+  // Per's report — dropping everything after "Session N" collapsed
+  // every file in a session down to the exact same title ("Session
+  // 7", "Session 7", "Session 7"...), completely indistinguishable in
+  // the lesson file list once there's more than one file per session.
+  // Now keeps everything from "Session N" onward (e.g. "Session 7
+  // Daily Top-up 4min") and only strips the programme-name prefix
+  // before it — still drops the redundant course name, but never
+  // loses what actually tells two files in the same session apart.
+  const m = name.match(/\b(Session|Day|Lesson)\s*0*(\d+)\b(.*)$/i);
   if (m) {
     const label = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
-    return `${label} ${m[2]}`;
+    const rest = m[3].replace(/^[\s\-–—:]+/, '').trim();
+    return rest ? `${label} ${m[2]} ${rest}` : `${label} ${m[2]}`;
   }
   return name;
 }
