@@ -1342,20 +1342,26 @@ function emailSessionReminder1Hour(user, courseTitle, sessionTitle, sessionDateS
     { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
 }
 
-// Deep sweep — removed emailMembershipHonouredEnded here (Per Bot 18):
-// "fires when a manually-honoured membership period (set by hand in
-// People admin, not tied to any Stripe subscription) actually runs
-// out." It was never actually called anywhere, and tracing why turned
-// up the real reason: sweepExpiredMemberships/checkTrialExpiry in
-// db.js (redesigned at Per Bot 21) already treats a manually-honoured
-// member_expires_at lapsing exactly the same as a real Stripe
-// cancellation — same 14-day Savers grace sequence, same mid/final
-// emails (see startSaversGrace, 'cancellation'). This function was the
-// original one-shot notification from before that redesign unified
-// both paths; it was simply never removed once superseded. Reviving it
-// now would either duplicate emailSaversCancelFinal's message or
-// bypass the intentional 14-day grace window — the right fix was
-// deleting it, not wiring it up.
+// Per Bot 18 — fires when a manually-honoured membership period (set by
+// hand in People admin, not tied to any Stripe subscription — the
+// carried-over-legacy-member case) actually runs out. Distinct from
+// both the trial sequence (that's a brand new trial ending) and Savers
+// (that's a real Stripe subscription lapsing) — this is specifically
+// "the free time we gave you has now been used up."
+async function emailMembershipHonouredEnded(user) {
+  const b = brand();
+  return sendEmail(user.email, `Your access has come to an end`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${user.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">The membership time we carried over for you has now come to an end. Your account is on the free Explorer tier — your history's still there, and so is the free content.</p>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">If you'd like full access again, you're welcome to subscribe whenever suits — no rush, and nothing about picking it back up later is complicated.</p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/membership" style="color:#2d6a4f">See membership options →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
 
 const SAVERS_MID_SENDERS = { cancellation: emailSaversCancelMid, payment_failure: emailSaversFailureMid };
 const SAVERS_FINAL_SENDERS = { cancellation: emailSaversCancelFinal, payment_failure: emailSaversFailureFinal };
@@ -5868,58 +5874,20 @@ async function uploadMessageAttachmentToR2(buffer, mimeType, originalName) {
   return key;
 }
 
-// ── R2 upload — Step 1: presigned PUT URL for a message attachment
-// (either direction — facilitator-to-client or client-to-facilitator
-// share the same key shape and the same risk this fixes). Same
-// reasoning as every other presign-upload route in this audit pass: a
-// real attachment (a voice note, a photo, occasionally a short video)
-// uploading straight through this Node server risked Railway's hard
-// 5-minute request ceiling on a slow connection, with zero upload
-// progress shown either. Auth only requires being logged in as either
-// role — the actual send still goes through the real per-role route
-// below, which does the real ownership/assignment checks; this step
-// only ever hands back a one-time write URL to a fresh, unguessable
-// key, nothing sensitive. ──
-app.post('/api/messages/presign-upload', auth.requireAuthApi(['admin','facilitator','client']), async (req, res) => {
-  try {
-    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
-    const { filename, contentType } = req.body;
-    if (!filename) return res.status(400).json({ error: 'filename required.' });
-    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || [''])[0];
-    const key = `message-${uuidv4()}${ext}`;
-    const uploadUrl = await media.getUploadUrl(key, contentType || 'application/octet-stream');
-    res.json({ uploadUrl, key });
-  } catch (e) {
-    console.error('messages presign-upload error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 app.post('/api/clients/:id/messages/upload', auth.requireAuthApi(['admin','facilitator']), requireClientOwnedByFacilitator, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
   const facilitatorId = req.messageClient.facilitator_id || req.user.id;
-  let storedFilename, originalName;
-  if (req.body.r2Key) {
-    // Fast path — browser already uploaded directly to R2 via the
-    // presign route above.
-    storedFilename = req.body.r2Key;
-    originalName = req.body.originalName || req.body.r2Key;
-  } else if (req.file) {
-    // Legacy fallback — presign failed, or an older client.
-    storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
-    originalName = req.file.originalname;
-    try {
-      const buffer = fs.readFileSync(req.file.path);
-      storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
-      fs.unlink(req.file.path, () => {});
-    } catch (e) {
-      console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
-    }
-  } else {
-    return res.status(400).json({ error: 'No file received.' });
+  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+    fs.unlink(req.file.path, () => {});
+  } catch (e) {
+    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
   }
   const msg = db.addMessage(uuidv4(), req.params.id, facilitatorId, session_id || null, 'facilitator', req.user.id,
-    content_type || 'attachment', content || '', storedFilename, originalName);
+    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
   notifyClientOfMessage(req.messageClient, msg);
   res.json(msg);
 });
@@ -6047,26 +6015,18 @@ app.post('/api/my/messages/upload', auth.requireAuthApi(['client']), upload.sing
   const me = db.getUser(req.user.id);
   const facilitatorId = resolveClientFacilitatorId(me, req.body.facilitatorId);
   if (!facilitatorId) return res.status(400).json({ error: 'No facilitator assigned yet.' });
+  if (!req.file) return res.status(400).json({ error: 'No file received.' });
   const { session_id, content_type, content } = req.body;
-  let storedFilename, originalName;
-  if (req.body.r2Key) {
-    storedFilename = req.body.r2Key;
-    originalName = req.body.originalName || req.body.r2Key;
-  } else if (req.file) {
-    storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
-    originalName = req.file.originalname;
-    try {
-      const buffer = fs.readFileSync(req.file.path);
-      storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
-      fs.unlink(req.file.path, () => {});
-    } catch (e) {
-      console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
-    }
-  } else {
-    return res.status(400).json({ error: 'No file received.' });
+  let storedFilename = req.file.filename; // local-disk fallback if R2 isn't configured
+  try {
+    const buffer = fs.readFileSync(req.file.path);
+    storedFilename = await uploadMessageAttachmentToR2(buffer, req.file.mimetype, req.file.originalname);
+    fs.unlink(req.file.path, () => {});
+  } catch (e) {
+    console.error('message attachment R2 upload failed, falling back to local disk (not persistent — will not survive the next deploy):', e.message);
   }
   const msg = db.addMessage(uuidv4(), req.user.id, facilitatorId, session_id || null, 'client', req.user.id,
-    content_type || 'attachment', content || '', storedFilename, originalName);
+    content_type || 'attachment', content || '', storedFilename, req.file.originalname);
   res.json(msg);
 });
 app.patch('/api/my/messages/read', auth.requireAuthApi(['client']), (req, res) => {
@@ -7064,45 +7024,10 @@ app.get('/api/admin/poems', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json({ rows: db.getPoemsForAdmin() }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-// ── R2 upload — Step 1: presigned PUT URL for a manually-uploaded poem
-// narration. Per's audit — same reasoning as every other route in this
-// pass: a real recording uploading straight through this Node server
-// risked Railway's 5-minute request ceiling on a slow connection, with
-// no upload progress shown either. ──
-app.post('/api/admin/poems/:id/audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
-    const file = db.getLibraryFile(req.params.id);
-    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
-    const { filename, contentType } = req.body;
-    if (!filename) return res.status(400).json({ error: 'filename required.' });
-    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
-    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
-    const key = `poem-audio/${file.id}-${uuidv4()}${ext}`;
-    const uploadUrl = await media.getUploadUrl(key, contentType);
-    res.json({ uploadUrl, key });
-  } catch (e) {
-    console.error('poem audio presign-upload error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 app.post('/api/admin/poems/:id/audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
-
-    // Path A: the upload already happened directly to R2 (see
-    // presign-upload above); this just confirms the key is real.
-    if (req.body && req.body.r2Key) {
-      const key = req.body.r2Key;
-      if (!key.startsWith(`poem-audio/${file.id}-`)) return res.status(400).json({ error: 'Unexpected key.' });
-      const exists = await media.objectExists(key).catch(() => false);
-      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
-      db.setPoemAudio(file.id, key, 'manual');
-      return res.json({ ok: true });
-    }
-
-    // Path B — legacy fallback: presign failed, or an older client.
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!(req.file.mimetype || '').startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
@@ -9507,45 +9432,10 @@ app.get('/newsletter-images/:key', async (req, res) => {
 // private, ownership-checked storage model instead (see
 // /api/journal/:id/audio-url for that existing pattern), which is a
 // separate decision Per hasn't made yet for embedded media specifically.
-// ── R2 upload — Step 1: get a presigned PUT URL for newsletter audio.
-// Per's audit — same fix as newsletter-videos below, applied here too:
-// this was the one inconsistency in the pass that added presigned
-// direct-to-R2 uploads to video but never got around to audio, despite
-// audio (a full guided practice recording, easily tens of MB) having
-// exactly the same risk — browser → Node → R2 double transfer, exposed
-// to Railway's 5-minute request limit. ──
-app.post('/api/admin/newsletter-audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME.' });
-    const { filename, contentType } = req.body;
-    if (!filename) return res.status(400).json({ error: 'filename required.' });
-    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
-    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
-    const key = `newsletter-audio/${uuidv4()}${ext}`;
-    const uploadUrl = await media.getUploadUrl(key, contentType);
-    res.json({ uploadUrl, key });
-  } catch (e) {
-    console.error('newsletter-audio presign-upload error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 app.post('/api/admin/newsletter-audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
-    if (!media.isConfigured()) return res.status(400).json({ error: 'Audio storage (R2) is not configured on this deployment.' });
-
-    // Path A: the upload already happened directly to R2 (see
-    // presign-upload above); this just confirms the key is real and
-    // returns the public URL, no file bytes touch this server at all.
-    if (req.body && req.body.r2Key) {
-      const key = req.body.r2Key;
-      if (!key.startsWith('newsletter-audio/')) return res.status(400).json({ error: 'Unexpected key.' });
-      const exists = await media.objectExists(key).catch(() => false);
-      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
-      return res.json({ url: `${APP_URL}/newsletter-audio/${encodeURIComponent(key.replace('newsletter-audio/', ''))}` });
-    }
-
-    // Path B — legacy fallback: presign failed, or an older client.
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Audio storage (R2) is not configured on this deployment.' });
     if (!req.file.mimetype.startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Only audio files are supported here.' });
@@ -10424,79 +10314,26 @@ app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, 
 // a replacement PDF gets converted to EPUB exactly the same way a newly
 // uploaded one does, rather than a second, separately-maintained copy of
 // that logic that could quietly drift out of sync with it over time.
-// ── R2 upload — Step 1: presigned PUT URL for replacing a file's
-// content in place. Same reasoning and pattern as
-// /api/content/library/presign-upload above — a big replacement
-// (a long audiobook chapter, a large PDF) uploading straight through
-// this Node server risked the same Railway 5-minute hard request
-// ceiling documented at the audiobook-chapter-combining route further
-// up, and gave no real upload progress either. ──
-app.post('/api/content/library/:id/replace-file/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured.' });
-    const file = db.getLibraryFile(req.params.id);
-    if (!file) return res.status(404).json({ error: 'Not found.' });
-    const { filename, contentType } = req.body;
-    if (!filename) return res.status(400).json({ error: 'filename required.' });
-    const ext = path.extname(filename);
-    const key = `library/${uuidv4()}${ext}`;
-    const uploadUrl = await media.getUploadUrl(key, contentType || 'application/octet-stream');
-    res.json({ uploadUrl, key });
-  } catch (e) {
-    console.error('replace-file presign-upload error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (!req.file) return res.status(400).json({ error: 'No file provided.' });
 
-    // Two ways content can arrive here: the new fast path (browser
-    // already uploaded directly to R2 via the presign route above —
-    // req.body.r2Key present, no multipart file), or the legacy
-    // fallback (presign failed, or an older client — req.file present,
-    // same as before). Either way, the actual bytes are needed once,
-    // in memory, for the PDF-conversion check below.
-    let uploadedContentType, uploadedOriginalName, uploadedSize, newBuffer;
-    if (req.body.r2Key) {
-      uploadedContentType = req.body.contentType || 'application/octet-stream';
-      uploadedOriginalName = req.body.originalName || req.body.r2Key;
-      const obj = await media.getPublicObject(req.body.r2Key);
-      const chunks = [];
-      for await (const chunk of obj.Body) chunks.push(chunk);
-      newBuffer = Buffer.concat(chunks);
-      uploadedSize = newBuffer.length;
-    } else if (req.file) {
-      uploadedContentType = req.file.mimetype;
-      uploadedOriginalName = req.file.originalname;
-      newBuffer = fs.readFileSync(req.file.path);
-      uploadedSize = req.file.size;
-    } else {
-      return res.status(400).json({ error: 'No file provided.' });
-    }
+    let mainFilename, mainContentType = req.file.mimetype, originalPdfKey = null;
+    const newBuffer = fs.readFileSync(req.file.path);
 
-    let mainFilename, mainContentType, originalPdfKey = null;
-
-    if (uploadedContentType === 'application/pdf' && media.isConfigured()) {
+    if (req.file.mimetype === 'application/pdf' && media.isConfigured()) {
       try {
         const epubBuffer = await convertPdfToEpub(newBuffer, file.title, brand().name);
         if (epubBuffer) {
           const epubKey = `library-epubs/${uuidv4()}.epub`;
+          const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
           await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+          await media.putObject(pdfKey, newBuffer, 'application/pdf');
           mainFilename = epubKey;
           mainContentType = 'application/epub+zip';
-          // Fast path: the original PDF is already sitting in R2 under
-          // the presigned key — reuse it directly rather than
-          // re-uploading the exact same bytes a second time. Legacy
-          // path: it only ever lived on local disk, so it needs its
-          // first real R2 upload here.
-          originalPdfKey = req.body.r2Key || null;
-          if (!originalPdfKey) {
-            const pdfKey = `library-pdfs/${uuidv4()}.pdf`;
-            await media.putObject(pdfKey, newBuffer, 'application/pdf');
-            originalPdfKey = pdfKey;
-          }
+          originalPdfKey = pdfKey;
         }
       } catch (e) {
         console.error('[replace-file pdf conversion]', e.message);
@@ -10506,32 +10343,15 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
       // Not a PDF, or conversion wasn't viable (e.g. a scanned PDF with
       // no real text layer) — stored as-is, same as any other plain
       // library upload.
-      if (!media.isConfigured()) {
-        if (req.file) fs.unlink(req.file.path, () => {});
-        return res.status(503).json({ error: 'File storage is not available right now — please try again later.' });
-      }
-      if (req.body.r2Key) {
-        // Already sitting in R2 under the presigned key — reuse it
-        // directly as the permanent library key, no re-upload needed.
-        mainFilename = req.body.r2Key;
-        mainContentType = uploadedContentType;
-      } else {
-        const ext = path.extname(uploadedOriginalName) || '';
-        mainFilename = `library-files/${uuidv4()}${ext}`;
-        mainContentType = uploadedContentType;
-        await media.putObject(mainFilename, newBuffer, uploadedContentType);
-      }
+      if (!media.isConfigured()) { fs.unlink(req.file.path, () => {}); return res.status(503).json({ error: 'File storage is not available right now — please try again later.' }); }
+      const ext = path.extname(req.file.originalname) || '';
+      mainFilename = `library-files/${uuidv4()}${ext}`;
+      await media.putObject(mainFilename, newBuffer, req.file.mimetype);
     }
-    if (req.file) fs.unlink(req.file.path, () => {});
+    fs.unlink(req.file.path, () => {});
 
-    db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, uploadedSize, uploadedOriginalName, 'r2', originalPdfKey);
-    // Per's report — replacing a file gave no feedback either way,
-    // success or failure, so a real failure (e.g. the PDF-to-EPUB
-    // conversion above silently falling back to storing the file as-is)
-    // looked identical to nothing happening at all. converted tells the
-    // client which actually occurred, so it can say so plainly instead
-    // of just going quiet.
-    res.json({ ok: true, converted: mainContentType === 'application/epub+zip' });
+    db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
+    res.json({ ok: true });
   } catch (e) {
     console.error('[replace-file]', e.message);
     res.status(500).json({ error: 'Could not replace this file — please try again.' });
@@ -10866,21 +10686,40 @@ app.get('/api/admin/run-mmpm-practices-import/status', auth.requireAuthApi(['adm
 // process restarts; that's an acceptable trade for not needing a new DB
 // table just to remember button-click history.
 const ADMIN_SCRIPTS = [
-  // Per's cleanup — the five scripts that used to live here
-  // (meditation-tags-import, tag-casing-cleanup,
-  // set-practices-member-visibility, import-poems-for-the-soul,
-  // reconvert-pdf-epubs) have all completed their one-time job and were
-  // removed, along with their .js files and any manifest data, in the
-  // same round this comment was added. Add future one-time scripts
-  // here: { id, label, description, module }. The module just needs to
-  // export async runImport(log) — see git history for the removed
-  // entries above as a template if needed.
   {
-    id: 'bulk-convert-pdfs-to-epub',
-    label: 'Convert all PDFs to readable books',
-    description: 'Converts every PDF still sitting in the library as a plain PDF into the proper readable book format, all at once — the same conversion an upload (or a student\'s first open) already does automatically, just run eagerly across everything that predates that feature instead of waiting for someone to happen to open each one.',
-    module: './bulk_convert_pdfs_to_epub',
+    id: 'meditation-tags-import',
+    label: 'Meditation tags import (Aug 2026 batch)',
+    description: 'Applies the confirmed theme tags to the August meditation upload batch (156 files). Safe to re-run.',
+    module: './apply_meditation_tags',
   },
+  {
+    id: 'tag-casing-cleanup',
+    label: 'Tag casing cleanup',
+    description: "Merges tag casing variants (e.g. 'Grounding'/'grounding') into a single lowercase tag, across the whole library. Safe to re-run.",
+    module: './cleanup_tag_casing',
+  },
+  {
+    id: 'set-practices-member-visibility',
+    label: 'Set all practices to Member visibility',
+    description: "Sets every meditation/practice library file (except one-to-one assigned ones) to Member visibility, as a baseline to then hand-pick some down to Explorer. Safe to re-run.",
+    module: './set_practices_member_visibility',
+  },
+  {
+    id: 'import-poems-for-the-soul',
+    label: 'Import Poems for the Soul (68 new)',
+    description: "Adds the 68 poems from Per's Poems_for_the_Soul.docx that aren't already in the library (51 of the 119 in the document were already there). Lands in Writing > Poems at Member visibility. Safe to re-run — checks titles against the live library each time.",
+    module: './import_poems',
+  },
+  {
+    id: 'reconvert-pdf-epubs',
+    label: 'Reconvert already-converted PDFs',
+    description: "Reconverts every PDF that was turned into an EPUB before the running-header/footer and FELT · FIBRE masthead stripping fix existed, so they self-heal instead of permanently keeping the old unstripped content. Safe to re-run.",
+    module: './reconvert_pdf_epubs',
+  },
+  // Add future one-time scripts here: { id, label, description, module }.
+  // The module just needs to export async runImport(log) — see either
+  // entry above, or apply_meditation_tags.js / cleanup_tag_casing.js
+  // themselves, as the template.
 ];
 const adminScriptJobs = {}; // id -> job, live progress during THIS process's lifetime only
 
@@ -11330,16 +11169,6 @@ app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
     if (!courseId || lessonNumber === undefined || lessonNumber === null || lessonNumber === '' || !title) {
       return res.status(400).json({ error: 'Missing fields.' });
     }
-    // Per's report — a wrong-course file upload ended up creating a
-    // second lesson with the same number as one that already existed,
-    // silently, with nothing catching it. Lesson numbers only make
-    // sense as unique within their own course (two different courses
-    // can each have their own "Session 7"), so the check is scoped per
-    // courseId, not global.
-    const dupe = db.getLessonsForCourse(courseId).find(l => l.lesson_number === parseInt(lessonNumber));
-    if (dupe) {
-      return res.status(400).json({ error: `This course already has a Session ${lessonNumber} — "${dupe.title}". Use a different number, or open that existing lesson to add files to it instead.` });
-    }
     const lessonId = uuidv4();
     db.createLesson(lessonId, courseId, parseInt(lessonNumber), title, '', visibility || 'client', accessStatus || 'visible');
     if (fileIds?.length) {
@@ -11369,16 +11198,6 @@ app.patch('/api/content/lessons/:id', auth.requireAuthApi(['admin']), (req, res)
     // 0 into 1. Only fall back to 1 when parseInt actually failed (NaN).
     const parsedNumber = parseInt(lessonNumber);
     const finalLessonNumber = Number.isNaN(parsedNumber) ? 1 : parsedNumber;
-    // Same duplicate-number guard as create, above — scoped to this
-    // lesson's own course, and excluding itself (renaming a lesson to
-    // the number it already has isn't a duplicate).
-    const lesson = db.getLesson(req.params.id);
-    if (lesson) {
-      const dupe = db.getLessonsForCourse(lesson.course_id).find(l => l.id !== req.params.id && l.lesson_number === finalLessonNumber);
-      if (dupe) {
-        return res.status(400).json({ error: `This course already has a Session ${finalLessonNumber} — "${dupe.title}". Use a different number.` });
-      }
-    }
     db.updateLesson(req.params.id, finalLessonNumber, title.trim(), description, visibility || 'client', accessStatus || 'visible');
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -13195,6 +13014,115 @@ app.post('/api/admin/bulkpublish/publish', auth.requireAuthApi(['admin']), async
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// BULKPUBLISH QUEUE (Per Bot — scheduling extension) — the piece the
+// immediate-publish route above never had: create a post now, choose
+// to send it right away (queued), at a specific future time
+// (scheduled), or on a repeating schedule (recurrence_type, reusing
+// the exact same recurrence system scheduled_messages already uses).
+// Actual sending happens via sendDueQueuedPublishes() on its own cron
+// tick — these routes only manage the queue's contents.
+// ─────────────────────────────────────────────────────────────────────
+
+app.get('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const list = db.getAllQueuedPublishes().map(p => ({ ...p, recurrence_config: p.recurrence_config ? JSON.parse(p.recurrence_config) : null }));
+    res.json({ posts: list });
+  }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { platform, content, mediaUrl, scheduledFor, recurrenceType, recurrenceConfig, sendHour } = req.body || {};
+    if (!platform || !content || !content.trim()) return res.status(400).json({ error: 'platform and content are required.' });
+    if (recurrenceType && recurrenceType !== 'once' && !['daily', 'weekly', 'monthly_date', 'monthly_nth_weekday', 'yearly'].includes(recurrenceType)) {
+      return res.status(400).json({ error: 'Unrecognised recurrence type.' });
+    }
+    const id = uuidv4();
+    db.createQueuedPublish(id, {
+      platform, content, media_url: mediaUrl || null,
+      scheduled_for: scheduledFor || null,
+      recurrence_type: recurrenceType || null,
+      recurrence_config: recurrenceConfig || null,
+      send_hour: sendHour,
+      created_by: req.user?.id || null,
+    });
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const existing = db.getQueuedPublish(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Not found.' });
+    if (!['queued', 'scheduled', 'failed'].includes(existing.status)) {
+      return res.status(409).json({ error: `Can't edit a post that's already ${existing.status}.` });
+    }
+    const { platform, content, mediaUrl, scheduledFor, recurrenceType, recurrenceConfig, sendHour, active } = req.body || {};
+    // Falls back to the existing row's own scheduled_for/recurrence_type
+    // when this PATCH doesn't touch them — otherwise editing just the
+    // content of a failed post (without resending its schedule) would
+    // wrongly reset a scheduled/recurring post back to plain 'queued'.
+    const effectiveScheduledFor = scheduledFor !== undefined ? scheduledFor : existing.scheduled_for;
+    const effectiveRecurrenceType = recurrenceType !== undefined ? recurrenceType : existing.recurrence_type;
+    db.updateQueuedPublish(req.params.id, {
+      platform, content, media_url: mediaUrl,
+      scheduled_for: scheduledFor, recurrence_type: recurrenceType,
+      recurrence_config: recurrenceConfig, send_hour: sendHour, active,
+      // Editing a failed post puts it back in the running rather than
+      // leaving it permanently stuck — same "retry by re-queueing"
+      // convention as everything else admin-facing in this app. Clears
+      // the old error too — otherwise a successfully-requeued post
+      // would still display its previous failure reason, which reads
+      // as "this is still broken" even though it's back in the queue.
+      status: existing.status === 'failed' ? (effectiveScheduledFor || effectiveRecurrenceType ? 'scheduled' : 'queued') : undefined,
+      error: existing.status === 'failed' ? null : undefined,
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.deleteQueuedPublish(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Force an immediate send, bypassing whatever schedule/recurrence the
+// post has — same "admin override" pattern as the newsletter Send
+// button. Recurring posts are left active afterward (this is a manual
+// extra send, not a replacement for their normal schedule); one-off
+// posts move to 'published' same as a normal due-send would.
+app.post('/api/admin/bulkpublish/queue/:id/publish-now', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const post = db.getQueuedPublish(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Not found.' });
+    const { channels } = await bulkPublishRequest('GET', '/channels');
+    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === post.platform.toLowerCase());
+    if (!channel) return res.status(400).json({ error: `${post.platform} isn't connected in BulkPublish yet — connect it in the Channels page first.` });
+    const publishBody = { content: post.content, channels: [{ channelId: channel.id, platform: channel.platform }], status: 'published' };
+    if (post.media_url) publishBody.media = [{ url: post.media_url }];
+    const result = await bulkPublishRequest('POST', '/posts', publishBody);
+    db.markQueuedPublishSent(post.id, new Date().toISOString().slice(0, 10), {
+      bulkpublishPostId: result?.post?.id || result?.id || null,
+      bulkpublishChannelId: channel.id,
+      isRecurring: !!post.recurrence_type,
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    db.markQueuedPublishFailed(req.params.id, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Message builder history (Per Bot 17 phase 4) ──
 app.get('/api/admin/social-posts', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getAllSocialPosts()); }
@@ -14306,6 +14234,59 @@ async function sendDueScheduledMessages() {
   return { checked: messages.length, fired: firedCount, details: fired };
 }
 
+// ── Social post queue (BulkPublish scheduling extension) ──
+// Same structure as sendDueScheduledMessages above, on purpose — same
+// staging guard, same "checked/fired/details" return shape for the
+// cron log, same "once-style sends get marked done, recurring sends
+// stay active" convention. The one real difference: a social post can
+// be due for three different reasons (see the table comment in db.js),
+// so isRecurring is tracked per-post rather than assumed.
+async function sendDueQueuedPublishes() {
+  if (IS_STAGING) return { skipped: 'staging' };
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const currentHour = now.getUTCHours();
+  const candidates = db.getCandidateQueuedPublishes();
+  let firedCount = 0;
+  const fired = [];
+  const failed = [];
+
+  for (const post of candidates) {
+    const isRecurring = !!post.recurrence_type;
+    if (isRecurring) {
+      if (post.last_sent_date === todayStr) continue;
+      if (Number(post.send_hour) !== currentHour) continue;
+      let config = {};
+      try { config = JSON.parse(post.recurrence_config || '{}'); } catch (e) {}
+      if (!db.scheduledMessageMatchesDate(post.recurrence_type, config, now)) continue;
+    }
+    // Non-recurring posts (immediate queue or a one-off scheduled_for)
+    // are already correctly filtered by getCandidateSocialPosts()'s SQL
+    // — active, status still queued/scheduled, and scheduled_for either
+    // NULL or already past — nothing further to check here.
+
+    try {
+      const { channels } = await bulkPublishRequest('GET', '/channels');
+      const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === post.platform.toLowerCase());
+      if (!channel) throw new Error(`${post.platform} isn't connected in BulkPublish yet — connect it in the Channels page first.`);
+      const publishBody = { content: post.content, channels: [{ channelId: channel.id, platform: channel.platform }], status: 'published' };
+      if (post.media_url) publishBody.media = [{ url: post.media_url }];
+      const result = await bulkPublishRequest('POST', '/posts', publishBody);
+      db.markQueuedPublishSent(post.id, todayStr, {
+        bulkpublishPostId: result?.post?.id || result?.id || null,
+        bulkpublishChannelId: channel.id,
+        isRecurring,
+      });
+      firedCount++;
+      fired.push({ id: post.id, platform: post.platform });
+    } catch (e) {
+      db.markQueuedPublishFailed(post.id, e.message);
+      failed.push({ id: post.id, platform: post.platform, error: e.message });
+    }
+  }
+  return { checked: candidates.length, fired: firedCount, failed: failed.length, details: fired, failedDetails: failed };
+}
+
 app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     // Defense-in-depth alongside the cron guard above — a genuine bulk
@@ -14500,7 +14481,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

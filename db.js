@@ -963,6 +963,40 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── Social post queue (BulkPublish scheduling extension) ──
+  // Same proven shape as scheduled_messages above (recurrence_type/
+  // recurrence_config/send_hour/active/last_sent_date — reuses
+  // db.scheduledMessageMatchesDate() verbatim, no duplicated date logic)
+  // but covers three cases scheduled_messages doesn't need to, since a
+  // social post can go out three different ways:
+  //   - scheduled_for NULL, recurrence_type NULL: queued for the very
+  //     next cron tick — "just send it" with no specific time in mind.
+  //   - scheduled_for set, recurrence_type NULL: a one-off future send.
+  //   - recurrence_type set: recurring, same as a scheduled_messages row.
+  // bulkpublish_post_id/bulkpublish_channel_id are filled in once a
+  // send actually succeeds — useful for admin troubleshooting ("did
+  // this really go out, and to which connected channel") without
+  // needing to cross-reference BulkPublish's own dashboard.
+  db.run(`CREATE TABLE IF NOT EXISTS social_publish_queue (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    content TEXT NOT NULL,
+    media_url TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    scheduled_for TEXT,
+    recurrence_type TEXT,
+    recurrence_config TEXT,
+    send_hour INTEGER DEFAULT 9,
+    active INTEGER DEFAULT 1,
+    last_sent_date TEXT,
+    bulkpublish_post_id TEXT,
+    bulkpublish_channel_id TEXT,
+    error TEXT,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Campaigns (Per Bot 18) ──
   // A campaign is a named sequence of steps, mixing calming (line-bank,
   // no CTA) and sales (offer-linked, tracked) content across email and
@@ -2777,6 +2811,23 @@ function seedKnowledgeLevels() {
     db.run(`INSERT OR IGNORE INTO knowledge_levels_config (id,name,sort_order,description) VALUES (?,?,?,?)`,
       [l.id, l.name, l.sort_order, l.description]);
   });
+}
+
+// Normalizes any JS Date-parseable input to SQLite's own datetime
+// format ('YYYY-MM-DD HH:MM:SS', UTC, space not 'T'). Needed because a
+// raw JS ISO string ('...T...Z') sorts differently as plain text than
+// SQLite's own datetime('now') output — 'T' (char code 84) is greater
+// than ' ' (32) — so a comparison like `scheduled_for <= datetime('now')`
+// would silently never be true for a real ISO string regardless of
+// actual time, no matter how far in the past it is. Confirmed directly:
+// a post scheduled for an hour ago was NOT detected as due until this
+// fix. Apply this to anything written into a column compared against
+// datetime('now') elsewhere in this file.
+function toSqliteDatetime(input) {
+  if (!input) return null;
+  const d = input instanceof Date ? input : new Date(input);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 function save() {
@@ -5310,6 +5361,14 @@ function getSessionsForClient(clientId) {
 function getClientSessionsForClient(clientId) {
   return queryAll('SELECT id,type,client_summary,created_at FROM sessions WHERE client_id=? AND client_summary!="" ORDER BY created_at DESC', [clientId]);
 }
+// Per Bot 18 — self-guided Talk sessions save as type='self' with no
+// facilitator_id (see the addSession call right after a Talk session
+// generates its summary). A facilitator-led session is a different type
+// and shouldn't count here — this is specifically about whether the
+// person has used the self-serve Talk feature, not sessions generally.
+function hasEverUsedTalk(userId) {
+  return !!queryOne("SELECT 1 FROM sessions WHERE client_id=? AND type='self' LIMIT 1", [userId]);
+}
 
 // ── Content shares (Per Bot 22) ── Admin (or later, facilitator) sharing
 // specific library files with specific people — see content_shares table
@@ -6571,6 +6630,75 @@ function markScheduledMessageSent(id, dateStr) {
   save();
 }
 
+// ── Social post queue ──
+function getAllQueuedPublishes() { return queryAll('SELECT * FROM social_publish_queue ORDER BY created_at DESC'); }
+function getQueuedPublish(id) { return queryOne('SELECT * FROM social_publish_queue WHERE id=?', [id]); }
+function createQueuedPublish(id, fields) {
+  const scheduledFor = toSqliteDatetime(fields.scheduled_for);
+  getDbSync().run(
+    `INSERT INTO social_publish_queue (id, platform, content, media_url, status, scheduled_for, recurrence_type, recurrence_config, send_hour, active, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, fields.platform, fields.content, fields.media_url || null,
+     scheduledFor || fields.recurrence_type ? 'scheduled' : 'queued',
+     scheduledFor, fields.recurrence_type || null,
+     fields.recurrence_type ? JSON.stringify(fields.recurrence_config || {}) : null,
+     fields.send_hour ?? 9, fields.active === false ? 0 : 1, fields.created_by || null]
+  );
+  save();
+}
+function updateQueuedPublish(id, fields) {
+  const allowed = ['platform', 'content', 'media_url', 'status', 'recurrence_type', 'send_hour', 'active', 'bulkpublish_post_id', 'bulkpublish_channel_id', 'error'];
+  const sets = [];
+  const vals = [];
+  allowed.forEach(k => { if (fields[k] !== undefined) { sets.push(`${k}=?`); vals.push(fields[k]); } });
+  if (fields.scheduled_for !== undefined) { sets.push('scheduled_for=?'); vals.push(toSqliteDatetime(fields.scheduled_for)); }
+  if (fields.recurrence_config !== undefined) { sets.push('recurrence_config=?'); vals.push(JSON.stringify(fields.recurrence_config || {})); }
+  if (!sets.length) return;
+  sets.push('updated_at=datetime(\'now\')');
+  vals.push(id);
+  getDbSync().run(`UPDATE social_publish_queue SET ${sets.join(', ')} WHERE id=?`, vals);
+  save();
+}
+function deleteQueuedPublish(id) {
+  getDbSync().run('DELETE FROM social_publish_queue WHERE id=?', [id]);
+  save();
+}
+function markQueuedPublishSent(id, dateStr, { bulkpublishPostId, bulkpublishChannelId, isRecurring }) {
+  // Recurring posts stay active and just record last_sent_date, same as
+  // scheduled_messages — one-off posts (queued or single scheduled_for)
+  // move to 'published' since there's nothing left for them to do.
+  if (isRecurring) {
+    getDbSync().run(
+      `UPDATE social_publish_queue SET last_sent_date=?, bulkpublish_post_id=?, bulkpublish_channel_id=?, error=NULL, updated_at=datetime('now') WHERE id=?`,
+      [dateStr, bulkpublishPostId || null, bulkpublishChannelId || null, id]
+    );
+  } else {
+    getDbSync().run(
+      `UPDATE social_publish_queue SET status='published', last_sent_date=?, bulkpublish_post_id=?, bulkpublish_channel_id=?, error=NULL, updated_at=datetime('now') WHERE id=?`,
+      [dateStr, bulkpublishPostId || null, bulkpublishChannelId || null, id]
+    );
+  }
+  save();
+}
+function markQueuedPublishFailed(id, errorMsg) {
+  getDbSync().run(`UPDATE social_publish_queue SET status='failed', error=?, updated_at=datetime('now') WHERE id=?`, [errorMsg, id]);
+  save();
+}
+// Candidates for this cron tick — the same three-way split explained
+// on the table definition above. JS does the finer-grained filtering
+// (recurrence date/hour matching via scheduledMessageMatchesDate,
+// already-sent-today checks) since that logic already exists and
+// working SQL for "match this weekday, or this nth-weekday-of-month"
+// would just be reimplementing scheduledMessageMatchesDate in SQL for
+// no benefit — this table is small, a full scan every hour costs
+// nothing.
+function getCandidateQueuedPublishes() {
+  return queryAll(
+    `SELECT * FROM social_publish_queue WHERE active=1 AND status IN ('queued','scheduled')
+     AND (scheduled_for IS NULL OR scheduled_for <= datetime('now'))`
+  );
+}
+
 // Per Bot 21 — the actual recurrence logic. Pure function, deliberately
 // no DB/date-library dependency beyond plain Date math, so it's easy to
 // test directly against known dates rather than only ever observing it
@@ -6828,16 +6956,7 @@ function pruneLoginLog() {
 // (right below) already inserts THIS session's own row before the
 // system prompt gets built each turn — without excluding it, a
 // brand-new first-timer would immediately see their own just-started
-// session and conclude they'd used Talk before. excludeSessionId is
-// optional — the Tomte "try Talk" tip condition calls this with just a
-// userId, which is fine: an empty string never matches a real session
-// id, so the exclusion is simply a no-op there.
-//
-// Deep sweep — this used to silently coexist with a second, completely
-// different function also named hasEverUsedTalk (checking the older
-// sessions table's type='self' rows instead of talk_sessions). Since
-// this one was declared later in the file, it always silently won at
-// runtime — the other definition was 100% dead code, removed.
+// session and conclude they'd used Talk before.
 function hasEverUsedTalk(userId, excludeSessionId) {
   return !!queryOne(`SELECT 1 as x FROM talk_sessions WHERE user_id=? AND id != ? LIMIT 1`, [userId, excludeSessionId || '']);
 }
@@ -8420,6 +8539,7 @@ module.exports = {
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   getAllScheduledMessages, getScheduledMessage, createScheduledMessage, updateScheduledMessage, deleteScheduledMessage, markScheduledMessageSent, scheduledMessageMatchesDate,
+  getAllQueuedPublishes, getQueuedPublish, createQueuedPublish, updateQueuedPublish, deleteQueuedPublish, markQueuedPublishSent, markQueuedPublishFailed, getCandidateQueuedPublishes,
   logEmailPending, logEmailPendingBatch, logEmailResult, logEmailResultBatch, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,

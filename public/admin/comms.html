@@ -530,6 +530,19 @@
     </div>
   </div>
 
+  <!-- ── Social publish queue — schedule/recurrence extension over BulkPublish's existing immediate-only publish, added directly beneath it so the two feel like one feature rather than two unrelated ones. ── -->
+  <div>
+    <div class="section-label">Social publish queue</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Queued, scheduled &amp; repeating posts</div>
+        <button class="btn primary" onclick="openSocialQueueModal()">+ New post</button>
+      </div>
+      <div style="padding:0 20px 12px; font-size:12px; color:rgba(255,255,255,0.4);">Send now (goes out on the next hourly check), pick a future date &amp; time, or repeat on a schedule — same recurrence patterns as Scheduled messages above. Checked every hour, 25 past. A post generated in Message Builder below can be sent here directly via its own "Schedule…" button instead of retyping it.</div>
+      <div id="socialQueueList"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
   <!-- ── Legal documents ── -->
   <div>
   <!-- Legal documents moved to Settings (Per Bot 15h) — now skin-aware, so it lives alongside Skins rather than duplicated here. -->
@@ -699,6 +712,60 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newsletterModal')">Cancel</button>
       <button class="modal-ok" id="newsletterSaveBtn" onclick="saveNewsletter()">Save as draft</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Social queue compose modal ── -->
+<div class="modal-overlay" id="socialQueueModal">
+  <div class="modal">
+    <h3 id="socialQueueModalTitle">New post</h3>
+    <input type="hidden" id="socialQueueEditId"/>
+    <div>
+      <label>Platform</label>
+      <select id="sqPlatform" style="width:100%">
+        <option value="facebook">Facebook</option>
+        <option value="instagram">Instagram</option>
+        <option value="linkedin">LinkedIn</option>
+        <option value="threads">Threads</option>
+      </select>
+    </div>
+    <div>
+      <label>Content</label>
+      <textarea id="sqContent" placeholder="What you want this post to say."></textarea>
+    </div>
+    <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
+      <label style="display:block; margin-bottom:8px;">When should this go out?</label>
+      <select id="sqSendMode" onchange="toggleSocialQueueSendMode()" style="width:100%">
+        <option value="now">Send now — goes out on the next hourly check</option>
+        <option value="scheduled">A specific date &amp; time</option>
+        <option value="recurring">Repeat on a schedule</option>
+      </select>
+      <div id="sqScheduledFields" style="display:none; margin-top:10px;">
+        <input type="datetime-local" id="sqScheduledFor" style="width:100%"/>
+        <div class="modal-note" style="margin-top:6px">Sent once, the next time the hourly check runs at or after this moment (25 past the hour, UTC) — not exactly on the dot.</div>
+      </div>
+      <div id="sqRecurringFields" style="display:none; margin-top:10px;">
+        <select id="sqRecurrenceType" onchange="renderSocialQueueRecurrenceSubFields()" style="width:100%">
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week, on certain days</option>
+          <option value="monthly_date">Every month, on a specific date</option>
+          <option value="monthly_nth_weekday">Every month, on a specific week + day (e.g. "1st Monday")</option>
+          <option value="yearly">Every year, on a specific date</option>
+        </select>
+        <div id="sqRecurrenceSubFields" style="margin-top:10px"></div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="margin:0">Send at</label>
+          <select id="sqSendHour" style="width:auto"></select>
+          <span class="modal-note" style="margin:0">UTC</span>
+        </div>
+        <div class="modal-note" style="margin-top:8px">Checked every hour, 25 past — if today matches the pattern above and it's this hour (UTC), it goes out automatically, once. Won't send twice in the same day even if the pattern matches more than once.</div>
+      </div>
+    </div>
+    <div class="modal-err" id="socialQueueErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('socialQueueModal')">Cancel</button>
+      <button class="modal-ok" id="socialQueueSaveBtn" onclick="saveSocialQueuePost()">Save</button>
     </div>
   </div>
 </div>
@@ -1197,6 +1264,7 @@
           <div style="display:flex;gap:6px;align-items:center">
             <span id="mbPublishStatus_${p}" style="font-size:11px;color:rgba(255,255,255,0.4)"></span>
             <button class="btn sm" onclick="mbPublish('${p}')" id="mbPublishBtn_${p}">Publish</button>
+            <button class="btn sm" onclick="mbSchedule('${p}')" title="Queue this for later or on a repeating schedule, instead of publishing right now">Schedule…</button>
             <button class="btn sm" onclick="mbCopy('${p}')">Copy text</button>
           </div>
         </div>
@@ -1232,6 +1300,17 @@
     }).catch(() => {
       showFeedback('mbFeedback', 'Could not copy — select the text manually.', 'err');
     });
+  }
+  // Same text extraction as mbCopy, but opens the Social Queue compose
+  // modal pre-filled instead of copying to the clipboard — lets a
+  // generated post go straight to "send now / schedule / repeat"
+  // without retyping it there.
+  function mbSchedule(platform) {
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    const text = q.getText().replace(/\n$/, '');
+    if (!text.trim()) { showFeedback('mbFeedback', 'Nothing to schedule — the text is empty.', 'err'); return; }
+    openSocialQueueModal({ platform, content: text });
   }
 
   // Per Bot 18 — publishes straight to the connected account via
@@ -1753,6 +1832,231 @@
     } finally {
       setBtnLoading(btn, false);
     }
+  }
+
+  // ── Social publish queue ──
+  let socialQueueData = [];
+  const SQ_PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn', threads: 'Threads' };
+
+  async function loadSocialQueue() {
+    const res = await fetch('/api/admin/bulkpublish/queue');
+    const data = await res.json();
+    socialQueueData = data.posts || [];
+    renderSocialQueueList();
+  }
+
+  function socialQueueSummary(p) {
+    if (p.status === 'published') return `Sent ${p.last_sent_date || ''}`;
+    if (p.status === 'failed') return `Failed: ${escHtml(p.error || 'unknown error')}`;
+    if (p.recurrence_type) return recurrenceSummary(p); // same function, same shape (recurrence_type/recurrence_config/send_hour) — reused as-is.
+    if (p.scheduled_for) {
+      // scheduled_for comes back from the server already normalised to
+      // SQLite's own space-separated format — displayed as-is rather
+      // than re-parsed, since it's already a plain readable UTC string.
+      return `Scheduled for ${p.scheduled_for} UTC`;
+    }
+    return 'Sends on the next hourly check';
+  }
+
+  function renderSocialQueueList() {
+    const el = document.getElementById('socialQueueList');
+    if (!socialQueueData.length) { el.innerHTML = '<div class="empty">Nothing queued yet.</div>'; return; }
+    el.innerHTML = socialQueueData.map(p => `
+      <div class="doc-row">
+        <div class="doc-title">
+          ${SQ_PLATFORM_LABELS[p.platform] || p.platform} — ${escHtml((p.content || '').slice(0, 60))}${(p.content || '').length > 60 ? '…' : ''}
+          <span class="badge ${p.status === 'published' ? '' : (p.status === 'failed' ? 'badge-draft' : '')}" style="margin-left:6px">${p.status}</span>
+        </div>
+        <div class="doc-consent">${socialQueueSummary(p)}</div>
+        <div class="doc-actions">
+          ${p.status !== 'published' ? `<button class="btn sm" onclick="editSocialQueuePost('${p.id}')">Edit</button>` : ''}
+          ${p.status !== 'published' ? `<button class="btn sm" onclick="publishSocialQueueNow('${p.id}', this)" title="Sends immediately — doesn't affect its normal schedule">Send now</button>` : ''}
+          <button class="btn sm danger" onclick="deleteSocialQueueRow('${p.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function toggleSocialQueueSendMode() {
+    const mode = document.getElementById('sqSendMode').value;
+    document.getElementById('sqScheduledFields').style.display = mode === 'scheduled' ? 'block' : 'none';
+    document.getElementById('sqRecurringFields').style.display = mode === 'recurring' ? 'block' : 'none';
+    if (mode === 'recurring') { populateSocialQueueSendHourOptions(); renderSocialQueueRecurrenceSubFields(); }
+  }
+
+  // Same UI shape as renderRecurrenceSubFields for scheduled messages,
+  // duplicated with sq-prefixed element IDs rather than parametrising
+  // the original — this picker is small and stable, and the newsletter
+  // scheduling flow it normally serves is too established to risk a
+  // shared-code refactor on for this. No "once" option here (unlike
+  // the newsletter version) — a one-off send already has its own
+  // dedicated "specific date & time" mode above, so recurrence-typed
+  // "once" would just be a second way to do the same thing.
+  function renderSocialQueueRecurrenceSubFields(existingConfig) {
+    const type = document.getElementById('sqRecurrenceType').value;
+    const cfg = existingConfig || {};
+    const el = document.getElementById('sqRecurrenceSubFields');
+    if (type === 'weekly') {
+      const selected = new Set(cfg.daysOfWeek || []);
+      el.innerHTML = `<div class="day-picker">${WEEKDAY_NAMES.map((name, i) => `
+        <button type="button" class="day-chip ${selected.has(i) ? 'active' : ''}" data-dow="${i}" onclick="this.classList.toggle('active')">${name.slice(0,3)}</button>
+      `).join('')}</div>`;
+    } else if (type === 'monthly_date') {
+      const isLast = cfg.dayOfMonth === 'last';
+      el.innerHTML = `
+        <label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="sqMonthlyDateIsLast" ${isLast ? 'checked' : ''} onchange="document.getElementById('sqMonthlyDateNum').disabled=this.checked"/>
+          Last day of the month
+        </label>
+        <div style="margin-top:8px">
+          <label style="margin:0">Or on day</label>
+          <input type="number" id="sqMonthlyDateNum" min="1" max="31" value="${isLast ? '' : (cfg.dayOfMonth || 1)}" ${isLast ? 'disabled' : ''} style="width:70px"/>
+          <span class="modal-note">of the month (if the month is shorter, this simply doesn't fire that month)</span>
+        </div>`;
+    } else if (type === 'monthly_nth_weekday') {
+      const nth = cfg.nth ?? 1;
+      const weekday = cfg.weekday ?? 1;
+      el.innerHTML = `
+        <select id="sqNthSelect" style="width:auto">
+          ${[1,2,3,4,-1].map(n => `<option value="${n}" ${Number(nth)===n?'selected':''}>${NTH_NAMES[n]}</option>`).join('')}
+        </select>
+        <select id="sqNthWeekdaySelect" style="width:auto">
+          ${WEEKDAY_NAMES.map((name, i) => `<option value="${i}" ${Number(weekday)===i?'selected':''}>${name}</option>`).join('')}
+        </select>
+        <span class="modal-note">of the month</span>`;
+    } else if (type === 'yearly') {
+      const month = cfg.month || 1;
+      const day = cfg.day || 1;
+      el.innerHTML = `
+        <select id="sqYearlyMonth" style="width:auto">
+          ${['January','February','March','April','May','June','July','August','September','October','November','December'].map((name,i) => `<option value="${i+1}" ${month===i+1?'selected':''}>${name}</option>`).join('')}
+        </select>
+        <input type="number" id="sqYearlyDay" min="1" max="31" value="${day}" style="width:60px"/>`;
+    } else {
+      el.innerHTML = ''; // daily — no sub-fields needed at all
+    }
+  }
+  function getSocialQueueRecurrenceConfig() {
+    const type = document.getElementById('sqRecurrenceType').value;
+    if (type === 'weekly') {
+      const daysOfWeek = Array.from(document.querySelectorAll('#sqRecurrenceSubFields .day-chip.active')).map(c => Number(c.dataset.dow));
+      return { type, config: { daysOfWeek } };
+    }
+    if (type === 'monthly_date') {
+      const isLast = document.getElementById('sqMonthlyDateIsLast').checked;
+      return { type, config: { dayOfMonth: isLast ? 'last' : Number(document.getElementById('sqMonthlyDateNum').value) || 1 } };
+    }
+    if (type === 'monthly_nth_weekday') {
+      return { type, config: { nth: Number(document.getElementById('sqNthSelect').value), weekday: Number(document.getElementById('sqNthWeekdaySelect').value) } };
+    }
+    if (type === 'yearly') {
+      return { type, config: { month: Number(document.getElementById('sqYearlyMonth').value), day: Number(document.getElementById('sqYearlyDay').value) || 1 } };
+    }
+    return { type: 'daily', config: {} };
+  }
+  // Same hour-select population as populateSendHourOptions() but into
+  // the sq-prefixed element — duplicated for the same reason as the
+  // rest of this picker (see comment above).
+  function populateSocialQueueSendHourOptions() {
+    const sel = document.getElementById('sqSendHour');
+    sel.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${String(h).padStart(2,'0')}:00</option>`).join('');
+    sel.value = '9';
+  }
+
+  function openSocialQueueModal(prefill) {
+    document.getElementById('socialQueueModalTitle').textContent = 'New post';
+    document.getElementById('socialQueueEditId').value = '';
+    document.getElementById('sqPlatform').value = (prefill && prefill.platform) || 'facebook';
+    document.getElementById('sqContent').value = (prefill && prefill.content) || '';
+    document.getElementById('sqSendMode').value = 'now';
+    document.getElementById('sqScheduledFor').value = '';
+    document.getElementById('sqRecurrenceType').value = 'daily';
+    toggleSocialQueueSendMode();
+    document.getElementById('socialQueueErr').textContent = '';
+    openModal('socialQueueModal');
+  }
+  function editSocialQueuePost(id) {
+    const p = socialQueueData.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('socialQueueModalTitle').textContent = 'Edit post';
+    document.getElementById('socialQueueEditId').value = id;
+    document.getElementById('sqPlatform').value = p.platform;
+    document.getElementById('sqContent').value = p.content;
+    if (p.recurrence_type) {
+      document.getElementById('sqSendMode').value = 'recurring';
+      toggleSocialQueueSendMode();
+      document.getElementById('sqRecurrenceType').value = p.recurrence_type;
+      renderSocialQueueRecurrenceSubFields(p.recurrence_config || {});
+      document.getElementById('sqSendHour').value = String(p.send_hour ?? 9);
+    } else if (p.scheduled_for) {
+      document.getElementById('sqSendMode').value = 'scheduled';
+      toggleSocialQueueSendMode();
+      // scheduled_for from the server is 'YYYY-MM-DD HH:MM:SS' (SQLite's
+      // own format); <input type="datetime-local"> needs 'YYYY-MM-DDTHH:MM'.
+      document.getElementById('sqScheduledFor').value = p.scheduled_for.replace(' ', 'T').slice(0, 16);
+    } else {
+      document.getElementById('sqSendMode').value = 'now';
+      toggleSocialQueueSendMode();
+    }
+    document.getElementById('socialQueueErr').textContent = '';
+    openModal('socialQueueModal');
+  }
+  async function saveSocialQueuePost() {
+    const err = document.getElementById('socialQueueErr');
+    err.textContent = '';
+    const platform = document.getElementById('sqPlatform').value;
+    const content = document.getElementById('sqContent').value.trim();
+    if (!content) { err.textContent = 'Write something first.'; return; }
+    const mode = document.getElementById('sqSendMode').value;
+    const body = { platform, content };
+    if (mode === 'scheduled') {
+      const val = document.getElementById('sqScheduledFor').value;
+      if (!val) { err.textContent = 'Pick a date and time.'; return; }
+      body.scheduledFor = val;
+    } else if (mode === 'recurring') {
+      const { type, config } = getSocialQueueRecurrenceConfig();
+      if (type === 'weekly' && !config.daysOfWeek.length) { err.textContent = 'Pick at least one day of the week.'; return; }
+      body.recurrenceType = type;
+      body.recurrenceConfig = config;
+      body.sendHour = Number(document.getElementById('sqSendHour').value);
+    }
+    const editId = document.getElementById('socialQueueEditId').value;
+    const btn = document.getElementById('socialQueueSaveBtn');
+    setBtnLoading(btn, true, 'Saving…');
+    try {
+      const res = await fetch(editId ? `/api/admin/bulkpublish/queue/${editId}` : '/api/admin/bulkpublish/queue', {
+        method: editId ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save.');
+      closeModal('socialQueueModal');
+      loadSocialQueue();
+    } catch (e) {
+      err.textContent = e.message;
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  }
+  async function publishSocialQueueNow(id, btn) {
+    if (!(await appConfirm('Publish this right now? This goes live immediately, not as a draft.'))) return;
+    setBtnLoading(btn, true, 'Publishing…');
+    try {
+      const res = await fetch(`/api/admin/bulkpublish/queue/${id}/publish-now`, { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) appAlert('Published.'); else appAlert(data.error || 'Could not publish.');
+      loadSocialQueue();
+    } catch (e) {
+      appAlert('Network error — please try again.');
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  }
+  async function deleteSocialQueueRow(id) {
+    if (!(await appConfirm('Delete this post from the queue?'))) return;
+    await fetch(`/api/admin/bulkpublish/queue/${id}`, { method: 'DELETE' });
+    loadSocialQueue();
   }
 
   async function loadNewsletters() {
@@ -2632,6 +2936,7 @@
     loadTomteBroadcastStatus();
     loadNewsletters();
     loadScheduledMessages();
+    loadSocialQueue();
     // Per Bot 24 — opens straight into compose, pre-filled with the
     // explicit-selected-list, if this page load came from Members'
     // "Message" button. No-op otherwise.
