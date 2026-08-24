@@ -34,6 +34,7 @@ const media      = require('./media');
 const { convertPdfToEpub } = require('./pdf-to-epub');
 const { convertPptxToSlides } = require('./pptx-to-slides');
 const sms        = require('./sms');
+const publishers = require('./publishers'); // Per App 30 — modular publishing layer (LinkedIn direct, BulkPublish for FB/IG/Threads)
 
 // ── Config ──
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY;
@@ -12210,15 +12211,13 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthA
     if (!step) return res.status(404).json({ error: 'Not found.' });
     if (step.channel === 'email') return res.status(400).json({ error: 'Use "Send test" for email steps, not this.' });
     if (step.status !== 'pending') return res.status(400).json({ error: 'This step has already fired.' });
-    const { channels } = await bulkPublishRequest('GET', '/channels');
-    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === step.channel.toLowerCase());
-    if (!channel) return res.status(400).json({ error: `${step.channel} isn't connected in BulkPublish yet.` });
-    const post = await bulkPublishRequest('POST', '/posts', {
-      content: step.content,
-      channels: [{ channelId: channel.id, platform: channel.platform }],
-      status: 'published',
-    });
-    db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || post?.post?.id || null });
+    // Per App 30 — immediate fire, so this routes through the same
+    // modular publisher registry as everything else (LinkedIn direct,
+    // others via BulkPublish). Only /activate below still needs
+    // BulkPublish specifically, since that's the one place using its
+    // native *scheduled* posting, which LinkedIn's own API doesn't offer.
+    const post = await publishers.publishToChannel(step.channel, { content: step.content });
+    db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || null });
     res.json({ ok: true });
   } catch(e) {
     db.setCampaignStepResult(req.params.stepId, 'failed', { error: e.message });
@@ -12231,6 +12230,20 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthA
 // infrastructure fires it, not our cron — more reliable, survives this
 // app being briefly down). Email steps stay pending; the daily cron below
 // picks those up on their actual day.
+//
+// Per App 30 note: this route deliberately keeps calling BulkPublish
+// directly (bulkPublishRequest, not publishers.publishToChannel) rather
+// than going through the modular registry, for every channel including
+// LinkedIn. Reason: this is the one place using BulkPublish's own
+// *native scheduling* (status:'scheduled' + a future scheduledAt) —
+// LinkedIn's direct API has no scheduling endpoint of its own at all,
+// only immediate posting, so a LinkedIn campaign step here still uses
+// BulkPublish's separately-connected LinkedIn channel, not the new
+// direct OAuth connection publishers/linkedin.js manages. The direct
+// connection is used everywhere posting happens immediately (Message
+// Builder's Publish button, the Social Queue's own cron-driven sends,
+// and the campaign publish-now route just above) — only this
+// future-dated scheduling case still needs BulkPublish's infrastructure.
 app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const campaign = db.getCampaign(req.params.id);
@@ -12959,59 +12972,98 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
   }
 });
 
-// ── BulkPublish integration (Per Bot 18) ──
+// ── Social publishing (Per Bot 18, rebuilt Per App 30) ──
 // Publishes message-builder output directly to the connected social
-// accounts, instead of only ever producing copy-paste text. Talks to
-// BulkPublish's REST API (app.bulkpublish.com) using an API key kept in
-// Railway's environment — never hardcoded, never sent to the browser.
-const BULKPUBLISH_BASE = 'https://app.bulkpublish.com/api';
-async function bulkPublishRequest(method, path, body) {
-  const apiKey = process.env.BULKPUBLISH_API_KEY;
-  if (!apiKey) throw new Error('BULKPUBLISH_API_KEY is not set — add it in Railway before publishing.');
-  const res = await fetch(`${BULKPUBLISH_BASE}${path}`, {
-    method,
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || data.message || `BulkPublish returned ${res.status}`);
-  return data;
-}
+// accounts, instead of only ever producing copy-paste text. As of Per
+// App 30 this goes through publishers/index.js's modular registry
+// rather than talking to BulkPublish directly — LinkedIn now posts via
+// its own direct API connection (publishers/linkedin.js); Facebook,
+// Instagram, and Threads still route through BulkPublish
+// (publishers/bulkpublish.js) until Meta App Review clears. Routes and
+// request/response shapes below are unchanged from before — only what
+// happens inside them changed — so the admin UI needed no updates for
+// any of this. bulkPublishRequest is kept as a local reference for the
+// one remaining place that needs BulkPublish specifically (campaign
+// activation's native scheduling — see that route's own comment).
+const { bulkPublishRequest } = publishers.PROVIDERS.bulkpublish;
 
-// Lists connected channels — the admin UI uses this to show which of the
-// four platforms actually have a live connection before offering a
-// Publish button for it, rather than letting someone click Publish on a
-// platform that was never connected and get a confusing failure.
+// Lists every connected channel across every provider — the admin UI
+// uses this to show which platforms actually have a live connection
+// before offering a Publish button for it, rather than letting someone
+// click Publish on a platform that was never connected and get a
+// confusing failure.
 app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const data = await bulkPublishRequest('GET', '/channels');
-    res.json({ ok: true, channels: data.channels || [] });
+    const channels = await publishers.listAllChannels();
+    res.json({ ok: true, channels });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Publishes one platform's already-generated text immediately (status
-// 'published', not scheduled) to whichever connected channel matches that
-// platform. Text-only for now — media attachment (the video generator's
-// output) is a natural next step once this is working end to end, not
-// bundled in here to keep the first real publish simple to verify.
+// Publishes one platform's already-generated text immediately. Text-only
+// for now on every provider — media attachment is a natural next step
+// once each is confirmed working end to end, not bundled in here to
+// keep the first real publish simple to verify.
 app.post('/api/admin/bulkpublish/publish', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const { platform, text } = req.body;
     if (!platform || !text || !text.trim()) return res.status(400).json({ error: 'platform and text are required.' });
-    const { channels } = await bulkPublishRequest('GET', '/channels');
-    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
-    if (!channel) return res.status(400).json({ error: `${platform} isn't connected in BulkPublish yet — connect it in the Channels page first.` });
-    const post = await bulkPublishRequest('POST', '/posts', {
-      content: text,
-      channels: [{ channelId: channel.id, platform: channel.platform }],
-      status: 'published',
-    });
+    const post = await publishers.publishToChannel(platform, { content: text });
     res.json({ ok: true, post });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── LinkedIn direct connect (Per App 30) ──
+// LinkedIn needs its own OAuth login (BulkPublish's platforms use a
+// single static API key instead) — this is the piece that makes that
+// possible from inside the admin area, without Per ever touching a
+// terminal or Railway console for it. /connect and /callback are full
+// page navigations (LinkedIn's consent screen, then back here), not
+// JSON — status/disconnect are ordinary admin API calls the UI polls.
+app.get('/auth/linkedin/connect', auth.requireAuth(['admin']), (req, res) => {
+  if (!publishers.PROVIDERS.linkedin.configured()) {
+    return res.status(500).send('LinkedIn isn\u2019t configured yet — LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, and LINKEDIN_REDIRECT_URI all need to be set in Railway first.');
+  }
+  const state = crypto.randomBytes(24).toString('hex');
+  res.cookie('li_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 10 * 60 * 1000 });
+  res.redirect(publishers.PROVIDERS.linkedin.getAuthUrl(state));
+});
+
+app.get('/auth/linkedin/callback', auth.requireAuth(['admin']), async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  const backToComms = (q) => res.redirect(`/admin/comms?${q}`);
+  try {
+    if (error) return backToComms(`li_error=${encodeURIComponent(error_description || error)}`);
+    const savedState = req.cookies?.li_oauth_state;
+    res.clearCookie('li_oauth_state');
+    if (!code || !state || !savedState || state !== savedState) {
+      return backToComms('li_error=' + encodeURIComponent('LinkedIn sign-in didn\u2019t complete cleanly — please try Connect again.'));
+    }
+    const tokenResp = await publishers.PROVIDERS.linkedin.exchangeCodeForToken(code);
+    const memberInfo = await publishers.PROVIDERS.linkedin.fetchMemberInfo(tokenResp.access_token);
+    publishers.PROVIDERS.linkedin.saveConnection(tokenResp, memberInfo, req.user?.id || null);
+    return backToComms('li_connected=1');
+  } catch (e) {
+    return backToComms('li_error=' + encodeURIComponent(e.message));
+  }
+});
+
+app.get('/api/admin/social/linkedin/status', auth.requireAuthApi(['admin']), (req, res) => {
+  const conn = db.getOAuthConnection('linkedin');
+  res.json({
+    configured: publishers.PROVIDERS.linkedin.configured(),
+    connected: !!(conn && conn.access_token),
+    accountName: conn?.account_name || null,
+    expiresAt: conn?.expires_at || null,
+  });
+});
+
+app.post('/api/admin/social/linkedin/disconnect', auth.requireAuthApi(['admin']), (req, res) => {
+  publishers.PROVIDERS.linkedin.disconnect();
+  res.json({ ok: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -13105,15 +13157,10 @@ app.post('/api/admin/bulkpublish/queue/:id/publish-now', auth.requireAuthApi(['a
   try {
     const post = db.getQueuedPublish(req.params.id);
     if (!post) return res.status(404).json({ error: 'Not found.' });
-    const { channels } = await bulkPublishRequest('GET', '/channels');
-    const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === post.platform.toLowerCase());
-    if (!channel) return res.status(400).json({ error: `${post.platform} isn't connected in BulkPublish yet — connect it in the Channels page first.` });
-    const publishBody = { content: post.content, channels: [{ channelId: channel.id, platform: channel.platform }], status: 'published' };
-    if (post.media_url) publishBody.media = [{ url: post.media_url }];
-    const result = await bulkPublishRequest('POST', '/posts', publishBody);
+    const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined });
     db.markQueuedPublishSent(post.id, new Date().toISOString().slice(0, 10), {
-      bulkpublishPostId: result?.post?.id || result?.id || null,
-      bulkpublishChannelId: channel.id,
+      bulkpublishPostId: result?.id || null,
+      bulkpublishChannelId: result?.channelId || null,
       isRecurring: !!post.recurrence_type,
     });
     res.json({ ok: true });
@@ -14266,15 +14313,10 @@ async function sendDueQueuedPublishes() {
     // NULL or already past — nothing further to check here.
 
     try {
-      const { channels } = await bulkPublishRequest('GET', '/channels');
-      const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === post.platform.toLowerCase());
-      if (!channel) throw new Error(`${post.platform} isn't connected in BulkPublish yet — connect it in the Channels page first.`);
-      const publishBody = { content: post.content, channels: [{ channelId: channel.id, platform: channel.platform }], status: 'published' };
-      if (post.media_url) publishBody.media = [{ url: post.media_url }];
-      const result = await bulkPublishRequest('POST', '/posts', publishBody);
+      const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined });
       db.markQueuedPublishSent(post.id, todayStr, {
-        bulkpublishPostId: result?.post?.id || result?.id || null,
-        bulkpublishChannelId: channel.id,
+        bulkpublishPostId: result?.id || null,
+        bulkpublishChannelId: result?.channelId || null,
         isRecurring,
       });
       firedCount++;

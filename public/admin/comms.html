@@ -1260,7 +1260,10 @@
     container.innerHTML = platforms.map(p => `
       <div style="margin-top:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <div class="config-label">${MB_LABELS[p] || p}</div>
+          <div class="config-label" style="display:flex;align-items:center;gap:8px">
+            ${MB_LABELS[p] || p}
+            ${p === 'linkedin' ? '<span id="mbLinkedinBadge" style="font-size:11px;font-weight:normal"></span>' : ''}
+          </div>
           <div style="display:flex;gap:6px;align-items:center">
             <span id="mbPublishStatus_${p}" style="font-size:11px;color:rgba(255,255,255,0.4)"></span>
             <button class="btn sm" onclick="mbPublish('${p}')" id="mbPublishBtn_${p}">Publish</button>
@@ -1272,6 +1275,7 @@
       </div>
     `).join('');
     container.style.display = 'block';
+    if (platforms.includes('linkedin')) refreshLinkedinBadge();
 
     // Per Bot 25 — mountRich('social') replaces the old raw new Quill(...)
     // + local toolbar config + manual audio-button labelling/handler
@@ -2928,6 +2932,57 @@
     });
   }
 
+  // ── LinkedIn direct connection (Per App 30) ──
+  // Everything else about publishing to LinkedIn (Publish button,
+  // Schedule…, the Social Queue) already worked before this existed —
+  // it just needs a live connection to actually succeed. This is the
+  // one small addition to this page: a status badge + connect/
+  // disconnect control next to LinkedIn's label in the message builder.
+  async function refreshLinkedinBadge() {
+    const badge = document.getElementById('mbLinkedinBadge');
+    if (!badge) return; // only present when 'linkedin' is one of the generated platforms
+    try {
+      const res = await fetch('/api/admin/social/linkedin/status');
+      const s = await res.json();
+      if (!s.configured) {
+        badge.innerHTML = `<span style="color:rgba(255,180,120,0.85)">LinkedIn app not configured yet</span>`;
+      } else if (s.connected) {
+        badge.innerHTML = `<span style="color:rgba(180,230,200,0.85)">Connected${s.accountName ? ' as ' + s.accountName : ''}</span> <button class="btn sm" onclick="disconnectLinkedin()">Disconnect</button>`;
+      } else {
+        badge.innerHTML = `<button class="btn sm" onclick="connectLinkedin()">Connect LinkedIn</button>`;
+      }
+    } catch (e) {
+      badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">Could not check status</span>`;
+    }
+  }
+  function connectLinkedin() {
+    // Full page navigation, not fetch — this has to hand off to
+    // LinkedIn's own consent screen in the real browser tab, then
+    // LinkedIn redirects back to /admin/comms itself once done.
+    window.location.href = '/auth/linkedin/connect';
+  }
+  async function disconnectLinkedin() {
+    if (!confirm('Disconnect LinkedIn? Posting to LinkedIn will stop working until it\u2019s reconnected.')) return;
+    await fetch('/api/admin/social/linkedin/disconnect', { method: 'POST' });
+    refreshLinkedinBadge();
+  }
+  // Picks up the query-param LinkedIn's own redirect back from
+  // /auth/linkedin/callback leaves on the URL, shows a one-time toast,
+  // then cleans the URL so a page refresh doesn't re-show it.
+  function checkLinkedinConnectResult() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('li_connected')) {
+      showFeedback('mbFeedback', 'LinkedIn connected.', 'ok');
+    } else if (params.has('li_error')) {
+      showFeedback('mbFeedback', 'LinkedIn connection failed: ' + params.get('li_error'), 'err');
+    } else {
+      return;
+    }
+    params.delete('li_connected'); params.delete('li_error');
+    const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    window.history.replaceState({}, '', clean);
+  }
+
   // ── Boot ──
   checkAuth().then(() => {
     initCollapsibleSections();
@@ -2937,6 +2992,7 @@
     loadNewsletters();
     loadScheduledMessages();
     loadSocialQueue();
+    checkLinkedinConnectResult();
     // Per Bot 24 — opens straight into compose, pre-filled with the
     // explicit-selected-list, if this page load came from Members'
     // "Message" button. No-op otherwise.

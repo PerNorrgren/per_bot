@@ -997,6 +997,29 @@ async function getDb() {
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
+  // ── OAuth connections (Per App 30 — modular publishing layer) ──
+  // One row per provider that needs its own login (as opposed to a
+  // static API key like BulkPublish's). provider is the primary key on
+  // purpose — this app only ever needs one connected account per
+  // provider (Per's own LinkedIn profile, not a multi-tenant system),
+  // so there's nothing to key on beyond the provider name itself.
+  // access_token/refresh_token are provider-specific opaque strings;
+  // expires_at/refresh_expires_at let each provider module decide for
+  // itself when a refresh is due without re-deriving that from
+  // provider-specific expires_in math scattered elsewhere.
+  db.run(`CREATE TABLE IF NOT EXISTS oauth_connections (
+    provider TEXT PRIMARY KEY,
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at TEXT,
+    refresh_expires_at TEXT,
+    account_name TEXT,
+    account_urn TEXT,
+    connected_by TEXT,
+    connected_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+
   // ── Campaigns (Per Bot 18) ──
   // A campaign is a named sequence of steps, mixing calming (line-bank,
   // no CTA) and sales (offer-linked, tracked) content across email and
@@ -6631,6 +6654,40 @@ function markScheduledMessageSent(id, dateStr) {
 }
 
 // ── Social post queue ──
+// ── OAuth connections (Per App 30) ──
+function getOAuthConnection(provider) {
+  return queryOne('SELECT * FROM oauth_connections WHERE provider=?', [provider]);
+}
+// Full connect/reconnect — replaces whatever was there before (account
+// details included), since a fresh OAuth consent means a fresh identity
+// on our end too, not just fresh tokens.
+function upsertOAuthConnection(provider, fields) {
+  const { access_token, refresh_token, expires_at, refresh_expires_at, account_name, account_urn, connected_by } = fields;
+  getDbSync().run(
+    `INSERT INTO oauth_connections (provider, access_token, refresh_token, expires_at, refresh_expires_at, account_name, account_urn, connected_by, connected_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+     ON CONFLICT(provider) DO UPDATE SET
+       access_token=excluded.access_token, refresh_token=excluded.refresh_token,
+       expires_at=excluded.expires_at, refresh_expires_at=excluded.refresh_expires_at,
+       account_name=excluded.account_name, account_urn=excluded.account_urn,
+       connected_by=excluded.connected_by, connected_at=datetime('now'), updated_at=datetime('now')`,
+    [provider, access_token || null, refresh_token || null, expires_at || null, refresh_expires_at || null,
+     account_name || null, account_urn || null, connected_by || null]
+  );
+}
+// Token-only refresh — leaves account_name/account_urn/connected_by
+// alone, since a token refresh isn't a new consent from a possibly
+// different account.
+function updateOAuthTokens(provider, { access_token, refresh_token, expires_at, refresh_expires_at }) {
+  getDbSync().run(
+    `UPDATE oauth_connections SET access_token=?, refresh_token=?, expires_at=?, refresh_expires_at=?, updated_at=datetime('now') WHERE provider=?`,
+    [access_token || null, refresh_token || null, expires_at || null, refresh_expires_at || null, provider]
+  );
+}
+function deleteOAuthConnection(provider) {
+  getDbSync().run('DELETE FROM oauth_connections WHERE provider=?', [provider]);
+}
+
 function getAllQueuedPublishes() { return queryAll('SELECT * FROM social_publish_queue ORDER BY created_at DESC'); }
 function getQueuedPublish(id) { return queryOne('SELECT * FROM social_publish_queue WHERE id=?', [id]); }
 function createQueuedPublish(id, fields) {
@@ -8540,6 +8597,7 @@ module.exports = {
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   getAllScheduledMessages, getScheduledMessage, createScheduledMessage, updateScheduledMessage, deleteScheduledMessage, markScheduledMessageSent, scheduledMessageMatchesDate,
   getAllQueuedPublishes, getQueuedPublish, createQueuedPublish, updateQueuedPublish, deleteQueuedPublish, markQueuedPublishSent, markQueuedPublishFailed, getCandidateQueuedPublishes,
+  getOAuthConnection, upsertOAuthConnection, updateOAuthTokens, deleteOAuthConnection,
   logEmailPending, logEmailPendingBatch, logEmailResult, logEmailResultBatch, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
