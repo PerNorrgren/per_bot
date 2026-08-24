@@ -882,8 +882,14 @@ async function getDb() {
     platforms TEXT NOT NULL,
     results TEXT NOT NULL,
     offer_id TEXT,
+    published_platforms TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
+  // Per App 30 — older rows predate the publish-tracking column above;
+  // ALTER TABLE ADD COLUMN is a no-op error (not a crash) if it already
+  // exists, same pattern used for every other incremental column add in
+  // this file.
+  try { db.run(`ALTER TABLE social_posts ADD COLUMN published_platforms TEXT`); } catch(e) {}
 
   // ── Signal lines (Per Bot 17 phase 6) ── The rotating "line bank" —
   // short signal-aware phrases (the "three truths" style: "You don't have
@@ -6494,12 +6500,25 @@ function addSocialPost(sourceText, platforms, results, offerId) {
 }
 function getAllSocialPosts(limit = 100) {
   return queryAll('SELECT * FROM social_posts ORDER BY created_at DESC LIMIT ?', [limit])
-    .map(p => ({ ...p, platforms: JSON.parse(p.platforms), results: JSON.parse(p.results) }));
+    .map(p => ({ ...p, platforms: JSON.parse(p.platforms), results: JSON.parse(p.results), published_platforms: p.published_platforms ? JSON.parse(p.published_platforms) : {} }));
 }
 function getSocialPost(id) {
   const row = queryAll('SELECT * FROM social_posts WHERE id=?', [id])[0];
   if (!row) return null;
-  return { ...row, platforms: JSON.parse(row.platforms), results: JSON.parse(row.results) };
+  return { ...row, platforms: JSON.parse(row.platforms), results: JSON.parse(row.results), published_platforms: row.published_platforms ? JSON.parse(row.published_platforms) : {} };
+}
+// Per App 30 — called right after a successful Publish, so the inline
+// "recent posts" table (and the reload-proof status badge on the
+// button itself) reflect what actually went out, not just whatever the
+// browser happened to remember before the next page load. Merges into
+// whatever's already recorded rather than overwriting, since a batch's
+// platforms typically get published one at a time, not all at once.
+function recordSocialPostPublish(id, platform, publishedAt) {
+  const existing = getSocialPost(id);
+  if (!existing) return;
+  const published = { ...existing.published_platforms, [platform]: publishedAt || new Date().toISOString() };
+  getDbSync().run('UPDATE social_posts SET published_platforms=? WHERE id=?', [JSON.stringify(published), id]);
+  save();
 }
 function deleteSocialPost(id) {
   getDbSync().run('DELETE FROM social_posts WHERE id=?', [id]);
@@ -8587,7 +8606,7 @@ module.exports = {
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
-  addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost,
+  addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
   // MOTD

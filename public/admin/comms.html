@@ -378,10 +378,13 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title">Reformat for social</div>
-        <button class="btn sm" onclick="mbOpenHistory()">History</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm" onclick="mbClearBuilder()" title="Resets the box below for a fresh message — anything already published is safe in Recent posts">Clear</button>
+          <button class="btn sm" onclick="mbOpenHistory()">History</button>
+        </div>
       </div>
       <div style="padding:16px 20px 8px">
-        <div class="config-desc" style="margin-bottom:8px">Paste a message, poem excerpt, or blog snippet — get platform-ready versions to copy and post by hand. No posting integration exists; nothing is sent anywhere automatically.</div>
+        <div class="config-desc" style="margin-bottom:8px">Paste a message, poem excerpt, or blog snippet — get platform-ready versions to copy, publish directly (LinkedIn), or send via BulkPublish (Facebook/Instagram/Threads).</div>
         <textarea class="inline-input" id="mbSource" rows="5" style="width:100%;resize:vertical" placeholder="Paste source content here…"></textarea>
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn sm" onclick="mbPullTodayMotd()">Pull today's MOTD</button>
@@ -414,6 +417,22 @@
       </div>
       <div style="padding:0 20px 14px"><div class="feedback" id="mbFeedback"></div></div>
       <div id="mbResults" style="padding:0 20px 20px;display:none"></div>
+    </div>
+  </div>
+
+  <!-- Per App 30 — inline "last 10" table, same pattern as Newsletters'
+       "Sent & drafts" above, so a generated/published post doesn't only
+       live behind the History button — a glance at this page shows what
+       actually went out recently without an extra click. History (the
+       modal opened above) still holds the full list beyond these 10. -->
+  <div>
+    <div class="section-label">Recent posts</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Last 10 generated</div>
+        <button class="btn sm" onclick="mbOpenHistory()">View all</button>
+      </div>
+      <div id="mbRecentList"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -1184,6 +1203,7 @@
   const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
   const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
   const mbQuillInstances = {}; // platform -> Quill instance, rebuilt every generate/duplicate
+  let mbCurrentPostId = null; // Per App 30 — social_posts row id for whatever's currently in the builder, so Publish can record against it
 
   function mbCheckboxId(p) { return 'mbPlatform' + p[0].toUpperCase() + p.slice(1); }
 
@@ -1252,13 +1272,32 @@
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Could not generate posts.');
+      mbCurrentPostId = data.postId || null; // Per App 30 — carried into Publish so it can be recorded against this row
       mbRenderResults(data.results, platforms);
       showFeedback('mbFeedback', 'Generated — copy whichever version you need.', 'ok');
+      mbLoadRecentPosts();
     } catch (e) {
       showFeedback('mbFeedback', e.message, 'err');
     } finally {
       btn.disabled = false; btn.innerHTML = origHtml;
     }
+  }
+
+  // Per App 30 — resets the builder back to empty, ready for the next
+  // message. Deliberately a manual button rather than something that
+  // fires automatically after a publish: a batch often has several
+  // platforms ticked and only one gets published at a time (LinkedIn
+  // direct vs. BulkPublish's own pace), so auto-clearing on the first
+  // publish could wipe out platforms still waiting their turn. Anything
+  // already published is safe regardless — it's recorded in Recent
+  // posts below, not just held in this form.
+  function mbClearBuilder() {
+    document.getElementById('mbSource').value = '';
+    document.getElementById('mbResults').style.display = 'none';
+    document.getElementById('mbResults').innerHTML = '';
+    document.getElementById('mbFeedback').innerHTML = '';
+    Object.keys(mbQuillInstances).forEach(k => delete mbQuillInstances[k]);
+    mbCurrentPostId = null;
   }
 
   function mbRenderResults(results, platforms) {
@@ -1345,13 +1384,14 @@
     try {
       const res = await fetch('/api/admin/bulkpublish/publish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, text })
+        body: JSON.stringify({ platform, text, postId: mbCurrentPostId })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not publish.');
       status.textContent = '✓ Published';
       status.style.color = 'rgba(180,230,200,0.85)';
       showFeedback('mbFeedback', (MB_LABELS[platform] || platform) + ' published.', 'ok');
+      mbLoadRecentPosts();
     } catch (e) {
       status.textContent = '✗ ' + e.message;
       status.style.color = 'rgba(255,140,120,0.9)';
@@ -1404,15 +1444,55 @@
     document.getElementById('mbSource').value = p.source_text;
     MB_PLATFORMS.forEach(pl => { document.getElementById(mbCheckboxId(pl)).checked = p.platforms.includes(pl); });
     mbRenderResults(p.results, p.platforms);
+    mbCurrentPostId = p.id; // Per App 30 — publishing from a duplicated post still records against its original row
     closeModal('mbHistoryModalOverlay');
     showFeedback('mbFeedback', 'Loaded — edit and copy, or hit Generate for a fresh pass.', 'ok');
   }
 
   async function mbDeleteHistoryPost(id) {
-    if (!(await appConfirm('Delete this from history? This only removes it from the list — nothing was ever posted anywhere.'))) return;
+    if (!(await appConfirm('Delete this from history? This only removes it from the list — nothing already published gets un-published.'))) return;
     await fetch(`/api/admin/social-posts/${id}`, { method: 'DELETE' });
     mbHistoryData = mbHistoryData.filter(p => p.id !== id);
     mbRenderHistory();
+    mbLoadRecentPosts();
+  }
+
+  // ── Recent posts (Per App 30) ── Inline last-10 table, loaded on
+  // boot and refreshed after every Generate/Publish, so this page always
+  // shows what actually happened without needing the History modal
+  // opened. Reuses the same /api/admin/social-posts data the modal
+  // uses — one fetch serves both, just sliced differently.
+  async function mbLoadRecentPosts() {
+    try {
+      mbHistoryData = await (await fetch('/api/admin/social-posts')).json();
+      mbRenderRecentList();
+    } catch(e) {
+      document.getElementById('mbRecentList').innerHTML = '<div class="empty">Could not load recent posts.</div>';
+    }
+  }
+
+  function mbRenderRecentList() {
+    const el = document.getElementById('mbRecentList');
+    const recent = mbHistoryData.slice(0, 10);
+    if (!recent.length) { el.innerHTML = '<div class="empty">No posts generated yet.</div>'; return; }
+    el.innerHTML = recent.map(p => {
+      const published = p.published_platforms || {};
+      const platformBadges = p.platforms.map(pl => {
+        const isPublished = !!published[pl];
+        return `<span class="badge ${isPublished ? '' : 'badge-draft'}" style="margin-right:4px" title="${isPublished ? 'Published ' + fmtDate(published[pl]) : 'Not published from here yet'}">${MB_LABELS[pl] || pl}${isPublished ? ' ✓' : ''}</span>`;
+      }).join('');
+      return `
+      <div class="doc-row">
+        <div class="doc-title">
+          <span class="msg-text" style="-webkit-line-clamp:1;display:inline">${escHtml(p.source_text.slice(0, 90))}${p.source_text.length > 90 ? '…' : ''}</span>
+        </div>
+        <div class="doc-consent">${platformBadges} · ${fmtDate(p.created_at)}</div>
+        <div class="doc-actions">
+          <button class="btn sm" onclick="mbDuplicatePost('${p.id}')">Duplicate</button>
+          <button class="btn sm danger" onclick="mbDeleteHistoryPost('${p.id}')">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   // ════════════════════════════════════
@@ -2988,11 +3068,53 @@
     }
   }
   function connectLinkedin() {
-    // Full page navigation, not fetch — this has to hand off to
-    // LinkedIn's own consent screen in the real browser tab, then
-    // LinkedIn redirects back to /admin/comms itself once done.
+    // Per App 30 — connecting has to be a real full-page navigation
+    // (LinkedIn's own login screen, then it redirects back here), which
+    // means the browser reloads this whole page and anything typed into
+    // Message Builder — never saved anywhere, only sitting in memory —
+    // would otherwise just vanish. Stash the current draft first so it
+    // can be restored the moment the page comes back.
+    try {
+      const platforms = MB_PLATFORMS.filter(p => document.getElementById(mbCheckboxId(p))?.checked);
+      sessionStorage.setItem('mbDraftBeforeLinkedinConnect', JSON.stringify({
+        sourceText: document.getElementById('mbSource')?.value || '',
+        platforms,
+        includeCta: document.getElementById('mbIncludeCta')?.checked ?? true,
+        offerId: document.getElementById('mbOfferSelect')?.value || '',
+      }));
+    } catch(e) { /* if this fails for any reason, still proceed to Connect — losing the draft is better than blocking the connection */ }
     window.location.href = '/auth/linkedin/connect';
   }
+  // Restores a Message Builder draft stashed by connectLinkedin() above,
+  // if this page load followed one — then re-generates automatically so
+  // the LinkedIn box (and every other platform ticked) comes back with
+  // real content, not just the empty form. The exact previous wording
+  // isn't preserved (nothing was ever saved except the source text and
+  // settings), so this is a fresh Generate on the same input rather than
+  // a byte-for-byte restore — worth knowing if the wording mattered.
+  async function restoreMbDraftIfAny() {
+    let saved;
+    try { saved = JSON.parse(sessionStorage.getItem('mbDraftBeforeLinkedinConnect') || 'null'); } catch(e) { saved = null; }
+    if (!saved) return;
+    sessionStorage.removeItem('mbDraftBeforeLinkedinConnect');
+    if (!saved.sourceText) return;
+    const sourceEl = document.getElementById('mbSource');
+    if (sourceEl) sourceEl.value = saved.sourceText;
+    (saved.platforms || []).forEach(p => {
+      const cb = document.getElementById(mbCheckboxId(p));
+      if (cb) cb.checked = true;
+    });
+    const ctaEl = document.getElementById('mbIncludeCta');
+    if (ctaEl) ctaEl.checked = !!saved.includeCta;
+    if (saved.offerId) {
+      await mbLoadOffers();
+      const offerEl = document.getElementById('mbOfferSelect');
+      if (offerEl) offerEl.value = saved.offerId;
+    }
+    showFeedback('mbFeedback', 'Your draft was restored and regenerated after connecting LinkedIn.', 'ok');
+    mbGenerate();
+  }
+
   async function disconnectLinkedin() {
     if (!confirm('Disconnect LinkedIn? Posting to LinkedIn will stop working until it\u2019s reconnected.')) return;
     await fetch('/api/admin/social/linkedin/disconnect', { method: 'POST' });
@@ -3024,7 +3146,9 @@
     loadNewsletters();
     loadScheduledMessages();
     loadSocialQueue();
+    mbLoadRecentPosts();
     checkLinkedinConnectResult();
+    restoreMbDraftIfAny();
     // Per Bot 24 — opens straight into compose, pre-filled with the
     // explicit-selected-list, if this page load came from Members'
     // "Message" button. No-op otherwise.

@@ -13056,11 +13056,18 @@ app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async
 // for now on every provider — media attachment is a natural next step
 // once each is confirmed working end to end, not bundled in here to
 // keep the first real publish simple to verify.
+//
+// Per App 30 — now accepts an optional postId (the message builder
+// always has one once Generate has run) and records the publish against
+// that social_posts row when present, so the "Recent posts" table below
+// can show real, reload-proof "Published" status per platform instead
+// of only whatever the browser happened to remember client-side.
 app.post('/api/admin/bulkpublish/publish', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { platform, text } = req.body;
+    const { platform, text, postId } = req.body;
     if (!platform || !text || !text.trim()) return res.status(400).json({ error: 'platform and text are required.' });
     const post = await publishers.publishToChannel(platform, { content: text });
+    if (postId) db.recordSocialPostPublish(postId, platform);
     res.json({ ok: true, post });
   } catch (e) {
     res.status(500).json({ error: e.message });
