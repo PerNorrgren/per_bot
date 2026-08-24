@@ -771,6 +771,30 @@ async function sendEmail(to, subject, html, meta = {}) {
   }
 }
 
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// Per App 30 — wraps sendEmail with automatic backoff-and-retry, up to
+// maxAttempts total tries per recipient. This is what a batch send
+// (newsletters, scheduled messages) uses instead of calling sendEmail
+// directly: a single flaky moment — a Scaleway hiccup, a transient
+// network blip — no longer needs someone to notice a "sending"
+// newsletter has stalled and click Retry by hand. Every attempt updates
+// the same email_log row (via meta.logId), so only the final outcome
+// after all retries is what ends up recorded — no duplicate rows, and
+// Progress always reflects the real, final state. Only a recipient that
+// still fails after every attempt gets surfaced further, in the admin
+// exception report runNewsletterSend sends below.
+async function sendEmailWithBackoff(to, subject, html, meta, maxAttempts = 3) {
+  const backoffMs = [3000, 10000]; // wait 3s after attempt 1 fails, 10s after attempt 2 fails
+  let result;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    result = await sendEmail(to, subject, html, meta);
+    if (result.ok || attempt === maxAttempts) return result;
+    await sleep(backoffMs[attempt - 1] || 10000);
+  }
+  return result;
+}
+
 // ── Scaleway TEM lookups (Per Bot 8) ──
 // Direct per-email status check, used once we already have a
 // scaleway_email_id on file (from the log above) — the reliable path
@@ -1723,6 +1747,33 @@ async function sendBirthdayMessages() {
     db.markBirthdaySent(user.id);
   }
   return { ok: true, matched: matches.length, sentEmail, sentSms };
+}
+
+// Per App 30 — sent once per newsletter send/retry run that ends with at
+// least one recipient still failed after 3 backed-off attempts (see
+// sendEmailWithBackoff above and runNewsletterSend below). A clean send
+// never generates this — it only fires when something's genuinely worth
+// a look, so it doesn't turn into noise that gets ignored. Every listed
+// address is exactly what "Retry outstanding" in admin would need to
+// pick up once the underlying issue (a bad address, a Scaleway hiccup,
+// whatever) is sorted.
+function emailNewsletterFailuresToAdmin(newsletter, failedRecipients) {
+  const rows = failedRecipients.slice(0, 50).map(f =>
+    `<tr><td style="padding:4px 10px 4px 0;color:#444">${f.email}</td><td style="padding:4px 0;color:#999;font-size:13px">${(f.error || '').slice(0, 200)}</td></tr>`
+  ).join('');
+  const more = failedRecipients.length > 50
+    ? `<p style="color:#999;font-size:13px">…and ${failedRecipients.length - 50} more — see Progress in admin for the full list.</p>`
+    : '';
+  return sendEmail(process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+    `Newsletter send — ${failedRecipients.length} still failed after retries — "${newsletter.subject}"`,
+    `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;padding:32px">
+      <h2 style="font-weight:normal">Some recipients didn't get "${newsletter.subject}"</h2>
+      <p style="color:#666">${failedRecipients.length} recipient${failedRecipients.length === 1 ? '' : 's'} failed even after 3 attempts with backoff. Everyone else on this send went through fine.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">${rows}</table>
+      ${more}
+      <p><a href="${APP_URL}/admin/comms">Open Comms in admin →</a> — use "Retry outstanding" there once the underlying issue is sorted.</p>
+    </div>`
+  );
 }
 
 // ── Facilitator requests (Per Bot 5, item 11) ──
@@ -14141,6 +14192,7 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   const b = brand();
   const cfg = db.getAppConfig() || {};
   let sentCount = 0, failedCount = 0;
+  const failedRecipients = []; // Per App 30 — feeds the admin exception report below
 
   for (const user of recipients) {
     // Per Bot 18 (now via the shared buildMessageTokens, Per Bot 19) — if
@@ -14161,14 +14213,23 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
     // exactly this: one bad address could abort everyone after it with no
     // record of how far it got. Every outcome, good or bad, is caught and
     // logged, and the loop always continues to the next person.
+    //
+    // Per App 30 — sendEmailWithBackoff retries a failure up to 3 times
+    // total with backoff between attempts, right here in the loop, so a
+    // transient hiccup on one address resolves itself automatically
+    // instead of needing someone to notice and click "Retry outstanding"
+    // by hand. Only what's still failed after all 3 attempts counts
+    // toward failedCount / the exception report below.
     try {
-      const result = await sendEmail(user.email, subject, html, {
+      const result = await sendEmailWithBackoff(user.email, subject, html, {
         kind: 'newsletter', newsletterId: newsletter.id, userId: user.id, logId: logRowsByUserId[user.id],
       });
-      if (result.ok) sentCount++; else failedCount++;
+      if (result.ok) sentCount++;
+      else { failedCount++; failedRecipients.push({ email: user.email, error: result.error }); }
     } catch(e) {
       failedCount++;
       db.updateEmailLogResult(logRowsByUserId[user.id], 'failed', null, e.message);
+      failedRecipients.push({ email: user.email, error: e.message });
     }
   }
 
@@ -14179,6 +14240,16 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   // finish cleanly at any real scale).
   db.markNewsletterSent(newsletter.id, sentCount);
   console.log(`Newsletter ${newsletter.id} send complete: ${sentCount} sent, ${failedCount} failed, ${recipients.length} total.`);
+
+  // Per App 30 — exception reporting: fires only when at least one
+  // recipient is still failed after every retry attempt, so a clean send
+  // never generates an email. Runs in the background — never blocks or
+  // risks failing the newsletter send itself over a notification email.
+  if (failedRecipients.length) {
+    emailNewsletterFailuresToAdmin(newsletter, failedRecipients).catch(e => {
+      console.error('newsletter failure-report email error:', e.message);
+    });
+  }
 }
 
 // Per Bot 21 — checks every active scheduled_messages row against

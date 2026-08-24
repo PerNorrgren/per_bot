@@ -44,6 +44,17 @@
     .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
     .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
     .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    /* Per App 30 — these filter tabs were plain unstyled <span>s wearing
+       the .day-chip class alongside real <button>s elsewhere on this
+       page that share that class; .day-chip has no CSS rule of its own
+       anywhere (buttons get their look from the browser default, spans
+       get nothing), so the filter words read as plain text with no
+       visible affordance — only the 🔁 emoji looked clickable.
+       .filter-chip gives these real button-like chrome and a clear
+       highlighted state for whichever one is active. */
+    .filter-chip { padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:12px; cursor:pointer; font-family:'Georgia',serif; transition:all 0.2s; display:inline-block; }
+    .filter-chip:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .filter-chip.active { border-color:rgba(180,230,200,0.45); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); }
     .btn.warn { border-color:rgba(255,180,60,0.3); color:rgba(255,180,60,0.65); }
     .btn.warn:hover { background:rgba(255,180,60,0.08); }
     .btn.sm { padding:5px 10px; font-size:10px; }
@@ -2069,6 +2080,21 @@
     renderNewsletterList();
   }
 
+  // Per App 30 — the "sending" row used to just sit there with stale text
+  // until something else happened to trigger a reload (a manual Retry
+  // click, or leaving and coming back). While anything is actively
+  // 'sending', quietly re-poll the whole list every 8s so the row updates
+  // itself to 'sent' the moment it's actually done — no more checking
+  // Progress and finding it's already finished while the row still says
+  // "Sending now". Self-cancelling: each reload re-checks and only
+  // reschedules itself if something's still sending.
+  let _newsletterSendingPollTimer = null;
+  function scheduleNewsletterSendingPoll() {
+    clearTimeout(_newsletterSendingPollTimer);
+    const anySending = (newslettersData || []).some(n => n.status === 'sending');
+    if (anySending) _newsletterSendingPollTimer = setTimeout(loadNewsletters, 8000);
+  }
+
   function audienceSummary(audience) {
     if (!audience || audience === 'all') return 'Everyone';
     return audience.split(',').map(s => AUDIENCE_LABELS[s] || s).join(', ');
@@ -2087,7 +2113,7 @@
     // doesn't bury the one-off newsletters you compose by hand.
     if (filterEl) {
       filterEl.innerHTML = ['all','manual','scheduled'].map(f => `
-        <span class="day-chip ${newsletterListFilter === f ? 'active' : ''}" onclick="setNewsletterListFilter('${f}')">${f === 'all' ? 'All' : f === 'manual' ? 'Manual' : '🔁 Scheduled'}</span>
+        <span class="filter-chip ${newsletterListFilter === f ? 'active' : ''}" onclick="setNewsletterListFilter('${f}')">${f === 'all' ? 'All' : f === 'manual' ? 'Manual' : 'Scheduled'}</span>
       `).join('');
     }
     const filtered = newslettersData.filter(n =>
@@ -2163,6 +2189,7 @@
         </div>
       </div>
     `).join('');
+    scheduleNewsletterSendingPoll();
   }
 
   // Per Bot 24 — explicit-selected-list compose. _explicitRecipientIds
@@ -2761,6 +2788,11 @@
       const res  = await fetch(`/api/admin/newsletters/${id}/progress`);
       const data = await res.json();
       appAlert(`Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`);
+      // Per App 30 — the row itself used to stay stuck on "Sending now"
+      // even once Progress confirmed everything was actually done, since
+      // nothing re-fetched the list. Checking Progress now also refreshes
+      // the row it's about, not just the modal.
+      loadNewsletters();
     } catch(e) { appAlert('Could not load progress.'); }
   }
 
