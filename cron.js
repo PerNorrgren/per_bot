@@ -67,9 +67,19 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
   // staggered so a slow run of one job never delays another. Checks
   // every active social_publish_queue row that's due — immediate
   // (queued, no schedule), a one-off scheduled_for that's arrived, or a
-  // recurring post whose recurrence matches this hour — and actually
-  // sends whichever are ready via sendDueQueuedPublishes (server.js).
-  cron.schedule('25 * * * *', async () => {
+  // recurring post whose recurrence matches this day and whose target
+  // time-of-day has arrived — and actually sends whichever are ready via
+  // sendDueQueuedPublishes (server.js).
+  //
+  // Per App 30 — was '25 * * * *' (once an hour). Social media is
+  // genuinely sensitive to posting time in a way email newsletters
+  // aren't, and an hourly tick meant a post "scheduled for 9:00" could
+  // actually go out anywhere from 9:00 to 9:59 depending on exactly
+  // when within that hour it happened to check — the granularity ceiling
+  // was the cron frequency itself, not anything in the UI. Every 5
+  // minutes gets a scheduled post out within 5 minutes of its target
+  // time-of-day, which is the point of setting one at all.
+  cron.schedule('*/5 * * * *', async () => {
     const t0 = Date.now();
     try {
       const result = await sendDueQueuedPublishes();

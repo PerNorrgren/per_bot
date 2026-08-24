@@ -1018,6 +1018,14 @@ async function getDb() {
   //     remembers to pause it".
   try { db.run(`ALTER TABLE social_publish_queue ADD COLUMN media_type TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE social_publish_queue ADD COLUMN recurrence_expires_on TEXT`); } catch(e) {}
+  // Per App 30 — minute-level send time, paired with the cron moving
+  // from hourly to every 5 minutes (see cron.js) — social media is
+  // sensitive to exact posting time in a way email newsletters aren't,
+  // and "send_hour" alone could only ever place a post somewhere within
+  // a given hour, never at a specific minute within it. Defaults to 0
+  // so every existing row (created before this column existed) keeps
+  // behaving exactly as it did — "on the hour" — unless edited.
+  try { db.run(`ALTER TABLE social_publish_queue ADD COLUMN send_minute INTEGER DEFAULT 0`); } catch(e) {}
 
   // ── OAuth connections (Per App 30 — modular publishing layer) ──
   // One row per provider that needs its own login (as opposed to a
@@ -6728,19 +6736,19 @@ function getQueuedPublish(id) { return queryOne('SELECT * FROM social_publish_qu
 function createQueuedPublish(id, fields) {
   const scheduledFor = toSqliteDatetime(fields.scheduled_for);
   getDbSync().run(
-    `INSERT INTO social_publish_queue (id, platform, content, media_url, media_type, status, scheduled_for, recurrence_type, recurrence_config, recurrence_expires_on, send_hour, active, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO social_publish_queue (id, platform, content, media_url, media_type, status, scheduled_for, recurrence_type, recurrence_config, recurrence_expires_on, send_hour, send_minute, active, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [id, fields.platform, fields.content, fields.media_url || null, fields.media_type || null,
      scheduledFor || fields.recurrence_type ? 'scheduled' : 'queued',
      scheduledFor, fields.recurrence_type || null,
      fields.recurrence_type ? JSON.stringify(fields.recurrence_config || {}) : null,
      fields.recurrence_type ? (fields.recurrence_expires_on || null) : null,
-     fields.send_hour ?? 9, fields.active === false ? 0 : 1, fields.created_by || null]
+     fields.send_hour ?? 9, fields.send_minute ?? 0, fields.active === false ? 0 : 1, fields.created_by || null]
   );
   save();
 }
 function updateQueuedPublish(id, fields) {
-  const allowed = ['platform', 'content', 'media_url', 'media_type', 'status', 'recurrence_type', 'recurrence_expires_on', 'send_hour', 'active', 'bulkpublish_post_id', 'bulkpublish_channel_id', 'error'];
+  const allowed = ['platform', 'content', 'media_url', 'media_type', 'status', 'recurrence_type', 'recurrence_expires_on', 'send_hour', 'send_minute', 'active', 'bulkpublish_post_id', 'bulkpublish_channel_id', 'error'];
   const sets = [];
   const vals = [];
   allowed.forEach(k => { if (fields[k] !== undefined) { sets.push(`${k}=?`); vals.push(fields[k]); } });

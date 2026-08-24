@@ -13219,7 +13219,7 @@ app.get('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, re
 
 app.post('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour } = req.body || {};
+    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour, sendMinute } = req.body || {};
     if (!platform || !content || !content.trim()) return res.status(400).json({ error: 'platform and content are required.' });
     if (recurrenceType && recurrenceType !== 'once' && !['daily', 'weekly', 'monthly_date', 'monthly_nth_weekday', 'yearly', 'every_n_days'].includes(recurrenceType)) {
       return res.status(400).json({ error: 'Unrecognised recurrence type.' });
@@ -13231,7 +13231,7 @@ app.post('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, r
       recurrence_type: recurrenceType || null,
       recurrence_config: recurrenceConfig || null,
       recurrence_expires_on: recurrenceExpiresOn || null,
-      send_hour: sendHour,
+      send_hour: sendHour, send_minute: sendMinute,
       created_by: req.user?.id || null,
     });
     res.json({ ok: true, id });
@@ -13247,7 +13247,7 @@ app.patch('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (r
     if (!['queued', 'scheduled', 'failed'].includes(existing.status)) {
       return res.status(409).json({ error: `Can't edit a post that's already ${existing.status}.` });
     }
-    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour, active } = req.body || {};
+    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour, sendMinute, active } = req.body || {};
     // Falls back to the existing row's own scheduled_for/recurrence_type
     // when this PATCH doesn't touch them — otherwise editing just the
     // content of a failed post (without resending its schedule) would
@@ -13257,7 +13257,7 @@ app.patch('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (r
     db.updateQueuedPublish(req.params.id, {
       platform, content, media_url: mediaUrl, media_type: mediaType,
       scheduled_for: scheduledFor, recurrence_type: recurrenceType,
-      recurrence_config: recurrenceConfig, recurrence_expires_on: recurrenceExpiresOn, send_hour: sendHour, active,
+      recurrence_config: recurrenceConfig, recurrence_expires_on: recurrenceExpiresOn, send_hour: sendHour, send_minute: sendMinute, active,
       // Editing a failed post puts it back in the running rather than
       // leaving it permanently stuck — same "retry by re-queueing"
       // convention as everything else admin-facing in this app. Clears
@@ -14446,8 +14446,16 @@ async function sendDueQueuedPublishes() {
   if (IS_STAGING) return { skipped: 'staging' };
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
-  const currentHour = now.getUTCHours();
-  db.deactivateExpiredQueuedPublishes(); // Per App 30 — "repeat until <date>": flip off anything past its expiry before candidates are even fetched
+  // Per App 30 — minutes-since-midnight-UTC, compared with >= rather
+  // than the old exact-hour equality. Paired with the cron itself moving
+  // from hourly to every 5 minutes (cron.js), this is what actually
+  // delivers "post at a specific time of day" — the old exact-match on
+  // send_hour alone could only ever place a post somewhere within a
+  // whole hour. >= also means a brief server hiccup right at the target
+  // minute doesn't cause the whole day to be skipped — it still fires on
+  // the very next tick, a few minutes late rather than a full day late.
+  const currentMinuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  db.deactivateExpiredQueuedPublishes(); // "repeat until <date>": flip off anything past its expiry before candidates are even fetched
   const candidates = db.getCandidateQueuedPublishes();
   let firedCount = 0;
   const fired = [];
@@ -14457,7 +14465,8 @@ async function sendDueQueuedPublishes() {
     const isRecurring = !!post.recurrence_type;
     if (isRecurring) {
       if (post.last_sent_date === todayStr) continue;
-      if (Number(post.send_hour) !== currentHour) continue;
+      const targetMinuteOfDay = Number(post.send_hour) * 60 + Number(post.send_minute || 0);
+      if (currentMinuteOfDay < targetMinuteOfDay) continue;
       let config = {};
       try { config = JSON.parse(post.recurrence_config || '{}'); } catch (e) {}
       // Per App 30 — last_sent_date passed through here specifically for

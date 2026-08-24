@@ -788,6 +788,8 @@
         <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
           <label style="margin:0">Send at</label>
           <select id="sqSendHour" style="width:auto"></select>
+          <span style="margin:0 -4px">:</span>
+          <select id="sqSendMinute" style="width:auto"></select>
           <span class="modal-note" style="margin:0">UTC</span>
         </div>
         <!-- Per App 30 — "repeat until <date>". Applies to every
@@ -2185,10 +2187,19 @@
   // Same hour-select population as populateSendHourOptions() but into
   // the sq-prefixed element — duplicated for the same reason as the
   // rest of this picker (see comment above).
+  //
+  // Per App 30 — added a real minute select (5-minute steps, matching
+  // the cron's own 5-minute tick — offering finer steps than the cron
+  // can actually honour would just be a false promise of precision).
+  // Social media is sensitive to exact posting time in a way email
+  // newsletters aren't, and "on the hour" alone genuinely wasn't enough.
   function populateSocialQueueSendHourOptions() {
     const sel = document.getElementById('sqSendHour');
-    sel.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${String(h).padStart(2,'0')}:00</option>`).join('');
+    sel.innerHTML = Array.from({length: 24}, (_, h) => `<option value="${h}">${String(h).padStart(2,'0')}</option>`).join('');
     sel.value = '9';
+    const minSel = document.getElementById('sqSendMinute');
+    minSel.innerHTML = Array.from({length: 12}, (_, i) => i * 5).map(m => `<option value="${m}">${String(m).padStart(2,'0')}</option>`).join('');
+    minSel.value = '0';
   }
 
   function openSocialQueueModal(prefill) {
@@ -2229,6 +2240,7 @@
       document.getElementById('sqRecurrenceType').value = p.recurrence_type;
       renderSocialQueueRecurrenceSubFields(p.recurrence_config || {});
       document.getElementById('sqSendHour').value = String(p.send_hour ?? 9);
+      document.getElementById('sqSendMinute').value = String(p.send_minute ?? 0);
     } else if (p.scheduled_for) {
       document.getElementById('sqSendMode').value = 'scheduled';
       toggleSocialQueueSendMode();
@@ -2264,6 +2276,7 @@
       body.recurrenceType = type;
       body.recurrenceConfig = config;
       body.sendHour = Number(document.getElementById('sqSendHour').value);
+      body.sendMinute = Number(document.getElementById('sqSendMinute').value);
       body.recurrenceExpiresOn = document.getElementById('sqRecurrenceExpiresOn').value || null;
     }
     const editId = document.getElementById('socialQueueEditId').value;
