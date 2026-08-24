@@ -988,10 +988,12 @@ async function getDb() {
     platform TEXT NOT NULL,
     content TEXT NOT NULL,
     media_url TEXT,
+    media_type TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
     scheduled_for TEXT,
     recurrence_type TEXT,
     recurrence_config TEXT,
+    recurrence_expires_on TEXT,
     send_hour INTEGER DEFAULT 9,
     active INTEGER DEFAULT 1,
     last_sent_date TEXT,
@@ -1002,6 +1004,20 @@ async function getDb() {
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
+  // Per App 30 — media_type/recurrence_expires_on are new on an existing
+  // table; ALTER TABLE ADD COLUMN is a no-op error (not a crash) if a
+  // column already exists, same pattern used for every other
+  // incremental column add in this file.
+  //   - media_type: 'image' | 'video', tells the publisher which
+  //     LinkedIn upload flow to use for a scheduled post carrying media
+  //     (BulkPublish-routed platforms don't need it — they infer type
+  //     from the file itself).
+  //   - recurrence_expires_on (YYYY-MM-DD): once past this date, the
+  //     due-query below excludes the row and the cron auto-deactivates
+  //     it — "repeat until <date>", not "repeat forever until someone
+  //     remembers to pause it".
+  try { db.run(`ALTER TABLE social_publish_queue ADD COLUMN media_type TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE social_publish_queue ADD COLUMN recurrence_expires_on TEXT`); } catch(e) {}
 
   // ── OAuth connections (Per App 30 — modular publishing layer) ──
   // One row per provider that needs its own login (as opposed to a
@@ -6712,18 +6728,19 @@ function getQueuedPublish(id) { return queryOne('SELECT * FROM social_publish_qu
 function createQueuedPublish(id, fields) {
   const scheduledFor = toSqliteDatetime(fields.scheduled_for);
   getDbSync().run(
-    `INSERT INTO social_publish_queue (id, platform, content, media_url, status, scheduled_for, recurrence_type, recurrence_config, send_hour, active, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, fields.platform, fields.content, fields.media_url || null,
+    `INSERT INTO social_publish_queue (id, platform, content, media_url, media_type, status, scheduled_for, recurrence_type, recurrence_config, recurrence_expires_on, send_hour, active, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, fields.platform, fields.content, fields.media_url || null, fields.media_type || null,
      scheduledFor || fields.recurrence_type ? 'scheduled' : 'queued',
      scheduledFor, fields.recurrence_type || null,
      fields.recurrence_type ? JSON.stringify(fields.recurrence_config || {}) : null,
+     fields.recurrence_type ? (fields.recurrence_expires_on || null) : null,
      fields.send_hour ?? 9, fields.active === false ? 0 : 1, fields.created_by || null]
   );
   save();
 }
 function updateQueuedPublish(id, fields) {
-  const allowed = ['platform', 'content', 'media_url', 'status', 'recurrence_type', 'send_hour', 'active', 'bulkpublish_post_id', 'bulkpublish_channel_id', 'error'];
+  const allowed = ['platform', 'content', 'media_url', 'media_type', 'status', 'recurrence_type', 'recurrence_expires_on', 'send_hour', 'active', 'bulkpublish_post_id', 'bulkpublish_channel_id', 'error'];
   const sets = [];
   const vals = [];
   allowed.forEach(k => { if (fields[k] !== undefined) { sets.push(`${k}=?`); vals.push(fields[k]); } });
@@ -6774,6 +6791,20 @@ function getCandidateQueuedPublishes() {
      AND (scheduled_for IS NULL OR scheduled_for <= datetime('now'))`
   );
 }
+// Per App 30 — "repeat until <date>". Runs once per cron tick, before
+// candidates are fetched: any recurring post whose expiry date has
+// passed flips to inactive right here, rather than just quietly never
+// matching scheduledMessageMatchesDate again while still showing as
+// Active in admin. Returns how many were deactivated, purely so the
+// caller can log something useful if it wants to.
+function deactivateExpiredQueuedPublishes() {
+  const db_ = getDbSync();
+  db_.run(
+    `UPDATE social_publish_queue SET active=0, updated_at=datetime('now')
+     WHERE active=1 AND recurrence_expires_on IS NOT NULL AND recurrence_expires_on < date('now')`
+  );
+  save();
+}
 
 // Per Bot 21 — the actual recurrence logic. Pure function, deliberately
 // no DB/date-library dependency beyond plain Date math, so it's easy to
@@ -6783,7 +6814,7 @@ function getCandidateQueuedPublishes() {
 // is stored as a UTC hour, so every comparison here needs to agree with
 // that same frame or the "which day is it" question silently drifts by
 // several hours near midnight for anyone west of Greenwich.
-function scheduledMessageMatchesDate(recurrenceType, config, dateObj) {
+function scheduledMessageMatchesDate(recurrenceType, config, dateObj, lastSentDate) {
   const cfg = config || {};
   const dow = dateObj.getUTCDay();       // 0=Sun .. 6=Sat
   const dom = dateObj.getUTCDate();      // 1-31
@@ -6829,6 +6860,23 @@ function scheduledMessageMatchesDate(recurrenceType, config, dateObj) {
     }
     case 'yearly':
       return month === Number(cfg.month) && dom === Number(cfg.day);
+    // Per App 30 — "repeat every N days" (e.g. every 3 days), the one
+    // cadence the existing daily/weekly/monthly/yearly set genuinely
+    // couldn't express. lastSentDate (YYYY-MM-DD, or null/undefined if
+    // this has never fired) is the only case here that needs it — every
+    // other branch above is a pure calendar-position check with no
+    // memory of past sends. Existing callers that don't pass a 4th
+    // argument (scheduled_messages' own send loop, which has no
+    // every_n_days option) are unaffected; lastSentDate is simply
+    // undefined there and this case is never reached.
+    case 'every_n_days': {
+      const n = Number(cfg.n);
+      if (!n || n < 1) return false;
+      if (!lastSentDate) return true; // never sent yet — due as soon as any other start condition (scheduled_for) is met
+      const last = new Date(lastSentDate + 'T00:00:00Z');
+      const diffDays = Math.floor((dateObj.getTime() - last.getTime()) / 86400000);
+      return diffDays >= n;
+    }
     default:
       return false;
   }
@@ -8615,7 +8663,7 @@ module.exports = {
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,
   getAllScheduledMessages, getScheduledMessage, createScheduledMessage, updateScheduledMessage, deleteScheduledMessage, markScheduledMessageSent, scheduledMessageMatchesDate,
-  getAllQueuedPublishes, getQueuedPublish, createQueuedPublish, updateQueuedPublish, deleteQueuedPublish, markQueuedPublishSent, markQueuedPublishFailed, getCandidateQueuedPublishes,
+  getAllQueuedPublishes, getQueuedPublish, createQueuedPublish, updateQueuedPublish, deleteQueuedPublish, markQueuedPublishSent, markQueuedPublishFailed, getCandidateQueuedPublishes, deactivateExpiredQueuedPublishes,
   getOAuthConnection, upsertOAuthConnection, updateOAuthTokens, deleteOAuthConnection,
   logEmailPending, logEmailPendingBatch, logEmailResult, logEmailResultBatch, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,

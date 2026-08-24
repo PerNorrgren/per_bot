@@ -778,6 +778,7 @@
       <div id="sqRecurringFields" style="display:none; margin-top:10px;">
         <select id="sqRecurrenceType" onchange="renderSocialQueueRecurrenceSubFields()" style="width:100%">
           <option value="daily">Every day</option>
+          <option value="every_n_days">Every N days</option>
           <option value="weekly">Every week, on certain days</option>
           <option value="monthly_date">Every month, on a specific date</option>
           <option value="monthly_nth_weekday">Every month, on a specific week + day (e.g. "1st Monday")</option>
@@ -788,6 +789,15 @@
           <label style="margin:0">Send at</label>
           <select id="sqSendHour" style="width:auto"></select>
           <span class="modal-note" style="margin:0">UTC</span>
+        </div>
+        <!-- Per App 30 — "repeat until <date>". Applies to every
+             recurrence type above, not just every_n_days — leaving it
+             blank means what it always did before this existed: repeats
+             indefinitely until paused by hand. -->
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="margin:0">Stop repeating after</label>
+          <input type="date" id="sqRecurrenceExpiresOn" style="width:auto"/>
+          <span class="modal-note" style="margin:0">optional — leave blank to repeat until paused</span>
         </div>
         <div class="modal-note" style="margin-top:8px">Checked every hour, 25 past — if today matches the pattern above and it's this hour (UTC), it goes out automatically, once. Won't send twice in the same day even if the pattern matches more than once.</div>
       </div>
@@ -1297,6 +1307,7 @@
     document.getElementById('mbResults').innerHTML = '';
     document.getElementById('mbFeedback').innerHTML = '';
     Object.keys(mbQuillInstances).forEach(k => delete mbQuillInstances[k]);
+    mbMedia = {};
     mbCurrentPostId = null;
   }
 
@@ -1305,6 +1316,7 @@
     // rebuilt below, so stale Quill objects would otherwise leak and
     // point at detached DOM nodes.
     Object.keys(mbQuillInstances).forEach(k => delete mbQuillInstances[k]);
+    mbMedia = {}; // Per App 30 — fresh generation, fresh media state; nothing carries over from a previous batch
 
     const container = document.getElementById('mbResults');
     container.innerHTML = platforms.map(p => `
@@ -1322,6 +1334,15 @@
           </div>
         </div>
         <div id="mbEditorWrap_${p}"></div>
+        <!-- Per App 30 — media row: generate an image fresh, or pull in
+             whatever Video Generator below has most recently rendered.
+             Instagram's own API refuses a text-only post, so its badge
+             starts in a visible "required" state rather than blank. -->
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn sm" onclick="mbGenerateImage('${p}')">🖼️ Generate image</button>
+          <button class="btn sm" onclick="mbUseRenderedVideo('${p}')" title="Uses whatever Video Generator below has most recently rendered">🎬 Use rendered video</button>
+          <span id="${mbMediaBadgeId(p)}" style="font-size:11px"></span>
+        </div>
       </div>
     `).join('');
     container.style.display = 'block';
@@ -1338,7 +1359,109 @@
       const q = MessageEditor.mountRich(`mbEditorWrap_${p}`, '', { toolbar: 'social' });
       q.setText(results[p] || '');
       mbQuillInstances[p] = q;
+      mbRenderMediaBadge(p); // sets the initial "required" state for Instagram, blank for everyone else
     });
+  }
+
+  // ── Media (Per App 30) ── Generated fresh per post, not picked from a
+  // library — per Per's own call on this. mbMedia is keyed by platform;
+  // each entry is null (nothing attached) or { url, type }. Publish and
+  // Schedule both read straight from this when they fire.
+  let mbMedia = {};
+  const MB_MEDIA_REQUIRED = { instagram: true }; // Instagram's own API refuses a text-only post — every other platform here is optional
+  function mbMediaBadgeId(p) { return `mbMediaBadge_${p}`; }
+
+  async function mbGenerateImage(platform) {
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    const postText = q.getText().replace(/\n$/, '');
+    if (!postText.trim()) { showFeedback('mbFeedback', 'Generate the post text first.', 'err'); return; }
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (badge) badge.innerHTML = '<span style="color:rgba(255,255,255,0.5)">Generating image… (up to 2 min)</span>';
+    try {
+      const res = await fetch('/api/admin/comms-ai-generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'social_image', context: JSON.stringify({ postText, platform }) })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.jobId) throw new Error(data.error || 'Could not start image generation.');
+      mbPollImageJob(platform, data.jobId);
+    } catch (e) {
+      if (badge) badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">${e.message}</span>`;
+    }
+  }
+  async function mbPollImageJob(platform, jobId) {
+    let res, data;
+    try {
+      res = await fetch(`/api/admin/comms-ai-generate/${jobId}`);
+      data = await res.json();
+    } catch(e) {
+      setTimeout(() => mbPollImageJob(platform, jobId), 2000);
+      return;
+    }
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (!res.ok || data.status === 'error') {
+      if (badge) badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">${data.error || 'Image generation failed.'}</span>`;
+      return;
+    }
+    if (data.status === 'pending') { setTimeout(() => mbPollImageJob(platform, jobId), 2000); return; }
+    mbMedia[platform] = { url: data.imageUrl, type: 'image' };
+    mbRenderMediaBadge(platform);
+  }
+  // Pulls in whatever the Video Generator section below has most
+  // recently rendered (_vgResultBlob — shared top-level state on this
+  // same page, see vgGenerate). Uploads it once here rather than routing
+  // through Video Generator's own "Save to library" flow, which is
+  // built for the categorized Content Library (title/category/
+  // subcategory/visibility) — a post attachment doesn't need any of
+  // that, just a real URL.
+  async function mbUseRenderedVideo(platform) {
+    if (!_vgResultBlob) { showFeedback('mbFeedback', 'Render a video in Video Generator below first.', 'err'); return; }
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (badge) badge.innerHTML = '<span style="color:rgba(255,255,255,0.5)">Uploading video…</span>';
+    try {
+      const fd = new FormData();
+      fd.append('file', _vgResultBlob, 'video.webm');
+      const res = await fetch('/api/admin/message-builder/upload-media', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || 'Could not upload the video.');
+      mbMedia[platform] = { url: data.url, type: 'video' };
+      mbRenderMediaBadge(platform);
+      showFeedback('mbFeedback', 'Video attached.', 'ok');
+    } catch (e) {
+      if (badge) badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">${e.message}</span>`;
+    }
+  }
+  function mbRemoveMedia(platform) {
+    mbMedia[platform] = null;
+    mbRenderMediaBadge(platform);
+  }
+  function mbRenderMediaBadge(platform) {
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (!badge) return;
+    const m = mbMedia[platform];
+    if (!m) {
+      badge.innerHTML = MB_MEDIA_REQUIRED[platform] ? '<span style="color:rgba(255,180,120,0.85)">Image or video required</span>' : '';
+      mbUpdatePublishAvailability(platform);
+      return;
+    }
+    const thumb = m.type === 'video'
+      ? `<video src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle" muted></video>`
+      : `<img src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle"/>`;
+    badge.innerHTML = `${thumb} <span style="color:rgba(180,230,200,0.85)">${m.type} attached</span> <button class="btn sm" onclick="mbRemoveMedia('${platform}')">Remove</button>`;
+    mbUpdatePublishAvailability(platform);
+  }
+  // Instagram's Publish button stays disabled until media is attached —
+  // this isn't a preference, Instagram's own API rejects a caption-only
+  // post outright, so letting the click through just to fail server-side
+  // would be a worse experience than not offering it at all.
+  function mbUpdatePublishAvailability(platform) {
+    const btn = document.getElementById(`mbPublishBtn_${platform}`);
+    if (!btn) return;
+    const required = MB_MEDIA_REQUIRED[platform];
+    const hasMedia = !!mbMedia[platform];
+    btn.disabled = required && !hasMedia;
+    btn.title = (required && !hasMedia) ? 'Instagram requires an image or video before this can be published' : '';
   }
 
   function mbCopy(platform) {
@@ -1364,7 +1487,8 @@
     if (!q) return;
     const text = q.getText().replace(/\n$/, '');
     if (!text.trim()) { showFeedback('mbFeedback', 'Nothing to schedule — the text is empty.', 'err'); return; }
-    openSocialQueueModal({ platform, content: text });
+    const media = mbMedia[platform];
+    openSocialQueueModal({ platform, content: text, mediaUrl: media?.url, mediaType: media?.type });
   }
 
   // Per Bot 18 — publishes straight to the connected account via
@@ -1382,9 +1506,10 @@
     btn.disabled = true; const origText = btn.textContent; btn.textContent = 'Publishing…';
     status.textContent = '';
     try {
+      const media = mbMedia[platform];
       const res = await fetch('/api/admin/bulkpublish/publish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, text, postId: mbCurrentPostId })
+        body: JSON.stringify({ platform, text, postId: mbCurrentPostId, mediaUrl: media?.url, mediaType: media?.type })
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not publish.');
@@ -1996,6 +2121,11 @@
       el.innerHTML = `<div class="day-picker">${WEEKDAY_NAMES.map((name, i) => `
         <button type="button" class="day-chip ${selected.has(i) ? 'active' : ''}" data-dow="${i}" onclick="this.classList.toggle('active')">${name.slice(0,3)}</button>
       `).join('')}</div>`;
+    } else if (type === 'every_n_days') {
+      el.innerHTML = `
+        <label style="margin:0">Every</label>
+        <input type="number" id="sqEveryNDays" min="1" max="365" value="${cfg.n || 3}" style="width:70px"/>
+        <span class="modal-note">days — counted from whenever this last actually sent, not the calendar date it was created</span>`;
     } else if (type === 'monthly_date') {
       const isLast = cfg.dayOfMonth === 'last';
       el.innerHTML = `
@@ -2037,6 +2167,9 @@
       const daysOfWeek = Array.from(document.querySelectorAll('#sqRecurrenceSubFields .day-chip.active')).map(c => Number(c.dataset.dow));
       return { type, config: { daysOfWeek } };
     }
+    if (type === 'every_n_days') {
+      return { type, config: { n: Number(document.getElementById('sqEveryNDays').value) || 3 } };
+    }
     if (type === 'monthly_date') {
       const isLast = document.getElementById('sqMonthlyDateIsLast').checked;
       return { type, config: { dayOfMonth: isLast ? 'last' : Number(document.getElementById('sqMonthlyDateNum').value) || 1 } };
@@ -2066,10 +2199,21 @@
     document.getElementById('sqSendMode').value = 'now';
     document.getElementById('sqScheduledFor').value = '';
     document.getElementById('sqRecurrenceType').value = 'daily';
+    document.getElementById('sqRecurrenceExpiresOn').value = '';
+    // Per App 30 — carried straight over from Message Builder's
+    // Schedule… button when a platform box has media attached; queued
+    // via the modal directly (no prefill) never has any.
+    _sqPrefillMedia = { url: (prefill && prefill.mediaUrl) || null, type: (prefill && prefill.mediaType) || null };
     toggleSocialQueueSendMode();
     document.getElementById('socialQueueErr').textContent = '';
     openModal('socialQueueModal');
   }
+  // Per App 30 — media doesn't have its own visible field in this modal
+  // (there's no room, and re-picking it here would duplicate Message
+  // Builder's own generate/attach UI); it just rides along silently from
+  // whichever platform box's Schedule… button opened this, or from the
+  // existing row when editing one already in the queue.
+  let _sqPrefillMedia = { url: null, type: null };
   function editSocialQueuePost(id) {
     const p = socialQueueData.find(x => x.id === id);
     if (!p) return;
@@ -2077,6 +2221,8 @@
     document.getElementById('socialQueueEditId').value = id;
     document.getElementById('sqPlatform').value = p.platform;
     document.getElementById('sqContent').value = p.content;
+    _sqPrefillMedia = { url: p.media_url || null, type: p.media_type || null };
+    document.getElementById('sqRecurrenceExpiresOn').value = p.recurrence_expires_on || '';
     if (p.recurrence_type) {
       document.getElementById('sqSendMode').value = 'recurring';
       toggleSocialQueueSendMode();
@@ -2104,6 +2250,10 @@
     if (!content) { err.textContent = 'Write something first.'; return; }
     const mode = document.getElementById('sqSendMode').value;
     const body = { platform, content };
+    if (_sqPrefillMedia && _sqPrefillMedia.url) {
+      body.mediaUrl = _sqPrefillMedia.url;
+      body.mediaType = _sqPrefillMedia.type;
+    }
     if (mode === 'scheduled') {
       const val = document.getElementById('sqScheduledFor').value;
       if (!val) { err.textContent = 'Pick a date and time.'; return; }
@@ -2114,6 +2264,7 @@
       body.recurrenceType = type;
       body.recurrenceConfig = config;
       body.sendHour = Number(document.getElementById('sqSendHour').value);
+      body.recurrenceExpiresOn = document.getElementById('sqRecurrenceExpiresOn').value || null;
     }
     const editId = document.getElementById('socialQueueEditId').value;
     const btn = document.getElementById('socialQueueSaveBtn');

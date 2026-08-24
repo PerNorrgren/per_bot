@@ -960,6 +960,29 @@ WRITE THE PROMPT to describe, in vivid concrete language: the one chosen subject
 
 OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
 
+// Per App 30 — Message builder's own "Generate image" button, generalised
+// from SUMIE_IMAGE_PROMPT_WRITING_PROMPT above but for a photographic/
+// illustrative social media image rather than sumi-e ink specifically —
+// Instagram in particular expects something that reads well as a square
+// feed image, not necessarily monochrome brushwork every time. Takes the
+// already-generated platform post text as context (not the raw source
+// content), since that's the actual wording the image needs to sit
+// alongside, and the target platform, since Instagram/Threads images get
+// looked at differently (quick scroll, needs to work small) than a
+// LinkedIn/Facebook image (more likely seen at a larger size, alongside
+// more surrounding text).
+const SOCIAL_IMAGE_PROMPT_WRITING_PROMPT = `You write a single image-generation prompt (for an AI image model, not for a person) describing one still image to accompany a Deeper Mindfulness social media post.
+
+You'll be given the post's own finished text as context, wrapped in <post_text></post_text> tags, and which platform it's for, wrapped in <platform></platform> tags.
+
+SUBJECT: read the post text and find its actual concrete image or moment, if it has one (a held breath, a hand on a chest, morning light through a window, a slow exhale, a single small choice) — base the image on THAT. If the text is more abstract with no single clear image, choose a fitting, specific, uncluttered scene instead — never a generic "person meditating" stock-photo cliché.
+
+STYLE: soft, warm, natural light photography or gentle illustration (your choice, whichever suits the subject better) — calm and uncluttered, generous negative space, nothing busy or overstimulating. No text, no logos, no watermarks, no borders anywhere in the image itself. No faces looking directly at camera (this is about a feeling, not a portrait). Square composition, works well at small size in a fast-scrolling feed.
+
+PLATFORM NOTE: if <platform> is instagram or threads, favour something that reads clearly and calmly even thumbnail-sized. If facebook or linkedin, either a wider establishing scene or a closer detail both work — whichever fits the subject.
+
+OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
+
 // Per Bot 17 — Message builder. Takes a short piece of source content (a
 // Message of the Day stanza, a poem excerpt, a blog snippet) and reformats
 // it into platform-ready social copy Per can copy and paste by hand. There
@@ -1130,6 +1153,7 @@ module.exports = {
   HAIKU_GENERATION_PROMPT,
   NATURE_POEM_GENERATION_PROMPT,
   SUMIE_IMAGE_PROMPT_WRITING_PROMPT,
+  SOCIAL_IMAGE_PROMPT_WRITING_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   CAMPAIGN_SALES_EMAIL_PROMPT,

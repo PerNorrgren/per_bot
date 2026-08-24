@@ -27,6 +27,9 @@ const AUTH_URL    = 'https://www.linkedin.com/oauth/v2/authorization';
 const TOKEN_URL   = 'https://www.linkedin.com/oauth/v2/accessToken';
 const USERINFO_URL = 'https://api.linkedin.com/v2/userinfo';
 const POSTS_URL    = 'https://api.linkedin.com/rest/posts';
+const API_BASE     = 'https://api.linkedin.com/rest';
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 // Personal-profile posting only, on purpose — Company Page posting
 // (w_organization_social) was explicitly ruled out as a use case.
@@ -156,13 +159,111 @@ async function listChannels() {
   }];
 }
 
-// Text-only for now — same "media is a natural next step, not bundled
-// in to keep the first real publish simple to verify" reasoning
-// BulkPublish's own integration used. LinkedIn's media path needs a
-// separate upload-then-reference flow (POST /rest/images first to get
-// an asset URN, then reference it here), which is real work best done
-// as its own follow-up once text posting is confirmed solid.
-async function publish(platform, { content, mediaUrl } = {}) {
+// Per App 30 — fetches the actual bytes of one of this app's own hosted
+// media URLs (an R2-generated image, or a saved Video Generator render).
+// LinkedIn has no "upload by URL" option — every asset has to be
+// registered, then the raw bytes PUT to a LinkedIn-issued upload target,
+// so the media always has to pass through here first.
+async function fetchMediaBytes(mediaUrl) {
+  const res = await fetch(mediaUrl);
+  if (!res.ok) throw new Error(`Could not fetch the media to upload (${res.status}).`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// LinkedIn processes uploaded media asynchronously — referencing an
+// asset's URN in a post before it's finished processing reliably fails.
+// Polls a handful of times with a short wait between; not fatal if it
+// times out without seeing AVAILABLE (some assets do work referenced
+// mid-processing per LinkedIn's own examples) — the post attempt itself
+// will surface any real problem clearly enough either way.
+async function waitForAssetAvailable(assetUrl, accessToken, maxTries = 8, delayMs = 2000) {
+  for (let i = 0; i < maxTries; i++) {
+    const res = await fetch(assetUrl, {
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': LI_VERSION },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data.status === 'AVAILABLE') return;
+    if (data.status === 'PROCESSING_FAILED' || data.status === 'FAILED') throw new Error('LinkedIn could not process the uploaded media.');
+    await sleep(delayMs);
+  }
+}
+
+// Images API: register -> PUT the bytes -> wait for processing. Three
+// calls for what looks like it should be one — this is LinkedIn's own
+// documented shape, not something simplifiable further.
+async function uploadImage(mediaUrl, ownerUrn, accessToken) {
+  const initRes = await fetch(`${API_BASE}/images?action=initializeUpload`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+      'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': LI_VERSION,
+    },
+    body: JSON.stringify({ initializeUploadRequest: { owner: ownerUrn } }),
+  });
+  const initData = await initRes.json().catch(() => ({}));
+  if (!initRes.ok) throw new Error(initData.message || `LinkedIn image upload setup returned ${initRes.status}`);
+  const { uploadUrl, image: imageUrn } = initData.value || {};
+  if (!uploadUrl || !imageUrn) throw new Error('LinkedIn did not return an upload target for the image.');
+
+  const bytes = await fetchMediaBytes(mediaUrl);
+  const putRes = await fetch(uploadUrl, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}` }, body: bytes });
+  if (!putRes.ok) throw new Error(`Uploading the image to LinkedIn failed (${putRes.status}).`);
+
+  await waitForAssetAvailable(`${API_BASE}/images/${encodeURIComponent(imageUrn)}`, accessToken);
+  return imageUrn;
+}
+
+// Videos API: register (with a real file size — required, unlike
+// images) -> PUT the bytes to the issued upload target -> finalize with
+// the returned uploadToken (LinkedIn's Videos API is inherently
+// multi-part for anything over 200MB, but a short narrated vertical
+// clip from this app's own Video Generator is nowhere near that, so
+// this only ever does the single-part path — the one uploadInstructions
+// entry LinkedIn returns for a file this size) -> wait for processing
+// (longer than images — video takes real time to transcode).
+async function uploadVideo(mediaUrl, ownerUrn, accessToken) {
+  const bytes = await fetchMediaBytes(mediaUrl);
+  const initRes = await fetch(`${API_BASE}/videos?action=initializeUpload`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+      'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': LI_VERSION,
+    },
+    body: JSON.stringify({ initializeUploadRequest: { owner: ownerUrn, fileSizeBytes: bytes.length, uploadCaptions: false, uploadThumbnail: false } }),
+  });
+  const initData = await initRes.json().catch(() => ({}));
+  if (!initRes.ok) throw new Error(initData.message || `LinkedIn video upload setup returned ${initRes.status}`);
+  const { video: videoUrn, uploadInstructions, uploadToken } = initData.value || {};
+  const instruction = uploadInstructions && uploadInstructions[0];
+  if (!videoUrn || !instruction) throw new Error('LinkedIn did not return an upload target for the video.');
+
+  const putRes = await fetch(instruction.uploadUrl, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}` }, body: bytes });
+  if (!putRes.ok) throw new Error(`Uploading the video to LinkedIn failed (${putRes.status}).`);
+  const etag = putRes.headers.get('etag') || putRes.headers.get('ETag');
+
+  const finalizeRes = await fetch(`${API_BASE}/videos?action=finalizeUpload`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+      'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': LI_VERSION,
+    },
+    body: JSON.stringify({ finalizeUploadRequest: { video: videoUrn, uploadToken: uploadToken || '', uploadedPartIds: etag ? [etag] : [] } }),
+  });
+  if (!finalizeRes.ok) {
+    const finData = await finalizeRes.json().catch(() => ({}));
+    throw new Error(finData.message || `Finalizing the LinkedIn video upload returned ${finalizeRes.status}`);
+  }
+
+  await waitForAssetAvailable(`${API_BASE}/videos/${encodeURIComponent(videoUrn)}`, accessToken, 15, 4000); // video processing takes longer than images
+  return videoUrn;
+}
+
+// Per App 30 — now attaches media. mediaUrl is one of this app's own
+// hosted URLs; mediaType ('image' | 'video') decides which upload flow
+// runs. Text-only still works exactly as before when neither is passed
+// — Facebook/Instagram/Threads' Publish button on a caption-only post,
+// or LinkedIn the same way, are unaffected by any of this.
+async function publish(platform, { content, mediaUrl, mediaType } = {}) {
   if (!content || !content.trim()) throw new Error('content is required to publish to LinkedIn.');
   const conn = db.getOAuthConnection('linkedin');
   if (!conn || !conn.account_urn) {
@@ -177,6 +278,14 @@ async function publish(platform, { content, mediaUrl } = {}) {
     lifecycleState: 'PUBLISHED',
     isReshareDisabledByAuthor: false,
   };
+  if (mediaUrl) {
+    const urn = mediaType === 'video'
+      ? await uploadVideo(mediaUrl, conn.account_urn, accessToken)
+      : await uploadImage(mediaUrl, conn.account_urn, accessToken);
+    body.content = mediaType === 'video'
+      ? { media: { title: content.slice(0, 80), id: urn } }
+      : { media: { id: urn } };
+  }
   const res = await fetch(POSTS_URL, {
     method: 'POST',
     headers: {

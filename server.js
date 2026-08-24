@@ -6473,19 +6473,13 @@ async function callClaudeWithRetry(systemPrompt, userMessage, maxTokens, disable
 // different source. gpt-image-2 is OpenAI's current flagship (April
 // 2026) — quality:'high' since cost here is genuinely trivial per image
 // and quality was the whole point of switching providers.
-async function generateSumieImage(context) {
+// Per App 30 — the actual OpenAI call, factored out of generateSumieImage
+// so generateSocialImage below (Message Builder's "Generate image") can
+// share it rather than duplicating the request/timeout/error-shape
+// handling. Takes a finished image prompt string, returns the raw PNG
+// bytes — callers own writing their own prompt first.
+async function callGptImage(imagePrompt) {
   if (!OPENAI_API_KEY) throw new Error('OpenAI is not configured on this deployment (missing OPENAI_API_KEY).');
-  // Per Bot 22 — context is the newsletter's current body text (plain
-  // text, stripped of HTML client-side), truncated defensively in case
-  // someone triggers this on a very long draft — a few thousand
-  // characters is more than enough for the model to spot a MOTD/poem/
-  // limerick/haiku's theme, and keeps this fast text call cheap.
-  const trimmedContext = (context || '').slice(0, 6000).trim();
-  const userMessage = trimmedContext
-    ? `<newsletter_context>\n${trimmedContext}\n</newsletter_context>\n\nWrite one sumi-e image prompt now.`
-    : 'No newsletter content yet — <newsletter_context></newsletter_context> is empty. Write one sumi-e image prompt now.';
-  const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
-
   let res;
   try {
     res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -6528,6 +6522,30 @@ async function generateSumieImage(context) {
   if (!b64) throw new Error('No image came back — please try again.');
   return Buffer.from(b64, 'base64');
 }
+async function generateSumieImage(context) {
+  // Per Bot 22 — context is the newsletter's current body text (plain
+  // text, stripped of HTML client-side), truncated defensively in case
+  // someone triggers this on a very long draft — a few thousand
+  // characters is more than enough for the model to spot a MOTD/poem/
+  // limerick/haiku's theme, and keeps this fast text call cheap.
+  const trimmedContext = (context || '').slice(0, 6000).trim();
+  const userMessage = trimmedContext
+    ? `<newsletter_context>\n${trimmedContext}\n</newsletter_context>\n\nWrite one sumi-e image prompt now.`
+    : 'No newsletter content yet — <newsletter_context></newsletter_context> is empty. Write one sumi-e image prompt now.';
+  const imagePrompt = (await callClaudeWithRetry(prompts.SUMIE_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
+  return callGptImage(imagePrompt);
+}
+// Per App 30 — Message Builder's "Generate image" button. postText is the
+// already-generated platform post copy (not the raw source content) —
+// that's the actual wording the image needs to sit next to. Shares
+// callGptImage above with generateSumieImage; only the prompt-writing
+// step differs (SOCIAL_IMAGE_PROMPT_WRITING_PROMPT in prompts.js).
+async function generateSocialImage(postText, platform) {
+  const trimmedText = (postText || '').slice(0, 3000).trim();
+  const userMessage = `<post_text>\n${trimmedText}\n</post_text>\n<platform>${platform}</platform>\n\nWrite one image prompt now.`;
+  const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
+  return callGptImage(imagePrompt);
+}
 // Per Bot 22 — background job pattern, not a single long request. A GPT
 // Image call can take up to ~2 minutes (OpenAI's own guidance), and
 // Railway/Cloudflare's edge proxy times out well before that — the
@@ -6550,6 +6568,26 @@ async function runCommsAiGenerateJob(jobId, type, context) {
       if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
       const buffer = await generateSumieImage(context);
       const key = `newsletter-images/${uuidv4()}.png`;
+      await media.uploadPublicObject(key, buffer, 'image/png');
+      db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
+      return;
+    }
+
+    // Per App 30 — Message Builder's "Generate image". context is a small
+    // JSON string ({ postText, platform }) rather than a plain string,
+    // since this generator needs two inputs. Deliberately stored under
+    // the same newsletter-images/ R2 prefix and served by the exact same
+    // GET /newsletter-images/:key route as sumie images above — that
+    // route is already a generic "serve a public image from R2" proxy,
+    // nothing newsletter-specific about its actual behaviour, so reusing
+    // it here avoids standing up a near-identical second route+prefix
+    // for what is, underneath, the same kind of object.
+    if (type === 'social_image') {
+      if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
+      let parsed;
+      try { parsed = JSON.parse(context); } catch { throw new Error('Malformed request for image generation.'); }
+      const buffer = await generateSocialImage(parsed.postText, parsed.platform);
+      const key = `newsletter-images/social-${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
       db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
       return;
@@ -6618,8 +6656,9 @@ function recoverPendingAiGenerateJobs() {
 }
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
   const { type, context } = req.body;
-  if (type === 'sumie' && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
-  if (type !== 'sumie' && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
+  const isImageType = type === 'sumie' || type === 'social_image';
+  if (isImageType && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
+  if (!isImageType && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
   const jobId = uuidv4();
   db.createAiGenerateJob(jobId, type, context);
   runCommsAiGenerateJob(jobId, type, context); // deliberately not awaited — returns to the client immediately
@@ -9471,6 +9510,42 @@ app.get('/newsletter-images/:key', async (req, res) => {
     obj.Body.pipe(res);
   } catch (e) {
     res.status(404).send('Not found');
+  }
+});
+
+// Per App 30 — Message Builder's "Use rendered video" button. The Video
+// Generator just below Message Builder on this same page already
+// renders a real .webm clip client-side (see vgGenerate); this is the
+// missing link that turns that in-browser blob into a real hosted URL a
+// platform's post can actually reference, without routing through the
+// heavier categorized Content Library save flow (title/category/
+// subcategory/visibility) that flow exists for — a post attachment
+// doesn't need any of that. Reuses the exact same newsletter-images/ R2
+// prefix and GET /newsletter-images/:key route above (which is already
+// content-type-agnostic — it just echoes back whatever ContentType was
+// stored), so no new serving infrastructure is needed for video either;
+// only the upload side needed loosening from image-only to image/video.
+app.post('/api/admin/message-builder/upload-media', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('image/') && !req.file.mimetype.startsWith('video/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only image or video files are supported here.' });
+    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = req.file.mimetype.startsWith('video/') ? '.webm' : ((req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || ['.png'])[0]);
+    const key = `newsletter-images/social-${uuidv4()}${ext}`;
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+    res.json({
+      url: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`,
+      mediaType: req.file.mimetype.startsWith('video/') ? 'video' : 'image',
+    });
+  } catch (e) {
+    console.error('message builder media upload error:', e.message);
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload media: ' + e.message });
   }
 });
 
@@ -13064,9 +13139,9 @@ app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async
 // of only whatever the browser happened to remember client-side.
 app.post('/api/admin/bulkpublish/publish', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { platform, text, postId } = req.body;
+    const { platform, text, postId, mediaUrl, mediaType } = req.body;
     if (!platform || !text || !text.trim()) return res.status(400).json({ error: 'platform and text are required.' });
-    const post = await publishers.publishToChannel(platform, { content: text });
+    const post = await publishers.publishToChannel(platform, { content: text, mediaUrl, mediaType });
     if (postId) db.recordSocialPostPublish(postId, platform);
     res.json({ ok: true, post });
   } catch (e) {
@@ -13144,17 +13219,18 @@ app.get('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, re
 
 app.post('/api/admin/bulkpublish/queue', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { platform, content, mediaUrl, scheduledFor, recurrenceType, recurrenceConfig, sendHour } = req.body || {};
+    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour } = req.body || {};
     if (!platform || !content || !content.trim()) return res.status(400).json({ error: 'platform and content are required.' });
-    if (recurrenceType && recurrenceType !== 'once' && !['daily', 'weekly', 'monthly_date', 'monthly_nth_weekday', 'yearly'].includes(recurrenceType)) {
+    if (recurrenceType && recurrenceType !== 'once' && !['daily', 'weekly', 'monthly_date', 'monthly_nth_weekday', 'yearly', 'every_n_days'].includes(recurrenceType)) {
       return res.status(400).json({ error: 'Unrecognised recurrence type.' });
     }
     const id = uuidv4();
     db.createQueuedPublish(id, {
-      platform, content, media_url: mediaUrl || null,
+      platform, content, media_url: mediaUrl || null, media_type: mediaType || null,
       scheduled_for: scheduledFor || null,
       recurrence_type: recurrenceType || null,
       recurrence_config: recurrenceConfig || null,
+      recurrence_expires_on: recurrenceExpiresOn || null,
       send_hour: sendHour,
       created_by: req.user?.id || null,
     });
@@ -13171,7 +13247,7 @@ app.patch('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (r
     if (!['queued', 'scheduled', 'failed'].includes(existing.status)) {
       return res.status(409).json({ error: `Can't edit a post that's already ${existing.status}.` });
     }
-    const { platform, content, mediaUrl, scheduledFor, recurrenceType, recurrenceConfig, sendHour, active } = req.body || {};
+    const { platform, content, mediaUrl, mediaType, scheduledFor, recurrenceType, recurrenceConfig, recurrenceExpiresOn, sendHour, active } = req.body || {};
     // Falls back to the existing row's own scheduled_for/recurrence_type
     // when this PATCH doesn't touch them — otherwise editing just the
     // content of a failed post (without resending its schedule) would
@@ -13179,9 +13255,9 @@ app.patch('/api/admin/bulkpublish/queue/:id', auth.requireAuthApi(['admin']), (r
     const effectiveScheduledFor = scheduledFor !== undefined ? scheduledFor : existing.scheduled_for;
     const effectiveRecurrenceType = recurrenceType !== undefined ? recurrenceType : existing.recurrence_type;
     db.updateQueuedPublish(req.params.id, {
-      platform, content, media_url: mediaUrl,
+      platform, content, media_url: mediaUrl, media_type: mediaType,
       scheduled_for: scheduledFor, recurrence_type: recurrenceType,
-      recurrence_config: recurrenceConfig, send_hour: sendHour, active,
+      recurrence_config: recurrenceConfig, recurrence_expires_on: recurrenceExpiresOn, send_hour: sendHour, active,
       // Editing a failed post puts it back in the running rather than
       // leaving it permanently stuck — same "retry by re-queueing"
       // convention as everything else admin-facing in this app. Clears
@@ -13215,7 +13291,7 @@ app.post('/api/admin/bulkpublish/queue/:id/publish-now', auth.requireAuthApi(['a
   try {
     const post = db.getQueuedPublish(req.params.id);
     if (!post) return res.status(404).json({ error: 'Not found.' });
-    const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined });
+    const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined, mediaType: post.media_type || undefined });
     db.markQueuedPublishSent(post.id, new Date().toISOString().slice(0, 10), {
       bulkpublishPostId: result?.id || null,
       bulkpublishChannelId: result?.channelId || null,
@@ -14371,6 +14447,7 @@ async function sendDueQueuedPublishes() {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
   const currentHour = now.getUTCHours();
+  db.deactivateExpiredQueuedPublishes(); // Per App 30 — "repeat until <date>": flip off anything past its expiry before candidates are even fetched
   const candidates = db.getCandidateQueuedPublishes();
   let firedCount = 0;
   const fired = [];
@@ -14383,7 +14460,11 @@ async function sendDueQueuedPublishes() {
       if (Number(post.send_hour) !== currentHour) continue;
       let config = {};
       try { config = JSON.parse(post.recurrence_config || '{}'); } catch (e) {}
-      if (!db.scheduledMessageMatchesDate(post.recurrence_type, config, now)) continue;
+      // Per App 30 — last_sent_date passed through here specifically for
+      // the new 'every_n_days' case (see scheduledMessageMatchesDate in
+      // db.js) — every other recurrence type ignores this 4th argument
+      // entirely, so this is a safe addition for all of them.
+      if (!db.scheduledMessageMatchesDate(post.recurrence_type, config, now, post.last_sent_date)) continue;
     }
     // Non-recurring posts (immediate queue or a one-off scheduled_for)
     // are already correctly filtered by getCandidateSocialPosts()'s SQL
@@ -14391,7 +14472,7 @@ async function sendDueQueuedPublishes() {
     // NULL or already past — nothing further to check here.
 
     try {
-      const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined });
+      const result = await publishers.publishToChannel(post.platform, { content: post.content, mediaUrl: post.media_url || undefined, mediaType: post.media_type || undefined });
       db.markQueuedPublishSent(post.id, todayStr, {
         bulkpublishPostId: result?.id || null,
         bulkpublishChannelId: result?.channelId || null,
