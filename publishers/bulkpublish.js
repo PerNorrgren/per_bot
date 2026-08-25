@@ -18,8 +18,25 @@ async function bulkPublishRequest(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || data.message || `BulkPublish returned ${res.status}`);
+  if (!res.ok) throw new Error(extractErrorMessage(data) || `BulkPublish returned ${res.status}`);
   return data;
+}
+
+// Per App 30 fix — data.error/.message from BulkPublish isn't always a
+// plain string; some of their endpoints return a structured object
+// instead (e.g. { error: { message: '...', code: '...' } }). The old
+// code did `throw new Error(data.error || ...)` unconditionally — when
+// data.error was an object, `new Error(anObject)` silently stringifies
+// it via the object's default toString(), producing the literal text
+// "[object Object]" as the whole error message, with the real reason
+// lost. This normalises whatever shape comes back into an actual
+// readable string before it ever reaches new Error(...).
+function extractErrorMessage(data) {
+  const raw = data && (data.error || data.message);
+  if (!raw) return null;
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object') return raw.message || raw.error || raw.detail || JSON.stringify(raw);
+  return String(raw);
 }
 
 function configured() {

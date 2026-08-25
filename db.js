@@ -605,6 +605,31 @@ async function getDb() {
     FOREIGN KEY (category_id) REFERENCES categories(id),
     FOREIGN KEY (subcategory_id) REFERENCES categories(id)
   )`);
+  // Per App 30 — email deliverability health, orthogonal to member_tier
+  // on purpose. member_tier drives real access control throughout this
+  // app (course access, pricing, dozens of "tier >= N" checks) — a
+  // paying Member whose email happens to be bouncing shouldn't lose paid
+  // access over it, so this never touches member_tier at all, any tier
+  // can end up here. 'ok' (default) -> 'flagged' (auto-detected: 3
+  // consecutive failed newsletters AND no login since the first of
+  // those 3 — see checkAndFlagEmailHealth) -> 'failed' (admin has
+  // reviewed the flagged row and confirmed it in the new Email Health
+  // panel; a flagged row does nothing further on its own beyond sitting
+  // in that admin queue, per Per's own call on auto-flag-but-I-approve).
+  try { db.run(`ALTER TABLE users ADD COLUMN email_health TEXT DEFAULT 'ok'`); } catch(e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN email_health_flagged_at TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN email_health_reason TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN consecutive_failed_newsletters INTEGER DEFAULT 0`); } catch(e) {}
+  // Set the moment /unsubscribe/:token fires — previously nothing
+  // recorded when someone unsubscribed, only that pref_email_news had
+  // become 0, with no way to tell a fresh unsubscribe from someone who's
+  // simply always had newsletters off. Drives the new win-back sweep
+  // below (deliberately separate from the Savers system, which is
+  // specifically for Stripe cancellations/payment failures on a paid
+  // subscription — most newsletter-only contacts have no subscription
+  // for Savers' own state machine to attach to at all).
+  try { db.run(`ALTER TABLE users ADD COLUMN unsubscribed_at TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE users ADD COLUMN winback_email_sent_at TEXT`); } catch(e) {}
 
   // ── Sessions ──
   db.run(`CREATE TABLE IF NOT EXISTS sessions (
@@ -1184,9 +1209,29 @@ async function getDb() {
     status TEXT NOT NULL DEFAULT 'pending',
     scaleway_email_id TEXT,
     error TEXT,
+    delivery_status TEXT,
+    delivery_status_detail TEXT,
+    delivery_checked_at TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )`);
+  // Per App 30 — bounce/delivery tracking. Deliberately separate columns
+  // from `status` above rather than reusing it: `status` already means
+  // something specific and load-bearing elsewhere (did sendEmail() itself
+  // succeed in handing this to Scaleway — drives Progress counts, retry
+  // logic, the exception-report email), set the instant a send happens.
+  // Scaleway's OWN 'sent' status actually means "delivered to the target
+  // mail system" (confirmed via their API docs) — a genuinely different,
+  // later fact that can only be known by asking Scaleway back afterward,
+  // which is what the new poller below does. Overloading `status` with
+  // this second meaning would have quietly broken every existing thing
+  // that reads it. delivery_status is null until checked, then
+  // 'delivered' | 'bounced' | 'unknown'; delivery_status_detail is the
+  // human-readable reason (Scaleway's status_details / SMTP response
+  // text) — exactly what the new Failures table shows per row.
+  try { db.run(`ALTER TABLE email_log ADD COLUMN delivery_status TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE email_log ADD COLUMN delivery_status_detail TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE email_log ADD COLUMN delivery_checked_at TEXT`); } catch(e) {}
 
   // ── Cron job activity log (Per Bot 20) ── One row per scheduled job
   // run, for the Reports hub's cron activity report. detail is a short

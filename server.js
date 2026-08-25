@@ -1991,6 +1991,11 @@ app.get('/api/public/facilitators/:id', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/assets/tomte.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'tomte.png')));
+// Per's request — the sumi-e meditation drawing from the "Finding Calm"
+// newsletter, now the Video Generator's default opening frame (see
+// VG_BACKGROUNDS in admin-comms.html). Same "no express.static() mount,
+// every file gets its own explicit route" convention as tomte.png above.
+app.get('/assets/video-bg-meditation-sumie.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'video-bg-meditation-sumie.png')));
 app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'bulk-import-sample.xlsx')));
 // Per Bot 17 fix: these two were missing entirely. This app has no
 // express.static() mount by design (see comment above) — every file

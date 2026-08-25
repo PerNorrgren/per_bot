@@ -1638,7 +1638,16 @@
   let _vgResultBlob = null;
   let _vgCats = [];
 
+  // Per's request — the sumi-e meditation drawing from the "Finding
+  // Calm" newsletter now opens every rendered video, replacing the
+  // generic aerial-beach stock photo that used to be first (images are
+  // drawn in array order, so position 0 here is always the opening
+  // frame). Served from this app itself (see the matching explicit
+  // route in server.js — no express.static() mount, so this needed its
+  // own route the same way tomte.png did), not Unsplash, so it never
+  // moves or changes out from under this without Per's own request.
   const VG_BACKGROUNDS = [
+    '/assets/video-bg-meditation-sumie.png',
     'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1600&q=80',
     'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1600&q=80',
     'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1600&q=80',

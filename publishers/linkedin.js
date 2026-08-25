@@ -214,13 +214,21 @@ async function uploadImage(mediaUrl, ownerUrn, accessToken) {
 }
 
 // Videos API: register (with a real file size — required, unlike
-// images) -> PUT the bytes to the issued upload target -> finalize with
-// the returned uploadToken (LinkedIn's Videos API is inherently
-// multi-part for anything over 200MB, but a short narrated vertical
-// clip from this app's own Video Generator is nowhere near that, so
-// this only ever does the single-part path — the one uploadInstructions
-// entry LinkedIn returns for a file this size) -> wait for processing
-// (longer than images — video takes real time to transcode).
+// images) -> PUT each byte-range chunk to its own issued upload target
+// -> finalize with the uploadToken plus every part's ETag, in order.
+//
+// Bug fix (Per App 30) — the original version here assumed a single
+// upload part always, using only uploadInstructions[0] and PUTting the
+// *entire* file to it. That's wrong: LinkedIn always splits video into
+// fixed 4MB (4194304-byte) parts, even a small file gets exactly one
+// part covering its whole size, but anything over 4MB gets multiple
+// parts, each expecting only its own byte range. Sending the whole file
+// to a single 4MB part's endpoint is exactly what LinkedIn's own upload
+// server was rejecting with 413 Payload Too Large — it wasn't a size
+// limit on the video overall, it was every part after the first getting
+// silently dropped and the first part receiving far more bytes than its
+// declared range. This now genuinely slices the buffer per part's
+// firstByte/lastByte (both inclusive) and uploads each separately.
 async function uploadVideo(mediaUrl, ownerUrn, accessToken) {
   const bytes = await fetchMediaBytes(mediaUrl);
   const initRes = await fetch(`${API_BASE}/videos?action=initializeUpload`, {
@@ -234,12 +242,22 @@ async function uploadVideo(mediaUrl, ownerUrn, accessToken) {
   const initData = await initRes.json().catch(() => ({}));
   if (!initRes.ok) throw new Error(initData.message || `LinkedIn video upload setup returned ${initRes.status}`);
   const { video: videoUrn, uploadInstructions, uploadToken } = initData.value || {};
-  const instruction = uploadInstructions && uploadInstructions[0];
-  if (!videoUrn || !instruction) throw new Error('LinkedIn did not return an upload target for the video.');
+  if (!videoUrn || !uploadInstructions || !uploadInstructions.length) {
+    throw new Error('LinkedIn did not return an upload target for the video.');
+  }
 
-  const putRes = await fetch(instruction.uploadUrl, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}` }, body: bytes });
-  if (!putRes.ok) throw new Error(`Uploading the video to LinkedIn failed (${putRes.status}).`);
-  const etag = putRes.headers.get('etag') || putRes.headers.get('ETag');
+  // Parts are returned already sorted by byte range (LinkedIn's own
+  // documented guarantee) — uploaded in that same order, sequentially,
+  // since uploadedPartIds below has to line up positionally with them.
+  const partIds = [];
+  for (const part of uploadInstructions) {
+    const chunk = bytes.subarray(part.firstByte, part.lastByte + 1); // lastByte is inclusive
+    const putRes = await fetch(part.uploadUrl, { method: 'PUT', headers: { 'Authorization': `Bearer ${accessToken}` }, body: chunk });
+    if (!putRes.ok) throw new Error(`Uploading part of the video to LinkedIn failed (${putRes.status}).`);
+    const etag = putRes.headers.get('etag') || putRes.headers.get('ETag');
+    if (!etag) throw new Error('LinkedIn didn\u2019t return an ETag for an uploaded video part — cannot finalize.');
+    partIds.push(etag);
+  }
 
   const finalizeRes = await fetch(`${API_BASE}/videos?action=finalizeUpload`, {
     method: 'POST',
@@ -247,7 +265,7 @@ async function uploadVideo(mediaUrl, ownerUrn, accessToken) {
       'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json',
       'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': LI_VERSION,
     },
-    body: JSON.stringify({ finalizeUploadRequest: { video: videoUrn, uploadToken: uploadToken || '', uploadedPartIds: etag ? [etag] : [] } }),
+    body: JSON.stringify({ finalizeUploadRequest: { video: videoUrn, uploadToken: uploadToken || '', uploadedPartIds: partIds } }),
   });
   if (!finalizeRes.ok) {
     const finData = await finalizeRes.json().catch(() => ({}));
