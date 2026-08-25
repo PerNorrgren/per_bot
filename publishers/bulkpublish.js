@@ -59,13 +59,32 @@ async function listChannels() {
   }));
 }
 
-// Text-only for now, same as it always was — media attachment is a
-// natural next step once each provider is confirmed working end to end.
+// Publishes with media as an optional attachment.
+//
+// Bug fix (Per App 30) — "status": "published" was never actually a
+// valid value for BulkPublish's own create-post endpoint at all (their
+// own docs and every example only ever show "draft" or "scheduled" —
+// immediate publishing is done via "scheduled" with a
+// near-immediate timestamp, or via a separate publish-a-draft action).
+// This had been silently broken since it was first written; it only
+// surfaced now because the real error message used to get lost to the
+// "[object Object]" bug just above, so "status must be draft or
+// scheduled" was never actually visible until that got fixed. Using
+// status:'scheduled' with scheduled_at set a few seconds in the future
+// is the documented, reliable way to get "post this right now" — it's
+// BulkPublish's own scheduling engine firing it almost immediately,
+// same mechanism the campaign /activate route already relies on for
+// its own future-dated posts, just with a near-zero delay here.
 async function publish(platform, { content, mediaUrl } = {}) {
   const { channels } = await bulkPublishRequest('GET', '/channels');
   const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
   if (!channel) throw new Error(`${platform} isn't connected in BulkPublish yet — connect it in the Channels page first.`);
-  const publishBody = { content, channels: [{ channelId: channel.id, platform: channel.platform }], status: 'published' };
+  const publishBody = {
+    content,
+    channels: [{ channelId: channel.id, platform: channel.platform }],
+    status: 'scheduled',
+    scheduled_at: new Date(Date.now() + 10000).toISOString(), // ~10s out — near-immediate, comfortably clear of "in the past" rejection
+  };
   if (mediaUrl) publishBody.media = [{ url: mediaUrl }];
   const result = await bulkPublishRequest('POST', '/posts', publishBody);
   return {
