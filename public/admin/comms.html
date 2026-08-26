@@ -588,16 +588,24 @@
     </div>
   </div>
 
-  <!-- ── Social publish queue — schedule/recurrence extension over BulkPublish's existing immediate-only publish, added directly beneath it so the two feel like one feature rather than two unrelated ones. ── -->
+  <!-- Per App 31 — this used to be a full browsing list of everything in
+       the queue (below), duplicated now by the Social tab's own Posting
+       Queue table, which does the same job with proper inline editing.
+       Kept: the "+ New post" compose action and the modal it opens
+       (socialQueueModal below), since Message Builder's own per-platform
+       "Schedule…" button (mbSchedule) opens this exact same modal to
+       actually queue a post — that's shared infrastructure, not part of
+       the old browsing view, and removing it would break scheduling
+       from Message Builder entirely. -->
   <div>
     <div class="section-label">Social publish queue</div>
     <div class="card">
       <div class="card-header">
-        <div class="card-title">Queued, scheduled &amp; repeating posts</div>
+        <div class="card-title">Queue a new post</div>
         <button class="btn primary" onclick="openSocialQueueModal()">+ New post</button>
       </div>
-      <div style="padding:0 20px 12px; font-size:12px; color:rgba(255,255,255,0.4);">Send now (goes out on the next hourly check), pick a future date &amp; time, or repeat on a schedule — same recurrence patterns as Scheduled messages above. Checked every hour, 25 past. A post generated in Message Builder below can be sent here directly via its own "Schedule…" button instead of retyping it.</div>
-      <div id="socialQueueList"><div class="loading">Loading…</div></div>
+      <div style="padding:0 20px 16px; font-size:12px; color:rgba(255,255,255,0.4);">Send now, pick a future date &amp; time, or repeat on a schedule. A post generated in Message Builder below can be sent here directly via its own "Schedule…" button instead of retyping it. To view, edit, or cancel anything already queued — across every platform — see the <a href="/admin/social" style="color:rgba(180,230,200,0.8)">Social tab</a>.</div>
+      <div class="feedback" id="sqFeedback" style="padding:0 20px 14px"></div>
     </div>
   </div>
 
@@ -2309,48 +2317,12 @@
   }
 
   // ── Social publish queue ──
-  let socialQueueData = [];
-  const SQ_PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn', threads: 'Threads' };
-
-  async function loadSocialQueue() {
-    const res = await fetch('/api/admin/bulkpublish/queue');
-    const data = await res.json();
-    socialQueueData = data.posts || [];
-    renderSocialQueueList();
-  }
-
-  function socialQueueSummary(p) {
-    if (p.status === 'published') return `Sent ${p.last_sent_date || ''}`;
-    if (p.status === 'failed') return `Failed: ${escHtml(p.error || 'unknown error')}`;
-    if (p.recurrence_type) return recurrenceSummary(p); // same function, same shape (recurrence_type/recurrence_config/send_hour) — reused as-is.
-    if (p.scheduled_for) {
-      // scheduled_for comes back from the server already normalised to
-      // SQLite's own space-separated format — displayed as-is rather
-      // than re-parsed, since it's already a plain readable UTC string.
-      return `Scheduled for ${p.scheduled_for} UTC`;
-    }
-    return 'Sends on the next hourly check';
-  }
-
-  function renderSocialQueueList() {
-    const el = document.getElementById('socialQueueList');
-    if (!socialQueueData.length) { el.innerHTML = '<div class="empty">Nothing queued yet.</div>'; return; }
-    el.innerHTML = socialQueueData.map(p => `
-      <div class="doc-row">
-        <div class="doc-title">
-          ${SQ_PLATFORM_LABELS[p.platform] || p.platform} — ${escHtml((p.content || '').slice(0, 60))}${(p.content || '').length > 60 ? '…' : ''}
-          <span class="badge ${p.status === 'published' ? '' : (p.status === 'failed' ? 'badge-draft' : '')}" style="margin-left:6px">${p.status}</span>
-        </div>
-        <div class="doc-consent">${socialQueueSummary(p)}</div>
-        <div class="doc-actions">
-          ${p.status !== 'published' ? `<button class="btn sm" onclick="editSocialQueuePost('${p.id}')">Edit</button>` : ''}
-          ${p.status !== 'published' ? `<button class="btn sm" onclick="publishSocialQueueNow('${p.id}', this)" title="Sends immediately — doesn't affect its normal schedule">Send now</button>` : ''}
-          <button class="btn sm danger" onclick="deleteSocialQueueRow('${p.id}')">Delete</button>
-        </div>
-      </div>
-    `).join('');
-  }
-
+  // Per App 31 — loadSocialQueue/renderSocialQueueList/socialQueueSummary
+  // (the old browsing list) were removed here — that view now lives on
+  // the Social tab with proper inline editing. openSocialQueueModal,
+  // saveSocialQueuePost, and everything below stay: Message Builder's
+  // own "Schedule…" button (mbSchedule) still opens this exact modal to
+  // actually queue a post, which has nothing to do with the old list.
   function toggleSocialQueueSendMode() {
     const mode = document.getElementById('sqSendMode').value;
     document.getElementById('sqScheduledFields').style.display = mode === 'scheduled' ? 'block' : 'none';
@@ -2474,38 +2446,12 @@
   // Per App 30 — media doesn't have its own visible field in this modal
   // (there's no room, and re-picking it here would duplicate Message
   // Builder's own generate/attach UI); it just rides along silently from
-  // whichever platform box's Schedule… button opened this, or from the
-  // existing row when editing one already in the queue.
+  // whichever platform box's Schedule… button opened this.
+  // Per App 31 — editSocialQueuePost (pre-filling this modal from an
+  // existing queue row) removed along with the old browsing list it
+  // belonged to; editing an existing row now happens inline on the
+  // Social tab instead, which doesn't route through this modal at all.
   let _sqPrefillMedia = { url: null, type: null };
-  function editSocialQueuePost(id) {
-    const p = socialQueueData.find(x => x.id === id);
-    if (!p) return;
-    document.getElementById('socialQueueModalTitle').textContent = 'Edit post';
-    document.getElementById('socialQueueEditId').value = id;
-    document.getElementById('sqPlatform').value = p.platform;
-    document.getElementById('sqContent').value = p.content;
-    _sqPrefillMedia = { url: p.media_url || null, type: p.media_type || null };
-    document.getElementById('sqRecurrenceExpiresOn').value = p.recurrence_expires_on || '';
-    if (p.recurrence_type) {
-      document.getElementById('sqSendMode').value = 'recurring';
-      toggleSocialQueueSendMode();
-      document.getElementById('sqRecurrenceType').value = p.recurrence_type;
-      renderSocialQueueRecurrenceSubFields(p.recurrence_config || {});
-      document.getElementById('sqSendHour').value = String(p.send_hour ?? 9);
-      document.getElementById('sqSendMinute').value = String(p.send_minute ?? 0);
-    } else if (p.scheduled_for) {
-      document.getElementById('sqSendMode').value = 'scheduled';
-      toggleSocialQueueSendMode();
-      // scheduled_for from the server is 'YYYY-MM-DD HH:MM:SS' (SQLite's
-      // own format); <input type="datetime-local"> needs 'YYYY-MM-DDTHH:MM'.
-      document.getElementById('sqScheduledFor').value = p.scheduled_for.replace(' ', 'T').slice(0, 16);
-    } else {
-      document.getElementById('sqSendMode').value = 'now';
-      toggleSocialQueueSendMode();
-    }
-    document.getElementById('socialQueueErr').textContent = '';
-    openModal('socialQueueModal');
-  }
   async function saveSocialQueuePost() {
     const err = document.getElementById('socialQueueErr');
     err.textContent = '';
@@ -2543,32 +2489,20 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not save.');
       closeModal('socialQueueModal');
-      loadSocialQueue();
+      // Per App 31 — used to call loadSocialQueue() to refresh the list
+      // right here; that list is gone now (see the Social tab instead),
+      // so this just confirms the save happened.
+      showFeedback('sqFeedback', 'Queued — view or edit it from the Social tab.', 'ok');
     } catch (e) {
       err.textContent = e.message;
     } finally {
       setBtnLoading(btn, false);
     }
   }
-  async function publishSocialQueueNow(id, btn) {
-    if (!(await appConfirm('Publish this right now? This goes live immediately, not as a draft.'))) return;
-    setBtnLoading(btn, true, 'Publishing…');
-    try {
-      const res = await fetch(`/api/admin/bulkpublish/queue/${id}/publish-now`, { method: 'POST' });
-      const data = await res.json();
-      if (data.ok) appAlert('Published.'); else appAlert(data.error || 'Could not publish.');
-      loadSocialQueue();
-    } catch (e) {
-      appAlert('Network error — please try again.');
-    } finally {
-      setBtnLoading(btn, false);
-    }
-  }
-  async function deleteSocialQueueRow(id) {
-    if (!(await appConfirm('Delete this post from the queue?'))) return;
-    await fetch(`/api/admin/bulkpublish/queue/${id}`, { method: 'DELETE' });
-    loadSocialQueue();
-  }
+  // Per App 31 — publishSocialQueueNow and deleteSocialQueueRow removed
+  // along with the old browsing list — "Send now" and "Cancel" for an
+  // existing queued post live on the Social tab now (queuePublishNow /
+  // queueDelete there), which call the same underlying endpoints.
 
   async function loadNewsletters() {
     const res = await fetch('/api/admin/newsletters');
@@ -3561,7 +3495,6 @@
     loadTomteBroadcastStatus();
     loadNewsletters();
     loadScheduledMessages();
-    loadSocialQueue();
     mbLoadRecentPosts();
     checkLinkedinConnectResult();
     restoreMbDraftIfAny();
