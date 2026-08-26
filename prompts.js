@@ -991,18 +991,27 @@ OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to 
 // carrying the post's own words on-image, not just a mood photo next to
 // a caption most scrollers won't stop to read. gpt-image-2 renders short
 // on-image text passably (unlike most image models), which is what
-// makes this worth attempting at all; the instruction below keeps the
-// actual rendered text short and simple for exactly that reason — a
-// full paragraph would come out garbled.
+// makes this worth attempting at all.
+// Revised same session — the first version told the model to pick a
+// single line and treat the rest as noise, which produced a big
+// pull-quote card, not an infographic. This version distills the whole
+// message into a headline plus a short handful of supporting phrases
+// laid out as distinct zones, which is what actually makes something
+// read as "infographic" rather than "quote card" — while still keeping
+// the total on-image word count low, since that's still the real
+// constraint on what an image model can render legibly.
 const SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT = `You write a single image-generation prompt (for an AI image model, not for a person) describing one square infographic-style image for an Instagram feed post.
 
 You'll be given the post's own finished text as context, wrapped in <post_text></post_text> tags.
 
-WHAT TO PULL FROM THE TEXT: pick the single strongest line or phrase from the post — the one line that carries the whole idea (often the opening line, but read the whole thing and pick whichever line actually lands hardest, not just the first one). This is the only text that should appear rendered on the image itself. Do not try to fit the whole post's words onto the image — image models render short text far more reliably than long text, and a cluttered image is worse than a clean one with less on it.
+WHAT TO PULL FROM THE TEXT: read the whole post and distill its actual structure into short on-image text — this needs to read as an infographic that carries the whole message, not a single quote card with one big line and everything else discarded. Produce:
+1. A HEADLINE — 3-6 words, the single strongest phrase or a condensed version of the opening idea.
+2. 2-4 SUPPORTING POINTS — each 2-5 words, short phrases (not full sentences) that carry the other beats of the message in order, condensed down to their essential words. If the post already reads as a short list or has natural line breaks (many of these posts do), those lines are your supporting points, trimmed further if needed. If it's a single flowing paragraph instead, find the 2-4 distinct beats within it and phrase each as a short standalone phrase.
+Keep total on-image text (headline + all supporting points combined) under roughly 25-30 words — an image model renders that much legibly; a full paragraph's worth comes out garbled, which defeats the point.
 
-LAYOUT: describe a clean, flat, modern infographic-style design — generous negative space, the chosen line set as the clear visual focus in a calm, legible serif or humanist sans-serif typeface, one simple supporting visual element only (a single line-art icon, a minimal shape, a soft gradient band, a subtle texture) that echoes the line's meaning without competing with it for attention. Muted, calming colour palette (soft warm neutrals, sage, dusty blue, warm cream) — never bright, saturated, or "corporate slide deck" colours. No stock-photo elements, no faces, no clutter, no more than one supporting graphic element. No logos or watermarks (those are added separately). Square composition, must stay legible at small thumbnail size in a fast-scrolling feed.
+LAYOUT: describe a clean, flat, modern infographic-style design — the headline set larger and bolder at the top or center as the clear visual anchor, the supporting points arranged beneath or around it as a short vertical list or evenly spaced short lines (like real infographic bullet points, each with generous breathing room, optionally each paired with a tiny simple icon or marker), calm and legible serif or humanist sans-serif typeface throughout. Generous negative space overall — this should still read as calm and uncluttered, not like a busy slide. Muted, calming colour palette (soft warm neutrals, sage, dusty blue, warm cream) — never bright, saturated, or "corporate slide deck" colours. No stock-photo elements, no faces. No logos or watermarks (those are added separately). Square composition, must stay legible at small thumbnail size in a fast-scrolling feed.
 
-TEXT ACCURACY: quote the chosen line exactly as it appears in the post text — do not paraphrase, shorten, or fix its punctuation. Specify in the prompt that this exact text should render clearly and correctly spelled, since that is the single most important element of the image.
+TEXT ACCURACY: specify in the prompt that all of this text — the headline and every supporting point — must render clearly and correctly spelled exactly as written, since that is the single most important element of the image, and that no other text should appear anywhere in the image.
 
 OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
 
