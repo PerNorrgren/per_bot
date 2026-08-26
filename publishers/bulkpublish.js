@@ -83,7 +83,13 @@ async function publish(platform, { content, mediaUrl } = {}) {
     content,
     channels: [{ channelId: channel.id, platform: channel.platform }],
     status: 'scheduled',
-    scheduled_at: new Date(Date.now() + 10000).toISOString(), // ~10s out — near-immediate, comfortably clear of "in the past" rejection
+    // Bug fix (Per App 30, round 2) — "scheduledAt is required for
+    // scheduled posts" confirmed the field name itself was wrong: their
+    // Python/Node SDK wrapper accepts scheduled_at (snake_case) as a
+    // convenience param, but the actual raw REST JSON field underneath
+    // is scheduledAt (camelCase) — a common SDK-wrapper-vs-raw-API
+    // naming mismatch, not a further status/logic problem.
+    scheduledAt: new Date(Date.now() + 10000).toISOString(), // ~10s out — near-immediate, comfortably clear of "in the past" rejection
   };
   if (mediaUrl) publishBody.media = [{ url: mediaUrl }];
   const result = await bulkPublishRequest('POST', '/posts', publishBody);
