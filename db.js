@@ -959,6 +959,24 @@ async function getDb() {
   db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('instagram', '[2,3]', '["12:00"]')`);
   db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('threads', '[2,3,4]', '["09:00"]')`);
 
+  // Per App 31 — "B" of the streamlining plan: which Messages of the Day
+  // have already been used to auto-fill each platform's queue. Tracked
+  // per (motd_id, platform) rather than a single global flag or a column
+  // on messages_of_the_day itself, for two reasons: (1) it must never
+  // touch or interact with that table's own status/sent_at fields, which
+  // already mean something specific for the actual daily MOTD email —
+  // marking a MOTD "used" here must not make it look emailed, or vice
+  // versa; (2) each platform posts on its own cadence (Facebook wants 4
+  // slots/week, Instagram 2), so each needs to advance through the MOTD
+  // backlog at its own pace rather than being locked in step with the
+  // others by a single shared "next one" pointer.
+  db.run(`CREATE TABLE IF NOT EXISTS social_motd_usage (
+    motd_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    used_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (motd_id, platform)
+  )`);
+
   // ── Signal lines (Per Bot 17 phase 6) ── The rotating "line bank" —
   // short signal-aware phrases (the "three truths" style: "You don't have
   // to earn the right to rest") used across /promotions, the message
@@ -6682,6 +6700,50 @@ function updateSocialScheduleConfig(platform, days, times) {
   save();
 }
 
+// Per App 31 — "B" of the streamlining plan: which Message of the Day
+// should fill this platform's next empty queue slot. Same ordering as
+// getNextMotdToSend (oldest scheduled_date, then oldest created_at) but
+// filtered against social_motd_usage for this platform specifically —
+// see the comment on that table above for why it's tracked per platform
+// rather than globally or on messages_of_the_day itself. Returns
+// undefined once every approved MOTD has already been used for this
+// platform — the caller (topUpSocialQueue) treats that as "nothing left
+// to generate from right now" rather than an error.
+function getNextUnusedMotdForPlatform(platform) {
+  return queryOne(
+    `SELECT m.* FROM messages_of_the_day m
+     WHERE m.status='approved'
+     AND NOT EXISTS (SELECT 1 FROM social_motd_usage u WHERE u.motd_id=m.id AND u.platform=?)
+     ORDER BY
+       CASE WHEN m.scheduled_date IS NOT NULL THEN m.scheduled_date ELSE '9999-99-99' END ASC,
+       m.created_at ASC
+     LIMIT 1`,
+    [platform]
+  );
+}
+function markMotdUsedForSocial(motdId, platform) {
+  getDbSync().run('INSERT OR IGNORE INTO social_motd_usage (motd_id, platform) VALUES (?,?)', [motdId, platform]);
+  save();
+}
+
+// Per App 31 — every currently active queued/scheduled scheduled_for
+// timestamp for one platform within a window, used by topUpSocialQueue
+// to work out which of a platform's upcoming weekly slots are already
+// covered and which are genuinely missing. Returns raw SQLite datetime
+// strings ("YYYY-MM-DD HH:MM:SS", UTC, via toSqliteDatetime) — the
+// caller parses them back into real Date objects for comparison rather
+// than this function doing that, since "how" to compare is the caller's
+// concern (exact slot match here, general due-ness in
+// getCandidateQueuedPublishes above).
+function getUpcomingQueuedTimesForPlatform(platform, fromDate, toDate) {
+  return queryAll(
+    `SELECT scheduled_for FROM social_publish_queue
+     WHERE platform=? AND active=1 AND status IN ('queued','scheduled')
+     AND scheduled_for IS NOT NULL AND scheduled_for >= ? AND scheduled_for <= ?`,
+    [platform, toSqliteDatetime(fromDate), toSqliteDatetime(toDate)]
+  ).map(r => r.scheduled_for);
+}
+
 // ── Messages of the day ──
 function addMotd(id, body, scheduledDate) {
   getDbSync().run(
@@ -8797,6 +8859,7 @@ module.exports = {
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish, updateSocialPostMedia,
   getSocialScheduleConfig, updateSocialScheduleConfig,
+  getNextUnusedMotdForPlatform, markMotdUsedForSocial, getUpcomingQueuedTimesForPlatform,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
   // MOTD

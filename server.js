@@ -13096,6 +13096,48 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
 // correct even if the offer/trial length changes later. Every generation
 // is saved to social_posts for the History panel, whether or not the CTA
 // was included.
+// Per App 31 — extracted from the route below so the automated queue
+// top-up ("B" of the social streamlining plan) can generate the exact
+// same platform copy an admin clicking Generate would get, without a
+// server-calling-itself HTTP round trip. Behaviour is unchanged from
+// before the extraction — the route is now a thin wrapper around this.
+async function generateSocialCopy(sourceText, platforms, includeCta, offerId) {
+  let offer = null;
+  if (includeCta) {
+    offer = offerId ? db.getOffer(offerId) : db.getDefaultOffer();
+    if (offer && !db.isOfferCurrentlyValid(offer)) offer = null; // don't promote a dead/expired offer
+  }
+
+  const ctaInstructions = (includeCta && offer)
+    ? prompts.MESSAGE_BUILDER_CTA_INSTRUCTIONS.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days)
+    : 'Do not add any signup hook, closing invitation, or link — produce only the reformatted message itself, per the platform shapes above.';
+  const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
+
+  const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.`;
+  const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1500);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    parsed = JSON.parse(cleaned);
+  }
+
+  if (includeCta && offer) {
+    // Per Bot 18 — every produced link now carries a source tag, no
+    // exceptions. Each platform gets its own link tagged with that
+    // platform's name, so a single generation batch (e.g. Facebook +
+    // LinkedIn + Instagram in one go) still shows up as three separately
+    // comparable rows in the funnel report, not one merged untagged hit.
+    Object.keys(parsed).forEach(k => {
+      if (typeof parsed[k] !== 'string') return;
+      const link = `${APP_URL}/promo/${offer.code}?src=${encodeURIComponent(k)}`;
+      parsed[k] = parsed[k].split('{{SIGNUP_LINK}}').join(link);
+    });
+  }
+  return { parsed, offer };
+}
+
 app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const sourceText = (req.body?.sourceText || '').trim();
@@ -13106,39 +13148,7 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
     if (!platforms.length) return res.status(400).json({ error: 'Select at least one platform.' });
 
     const includeCta = req.body?.includeCta !== false; // default on
-    let offer = null;
-    if (includeCta) {
-      offer = req.body?.offerId ? db.getOffer(req.body.offerId) : db.getDefaultOffer();
-      if (offer && !db.isOfferCurrentlyValid(offer)) offer = null; // don't promote a dead/expired offer
-    }
-
-    const ctaInstructions = (includeCta && offer)
-      ? prompts.MESSAGE_BUILDER_CTA_INSTRUCTIONS.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days)
-      : 'Do not add any signup hook, closing invitation, or link — produce only the reformatted message itself, per the platform shapes above.';
-    const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
-
-    const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.`;
-    const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1500);
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      parsed = JSON.parse(cleaned);
-    }
-
-    if (includeCta && offer) {
-      // Per Bot 18 — every produced link now carries a source tag, no
-      // exceptions. Each platform gets its own link tagged with that
-      // platform's name, so a single generation batch (e.g. Facebook +
-      // LinkedIn + Instagram in one go) still shows up as three separately
-      // comparable rows in the funnel report, not one merged untagged hit.
-      Object.keys(parsed).forEach(k => {
-        if (typeof parsed[k] !== 'string') return;
-        const link = `${APP_URL}/promo/${offer.code}?src=${encodeURIComponent(k)}`;
-        parsed[k] = parsed[k].split('{{SIGNUP_LINK}}').join(link);
-      });
-    }
+    const { parsed, offer } = await generateSocialCopy(sourceText, platforms, includeCta, req.body?.offerId);
 
     const postId = db.addSocialPost(sourceText, platforms, parsed, offer ? offer.id : null);
     res.json({ ok: true, results: parsed, postId });
@@ -13404,6 +13414,20 @@ app.post('/api/admin/social-schedule/:platform', auth.requireAuthApi(['admin']),
     if (!times.length) return res.status(400).json({ error: 'Add at least one time (HH:MM, 24-hour, UTC).' });
     db.updateSocialScheduleConfig(platform, [...new Set(days)].sort((a, b) => a - b), [...new Set(times)].sort());
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// Per App 31 — manual trigger for "B", the same top-up the daily cron
+// runs on its own. Admin-only and synchronous (awaits the whole run
+// before responding) — a full top-up across all four platforms takes at
+// most a handful of GPT Image + Claude calls, well within a normal
+// request timeout, so this doesn't need job-queue machinery the way the
+// heavier PDF/EPUB conversions elsewhere in this file do.
+app.post('/api/admin/social-queue/prepare', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const report = await topUpSocialQueue();
+    res.json({ ok: true, report });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -14592,6 +14616,115 @@ async function sendDueQueuedPublishes() {
   return { checked: candidates.length, fired: firedCount, failed: failed.length, details: fired, failedDetails: failed };
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// SOCIAL QUEUE AUTO-PREPARE ("B" of the social streamlining plan,
+// Per App 31) — keeps each platform's queue topped up to a rolling
+// week's worth of scheduled posts, per the schedule config from "A"
+// (social_schedule_config). Same function backs both a manual "Prepare
+// now" admin button and a new daily cron tick, so there's exactly one
+// place this logic lives rather than two copies that can drift apart.
+//
+// Deliberately per-platform and independent: each platform advances
+// through the Message of the Day backlog at its own pace (via
+// social_motd_usage), rather than all four being locked to a single
+// shared "today's message" — Facebook wants roughly twice as many
+// posts a week as Instagram under the seeded defaults, and forcing them
+// onto the same message would either starve the faster platform or
+// repeat content on the slower one.
+//
+// Real constraint worth being upfront about: this can only generate
+// text + a still image/infographic, never video. Video rendering
+// (Video Generator's narration + canvas + MediaRecorder pipeline) runs
+// in the browser, not in Node — there's no server-side renderer for it.
+// A platform's auto-prepared posts will always carry an image; adding
+// video to any of them is still a manual step in Message Builder if
+// wanted.
+// ─────────────────────────────────────────────────────────────────────
+
+// Every concrete UTC datetime in the next `horizonDays` that matches
+// this platform's allowed (day-of-week, time-of-day) combinations,
+// strictly after `fromDate` — pure function, no DB access, so it's
+// straightforward to reason about independent of what's already queued.
+function computeUpcomingUtcSlots(days, times, horizonDays, fromDate) {
+  const slots = [];
+  const startOfToday = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()));
+  const endTime = fromDate.getTime() + horizonDays * 24 * 60 * 60 * 1000;
+  // Scans one extra day past the horizon so a slot that falls late in
+  // the last day (e.g. horizon ends mid-afternoon but the slot is at
+  // 23:00 that same calendar day) still gets picked up correctly by the
+  // endTime check below, rather than the day-level loop bound cutting
+  // it off a day early.
+  for (let dayOffset = 0; dayOffset <= horizonDays + 1; dayOffset++) {
+    const day = new Date(startOfToday.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+    if (!days.includes(day.getUTCDay())) continue;
+    for (const t of times) {
+      const [hh, mm] = t.split(':').map(Number);
+      const slot = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), hh, mm, 0));
+      if (slot.getTime() > fromDate.getTime() && slot.getTime() <= endTime) slots.push(slot);
+    }
+  }
+  slots.sort((a, b) => a.getTime() - b.getTime());
+  return slots;
+}
+
+const SOCIAL_QUEUE_TOPUP_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
+async function topUpSocialQueue() {
+  // Same staging guard as sendDueQueuedPublishes just above, and for the
+  // same two reasons: defense-in-depth alongside cron already being
+  // skipped entirely on staging, and this one specifically also spends
+  // real GPT Image generation calls, which staging has no business doing.
+  if (IS_STAGING) return { skipped: 'staging' };
+  const now = new Date();
+  const horizonEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const config = db.getSocialScheduleConfig();
+  const byPlatform = Object.fromEntries(config.map(c => [c.platform, c]));
+  const report = {};
+
+  for (const platform of SOCIAL_QUEUE_TOPUP_PLATFORMS) {
+    const cfg = byPlatform[platform];
+    report[platform] = { slotsMissing: 0, generated: 0, errors: [] };
+    if (!cfg || !cfg.days.length || !cfg.times.length) {
+      report[platform].errors.push('No posting schedule configured yet for this platform.');
+      continue;
+    }
+
+    const upcomingSlots = computeUpcomingUtcSlots(cfg.days, cfg.times, 7, now);
+    const existingTimes = db.getUpcomingQueuedTimesForPlatform(platform, now, horizonEnd)
+      .map(s => new Date(s.replace(' ', 'T') + 'Z').getTime());
+    const missingSlots = upcomingSlots.filter(slot => !existingTimes.includes(slot.getTime()));
+    report[platform].slotsMissing = missingSlots.length;
+
+    for (const slot of missingSlots) {
+      try {
+        const motd = db.getNextUnusedMotdForPlatform(platform);
+        if (!motd) { report[platform].errors.push('No unused approved Message of the Day left to draw from.'); break; }
+
+        const { parsed } = await generateSocialCopy(motd.body, [platform], true, null);
+        const postText = parsed[platform];
+        if (!postText || !postText.trim()) throw new Error('Generation returned no text for this platform.');
+
+        const imageBuffer = platform === 'instagram'
+          ? await generateSocialInfographic(postText)
+          : await generateSocialImage(postText, platform);
+        const keyPrefix = platform === 'instagram' ? 'social-infographic' : 'social';
+        const key = `newsletter-images/${keyPrefix}-${uuidv4()}.png`;
+        await media.uploadPublicObject(key, imageBuffer, 'image/png');
+        const mediaUrl = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
+
+        db.createQueuedPublish(uuidv4(), {
+          platform, content: postText, media_url: mediaUrl, media_type: 'image',
+          scheduled_for: slot, created_by: 'auto-prepare',
+        });
+        db.markMotdUsedForSocial(motd.id, platform);
+        report[platform].generated++;
+      } catch (e) {
+        report[platform].errors.push(e.message);
+      }
+    }
+  }
+  return report;
+}
+
 app.post('/api/admin/newsletters/:id/send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     // Defense-in-depth alongside the cron guard above — a genuine bulk
@@ -14786,7 +14919,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

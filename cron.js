@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -88,6 +88,29 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] bulkpublish queue failed:', e.message);
       record('bulkpublish_queue', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Social queue auto-prepare (Per App 31 — "B" of the social
+  // streamlining plan) — once daily, 05:15 UTC. Checks each platform's
+  // queue against its own schedule config (social_schedule_config, "A")
+  // and generates whatever's missing to keep a rolling week's worth
+  // queued per channel — text via Message Builder's own generator, a
+  // still image/infographic via GPT Image, scheduled straight into the
+  // gap it's filling. Same function a manual "Prepare now" admin button
+  // calls (POST /api/admin/social-queue/prepare) — see topUpSocialQueue
+  // in server.js for the actual logic and its own staging guard.
+  // Staggered 15 minutes after the 05:00 cron log prune, well before the
+  // 06:50 membership sweep — nothing else runs in this window.
+  cron.schedule('15 5 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await topUpSocialQueue();
+      console.log('[cron] social queue auto-prepare:', JSON.stringify(result));
+      record('social_queue_autoprepare', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] social queue auto-prepare failed:', e.message);
+      record('social_queue_autoprepare', 'failed', null, e.message, t0);
     }
   });
 
@@ -296,7 +319,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), social queue auto-prepare (05:15 UTC), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };
