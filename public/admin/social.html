@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Social — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
+
+    .page { max-width:1040px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:28px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+    .section-note { font-size:12.5px; color:rgba(255,255,255,0.35); margin:-6px 0 14px; line-height:1.6; }
+
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    .config-row { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.05); flex-wrap:wrap; }
+    .config-row:last-child { border-bottom:none; }
+    .config-label { font-size:13px; color:rgba(255,255,255,0.65); }
+    .config-desc { font-size:11px; color:rgba(255,255,255,0.28); margin-top:3px; max-width:260px; }
+    .config-val { display:flex; flex-direction:column; gap:10px; font-size:13px; color:rgba(255,255,255,0.4); flex:1; min-width:280px; }
+
+    .day-toggles { display:flex; gap:6px; flex-wrap:wrap; }
+    .day-toggle { padding:6px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.4); font-size:11px; cursor:pointer; font-family:'Georgia',serif; }
+    .day-toggle.on { border-color:rgba(180,230,200,0.4); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.85); }
+
+    .inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:6px 10px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; }
+    .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+    .times-row { display:flex; align-items:center; gap:8px; }
+    .times-list { display:flex; gap:6px; flex-wrap:wrap; }
+    .time-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 6px 4px 10px; border-radius:14px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); font-size:12px; color:rgba(255,255,255,0.7); }
+    .time-chip button { background:none; border:none; color:rgba(255,140,120,0.8); cursor:pointer; font-size:13px; line-height:1; padding:0 2px; }
+
+    .feedback { font-size:12px; min-height:16px; }
+    .feedback.ok  { color:rgba(180,230,200,0.7); }
+    .feedback.err { color:rgba(255,120,100,0.8); }
+
+    .roadmap-note { font-size:12.5px; color:rgba(255,255,255,0.3); line-height:1.7; padding:16px 20px; }
+
+    .doc-row { display:flex; align-items:flex-start; gap:12px; padding:13px 20px; border-bottom:1px solid rgba(255,255,255,0.04); flex-wrap:wrap; }
+    .doc-row:last-child { border-bottom:none; }
+    .doc-thumb { width:44px; height:44px; object-fit:cover; border-radius:5px; flex-shrink:0; background:rgba(255,255,255,0.06); }
+    .doc-title { flex:1.6; min-width:220px; font-size:13px; color:rgba(255,255,255,0.75); line-height:1.5; }
+    .doc-consent { flex:0.9; min-width:140px; font-size:11px; color:rgba(255,255,255,0.3); }
+    .doc-actions { display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.05em; flex-shrink:0; }
+    .badge-draft { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.35); }
+    .badge-fail  { background:rgba(255,100,80,0.12); color:rgba(255,120,100,0.85); }
+    .empty { padding:20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+    .edit-form { flex:1; display:flex; flex-direction:column; gap:8px; width:100%; }
+    .edit-form textarea { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:8px 10px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; resize:vertical; min-height:70px; width:100%; }
+    .edit-form input[type="text"], .edit-form input[type="datetime-local"] { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:6px 10px; font-size:12.5px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; width:100%; }
+    .edit-form label { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div style="position:relative">
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <button onclick="toggleAdminMenu()" style="display:flex;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:4px 0;margin-top:2px">
+        <span class="logo-name" style="font-size:18px">Social</span>
+        <span style="color:rgba(255,255,255,0.3);font-size:11px">▾</span>
+      </button>
+      <div id="adminMenu" style="display:none;position:absolute;top:100%;left:0;background:#1a2420;border:1px solid rgba(255,255,255,0.1);border-radius:0 0 10px 10px;z-index:50;min-width:160px;overflow:hidden">
+        <a href="/account" style="display:block;width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left;text-decoration:none;box-sizing:border-box">My account</a>
+        <button onclick="logout()" style="width:100%;padding:11px 16px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:13px;font-family:Georgia,serif;cursor:pointer;text-align:left">Sign out</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="a11yMenuSlot" style="position:relative"></span>
+      <a href="/admin/" class="btn" style="position:relative">People<span id="peopleNavBadge" class="nav-badge" style="display:none"></span></a>
+      <a href="/admin/content" class="btn">Content</a>
+      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+      <a href="/admin/comms" class="btn">Comms 1</a>
+      <a href="/admin/comms2" class="btn" style="color:rgba(180,230,200,0.8)">Comms 2</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+      <a href="/admin/reports" class="btn">Reports</a>
+      <a href="/admin/pages" class="btn">Pages</a>
+      <a href="/admin/social" class="btn primary">Social</a>
+      <a href="/setup" class="btn">Settings</a>
+    </div>
+  </div>
+
+  <div class="page">
+
+    <div>
+      <div class="section-label">Posting Schedule</div>
+      <div class="section-note">Which days and times (UTC — same convention as the Social Queue's own "Send at" field) each platform is allowed to post into. Seeded with researched 2026 best-engagement windows; edit freely — these are starting points, not fixed rules. The auto-prepare automation (coming next) reads straight from this.</div>
+      <div class="card" id="scheduleCard"><div style="padding:20px;color:rgba(255,255,255,0.3);font-size:13px">Loading…</div></div>
+    </div>
+
+    <div>
+      <div class="section-label">Queue Auto-Prepare</div>
+      <div class="section-note">Runs automatically once a day (05:15 UTC), checking each platform against its schedule above and generating whatever's missing to keep a rolling week's worth queued. This button runs the exact same check right now instead of waiting for the next cron tick. Generates text and a still image/infographic per post — video still needs a manual pass in Message Builder afterward, since video rendering happens in the browser and can't run from here.</div>
+      <div class="card">
+        <div style="padding:20px">
+          <button class="btn sm primary" onclick="prepareQueueNow()" id="prepareBtn">Prepare now</button>
+          <div id="prepareReport" style="margin-top:14px;font-size:12.5px;line-height:1.8;color:rgba(255,255,255,0.5)"></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Posting Queue</div>
+      <div class="section-note">Every scheduled post across all four platforms, in one place — edit the text, swap the attached image/video, retime it, or cancel it right here without opening Message Builder. Split into three groups since a post can be queued three different ways: sends on the very next check, scheduled for a specific future moment, or repeating.</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn sm" onclick="loadSocialQueue()">Refresh</button>
+      </div>
+
+      <div style="margin-bottom:18px">
+        <div class="card-header" style="border-radius:14px 14px 0 0"><div class="card-title">Sends on next check</div></div>
+        <div class="card" style="border-radius:0 0 14px 14px" id="queueImmediateCard"><div class="empty">Loading…</div></div>
+      </div>
+      <div style="margin-bottom:18px">
+        <div class="card-header" style="border-radius:14px 14px 0 0"><div class="card-title">Scheduled</div></div>
+        <div class="card" style="border-radius:0 0 14px 14px" id="queueScheduledCard"><div class="empty">Loading…</div></div>
+      </div>
+      <div>
+        <div class="card-header" style="border-radius:14px 14px 0 0"><div class="card-title">Recurring</div></div>
+        <div class="card" style="border-radius:0 0 14px 14px" id="queueRecurringCard"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Coming Next</div>
+      <div class="card">
+        <div class="roadmap-note">
+          This tab is the new home for the social media streamlining plan — the posting schedule, queue auto-prepare, and the posting queue above are all built now. From here it's mostly refinement: things like showing recently published/failed history inline, and editing a recurring post's actual repeat pattern from this screen instead of needing Message Builder's own Schedule dialog for that one piece.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  function toggleAdminMenu() {
+    const m = document.getElementById('adminMenu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  }
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('adminMenu');
+    if (menu.style.display !== 'none' && !e.target.closest('#adminMenu') && !e.target.closest('.logo-name')) menu.style.display = 'none';
+  });
+  async function logout() { await fetch('/api/logout', { method: 'POST' }); window.location.href = '/login'; }
+
+  function showFeedback(id, msg, type) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg; el.className = 'feedback ' + type;
+    setTimeout(() => { el.textContent = ''; el.className = 'feedback'; }, 4000);
+  }
+
+  // Per App 31 — "A" of the social streamlining plan. One row per
+  // platform: day-of-week toggles (0=Sunday..6=Saturday, matching JS
+  // Date#getDay() so nothing needs remapping server-side) plus a small
+  // add/remove list of HH:MM times. Each platform saves independently —
+  // there's no single "Save all" button, since editing one platform's
+  // schedule has nothing to do with another's.
+  const PLATFORMS = [
+    { key: 'facebook',  label: 'Facebook' },
+    { key: 'linkedin',  label: 'LinkedIn' },
+    { key: 'instagram', label: 'Instagram' },
+    { key: 'threads',   label: 'Threads' },
+  ];
+  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  let scheduleState = {}; // platform -> { days:Set, times:[] }
+
+  async function loadSchedule() {
+    let config = [];
+    try {
+      config = await (await fetch('/api/admin/social-schedule')).json();
+    } catch (e) { /* fall through to defaults-shaped empty state below */ }
+    const byPlatform = Object.fromEntries((config || []).map(c => [c.platform, c]));
+    PLATFORMS.forEach(p => {
+      const existing = byPlatform[p.key];
+      scheduleState[p.key] = {
+        days: new Set(existing ? existing.days : []),
+        times: existing ? [...existing.times] : [],
+      };
+    });
+    renderSchedule();
+  }
+
+  function renderSchedule() {
+    document.getElementById('scheduleCard').innerHTML = PLATFORMS.map(p => {
+      const s = scheduleState[p.key];
+      return `
+      <div class="config-row">
+        <div>
+          <div class="config-label">${p.label}</div>
+          <div class="config-desc" id="scheduleDesc_${p.key}"></div>
+        </div>
+        <div class="config-val">
+          <div class="day-toggles" id="scheduleDays_${p.key}">
+            ${DAY_LABELS.map((label, i) => `<button type="button" class="day-toggle${s.days.has(i) ? ' on' : ''}" onclick="toggleDay('${p.key}',${i})">${label}</button>`).join('')}
+          </div>
+          <div class="times-row">
+            <input class="inline-input" type="time" id="scheduleTimeInput_${p.key}" style="width:110px"/>
+            <button class="btn sm" onclick="addTime('${p.key}')">Add time</button>
+          </div>
+          <div class="times-list" id="scheduleTimes_${p.key}">
+            ${s.times.map(t => `<span class="time-chip">${t} <button onclick="removeTime('${p.key}','${t}')" title="Remove">×</button></span>`).join('') || '<span style="font-size:11px;color:rgba(255,255,255,0.25)">No times set — add at least one before saving.</span>'}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
+            <button class="btn sm primary" onclick="saveSchedule('${p.key}')">Save ${p.label}</button>
+            <div class="feedback" id="scheduleFeedback_${p.key}"></div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    PLATFORMS.forEach(p => updateScheduleDesc(p.key));
+  }
+
+  function updateScheduleDesc(platform) {
+    const s = scheduleState[platform];
+    const el = document.getElementById(`scheduleDesc_${platform}`);
+    if (!el) return;
+    if (!s.days.size || !s.times.length) { el.textContent = 'Not fully configured yet.'; return; }
+    const days = [...s.days].sort((a, b) => a - b).map(i => DAY_LABELS[i]).join('/');
+    el.textContent = `${days} · ${[...s.times].sort().join(', ')} UTC`;
+  }
+
+  function toggleDay(platform, dayIndex) {
+    const s = scheduleState[platform].days;
+    if (s.has(dayIndex)) s.delete(dayIndex); else s.add(dayIndex);
+    renderSchedule();
+  }
+  function addTime(platform) {
+    const input = document.getElementById(`scheduleTimeInput_${platform}`);
+    const val = input.value; // native time input already gives HH:MM
+    if (!val) return;
+    if (!scheduleState[platform].times.includes(val)) scheduleState[platform].times.push(val);
+    input.value = '';
+    renderSchedule();
+  }
+  function removeTime(platform, val) {
+    scheduleState[platform].times = scheduleState[platform].times.filter(t => t !== val);
+    renderSchedule();
+  }
+
+  async function saveSchedule(platform) {
+    const s = scheduleState[platform];
+    const days = [...s.days];
+    const times = [...s.times];
+    if (!days.length) { showFeedback(`scheduleFeedback_${platform}`, 'Pick at least one day first.', 'err'); return; }
+    if (!times.length) { showFeedback(`scheduleFeedback_${platform}`, 'Add at least one time first.', 'err'); return; }
+    try {
+      const res = await fetch(`/api/admin/social-schedule/${platform}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days, times })
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save.');
+      showFeedback(`scheduleFeedback_${platform}`, 'Saved.', 'ok');
+    } catch (e) {
+      showFeedback(`scheduleFeedback_${platform}`, e.message, 'err');
+    }
+  }
+
+  const PLATFORM_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  async function prepareQueueNow() {
+    const btn = document.getElementById('prepareBtn');
+    const out = document.getElementById('prepareReport');
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = 'Preparing… (can take a few minutes)';
+    out.textContent = '';
+    try {
+      const res = await fetch('/api/admin/social-queue/prepare', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not run auto-prepare.');
+      const lines = Object.entries(data.report || {}).map(([platform, r]) => {
+        const label = PLATFORM_LABELS[platform] || platform;
+        let line = `<strong style="color:rgba(255,255,255,0.7)">${label}:</strong> `;
+        if (r.slotsMissing === 0) {
+          line += 'already fully queued for the week ahead.';
+        } else {
+          line += `${r.generated} of ${r.slotsMissing} missing slot(s) filled.`;
+        }
+        if (r.errors && r.errors.length) {
+          line += ` <span style="color:rgba(255,150,120,0.85)">${r.errors.join(' ')}</span>`;
+        }
+        return line;
+      });
+      out.innerHTML = lines.join('<br/>') || 'Nothing to report.';
+    } catch (e) {
+      out.innerHTML = `<span style="color:rgba(255,120,100,0.85)">${e.message}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+
+  const SQ_PLATFORM_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  const WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let socialQueueData = [];
+  let queueEditingId = null;
+
+  async function loadSocialQueue() {
+    try {
+      const res = await fetch('/api/admin/bulkpublish/queue');
+      const data = await res.json();
+      // Only ever showing what's still live and not yet sent — published
+      // history isn't part of "the queue" this view is for; that's a
+      // "Coming Next" item noted above rather than built here.
+      socialQueueData = (data.posts || []).filter(p => p.active && p.status !== 'published');
+      renderSocialQueue();
+    } catch (e) {
+      ['queueImmediateCard', 'queueScheduledCard', 'queueRecurringCard'].forEach(id => {
+        document.getElementById(id).innerHTML = `<div class="empty">Could not load the queue.</div>`;
+      });
+    }
+  }
+
+  function queueRecurrenceLabel(p) {
+    const cfg = p.recurrence_config || {};
+    const at = `${String(p.send_hour ?? 9).padStart(2, '0')}:${String(p.send_minute ?? 0).padStart(2, '0')} UTC`;
+    if (p.recurrence_type === 'daily') return `Every day at ${at}`;
+    if (p.recurrence_type === 'weekly') return `Every ${(cfg.daysOfWeek || []).slice().sort().map(d => WEEKDAY_SHORT[d]).join(', ') || '—'} at ${at}`;
+    if (p.recurrence_type === 'every_n_days') return `Every ${cfg.everyNDays || '?'} days at ${at}`;
+    if (p.recurrence_type === 'monthly_date') return `Monthly on the ${cfg.dayOfMonth === 'last' ? 'last day' : cfg.dayOfMonth} at ${at}`;
+    if (p.recurrence_type === 'monthly_nth_weekday') return `Monthly, ${({1:'1st',2:'2nd',3:'3rd',4:'4th','-1':'last'})[String(cfg.nth)] || cfg.nth} ${WEEKDAY_SHORT[cfg.weekday] || ''} at ${at}`;
+    if (p.recurrence_type === 'yearly') return `Every year, ${cfg.month}/${cfg.day} at ${at}`;
+    return `Repeats at ${at}`;
+  }
+
+  function renderSocialQueue() {
+    const immediate = socialQueueData.filter(p => !p.scheduled_for && !p.recurrence_type);
+    const scheduled = socialQueueData.filter(p => p.scheduled_for && !p.recurrence_type)
+      .sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for));
+    const recurring = socialQueueData.filter(p => p.recurrence_type);
+
+    document.getElementById('queueImmediateCard').innerHTML = renderQueueGroup(immediate, 'immediate');
+    document.getElementById('queueScheduledCard').innerHTML = renderQueueGroup(scheduled, 'scheduled');
+    document.getElementById('queueRecurringCard').innerHTML = renderQueueGroup(recurring, 'recurring');
+  }
+
+  function renderQueueGroup(list, kind) {
+    if (!list.length) return '<div class="empty">Nothing here right now.</div>';
+    return list.map(p => p.id === queueEditingId ? renderQueueEditRow(p, kind) : renderQueueRow(p, kind)).join('');
+  }
+
+  function renderQueueRow(p, kind) {
+    const preview = escHtmlSocial((p.content || '').slice(0, 140)) + ((p.content || '').length > 140 ? '…' : '');
+    const thumb = p.media_url
+      ? (p.media_type === 'video'
+          ? `<video src="${p.media_url}" class="doc-thumb" muted></video>`
+          : `<img src="${p.media_url}" class="doc-thumb"/>`)
+      : '';
+    let timeLabel = kind === 'immediate' ? 'Sends on the next 5-minute check' : (kind === 'scheduled' ? `${p.scheduled_for} UTC` : queueRecurrenceLabel(p));
+    return `
+      <div class="doc-row">
+        ${thumb}
+        <div class="doc-title">
+          <strong style="color:rgba(255,255,255,0.85)">${SQ_PLATFORM_LABELS[p.platform] || p.platform}</strong>
+          ${p.status === 'failed' ? `<span class="badge badge-fail">failed</span>` : ''}
+          <div style="margin-top:3px">${preview || '<em style="color:rgba(255,255,255,0.25)">No text</em>'}</div>
+          ${p.status === 'failed' && p.error ? `<div style="color:rgba(255,140,120,0.75);font-size:11px;margin-top:4px">${escHtmlSocial(p.error)}</div>` : ''}
+        </div>
+        <div class="doc-consent">${timeLabel}</div>
+        <div class="doc-actions">
+          <button class="btn sm" onclick="queueStartEdit('${p.id}')">Edit</button>
+          <button class="btn sm" onclick="queuePublishNow('${p.id}')" title="Sends immediately — doesn't affect its normal schedule">Send now</button>
+          <button class="btn sm danger" onclick="queueDelete('${p.id}')">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  function renderQueueEditRow(p, kind) {
+    // scheduled_for comes back "YYYY-MM-DD HH:MM:SS" (UTC); a
+    // datetime-local input wants "YYYY-MM-DDTHH:MM" — reformatted only
+    // for display here, converted back on save.
+    const dtLocal = p.scheduled_for ? p.scheduled_for.slice(0, 16).replace(' ', 'T') : '';
+    return `
+      <div class="doc-row">
+        <div class="edit-form">
+          <label>${SQ_PLATFORM_LABELS[p.platform] || p.platform} — post text</label>
+          <textarea id="queueEditContent_${p.id}">${escHtmlSocial(p.content || '')}</textarea>
+          <label>Media URL (blank to remove)</label>
+          <input type="text" id="queueEditMedia_${p.id}" value="${p.media_url ? escHtmlSocial(p.media_url) : ''}" placeholder="https://…"/>
+          ${kind === 'scheduled' ? `
+          <label>Scheduled for (UTC)</label>
+          <input type="datetime-local" id="queueEditWhen_${p.id}" value="${dtLocal}"/>
+          ` : `<div style="font-size:11px;color:rgba(255,255,255,0.3)">${kind === 'recurring' ? 'Changing the repeat pattern itself still needs Message Builder\'s Schedule dialog — text and media can be edited here.' : 'This sends on the next 5-minute check — no time to edit.'}</div>`}
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button class="btn sm primary" onclick="queueSaveEdit('${p.id}', '${kind}')">Save</button>
+            <button class="btn sm" onclick="queueCancelEdit()">Cancel</button>
+          </div>
+          <div class="feedback" id="queueEditFeedback_${p.id}"></div>
+        </div>
+      </div>`;
+  }
+
+  function queueStartEdit(id) { queueEditingId = id; renderSocialQueue(); }
+  function queueCancelEdit() { queueEditingId = null; renderSocialQueue(); }
+
+  async function queueSaveEdit(id, kind) {
+    const content = document.getElementById(`queueEditContent_${id}`).value.trim();
+    const mediaUrl = document.getElementById(`queueEditMedia_${id}`).value.trim();
+    const fb = document.getElementById(`queueEditFeedback_${id}`);
+    if (!content) { showFeedback(`queueEditFeedback_${id}`, 'Post text can\'t be empty.', 'err'); return; }
+    const body = { content, mediaUrl: mediaUrl || null, mediaType: mediaUrl ? (socialQueueData.find(p => p.id === id)?.media_type || 'image') : null };
+    if (kind === 'scheduled') {
+      const whenLocal = document.getElementById(`queueEditWhen_${id}`).value;
+      if (!whenLocal) { showFeedback(`queueEditFeedback_${id}`, 'Pick a date and time.', 'err'); return; }
+      body.scheduledFor = whenLocal.replace('T', ' ') + ':00';
+    }
+    try {
+      const res = await fetch(`/api/admin/bulkpublish/queue/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save.');
+      queueEditingId = null;
+      await loadSocialQueue();
+    } catch (e) {
+      showFeedback(`queueEditFeedback_${id}`, e.message, 'err');
+    }
+  }
+
+  async function queuePublishNow(id) {
+    if (!(await appConfirm('Send this now? This won\'t affect its normal schedule.'))) return;
+    try {
+      const res = await fetch(`/api/admin/bulkpublish/queue/${id}/publish-now`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not send.');
+      await loadSocialQueue();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function queueDelete(id) {
+    if (!(await appConfirm('Cancel this post? This removes it from the queue entirely.'))) return;
+    await fetch(`/api/admin/bulkpublish/queue/${id}`, { method: 'DELETE' });
+    await loadSocialQueue();
+  }
+
+  function escHtmlSocial(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  loadSchedule();
+  loadSocialQueue();
+</script>
+</body>
+</html>
