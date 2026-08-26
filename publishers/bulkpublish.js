@@ -59,22 +59,54 @@ async function listChannels() {
   }));
 }
 
+// Bug fix (Per App 30, round 3) — media was silently dropped entirely.
+// Confirmed by downloading BulkPublish's own real npm package
+// ("bulkpublish") and reading its actual client source rather than
+// guessing a third time: posting `media: [{ url }]` isn't a recognised
+// field at all — BulkPublish requires media to be uploaded as its own
+// object first (POST /api/media, multipart/form-data, field name
+// "file"), which returns a numeric file id, and THAT id is what a post
+// references, via `mediaFiles: [id]` — not a raw URL inline in the post
+// body. This fetches mediaUrl's bytes ourselves and re-uploads them,
+// same as their own SDK does internally when given a URL to upload.
+async function uploadMediaFromUrl(mediaUrl) {
+  const apiKey = process.env.BULKPUBLISH_API_KEY;
+  if (!apiKey) throw new Error('BULKPUBLISH_API_KEY is not set — add it in Railway before publishing.');
+  const fileRes = await fetch(mediaUrl);
+  if (!fileRes.ok) throw new Error(`Could not fetch media to upload to BulkPublish (${fileRes.status}).`);
+  const contentType = fileRes.headers.get('content-type')?.split(';')[0] || 'application/octet-stream';
+  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  const fileName = mediaUrl.split('/').pop()?.split('?')[0] || 'upload';
+
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: contentType }), fileName);
+  const uploadRes = await fetch(`${BULKPUBLISH_BASE}/media`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}` }, // no Content-Type — fetch sets the multipart boundary itself
+    body: formData,
+  });
+  const uploadData = await uploadRes.json().catch(() => ({}));
+  if (!uploadRes.ok) throw new Error(extractErrorMessage(uploadData) || `BulkPublish media upload returned ${uploadRes.status}`);
+  if (!uploadData.file || !uploadData.file.id) throw new Error('BulkPublish did not return a media file id.');
+  return uploadData.file.id;
+}
+
 // Publishes with media as an optional attachment.
 //
-// Bug fix (Per App 30) — "status": "published" was never actually a
-// valid value for BulkPublish's own create-post endpoint at all (their
-// own docs and every example only ever show "draft" or "scheduled" —
-// immediate publishing is done via "scheduled" with a
+// Bug fix (Per App 30, round 2) — "status": "published" was never
+// actually a valid value for BulkPublish's own create-post endpoint at
+// all (their own docs and every example only ever show "draft" or
+// "scheduled" — immediate publishing is done via "scheduled" with a
 // near-immediate timestamp, or via a separate publish-a-draft action).
 // This had been silently broken since it was first written; it only
-// surfaced now because the real error message used to get lost to the
-// "[object Object]" bug just above, so "status must be draft or
-// scheduled" was never actually visible until that got fixed. Using
-// status:'scheduled' with scheduled_at set a few seconds in the future
-// is the documented, reliable way to get "post this right now" — it's
-// BulkPublish's own scheduling engine firing it almost immediately,
-// same mechanism the campaign /activate route already relies on for
-// its own future-dated posts, just with a near-zero delay here.
+// surfaced because the real error message used to get lost to the
+// "[object Object]" bug above. Using status:'scheduled' with scheduledAt
+// (camelCase — confirmed against their real client source, see
+// uploadMediaFromUrl's comment above) a few seconds out is the
+// documented, reliable way to get "post this right now" — BulkPublish's
+// own scheduling engine firing it almost immediately, same mechanism the
+// campaign /activate route already relies on for its own future-dated
+// posts, just with a near-zero delay here.
 async function publish(platform, { content, mediaUrl } = {}) {
   const { channels } = await bulkPublishRequest('GET', '/channels');
   const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
@@ -83,15 +115,12 @@ async function publish(platform, { content, mediaUrl } = {}) {
     content,
     channels: [{ channelId: channel.id, platform: channel.platform }],
     status: 'scheduled',
-    // Bug fix (Per App 30, round 2) — "scheduledAt is required for
-    // scheduled posts" confirmed the field name itself was wrong: their
-    // Python/Node SDK wrapper accepts scheduled_at (snake_case) as a
-    // convenience param, but the actual raw REST JSON field underneath
-    // is scheduledAt (camelCase) — a common SDK-wrapper-vs-raw-API
-    // naming mismatch, not a further status/logic problem.
     scheduledAt: new Date(Date.now() + 10000).toISOString(), // ~10s out — near-immediate, comfortably clear of "in the past" rejection
   };
-  if (mediaUrl) publishBody.media = [{ url: mediaUrl }];
+  if (mediaUrl) {
+    const mediaFileId = await uploadMediaFromUrl(mediaUrl);
+    publishBody.mediaFiles = [mediaFileId];
+  }
   const result = await bulkPublishRequest('POST', '/posts', publishBody);
   return {
     id: result?.post?.id || result?.id || null,
