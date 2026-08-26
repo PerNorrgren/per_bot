@@ -448,6 +448,33 @@
     </div>
   </div>
 
+  <!-- Per App 31 — media preview modal. Opened from the small thumbnail
+       badge next to each platform's Generate image/video buttons, so a
+       generated image, infographic, or video can actually be looked at
+       full-size before it goes anywhere — the badge itself is only
+       36x36px. Also where Regenerate-with-suggestions and Save to
+       library live, since both naturally follow from "I'm looking at
+       this and deciding what to do with it" rather than needing their
+       own separate buttons cluttering the media row. -->
+  <div class="modal-overlay" id="mbMediaPreviewModal">
+    <div class="modal" style="max-width:520px">
+      <h3 style="margin-top:0">Preview</h3>
+      <div id="mbMediaPreviewBody" style="text-align:center;margin-bottom:16px"></div>
+      <div id="mbMediaPreviewSuggestWrap" style="margin-bottom:12px">
+        <div class="config-label" style="margin-bottom:6px">Regenerate with suggestions (optional)</div>
+        <textarea class="inline-input" id="mbMediaPreviewSuggestions" rows="2" style="width:100%;resize:vertical;min-height:60px" placeholder="e.g. warmer colours, bigger text, less abstract"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn sm primary" id="mbMediaPreviewRegenBtn" onclick="mbRegenerateFromPreview()">Regenerate with suggestions</button>
+        <button class="btn sm" onclick="mbSaveMediaToLibrary()">💾 Save to library (Social)</button>
+      </div>
+      <div class="feedback" id="mbMediaPreviewFeedback" style="margin-bottom:6px"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('mbMediaPreviewModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Video generator (Per Bot 17 phase 5) -->
   <div>
     <div class="section-label">Video generator</div>
@@ -1402,6 +1429,10 @@
   // platform's text never triggers or stacks a prompt for another.
   let mbVideoStaleTimers = {};
   let mbVideoStaleDialogOpen = {};
+  // Per App 31 — which platform the media preview modal is currently
+  // showing, so its Regenerate/Save actions know what they're acting on
+  // without threading the platform through every button's onclick.
+  let mbPreviewPlatform = null;
 
   // Persists the current image/video attachment for one platform against
   // this batch's social_posts row, so it survives a reload and — more to
@@ -1422,19 +1453,23 @@
   // Per App 31 — Instagram routes to the infographic generator instead
   // of the standard photo/illustration one (see the button row above);
   // everything else about this flow — badge states, polling, attaching
-  // the result — stays exactly the same either way.
-  async function mbGenerateImage(platform) {
+  // the result — stays exactly the same either way. suggestions is
+  // optional free text from the preview modal's Regenerate action (see
+  // mbRegenerateFromPreview) — undefined/blank on a plain first-time
+  // Generate click, which is exactly the "fresh attempt" behaviour that
+  // should keep working unchanged.
+  async function mbGenerateImage(platform, suggestions) {
     const q = mbQuillInstances[platform];
     if (!q) return;
     const postText = q.getText().replace(/\n$/, '');
     if (!postText.trim()) { showFeedback('mbFeedback', 'Generate the post text first.', 'err'); return; }
     const isInfographic = platform === 'instagram';
     const badge = document.getElementById(mbMediaBadgeId(platform));
-    if (badge) badge.innerHTML = `<span style="color:rgba(255,255,255,0.5)">Generating ${isInfographic ? 'infographic' : 'image'}… (up to 2 min)</span>`;
+    if (badge) badge.innerHTML = `<span style="color:rgba(255,255,255,0.5)">${suggestions ? 'Regenerating' : 'Generating'} ${isInfographic ? 'infographic' : 'image'}… (up to 2 min)</span>`;
     try {
       const res = await fetch('/api/admin/comms-ai-generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: isInfographic ? 'social_infographic' : 'social_image', context: JSON.stringify({ postText, platform }) })
+        body: JSON.stringify({ type: isInfographic ? 'social_infographic' : 'social_image', context: JSON.stringify({ postText, platform, suggestions: suggestions || '' }) })
       });
       const data = await res.json();
       if (!res.ok || !data.jobId) throw new Error(data.error || `Could not start ${isInfographic ? 'infographic' : 'image'} generation.`);
@@ -1545,6 +1580,87 @@
     mbRenderMediaBadge(platform);
     mbPersistMedia(platform);
   }
+
+  // Per App 31 — opens the full-size preview modal for whatever's
+  // currently attached to this platform. Video regeneration has no
+  // separate "suggestions" step (it re-renders straight from the post's
+  // own text, no prompt-writing in between), so the suggestions box only
+  // shows for image/infographic media — the Regenerate button's label
+  // changes to match what it'll actually do either way.
+  function mbOpenMediaPreview(platform) {
+    const m = mbMedia[platform];
+    if (!m) return;
+    mbPreviewPlatform = platform;
+    document.getElementById('mbMediaPreviewBody').innerHTML = m.type === 'video'
+      ? `<video src="${m.url}" controls style="max-width:100%;max-height:60vh;border-radius:8px;background:#000"></video>`
+      : `<img src="${m.url}" style="max-width:100%;max-height:60vh;border-radius:8px"/>`;
+    document.getElementById('mbMediaPreviewSuggestWrap').style.display = m.type === 'video' ? 'none' : 'block';
+    document.getElementById('mbMediaPreviewSuggestions').value = '';
+    document.getElementById('mbMediaPreviewRegenBtn').textContent = m.type === 'video' ? 'Re-render video' : 'Regenerate with suggestions';
+    document.getElementById('mbMediaPreviewFeedback').textContent = '';
+    openModal('mbMediaPreviewModal');
+  }
+
+  async function mbRegenerateFromPreview() {
+    const platform = mbPreviewPlatform;
+    if (!platform) return;
+    const m = mbMedia[platform];
+    closeModal('mbMediaPreviewModal');
+    if (m && m.type === 'video') {
+      await mbGenerateVideo(platform);
+    } else {
+      const suggestions = document.getElementById('mbMediaPreviewSuggestions').value.trim();
+      await mbGenerateImage(platform, suggestions);
+    }
+  }
+
+  // Per App 31 — saves whatever's in the preview modal into the Content
+  // Library under a fixed "Social" category (seeded server-side with id
+  // 'cat-social', same unconditional-seed pattern as the existing App
+  // Files category) and a 'social' tag, so all of Message Builder's
+  // generated images/infographics/videos collect in one browsable place
+  // rather than only living as a one-off attachment on a single post.
+  // No second upload needed — every one of these already lives in R2
+  // under newsletter-images/ (see generateSocialImage/
+  // generateSocialInfographic/the upload-media route for "Use rendered
+  // video"), so this only derives that existing key from the public URL
+  // and writes a library_files row pointing at it ("Path A" on
+  // POST /api/content/library). facilitatorResource:true +
+  // visibility:'facilitator' keep these out of client-facing browse
+  // lists by default — this is Per's own working material, not
+  // something meant to appear in a client's library.
+  async function mbSaveMediaToLibrary() {
+    const platform = mbPreviewPlatform;
+    const m = platform && mbMedia[platform];
+    const fb = document.getElementById('mbMediaPreviewFeedback');
+    if (!m) { fb.textContent = ''; return; }
+    fb.textContent = 'Saving…'; fb.className = 'feedback';
+    try {
+      const marker = '/newsletter-images/';
+      const idx = m.url.indexOf(marker);
+      if (idx === -1) throw new Error('Could not identify the stored file — try downloading it manually instead.');
+      const r2Key = `newsletter-images/${decodeURIComponent(m.url.slice(idx + marker.length))}`;
+      const q = mbQuillInstances[platform];
+      const postText = q ? q.getText().replace(/\n$/, '').trim() : '';
+      const title = (postText.slice(0, 60).trim()) || `${MB_LABELS[platform] || platform} ${m.type}`;
+      const contentType = m.type === 'video' ? 'video/webm' : 'image/png';
+      const fd = new FormData();
+      fd.append('title', title);
+      fd.append('categoryId', 'cat-social');
+      fd.append('visibility', 'facilitator');
+      fd.append('facilitatorResource', 'true');
+      fd.append('tags', 'social');
+      fd.append('r2Key', r2Key);
+      fd.append('originalName', r2Key.split('/').pop());
+      fd.append('contentType', contentType);
+      fd.append('fileSize', '0');
+      const res = await fetch('/api/content/library', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save to the library.');
+      showFeedback('mbMediaPreviewFeedback', 'Saved to the library under Social.', 'ok');
+    } catch (e) {
+      showFeedback('mbMediaPreviewFeedback', e.message, 'err');
+    }
+  }
   function mbRenderMediaBadge(platform) {
     const badge = document.getElementById(mbMediaBadgeId(platform));
     if (!badge) return;
@@ -1554,10 +1670,13 @@
       mbUpdatePublishAvailability(platform);
       return;
     }
+    // Per App 31 — the thumbnail itself opens the full preview modal now
+    // (clickable, not just decorative), plus an explicit "View" button
+    // for anyone who wouldn't think to click a 36px thumbnail.
     const thumb = m.type === 'video'
-      ? `<video src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle" muted></video>`
-      : `<img src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle"/>`;
-    badge.innerHTML = `${thumb} <span style="color:rgba(180,230,200,0.85)">${m.type} attached</span> <button class="btn sm" onclick="mbRemoveMedia('${platform}')">Remove</button>`;
+      ? `<video src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle;cursor:pointer" muted onclick="mbOpenMediaPreview('${platform}')"></video>`
+      : `<img src="${m.url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;vertical-align:middle;cursor:pointer" onclick="mbOpenMediaPreview('${platform}')"/>`;
+    badge.innerHTML = `${thumb} <span style="color:rgba(180,230,200,0.85)">${m.type} attached</span> <button class="btn sm" onclick="mbOpenMediaPreview('${platform}')">View</button> <button class="btn sm" onclick="mbRemoveMedia('${platform}')">Remove</button>`;
     mbUpdatePublishAvailability(platform);
   }
   // Instagram's Publish button stays disabled until media is attached —

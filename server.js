@@ -6545,9 +6545,17 @@ async function generateSumieImage(context) {
 // that's the actual wording the image needs to sit next to. Shares
 // callGptImage above with generateSumieImage; only the prompt-writing
 // step differs (SOCIAL_IMAGE_PROMPT_WRITING_PROMPT in prompts.js).
-async function generateSocialImage(postText, platform) {
+// Per App 31 — optional suggestions param, straight from the person
+// reviewing the previous attempt in the preview modal (e.g. "warmer
+// colours", "less abstract") — appended to the prompt-writing call so a
+// regenerate actually steers toward what they asked for instead of just
+// re-rolling the same brief.
+async function generateSocialImage(postText, platform, suggestions) {
   const trimmedText = (postText || '').slice(0, 3000).trim();
-  const userMessage = `<post_text>\n${trimmedText}\n</post_text>\n<platform>${platform}</platform>\n\nWrite one image prompt now.`;
+  let userMessage = `<post_text>\n${trimmedText}\n</post_text>\n<platform>${platform}</platform>\n\nWrite one image prompt now.`;
+  if (suggestions && suggestions.trim()) {
+    userMessage += `\n\nThe previous attempt wasn't quite right — the person reviewing it asked for this change, so make sure the new prompt reflects it: ${suggestions.trim().slice(0, 500)}`;
+  }
   const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
   return callGptImage(imagePrompt);
 }
@@ -6559,10 +6567,14 @@ async function generateSocialImage(postText, platform) {
 // text — a fundamentally different brief to "a mood photo next to this
 // caption". platform isn't passed through here (unlike
 // generateSocialImage) since this generator only ever runs for
-// Instagram — see the routing in runCommsAiGenerateJob below.
-async function generateSocialInfographic(postText) {
+// Instagram — see the routing in runCommsAiGenerateJob below. suggestions
+// works the same way as generateSocialImage above.
+async function generateSocialInfographic(postText, suggestions) {
   const trimmedText = (postText || '').slice(0, 3000).trim();
-  const userMessage = `<post_text>\n${trimmedText}\n</post_text>\n\nWrite one infographic image prompt now.`;
+  let userMessage = `<post_text>\n${trimmedText}\n</post_text>\n\nWrite one infographic image prompt now.`;
+  if (suggestions && suggestions.trim()) {
+    userMessage += `\n\nThe previous attempt wasn't quite right — the person reviewing it asked for this change, so make sure the new prompt reflects it: ${suggestions.trim().slice(0, 500)}`;
+  }
   const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
   return callGptImage(imagePrompt);
 }
@@ -6606,7 +6618,7 @@ async function runCommsAiGenerateJob(jobId, type, context) {
       if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
       let parsed;
       try { parsed = JSON.parse(context); } catch { throw new Error('Malformed request for image generation.'); }
-      const buffer = await generateSocialImage(parsed.postText, parsed.platform);
+      const buffer = await generateSocialImage(parsed.postText, parsed.platform, parsed.suggestions);
       const key = `newsletter-images/social-${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
       db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
@@ -6621,7 +6633,7 @@ async function runCommsAiGenerateJob(jobId, type, context) {
       if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
       let parsed;
       try { parsed = JSON.parse(context); } catch { throw new Error('Malformed request for image generation.'); }
-      const buffer = await generateSocialInfographic(parsed.postText);
+      const buffer = await generateSocialInfographic(parsed.postText, parsed.suggestions);
       const key = `newsletter-images/social-infographic-${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
       db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });

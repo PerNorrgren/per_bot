@@ -2659,6 +2659,16 @@ async function getDb() {
   db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-appfiles','App Files','app-files',NULL,999)`);
   db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('sub-appfiles','App Files','app-files-sub','cat-appfiles',1)`);
 
+  // Per App 31 — Social category, a fixed-id home for images/infographics/
+  // videos generated in Message Builder and saved to the library from
+  // there. Same unconditional INSERT OR IGNORE pattern as App Files just
+  // above, and the same reasoning: this must exist on every deployment
+  // regardless of whether their categories table was already non-empty
+  // (and so never hit seedCategories() below). Fixed id 'cat-social' is
+  // hardcoded client-side in Message Builder's "Save to library" action —
+  // no picker needed since every save from there goes to the same place.
+  db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-social','Social','social',NULL,998)`);
+
   // Category tree v2 (Per Bot 8) — University / Mindfulness / FELT·FIBRE /
   // Therapy, replacing the old Mindfulness/FELT·FIBRE/Girls Programme/Therapy
   // set. Runs unconditionally on every boot, same reasoning as the App
