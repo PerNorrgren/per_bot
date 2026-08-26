@@ -13318,6 +13318,21 @@ app.delete('/api/admin/social-posts/:id', auth.requireAuthApi(['admin']), (req, 
   try { db.deleteSocialPost(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per App 31 — persists Message Builder's image/video attachment against
+// the social_posts row as soon as it's generated, attached, or removed
+// (not just held in the browser tab), so Duplicate can bring a
+// platform's media across too instead of leaving it blank. media: null
+// clears that platform's slot.
+app.post('/api/admin/social-posts/:id/media', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { platform, media } = req.body || {};
+    if (!platform) return res.status(400).json({ error: 'platform is required.' });
+    db.updateSocialPostMedia(req.params.id, platform, media || null);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Signal lines / line bank (Per Bot 17 phase 6) ──
 app.get('/api/admin/signal-lines', auth.requireAuthApi(['admin']), (req, res) => {

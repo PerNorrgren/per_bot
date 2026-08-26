@@ -1319,6 +1319,11 @@
     // point at detached DOM nodes.
     Object.keys(mbQuillInstances).forEach(k => delete mbQuillInstances[k]);
     mbMedia = {}; // Per App 30 — fresh generation, fresh media state; nothing carries over from a previous batch
+    // Per App 31 — same reset for the re-render-video-on-edit tracking
+    // below, so a pending debounce timer or an open confirm dialog from
+    // the previous batch can't fire against this new one.
+    Object.keys(mbVideoStaleTimers).forEach(k => { clearTimeout(mbVideoStaleTimers[k]); delete mbVideoStaleTimers[k]; });
+    Object.keys(mbVideoStaleDialogOpen).forEach(k => delete mbVideoStaleDialogOpen[k]);
 
     const container = document.getElementById('mbResults');
     container.innerHTML = platforms.map(p => `
@@ -1342,6 +1347,7 @@
              starts in a visible "required" state rather than blank. -->
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="mbGenerateImage('${p}')">🖼️ Generate image</button>
+          <button class="btn sm" onclick="mbGenerateVideo('${p}')" title="Renders a fresh video using this platform's own text, and attaches it automatically once done">🎥 Generate video</button>
           <button class="btn sm" onclick="mbUseRenderedVideo('${p}')" title="Uses whatever Video Generator below has most recently rendered">🎬 Use rendered video</button>
           <span id="${mbMediaBadgeId(p)}" style="font-size:11px"></span>
         </div>
@@ -1362,6 +1368,16 @@
       q.setText(results[p] || '');
       mbQuillInstances[p] = q;
       mbRenderMediaBadge(p); // sets the initial "required" state for Instagram, blank for everyone else
+      // Per App 31 — if a video is already attached to this platform and
+      // the text changes underneath it, the video's narration/on-screen
+      // lines no longer match the post. Quill fires 'text-change' with
+      // source 'api' for the programmatic setText(...) just above and
+      // 'user' for anything Per actually types, so this only reacts to
+      // real edits, never its own initial fill.
+      q.on('text-change', (delta, oldDelta, source) => {
+        if (source !== 'user') return;
+        mbScheduleVideoStaleCheck(p);
+      });
     });
   }
 
@@ -1372,6 +1388,27 @@
   let mbMedia = {};
   const MB_MEDIA_REQUIRED = { instagram: true }; // Instagram's own API refuses a text-only post — every other platform here is optional
   function mbMediaBadgeId(p) { return `mbMediaBadge_${p}`; }
+  // Per App 31 — debounce timers + "dialog already open" flags for the
+  // re-render-on-edit prompt, keyed by platform so editing one
+  // platform's text never triggers or stacks a prompt for another.
+  let mbVideoStaleTimers = {};
+  let mbVideoStaleDialogOpen = {};
+
+  // Persists the current image/video attachment for one platform against
+  // this batch's social_posts row, so it survives a reload and — more to
+  // the point — so Duplicate can bring it across later. Best-effort and
+  // silent: if this fails, the only consequence is that a future
+  // Duplicate of this exact post won't restore this platform's media,
+  // which isn't worth interrupting the person over.
+  async function mbPersistMedia(platform) {
+    if (!mbCurrentPostId) return;
+    try {
+      await fetch(`/api/admin/social-posts/${mbCurrentPostId}/media`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform, media: mbMedia[platform] || null })
+      });
+    } catch (e) { /* silent — see comment above */ }
+  }
 
   async function mbGenerateImage(platform) {
     const q = mbQuillInstances[platform];
@@ -1409,6 +1446,7 @@
     if (data.status === 'pending') { setTimeout(() => mbPollImageJob(platform, jobId), 2000); return; }
     mbMedia[platform] = { url: data.imageUrl, type: 'image' };
     mbRenderMediaBadge(platform);
+    mbPersistMedia(platform);
   }
   // Pulls in whatever the Video Generator section below has most
   // recently rendered (_vgResultBlob — shared top-level state on this
@@ -1429,14 +1467,69 @@
       if (!res.ok || !data.url) throw new Error(data.error || 'Could not upload the video.');
       mbMedia[platform] = { url: data.url, type: 'video' };
       mbRenderMediaBadge(platform);
+      mbPersistMedia(platform);
       showFeedback('mbFeedback', 'Video attached.', 'ok');
     } catch (e) {
       if (badge) badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">${e.message}</span>`;
     }
   }
+  // Per App 31 — one click instead of the previous three (copy the text
+  // down manually, click Generate in Video Generator, then come back up
+  // and click Use rendered video). Drives the Video Generator exactly as
+  // if Per had done that by hand: fills its source box with this
+  // platform's own current text, runs its normal render pipeline
+  // (vgGenerate — narration, background slideshow, MediaRecorder), then
+  // attaches whatever it produced via the existing mbUseRenderedVideo
+  // upload path. _vgResultBlob is cleared first so a render that fails
+  // here can never be mistaken for an earlier successful one still
+  // sitting in that variable.
+  async function mbGenerateVideo(platform) {
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    const postText = q.getText().replace(/\n$/, '');
+    if (!postText.trim()) { showFeedback('mbFeedback', 'Generate the post text first.', 'err'); return; }
+    if (_vgRendering) { showFeedback('mbFeedback', 'A video is already rendering — wait for it to finish before starting another.', 'err'); return; }
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (badge) badge.innerHTML = '<span style="color:rgba(255,255,255,0.5)">Rendering video… (roughly as long as the text takes to read)</span>';
+    document.getElementById('vgSource').value = postText;
+    _vgResultBlob = null;
+    await vgGenerate();
+    if (!_vgResultBlob) {
+      if (badge) badge.innerHTML = '<span style="color:rgba(255,140,120,0.9)">Could not render — see Video Generator feedback below.</span>';
+      return;
+    }
+    await mbUseRenderedVideo(platform);
+  }
+
+  // Debounced so this only fires once typing pauses, not on every
+  // keystroke, and only ever asks once per pause — a platform mid-dialog
+  // ignores further scheduling until it's answered.
+  function mbScheduleVideoStaleCheck(platform) {
+    clearTimeout(mbVideoStaleTimers[platform]);
+    mbVideoStaleTimers[platform] = setTimeout(() => mbCheckVideoStale(platform), 1200);
+  }
+  async function mbCheckVideoStale(platform) {
+    const media = mbMedia[platform];
+    if (!media || media.type !== 'video') return; // only video goes stale here — a still image has no narration/timing tied to the words
+    if (mbVideoStaleDialogOpen[platform]) return;
+    const q = mbQuillInstances[platform];
+    if (!q) return;
+    const text = q.getText().replace(/\n$/, '');
+    if (!text.trim()) return;
+    mbVideoStaleDialogOpen[platform] = true;
+    let reRender = false;
+    try {
+      reRender = await appConfirm(`The ${MB_LABELS[platform] || platform} text has changed since this video was rendered. Re-render it with the updated text?`);
+    } finally {
+      mbVideoStaleDialogOpen[platform] = false;
+    }
+    if (reRender) await mbGenerateVideo(platform);
+  }
+
   function mbRemoveMedia(platform) {
     mbMedia[platform] = null;
     mbRenderMediaBadge(platform);
+    mbPersistMedia(platform);
   }
   function mbRenderMediaBadge(platform) {
     const badge = document.getElementById(mbMediaBadgeId(platform));
@@ -1572,6 +1665,13 @@
     MB_PLATFORMS.forEach(pl => { document.getElementById(mbCheckboxId(pl)).checked = p.platforms.includes(pl); });
     mbRenderResults(p.results, p.platforms);
     mbCurrentPostId = p.id; // Per App 30 — publishing from a duplicated post still records against its original row
+    // Per App 31 — bring the original post's image/video across too,
+    // instead of leaving every platform's media slot blank the way a
+    // duplicate used to. mbRenderResults above already reset mbMedia and
+    // rendered each badge in its default empty state, so this restores
+    // the real state on top and re-renders those badges to match.
+    mbMedia = JSON.parse(JSON.stringify(p.media || {}));
+    p.platforms.forEach(pl => mbRenderMediaBadge(pl));
     closeModal('mbHistoryModalOverlay');
     showFeedback('mbFeedback', 'Loaded — edit and copy, or hit Generate for a fresh pass.', 'ok');
   }
@@ -1636,6 +1736,13 @@
   // mp4 — accepted by every mainstream upload tool in practice, but worth
   // knowing if something downstream specifically demands mp4.
   let _vgResultBlob = null;
+  // Per App 31 — the canvas/audio elements and _vgResultBlob above are
+  // shared, single-instance state (there's only one Video Generator on
+  // this page). vgGenerate now gets called from Message Builder's own
+  // "Generate video" button too, so this guards against two renders
+  // (e.g. two platforms clicked back-to-back) racing on that same shared
+  // state and one platform silently ending up with the wrong clip.
+  let _vgRendering = false;
   let _vgCats = [];
 
   // Per's request — the sumi-e meditation drawing from the "Finding
@@ -1719,6 +1826,7 @@
   }
 
   async function vgGenerate() {
+    if (_vgRendering) { showFeedback('vgFeedback', 'A video is already rendering — wait for it to finish before starting another.', 'err'); return; }
     const sourceText = document.getElementById('vgSource').value.trim();
     if (!sourceText) { showFeedback('vgFeedback', 'Paste a message to narrate first.', 'err'); return; }
     const bgMode = document.getElementById('vgBackgroundMode').value;
@@ -1729,6 +1837,7 @@
     }
     const requestedLength = parseInt(document.getElementById('vgLengthSec').value, 10) || 0;
 
+    _vgRendering = true;
     const btn = document.getElementById('vgGenerateBtn');
     btn.disabled = true; const origHtml = btn.innerHTML;
     try {
@@ -1891,6 +2000,7 @@
       showFeedback('vgFeedback', e.message, 'err');
     } finally {
       btn.disabled = false; btn.innerHTML = origHtml;
+      _vgRendering = false;
     }
   }
 

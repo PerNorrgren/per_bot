@@ -908,6 +908,7 @@ async function getDb() {
     results TEXT NOT NULL,
     offer_id TEXT,
     published_platforms TEXT,
+    media TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
   // Per App 30 — older rows predate the publish-tracking column above;
@@ -915,6 +916,16 @@ async function getDb() {
   // exists, same pattern used for every other incremental column add in
   // this file.
   try { db.run(`ALTER TABLE social_posts ADD COLUMN published_platforms TEXT`); } catch(e) {}
+  // Per App 31 — the image/video attached to each platform in Message
+  // Builder (generated fresh via Generate image/Generate video, or
+  // pulled from the Video Generator via Use rendered video), so
+  // Duplicate can bring the media across too rather than leaving every
+  // platform's slot blank. Keyed by platform, same shape as the
+  // client-side mbMedia object: { facebook: {url,type}, linkedin: {...},
+  // ... }. Separate from `results` (model-generated text, written once
+  // at generation time) since media is attached afterward, one platform
+  // at a time, well after the row already exists.
+  try { db.run(`ALTER TABLE social_posts ADD COLUMN media TEXT`); } catch(e) {}
 
   // ── Signal lines (Per Bot 17 phase 6) ── The rotating "line bank" —
   // short signal-aware phrases (the "three truths" style: "You don't have
@@ -6558,23 +6569,23 @@ function deleteSignalLine(id) {
 // ── Social posts (Per Bot 17 phase 4) ── History for the message builder.
 // platforms/results are stored as JSON text and parsed back out on read —
 // sql.js has no native JSON column type.
-function addSocialPost(sourceText, platforms, results, offerId) {
+function addSocialPost(sourceText, platforms, results, offerId, media) {
   const id = crypto.randomUUID();
   getDbSync().run(
-    'INSERT INTO social_posts (id,source_text,platforms,results,offer_id) VALUES (?,?,?,?,?)',
-    [id, sourceText, JSON.stringify(platforms), JSON.stringify(results), offerId || null]
+    'INSERT INTO social_posts (id,source_text,platforms,results,offer_id,media) VALUES (?,?,?,?,?,?)',
+    [id, sourceText, JSON.stringify(platforms), JSON.stringify(results), offerId || null, JSON.stringify(media || {})]
   );
   save();
   return id;
 }
 function getAllSocialPosts(limit = 100) {
   return queryAll('SELECT * FROM social_posts ORDER BY created_at DESC LIMIT ?', [limit])
-    .map(p => ({ ...p, platforms: JSON.parse(p.platforms), results: JSON.parse(p.results), published_platforms: p.published_platforms ? JSON.parse(p.published_platforms) : {} }));
+    .map(p => ({ ...p, platforms: JSON.parse(p.platforms), results: JSON.parse(p.results), published_platforms: p.published_platforms ? JSON.parse(p.published_platforms) : {}, media: p.media ? JSON.parse(p.media) : {} }));
 }
 function getSocialPost(id) {
   const row = queryAll('SELECT * FROM social_posts WHERE id=?', [id])[0];
   if (!row) return null;
-  return { ...row, platforms: JSON.parse(row.platforms), results: JSON.parse(row.results), published_platforms: row.published_platforms ? JSON.parse(row.published_platforms) : {} };
+  return { ...row, platforms: JSON.parse(row.platforms), results: JSON.parse(row.results), published_platforms: row.published_platforms ? JSON.parse(row.published_platforms) : {}, media: row.media ? JSON.parse(row.media) : {} };
 }
 // Per App 30 — called right after a successful Publish, so the inline
 // "recent posts" table (and the reload-proof status badge on the
@@ -6591,6 +6602,22 @@ function recordSocialPostPublish(id, platform, publishedAt) {
 }
 function deleteSocialPost(id) {
   getDbSync().run('DELETE FROM social_posts WHERE id=?', [id]);
+  save();
+}
+// Per App 31 — called whenever Message Builder attaches or removes an
+// image/video on a platform (Generate image, Generate video, Use
+// rendered video, or Remove), so the social_posts row always reflects
+// what's actually attached right now rather than only what the browser
+// tab remembers. Merges into whatever's already recorded, same pattern
+// as recordSocialPostPublish above, since a batch's platforms get their
+// media attached one at a time, not all together. Passing media as
+// null/falsy clears that platform's slot (the Remove button case).
+function updateSocialPostMedia(id, platform, media) {
+  const existing = getSocialPost(id);
+  if (!existing) return;
+  const merged = { ...existing.media };
+  if (media) merged[platform] = media; else delete merged[platform];
+  getDbSync().run('UPDATE social_posts SET media=? WHERE id=?', [JSON.stringify(merged), id]);
   save();
 }
 
@@ -8707,7 +8734,7 @@ module.exports = {
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
-  addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish,
+  addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish, updateSocialPostMedia,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
   // MOTD
