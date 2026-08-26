@@ -983,6 +983,29 @@ PLATFORM NOTE: if <platform> is instagram or threads, favour something that read
 
 OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
 
+// Per App 31 — Instagram's feed post type doesn't accept video at all
+// (confirmed directly by BulkPublish's own API rejecting it: "instagram
+// allows max 0 videos for feed_photo"), so Instagram gets its own
+// distinct image style instead of the atmospheric photo/illustration
+// SOCIAL_IMAGE_PROMPT_WRITING_PROMPT above produces — a real infographic
+// carrying the post's own words on-image, not just a mood photo next to
+// a caption most scrollers won't stop to read. gpt-image-2 renders short
+// on-image text passably (unlike most image models), which is what
+// makes this worth attempting at all; the instruction below keeps the
+// actual rendered text short and simple for exactly that reason — a
+// full paragraph would come out garbled.
+const SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT = `You write a single image-generation prompt (for an AI image model, not for a person) describing one square infographic-style image for an Instagram feed post.
+
+You'll be given the post's own finished text as context, wrapped in <post_text></post_text> tags.
+
+WHAT TO PULL FROM THE TEXT: pick the single strongest line or phrase from the post — the one line that carries the whole idea (often the opening line, but read the whole thing and pick whichever line actually lands hardest, not just the first one). This is the only text that should appear rendered on the image itself. Do not try to fit the whole post's words onto the image — image models render short text far more reliably than long text, and a cluttered image is worse than a clean one with less on it.
+
+LAYOUT: describe a clean, flat, modern infographic-style design — generous negative space, the chosen line set as the clear visual focus in a calm, legible serif or humanist sans-serif typeface, one simple supporting visual element only (a single line-art icon, a minimal shape, a soft gradient band, a subtle texture) that echoes the line's meaning without competing with it for attention. Muted, calming colour palette (soft warm neutrals, sage, dusty blue, warm cream) — never bright, saturated, or "corporate slide deck" colours. No stock-photo elements, no faces, no clutter, no more than one supporting graphic element. No logos or watermarks (those are added separately). Square composition, must stay legible at small thumbnail size in a fast-scrolling feed.
+
+TEXT ACCURACY: quote the chosen line exactly as it appears in the post text — do not paraphrase, shorten, or fix its punctuation. Specify in the prompt that this exact text should render clearly and correctly spelled, since that is the single most important element of the image.
+
+OUTPUT: respond with ONLY the finished image-generation prompt itself, ready to send straight to the image model — a single paragraph, no preamble, no title, no markdown fences, no commentary before or after.`;
+
 // Per Bot 17 — Message builder. Takes a short piece of source content (a
 // Message of the Day stanza, a poem excerpt, a blog snippet) and reformats
 // it into platform-ready social copy Per can copy and paste by hand. There
@@ -1154,6 +1177,7 @@ module.exports = {
   NATURE_POEM_GENERATION_PROMPT,
   SUMIE_IMAGE_PROMPT_WRITING_PROMPT,
   SOCIAL_IMAGE_PROMPT_WRITING_PROMPT,
+  SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
   CAMPAIGN_SALES_EMAIL_PROMPT,

@@ -1344,11 +1344,20 @@
         <!-- Per App 30 — media row: generate an image fresh, or pull in
              whatever Video Generator below has most recently rendered.
              Instagram's own API refuses a text-only post, so its badge
-             starts in a visible "required" state rather than blank. -->
+             starts in a visible "required" state rather than blank.
+             Per App 31 — Instagram's feed post type doesn't accept
+             video at all (BulkPublish itself rejects it: "instagram
+             allows max 0 videos for feed_photo"), so Instagram gets a
+             single "Generate infographic" button instead of the three
+             image/video/use-rendered options every other platform gets. -->
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+          ${p === 'instagram' ? `
+          <button class="btn sm" onclick="mbGenerateImage('${p}')">📊 Generate infographic</button>
+          ` : `
           <button class="btn sm" onclick="mbGenerateImage('${p}')">🖼️ Generate image</button>
           <button class="btn sm" onclick="mbGenerateVideo('${p}')" title="Renders a fresh video using this platform's own text, and attaches it automatically once done">🎥 Generate video</button>
           <button class="btn sm" onclick="mbUseRenderedVideo('${p}')" title="Uses whatever Video Generator below has most recently rendered">🎬 Use rendered video</button>
+          `}
           <span id="${mbMediaBadgeId(p)}" style="font-size:11px"></span>
         </div>
       </div>
@@ -1410,20 +1419,25 @@
     } catch (e) { /* silent — see comment above */ }
   }
 
+  // Per App 31 — Instagram routes to the infographic generator instead
+  // of the standard photo/illustration one (see the button row above);
+  // everything else about this flow — badge states, polling, attaching
+  // the result — stays exactly the same either way.
   async function mbGenerateImage(platform) {
     const q = mbQuillInstances[platform];
     if (!q) return;
     const postText = q.getText().replace(/\n$/, '');
     if (!postText.trim()) { showFeedback('mbFeedback', 'Generate the post text first.', 'err'); return; }
+    const isInfographic = platform === 'instagram';
     const badge = document.getElementById(mbMediaBadgeId(platform));
-    if (badge) badge.innerHTML = '<span style="color:rgba(255,255,255,0.5)">Generating image… (up to 2 min)</span>';
+    if (badge) badge.innerHTML = `<span style="color:rgba(255,255,255,0.5)">Generating ${isInfographic ? 'infographic' : 'image'}… (up to 2 min)</span>`;
     try {
       const res = await fetch('/api/admin/comms-ai-generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'social_image', context: JSON.stringify({ postText, platform }) })
+        body: JSON.stringify({ type: isInfographic ? 'social_infographic' : 'social_image', context: JSON.stringify({ postText, platform }) })
       });
       const data = await res.json();
-      if (!res.ok || !data.jobId) throw new Error(data.error || 'Could not start image generation.');
+      if (!res.ok || !data.jobId) throw new Error(data.error || `Could not start ${isInfographic ? 'infographic' : 'image'} generation.`);
       mbPollImageJob(platform, data.jobId);
     } catch (e) {
       if (badge) badge.innerHTML = `<span style="color:rgba(255,140,120,0.9)">${e.message}</span>`;

@@ -6551,6 +6551,21 @@ async function generateSocialImage(postText, platform) {
   const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_IMAGE_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
   return callGptImage(imagePrompt);
 }
+// Per App 31 — Message Builder's Instagram-only "Generate infographic"
+// button. Same shape as generateSocialImage above (postText in, PNG
+// bytes out via callGptImage) but with its own prompt-writing step
+// (SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT), since an infographic needs
+// the post's own strongest line picked out and described as on-image
+// text — a fundamentally different brief to "a mood photo next to this
+// caption". platform isn't passed through here (unlike
+// generateSocialImage) since this generator only ever runs for
+// Instagram — see the routing in runCommsAiGenerateJob below.
+async function generateSocialInfographic(postText) {
+  const trimmedText = (postText || '').slice(0, 3000).trim();
+  const userMessage = `<post_text>\n${trimmedText}\n</post_text>\n\nWrite one infographic image prompt now.`;
+  const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
+  return callGptImage(imagePrompt);
+}
 // Per Bot 22 — background job pattern, not a single long request. A GPT
 // Image call can take up to ~2 minutes (OpenAI's own guidance), and
 // Railway/Cloudflare's edge proxy times out well before that — the
@@ -6593,6 +6608,21 @@ async function runCommsAiGenerateJob(jobId, type, context) {
       try { parsed = JSON.parse(context); } catch { throw new Error('Malformed request for image generation.'); }
       const buffer = await generateSocialImage(parsed.postText, parsed.platform);
       const key = `newsletter-images/social-${uuidv4()}.png`;
+      await media.uploadPublicObject(key, buffer, 'image/png');
+      db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
+      return;
+    }
+
+    // Per App 31 — Instagram-only infographic variant. Same storage
+    // pattern as social_image just above (newsletter-images/ prefix,
+    // same generic serving route) — only the generator function called
+    // differs.
+    if (type === 'social_infographic') {
+      if (!media.isConfigured()) throw new Error('Image storage (R2) is not configured on this deployment.');
+      let parsed;
+      try { parsed = JSON.parse(context); } catch { throw new Error('Malformed request for image generation.'); }
+      const buffer = await generateSocialInfographic(parsed.postText);
+      const key = `newsletter-images/social-infographic-${uuidv4()}.png`;
       await media.uploadPublicObject(key, buffer, 'image/png');
       db.markAiGenerateJobDone(jobId, { imageUrl: `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}` });
       return;
@@ -6661,7 +6691,7 @@ function recoverPendingAiGenerateJobs() {
 }
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
   const { type, context } = req.body;
-  const isImageType = type === 'sumie' || type === 'social_image';
+  const isImageType = type === 'sumie' || type === 'social_image' || type === 'social_infographic';
   if (isImageType && !media.isConfigured()) return res.status(400).json({ error: 'Image storage (R2) is not configured on this deployment.' });
   if (!isImageType && !COMMS_AI_GENERATORS[type]) return res.status(400).json({ error: 'Unknown generator type.' });
   const jobId = uuidv4();
