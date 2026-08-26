@@ -12513,6 +12513,11 @@ app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => res.sendFile
 // report later is a data function + one registry entry, not a new page.
 app.get('/admin/reports',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 app.get('/admin/pages',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'pages.html')));
+// Per App 31 — Social tab, home for the streamlining plan: the posting
+// schedule config (this session's "A"), and the auto-prepare/calendar
+// pieces ("B"/"C") to follow in upcoming sessions.
+app.get('/admin/social',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
+app.get('/admin/social/',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
 app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 
 // ── Legal document public pages ──
@@ -13370,6 +13375,34 @@ app.post('/api/admin/social-posts/:id/media', auth.requireAuthApi(['admin']), (r
     const { platform, media } = req.body || {};
     if (!platform) return res.status(400).json({ error: 'platform is required.' });
     db.updateSocialPostMedia(req.params.id, platform, media || null);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Social posting schedule (Per App 31 — "A" of the streamlining plan) ──
+// One row per platform (facebook/linkedin/instagram/threads), each with
+// its allowed days-of-week and time-of-day slots (UTC) — seeded with
+// research-backed defaults in db.js, editable from the new Social admin
+// tab. This is deliberately just the config store for now — the
+// automation that actually reads it to auto-schedule posts ("B") is the
+// next piece to build on top of this.
+const SOCIAL_SCHEDULE_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
+const SOCIAL_SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+app.get('/api/admin/social-schedule', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getSocialScheduleConfig()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/social-schedule/:platform', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { platform } = req.params;
+    if (!SOCIAL_SCHEDULE_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Unknown platform.' });
+    const days = Array.isArray(req.body.days) ? req.body.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+    const times = Array.isArray(req.body.times) ? req.body.times.filter(t => SOCIAL_SCHEDULE_TIME_RE.test(t)) : [];
+    if (!days.length) return res.status(400).json({ error: 'Pick at least one day.' });
+    if (!times.length) return res.status(400).json({ error: 'Add at least one time (HH:MM, 24-hour, UTC).' });
+    db.updateSocialScheduleConfig(platform, [...new Set(days)].sort((a, b) => a - b), [...new Set(times)].sort());
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

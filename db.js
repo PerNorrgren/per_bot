@@ -927,6 +927,38 @@ async function getDb() {
   // at a time, well after the row already exists.
   try { db.run(`ALTER TABLE social_posts ADD COLUMN media TEXT`); } catch(e) {}
 
+  // ── Social posting schedule (Per App 31 — "A" of the streamlining
+  // plan) ── One row per platform, not per slot: `days` is a JSON array
+  // of allowed day-of-week numbers (0=Sunday..6=Saturday, matching JS
+  // Date#getDay()) and `times` is a JSON array of "HH:MM" 24-hour times,
+  // both in UTC — same convention the existing Social Queue cron
+  // already uses for its own "Send at" field, so a time typed here means
+  // the same thing it already means everywhere else in this app. A
+  // platform can have several allowed times per day (e.g. Facebook
+  // trying both a morning and an early-afternoon slot); the automation
+  // job (next up) picks the next allowed (day,time) combination that's
+  // still in the future when it needs to schedule something. Seeded
+  // with research-backed 2026 defaults below — editable afterward from
+  // the new Social admin tab, this table is just the starting point.
+  db.run(`CREATE TABLE IF NOT EXISTS social_schedule_config (
+    platform TEXT PRIMARY KEY,
+    days TEXT NOT NULL,
+    times TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`);
+  // Unconditional INSERT OR IGNORE, same reasoning as the Social category
+  // and App Files seeds elsewhere in this file — must exist on every
+  // deployment regardless of table state. Defaults approximate the
+  // researched best-engagement windows for each platform (UK/Western-
+  // European daytime hours, since that's Per's own base and the closest
+  // available proxy for his audience) — Tue/Wed/Thu skew across the
+  // board since weekends and Mondays consistently underperform on all
+  // four platforms.
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('facebook', '[3,4]', '["09:00","13:00"]')`);
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('linkedin', '[2,3,4]', '["09:00"]')`);
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('instagram', '[2,3]', '["12:00"]')`);
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('threads', '[2,3,4]', '["09:00"]')`);
+
   // ── Signal lines (Per Bot 17 phase 6) ── The rotating "line bank" —
   // short signal-aware phrases (the "three truths" style: "You don't have
   // to earn the right to rest") used across /promotions, the message
@@ -6631,6 +6663,25 @@ function updateSocialPostMedia(id, platform, media) {
   save();
 }
 
+// Per App 31 — social posting schedule config ("A" of the streamlining
+// plan). getSocialScheduleConfig returns all four platforms parsed into
+// real arrays (not raw JSON strings) since every caller wants to work
+// with the days/times directly. updateSocialScheduleConfig upserts one
+// platform at a time — the admin UI saves each platform's row
+// independently rather than the whole table at once.
+function getSocialScheduleConfig() {
+  return queryAll('SELECT * FROM social_schedule_config ORDER BY platform ASC')
+    .map(r => ({ platform: r.platform, days: JSON.parse(r.days), times: JSON.parse(r.times), updated_at: r.updated_at }));
+}
+function updateSocialScheduleConfig(platform, days, times) {
+  getDbSync().run(
+    `INSERT INTO social_schedule_config (platform,days,times,updated_at) VALUES (?,?,?,datetime('now'))
+     ON CONFLICT(platform) DO UPDATE SET days=excluded.days, times=excluded.times, updated_at=excluded.updated_at`,
+    [platform, JSON.stringify(days), JSON.stringify(times)]
+  );
+  save();
+}
+
 // ── Messages of the day ──
 function addMotd(id, body, scheduledDate) {
   getDbSync().run(
@@ -8745,6 +8796,7 @@ module.exports = {
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish, updateSocialPostMedia,
+  getSocialScheduleConfig, updateSocialScheduleConfig,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
   // MOTD
