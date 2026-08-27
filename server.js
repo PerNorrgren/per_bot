@@ -13623,6 +13623,20 @@ function renderMessageBody(text, format) {
 }
 
 function postProcessRichBody(html) {
+  // Alignment (Per App 31) — Quill expresses centered/right/justified
+  // text as a ql-align-* class on the block tag (ql-align-left has no
+  // class at all — left is the unstyled default), never as an inline
+  // style. That class means something inside the editor's own
+  // stylesheet, which — same root cause as the margin problem handled
+  // below — never ships with the sent email, so centered or
+  // right-aligned text silently fell back to left-aligned in every
+  // recipient's inbox even though nothing about the written content
+  // changed. Translated here into a real inline text-align, alongside
+  // the margin reset every block tag already gets.
+  const alignStyleFor = (classAttr) => {
+    const m = (classAttr || '').match(/ql-align-(center|right|justify)/);
+    return m ? `text-align:${m[1]};` : '';
+  };
   return html
     .replace(/<a\s+([^>]*\bclass=["']nl-button["'][^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, innerText) => {
       const hrefMatch = attrs.match(/href=["']([^"']*)["']/i);
@@ -13652,14 +13666,15 @@ function postProcessRichBody(html) {
     // still shows up on its own, since that comes from line-height, not
     // from a paragraph's margin.
     .replace(/<p>/gi, '<p style="margin:0;">')
-    .replace(/<p class="([^"]*)">/gi, '<p class="$1" style="margin:0;">')
+    .replace(/<p class="([^"]*)">/gi, (m, cls) => `<p class="${cls}" style="margin:0;${alignStyleFor(cls)}">`)
     .replace(/<h2>/gi, '<h2 style="margin:0 0 12px;">')
-    .replace(/<h2 class="([^"]*)">/gi, '<h2 class="$1" style="margin:0 0 12px;">')
+    .replace(/<h2 class="([^"]*)">/gi, (m, cls) => `<h2 class="${cls}" style="margin:0 0 12px;${alignStyleFor(cls)}">`)
     .replace(/<h3>/gi, '<h3 style="margin:0 0 10px;">')
-    .replace(/<h3 class="([^"]*)">/gi, '<h3 class="$1" style="margin:0 0 10px;">')
+    .replace(/<h3 class="([^"]*)">/gi, (m, cls) => `<h3 class="${cls}" style="margin:0 0 10px;${alignStyleFor(cls)}">`)
     .replace(/<ul>/gi, '<ul style="margin:0 0 12px;padding-left:24px;">')
     .replace(/<ol>/gi, '<ol style="margin:0 0 12px;padding-left:24px;">')
-    .replace(/<li>/gi, '<li style="margin:0 0 4px;">');
+    .replace(/<li>/gi, '<li style="margin:0 0 4px;">')
+    .replace(/<li class="([^"]*)">/gi, (m, cls) => `<li class="${cls}" style="margin:0 0 4px;${alignStyleFor(cls)}">`);
 }
 
 // format: 'plain' (body is plain text, \n becomes <br/>, same as before) or

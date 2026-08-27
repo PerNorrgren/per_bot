@@ -3213,17 +3213,75 @@
     } finally { setBtnLoading(btnEl, false); }
   }
 
+  // Per App 31 — used to be a single static appAlert snapshot: whatever
+  // the counts were the instant this was clicked, frozen until you
+  // closed and reopened it. Rebuilt as its own small dialog (reusing
+  // dialogs.js's existing .app-dialog CSS so it still looks like every
+  // other popup in the app, without touching that shared file) that
+  // polls every 3 seconds while it's open and updates in place, so a
+  // send in progress is genuinely watchable rather than a snapshot.
+  // Once the newsletter's own status moves off 'sending' (i.e. it's
+  // actually finished, not just this particular poll tick), the body
+  // switches to a large "All Done" instead of another numbers line.
   async function showNewsletterProgress(id) {
-    try {
-      const res  = await fetch(`/api/admin/newsletters/${id}/progress`);
-      const data = await res.json();
-      appAlert(`Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`);
+    let timer = null;
+    // Per App 31 — styled fully inline rather than via dialogs.js's
+    // .app-dialog-overlay/.app-dialog classes (even though this is
+    // visually copied from them, for consistency): that stylesheet is
+    // only injected into the page the first time appAlert/appConfirm/
+    // appPrompt actually fires, so relying on those class names here
+    // would silently render unstyled if Progress happened to be the
+    // very first dialog opened on a given page load.
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px';
+    overlay.innerHTML = `
+      <div role="dialog" aria-modal="true" style="background:#12181a;border:1px solid rgba(255,255,255,0.14);border-radius:14px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.5);font-family:Georgia,serif;overflow:hidden">
+        <div style="padding:16px 20px 2px;font-size:12px;letter-spacing:0.08em;color:rgba(255,255,255,0.4);text-transform:uppercase">Deeper Mindfulness</div>
+        <div id="npBody" style="padding:8px 20px 18px;color:rgba(255,255,255,0.85);font-size:14.5px;line-height:1.5;white-space:pre-wrap">Loading…</div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+          <button id="npOkBtn" style="padding:9px 18px;border-radius:8px;border:1px solid rgba(180,230,200,0.45);background:rgba(180,230,200,0.18);color:rgba(210,240,222,0.95);font-family:Georgia,serif;font-size:13.5px;cursor:pointer">OK</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    function closeDialog() {
+      if (timer) clearInterval(timer);
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
       // Per App 30 — the row itself used to stay stuck on "Sending now"
       // even once Progress confirmed everything was actually done, since
-      // nothing re-fetched the list. Checking Progress now also refreshes
-      // the row it's about, not just the modal.
+      // nothing re-fetched the list. Closing this still refreshes the
+      // row it's about, same as before.
       loadNewsletters();
-    } catch(e) { appAlert('Could not load progress.'); }
+    }
+    function onKey(e) { if (e.key === 'Escape' || e.key === 'Enter') closeDialog(); }
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(); });
+    document.getElementById('npOkBtn').addEventListener('click', closeDialog);
+
+    async function poll() {
+      const body = document.getElementById('npBody');
+      if (!body) return; // dialog already closed — the interval below is cleared on close, but a tick already in flight could still land after
+      try {
+        const res = await fetch(`/api/admin/newsletters/${id}/progress`);
+        const data = await res.json();
+        if (data.status !== 'sending') {
+          body.style.whiteSpace = 'normal';
+          body.innerHTML = `<div style="font-size:24px;font-weight:bold;color:rgba(180,230,200,0.95);text-align:center;padding:6px 0 12px">All Done</div><div style="text-align:center;font-size:13px;color:rgba(255,255,255,0.5)">Sent: ${data.sent} · Failed: ${data.failed} · Total: ${data.total}</div>`;
+          if (timer) { clearInterval(timer); timer = null; }
+        } else {
+          body.style.whiteSpace = 'pre-wrap';
+          body.textContent = `Status: ${data.status}\n\nSent: ${data.sent}\nFailed: ${data.failed}\nStill pending: ${data.pending}\nTotal: ${data.total}`;
+        }
+      } catch (e) {
+        // Transient network hiccup — leave whatever was last shown in
+        // place and just try again on the next tick rather than
+        // replacing a real reading with an error.
+      }
+    }
+
+    await poll();
+    timer = setInterval(poll, 3000);
   }
 
   async function deleteNewsletterRow(id) {
