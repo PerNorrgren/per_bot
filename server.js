@@ -1836,6 +1836,39 @@ async function sendNewsletterWinbackEmails() {
   return { ok: true, matched: due.length, sent };
 }
 
+// ── Trending context (Per App 31) — refreshed once daily by a real web
+// search, read by most content generators in this file. See the schema
+// comment in db.js and TRENDING_CONTEXT_REFRESH_PROMPT in prompts.js for
+// the full reasoning.
+async function refreshTrendingContext() {
+  const raw = await anthropicFetchWithWebSearch(
+    prompts.TRENDING_CONTEXT_REFRESH_PROMPT,
+    [{ role: 'user', content: 'Find the current trend and write the hook now.' }],
+    2000,
+    90000 // same generous timeout as the signal-line trend scan — a few rounds of live search before the final answer
+  );
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch {
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    parsed = JSON.parse(cleaned);
+  }
+  if (!parsed || !parsed.trend_hook || !parsed.trend_hook.trim()) throw new Error('Trend refresh returned no usable hook.');
+  db.updateTrendContext(parsed.trend_hook.trim(), (parsed.trend_summary || '').trim());
+  return { ok: true, trend_hook: parsed.trend_hook.trim() };
+}
+// Every generator that connects to the daily trend calls this to build
+// the block it appends to its own user message — one place, so the tag
+// shape/wording is identical everywhere it's used. Falls back to the
+// seeded default row if the table is somehow empty (shouldn't happen —
+// db.js seeds it unconditionally — but a generator should never simply
+// fail because of this optional context).
+function getCurrentTrendBlock() {
+  const ctx = db.getCurrentTrendContext();
+  if (!ctx || !ctx.trend_hook) return '';
+  return `\n\n<current_trend>${ctx.trend_hook}</current_trend>`;
+}
+
 // ── Birthday messages (Per Bot 7) ── Providing a DOB at all is the consent
 // to send this — there's no separate preference toggle to check, unlike
 // every other message type in this file. Month/day only, everywhere —
@@ -6733,7 +6766,7 @@ async function generateSocialInfographic(postText, suggestions) {
 // call is well within a normal request timeout.
 async function generateMarketingScript(contentTitle, contentDescription, durationSeconds) {
   const promoted = `${contentTitle || 'Deeper Mindfulness'}${contentDescription ? ' — ' + contentDescription.slice(0, 600) : ''}`;
-  const userMessage = `<promoted_content>\n${promoted}\n</promoted_content>\n<duration_seconds>${durationSeconds || 30}</duration_seconds>\n\nWrite the script now.`;
+  const userMessage = `<promoted_content>\n${promoted}\n</promoted_content>\n<duration_seconds>${durationSeconds || 30}</duration_seconds>\n\nWrite the script now.` + getCurrentTrendBlock();
   return (await callClaudeWithRetry(prompts.MARKETING_SCRIPT_PROMPT, userMessage, 800, true)).trim();
 }
 // Per Bot 22 — background job pattern, not a single long request. A GPT
@@ -6810,7 +6843,13 @@ async function runCommsAiGenerateJob(jobId, type, context) {
     const userMessage = context && context.trim()
       ? `${gen.userMessage} Make it about: ${context.trim()}`
       : gen.userMessage;
-    const raw = await callClaudeWithRetry(gen.prompt, userMessage, 2000, gen.disableThinking);
+    // Per App 31 — appended after the topic (if any), same reasoning as
+    // the topic itself: additive context, never replacing what's already
+    // there. Each of these four prompts' own instructions (via
+    // TREND_CONTEXT_USAGE_CREATIVE for haiku/limerick/poem,
+    // TREND_CONTEXT_USAGE_MARKETING for motd) already say how much
+    // weight to actually give this.
+    const raw = await callClaudeWithRetry(gen.prompt, userMessage + getCurrentTrendBlock(), 2000, gen.disableThinking);
     let text;
     if (gen.parseJsonArray) {
       let arr;
@@ -6931,7 +6970,7 @@ app.post('/api/admin/course-description-polish', auth.requireAuthApi(['admin']),
     if (!title || !title.trim()) return res.status(400).json({ error: 'Give the course a title first.' });
     const plain = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const language = getAdminLanguage();
-    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCOURSE TITLE: ${title.trim()}\n\nCURRENT DESCRIPTION: ${plain || '(none yet — write one from the title alone)'}`;
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCOURSE TITLE: ${title.trim()}\n\nCURRENT DESCRIPTION: ${plain || '(none yet — write one from the title alone)'}` + getCurrentTrendBlock();
     const reply = await callClaudeRaw(prompts.COURSE_DESCRIPTION_SELLING_PROMPT, [{ role: 'user', content: userMessage }], 500);
     res.json({ text: reply.trim() });
   } catch(e) {
@@ -6996,7 +7035,7 @@ app.post('/api/admin/offer-copy-polish', auth.requireAuthApi(['admin']), async (
     const { name, trialDays, headline, description } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Give the offer a name first.' });
     const language = getAdminLanguage();
-    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nOFFER NAME: ${name.trim()}\nTRIAL DAYS: ${trialDays || 14}\n\nCURRENT HEADLINE: ${(headline || '').trim() || '(none yet)'}\nCURRENT DESCRIPTION: ${(description || '').trim() || '(none yet)'}`;
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nOFFER NAME: ${name.trim()}\nTRIAL DAYS: ${trialDays || 14}\n\nCURRENT HEADLINE: ${(headline || '').trim() || '(none yet)'}\nCURRENT DESCRIPTION: ${(description || '').trim() || '(none yet)'}` + getCurrentTrendBlock();
     const raw = await callClaudeRaw(prompts.OFFER_COPY_SELLING_PROMPT, [{ role: 'user', content: userMessage }], 400);
     let parsed;
     try { parsed = JSON.parse(raw); }
@@ -12450,7 +12489,7 @@ async function generateCampaignStepContent(campaign, step, brief) {
   if (step.channel === 'email') {
     const userBrief = brief || `${offer.headline || offer.name}. ${offer.description || ''}`.trim();
     const systemPrompt = prompts.CAMPAIGN_SALES_EMAIL_PROMPT.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days);
-    const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userBrief }], 800);
+    const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userBrief + getCurrentTrendBlock() }], 800);
     let parsed;
     try { parsed = JSON.parse(raw); }
     catch { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
@@ -13307,7 +13346,7 @@ async function generateSocialCopy(sourceText, platforms, includeCta, offerId) {
     : 'Do not add any signup hook, closing invitation, or link — produce only the reformatted message itself, per the platform shapes above.';
   const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
 
-  const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.`;
+  const userMessage = `SOURCE CONTENT:\n${sourceText}\n\nPLATFORMS TO PRODUCE: ${platforms.join(', ')}\n\nRespond with only the JSON object, nothing else.` + getCurrentTrendBlock();
   const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1500);
   let parsed;
   try {
@@ -15316,7 +15355,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

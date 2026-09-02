@@ -836,6 +836,45 @@ ${MOTD_SIGNAL_LIST}
 
 Preserve every link, button, image, video embed, and template placeholder (like {{name}}) exactly as they appear in the source, character for character, including any HTML comments — never remove, reword, restructure, or invent one. Don't add new claims, facts, or information that wasn't already there. Respond in ${language}. Respond with ONLY the revised HTML, no preamble, no explanation, no markdown code fences, no commentary before or after.`;
 
+// ── Trending context (Per App 31) ── Refreshed once daily by a real web
+// search (anthropicFetchWithWebSearch — Anthropic's own native tool, not
+// a canned prompt), read by most content generators below via the two
+// shared usage fragments that follow it. Modelled closely on
+// SIGNAL_LINE_TREND_SCAN_PROMPT further down this file (same "find
+// what's genuinely current, connect it to the brand's own honest
+// territory, never name the literal headline" approach) — this produces
+// one durable framing phrase for the day rather than several one-line
+// signals, since most generators need a throughline to work with, not a
+// menu of options.
+const TRENDING_CONTEXT_REFRESH_PROMPT = `You research what's genuinely current in wellness, mental-health, and self-improvement conversation right now, and distill it into one honest, durable framing Deeper Mindfulness (a nervous-system-focused mindfulness platform — training the body directly, not just offering insight) can authentically connect its content to for the next day.
+
+TASK: use web search to find what's actually being discussed right now in wellness/mental-health/self-improvement culture — named trends, shifting language, what people are searching for, what's gaining traction. You're looking for the genuine current state of that conversation, not a single news story.
+
+WHAT MAKES A GOOD HOOK: something Deeper Mindfulness can connect to HONESTLY, not just whatever is most viral. The strongest hooks are ones where the current cultural conversation is already moving toward what this platform actually does — training the nervous system directly, working with the body rather than just thinking about it. A hook that requires a stretch, or that only works by being vague, is a worse choice than a narrower one that's genuinely true.
+
+CONSTRAINTS:
+- Never name a specific news event, public figure, company, or political topic in the hook itself — the hook should stay usable and true for the roughly one day it's in use, not date immediately or wander into anything politically charged.
+- Evergreen wording — describe the conversation/category (e.g. "nervous-system training being talked about as its own wellness category"), not a specific headline that prompted noticing it.
+- No urgency or hype language ("everyone's doing this now", "don't get left behind") — the hook itself should sound like a calm, accurate observation, matching this brand's own voice rules (warm, never evangelical, no hype words).
+
+OUTPUT: respond with ONLY a JSON object, no preamble, no markdown fences: {"trend_hook": "one or two sentences — the actual connective framing other content will use", "trend_summary": "one short paragraph of reasoning/evidence for why this is the right hook today, for internal review only, never shown to a reader"}`;
+
+// Appended to generators whose whole job is persuasion/marketing (social
+// copy, MOTD, sales/offer copy, scripts) — the trend is meant to be a
+// visible, prominent throughline there, same standing instruction
+// already established in MESSAGE_BUILDER_PROMPT.
+const TREND_CONTEXT_USAGE_MARKETING = `
+
+CURRENT TREND CONTEXT: you may be given a <current_trend></current_trend> block below, refreshed daily from a live web search of what's genuinely current in wellness/mental-health conversation right now. Use it as connective framing where it authentically fits this piece — keep it prominent rather than buried, especially in an opening hook — but never force a connection that isn't genuinely there, and never treat it as a fact to cite or a headline to reference. If no block is given, proceed without it.`;
+
+// Appended to the creative/art generators (haiku, poem, limerick) —
+// deliberately a much lighter touch. A poem chasing a trend stops being
+// a poem; this is optional inspiration only, and should have zero
+// visible effect most of the time.
+const TREND_CONTEXT_USAGE_CREATIVE = `
+
+CURRENT TREND CONTEXT: you may be given a <current_trend></current_trend> block below. Treat this as optional inspiration only — if the current cultural thread genuinely suggests an image, a feeling, or a word choice for this specific piece, you may let it quietly inform your choice of subject or metaphor, without ever naming the trend itself or making the piece feel topical or dated. Most of the time this should have zero visible effect on what you write — if nothing about it genuinely fits, ignore it completely. This platform's voice rules (no hype, no evangelism, timeless language) still apply in full regardless.`;
+
 const MOTD_GENERATION_PROMPT = `You write "Message of the Day" content for Deeper Mindfulness — short, one-off daily messages sent by email to people on a nervous-system-focused mindfulness platform. You write in Per Norrgren's voice.
 
 THE FELT VOICE — every message must be:
@@ -874,7 +913,7 @@ EXAMPLES (approved as exactly the right form and tone — match this level, not 
 
 "If the door slammed and you jumped too far,\nthat's not you being dramatic —\nthat's a brake still learning its own strength.\nTurn your head, slow, and back again.\nIt builds the way anything true does: slowly."
 
-OUTPUT FORMAT: respond with ONLY a JSON array of strings, one per message, in the exact order requested. Each string contains its five lines joined by \n. No preamble, no markdown fences, no commentary — just the raw JSON array.`;
+OUTPUT FORMAT: respond with ONLY a JSON array of strings, one per message, in the exact order requested. Each string contains its five lines joined by \n. No preamble, no markdown fences, no commentary — just the raw JSON array.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 22 — four siblings to MOTD_GENERATION_PROMPT above, for the
 // newsletter editor's "generate & insert at cursor" button. Same signal
@@ -898,7 +937,7 @@ STANDING RULES (same as everything else on this platform):
 - No clinical or brain-science terms exposed to the reader, even inside the joke.
 - Second person or a light "someone/you" address is fine — whatever the joke actually needs.
 
-OUTPUT: respond with ONLY the five lines, separated by literal \n characters. No title, no signature, no preamble, no markdown fences, no commentary.`;
+OUTPUT: respond with ONLY the five lines, separated by literal \n characters. No title, no signature, no preamble, no markdown fences, no commentary.` + TREND_CONTEXT_USAGE_CREATIVE;
 
 const HAIKU_GENERATION_PROMPT = `You write a single haiku for Deeper Mindfulness, in Per Norrgren's voice — to be dropped into a newsletter as a small, surprising moment.
 
@@ -918,7 +957,7 @@ STANDING RULES (same as everything else on this platform):
 - Culturally universal, religiously/spiritually neutral, no clinical or brain-science terms exposed to the reader.
 - No title, no explanation of the syllable count or the turn — just the haiku itself, exactly as it should appear.
 
-OUTPUT: respond with ONLY the three lines, separated by literal \n characters. No preamble, no markdown fences, no commentary.`;
+OUTPUT: respond with ONLY the three lines, separated by literal \n characters. No preamble, no markdown fences, no commentary.` + TREND_CONTEXT_USAGE_CREATIVE;
 
 const NATURE_POEM_GENERATION_PROMPT = `You write a single four-stanza poem for Deeper Mindfulness, in Per Norrgren's voice, in the register of Mary Oliver — to be dropped into a newsletter as a longer, quieter moment of attention.
 
@@ -939,7 +978,7 @@ STANDING RULES (same as everything else on this platform):
 
 TITLE: give the poem a short, plain title — a few words, drawn from the poem's own central image, not a grand or explanatory phrase (think "The Heron's Wait", not "On Finding Peace"). No colon-subtitle construction.
 
-OUTPUT: respond with the title on the first line by itself, then a single blank line, then the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No signature, no preamble, no markdown fences, no commentary — just the title, a blank line, then the poem exactly as it should appear.`;
+OUTPUT: respond with the title on the first line by itself, then a single blank line, then the poem — four stanzas, lines within each stanza separated by a single \n, stanzas separated by \n\n. No signature, no preamble, no markdown fences, no commentary — just the title, a blank line, then the poem exactly as it should appear.` + TREND_CONTEXT_USAGE_CREATIVE;
 
 // Per Bot 22 — the one non-text generator, now backed by OpenAI's GPT
 // Image API (see /api/admin/comms-ai-generate) rather than hand-composed
@@ -1032,7 +1071,7 @@ VOICE RULES (same as the source content — keep them intact):
 - Religiously and spiritually neutral — no "soul", "blessing", "universe [as a benevolent force]", prayer, or faith-specific language.
 - Plain language throughout.
 
-TRENDING HOOK — Per's standing instruction, keep this prominent rather than buried: nervous-system training / "mental fitness" is a real, widely-recognised 2026 wellness category — distinct from generic "mindfulness" or "meditation" in how people are currently talking about and searching for it. Work that frame in as the entry point wherever a post's opening line allows it: this is training the nervous system directly, not more insight, not another mindfulness app — the same territory "mental fitness" already names, just taught through specific, felt things the body does rather than more thinking. Don't force the literal phrase into every post like a keyword — but that underlying frame (train the nervous system, don't just inform the mind) should be the throughline connecting most posts, especially opening hooks.
+TRENDING HOOK — Per's standing instruction, keep this prominent rather than buried, as the throughline connecting most posts, especially opening hooks. Don't force it into every single post like a keyword.
 
 WHAT CHANGES PER PLATFORM — the underlying message and voice stay the same; only the shape, length, and framing adapt to how people actually read each platform:
 - facebook: conversational, medium length (roughly 40-80 words), can open with a short relatable line before the core message, soft optional closing question or invitation. No hashtag block, no "link in bio" — Facebook readers don't expect either.
@@ -1043,7 +1082,7 @@ WHAT CHANGES PER PLATFORM — the underlying message and voice stay the same; on
 {{CTA_INSTRUCTIONS}}
 
 INPUT: you will be given the source content and a list of platforms to produce.
-OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform names requested (lowercase, e.g. "facebook", "linkedin", "instagram", "threads"). Values are the finished post text as a single string (use \\n for any line breaks within a value). No preamble, no markdown fences, no commentary — just the raw JSON object.`;
+OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform names requested (lowercase, e.g. "facebook", "linkedin", "instagram", "threads"). Values are the finished post text as a single string (use \\n for any line breaks within a value). No preamble, no markdown fences, no commentary — just the raw JSON object.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 17 (phase 4) — appended into MESSAGE_BUILDER_PROMPT in place of
 // {{CTA_INSTRUCTIONS}} when the "include headline & signup footer" option
@@ -1073,7 +1112,7 @@ VOICE RULES (same as everywhere else):
 - Honest, never evangelical. No "this will change everything", no promises of transformation, no reassurance clichés.
 - Culturally universal, religiously and spiritually neutral, plain language throughout.
 
-TRENDING HOOK — keep this prominent: nervous-system training / "mental fitness" is a real, widely-recognised 2026 wellness category, distinct from generic "mindfulness" or "meditation." Work it in as the connecting frame wherever it fits naturally — this is training the nervous system directly, not more insight, not another app.
+TRENDING HOOK — keep this prominent, worked in as the connecting frame wherever it fits naturally, using the <current_trend> block described below.
 
 You'll be given what's being promoted (a course, a piece of content, or the practice in general) with its real title and description, wrapped in <promoted_content></promoted_content>, and a target spoken length in seconds, wrapped in <duration_seconds></duration_seconds>.
 
@@ -1081,7 +1120,7 @@ STRUCTURE: open with a short, relatable hook — a felt moment, not a claim ("yo
 
 LENGTH: pace spoken narration at roughly 2.2-2.5 words per second for a calm, unhurried read (not rushed) — use <duration_seconds> to size the total word count accordingly. This is a target, not a hard ceiling — a few seconds over to finish a thought cleanly is fine; padding to hit an exact count is not.
 
-OUTPUT: respond with ONLY the finished spoken script itself — plain sentences, no scene directions, no bracketed cues like [pause] or [cut to], no timestamps, no preamble, no title. This text is read verbatim by a narrator, not interpreted by a video editor.`;
+OUTPUT: respond with ONLY the finished spoken script itself — plain sentences, no scene directions, no bracketed cues like [pause] or [cut to], no timestamps, no preamble, no title. This text is read verbatim by a narrator, not interpreted by a video editor.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 18 — campaign email steps. Same job as MESSAGE_BUILDER_PROMPT +
 // its CTA instructions, just shaped for an email (subject + body) instead
@@ -1099,7 +1138,7 @@ VOICE RULES:
 SHAPE: a short subject line (under 60 characters, no clickbait, no ALL CAPS, no excessive punctuation), then a body of 2-4 short paragraphs — open with a felt-experience observation, name what the offer actually is in plain terms, close with an invitation mentioning {{TRIAL_DAYS}} days full access and the literal token {{SIGNUP_LINK}} on its own line (this is replaced with the real tracked link afterward — write it exactly as {{SIGNUP_LINK}}, never invent a URL).
 
 INPUT: you'll be given a short brief describing what this campaign step is about.
-OUTPUT FORMAT: respond with ONLY a JSON object: {"subject": "...", "body": "..."}. Use \\n\\n between paragraphs in body. No preamble, no markdown fences.`;
+OUTPUT FORMAT: respond with ONLY a JSON object: {"subject": "...", "body": "..."}. Use \\n\\n between paragraphs in body. No preamble, no markdown fences.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 17 phase 6 — the "re-check current trends" tool. Given live
 // web search results, this identifies genuinely CURRENT cultural/
@@ -1155,7 +1194,7 @@ RULES:
 - Do not invent facts about the course's structure, length, or content beyond what's given to you — if the source description mentions a session count or format, preserve that; don't add claims that weren't there.
 - LANGUAGE: you will be told which language to write in. If it isn't English, write as a native speaker of that language and culture actually would — not a word-for-word translation of English phrasing. Where a direct translation of an English idiom would sound unnatural, foreign, or carry a different connotation in that language, adapt the phrasing to what genuinely resonates in that culture while keeping the same underlying meaning and the same voice rules above. Never guess at a cultural reference you aren't confident about — when in doubt, stay plain and universal rather than reaching for an idiom that might land wrong.
 
-You will be given the course title and its current description (may be plain, clinical, or empty). Rewrite it following the shape and rules above. Respond with ONLY the new description text — no preamble, no markdown, no quotation marks around it, no explanation.`;
+You will be given the course title and its current description (may be plain, clinical, or empty). Rewrite it following the shape and rules above. Respond with ONLY the new description text — no preamble, no markdown, no quotation marks around it, no explanation.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 17 (session 3) — offer headline + description, the other
 // place in the app with genuine hand-written selling copy besides course
@@ -1179,7 +1218,7 @@ RULES:
 
 You will be given the offer's internal name, trial length in days, and its current headline/description (may be empty). Write both fresh, following the shape and rules above — keep the actual trial-day number if one is given, don't invent a different one.
 
-OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description": "..."}. No preamble, no markdown fences.`;
+OUTPUT FORMAT: respond with ONLY a JSON object: {"headline": "...", "description": "..."}. No preamble, no markdown fences.` + TREND_CONTEXT_USAGE_MARKETING;
 
 // Per Bot 24 — "What's New" home screen promo, the third selling-copy
 // prompt following the same house standard (Voice Guide Section 19,
@@ -1207,6 +1246,7 @@ RULES:
 You will be given the title and type of whatever this promo currently links to (may be none — text-only), and the current draft line (may be empty). Write one fresh line following the shape and rules above. Respond with ONLY the line itself — no preamble, no markdown, no quotation marks around it, no explanation.`;
 
 module.exports = {
+  TRENDING_CONTEXT_REFRESH_PROMPT,
   MOTD_GENERATION_PROMPT,
   AI_POLISH_SIGNAL_PROMPT,
   LIMERICK_GENERATION_PROMPT,

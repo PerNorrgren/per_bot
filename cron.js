@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -88,6 +88,28 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] bulkpublish queue failed:', e.message);
       record('bulkpublish_queue', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Trending context refresh (Per App 31) — once daily, 05:05 UTC ──
+  // A real web search for what's genuinely current in wellness/mental-
+  // health conversation, distilled into one hook phrase every relevant
+  // generator in the app (Message Builder, MOTD, marketing scripts,
+  // sales/offer copy, and — much more lightly — haiku/poem/limerick)
+  // reads for the rest of the day. Runs before the 05:15 social queue
+  // auto-prepare below on purpose, so that job's own generation already
+  // sees today's fresh trend rather than yesterday's. On failure, simply
+  // leaves whatever was already stored in place — see
+  // refreshTrendingContext in server.js and the schema comment in db.js.
+  cron.schedule('5 5 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await refreshTrendingContext();
+      console.log('[cron] trending context refresh:', JSON.stringify(result));
+      record('trending_context_refresh', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] trending context refresh failed:', e.message);
+      record('trending_context_refresh', 'failed', null, e.message, t0);
     }
   });
 
@@ -370,7 +392,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), trending context refresh (05:05 UTC), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };

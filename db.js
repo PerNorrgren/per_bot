@@ -1031,6 +1031,39 @@ async function getDb() {
   // at a time, well after the row already exists.
   try { db.run(`ALTER TABLE social_posts ADD COLUMN media TEXT`); } catch(e) {}
 
+  // ── Trending context (Per App 31) ── One row, replaced daily by a real
+  // web search (see refreshTrendingContext in server.js), read by every
+  // generator below that connects Deeper Mindfulness's content to
+  // current wellness conversation — Message Builder's social copy, MOTD,
+  // marketing scripts, sales/offer copy, and (much more lightly, as pure
+  // optional inspiration) the haiku/poem/limerick generators. Kept as a
+  // single row (id always 'current') rather than a history table — old
+  // days' trends have no ongoing use once superseded, and every reader
+  // just wants "today's version," never a specific past date's.
+  // trend_hook is the short framing phrase generation prompts actually
+  // interpolate; trend_summary is the fuller reasoning, kept for admin
+  // visibility (so Per can see why the hook is what it is) but never
+  // itself sent to a generator. refreshed_at lets any caller notice a
+  // stale row (the daily cron failed repeatedly) rather than silently
+  // using week-old context forever.
+  db.run(`CREATE TABLE IF NOT EXISTS trending_context (
+    id TEXT PRIMARY KEY DEFAULT 'current',
+    trend_hook TEXT NOT NULL,
+    trend_summary TEXT,
+    refreshed_at TEXT DEFAULT (datetime('now'))
+  )`);
+  // Seeded with the same "mental fitness / nervous-system training"
+  // framing researched by hand the session this was first built, purely
+  // as a safety-net default so every generator has something real to
+  // work with from the very first deploy, before the first daily refresh
+  // has even run once. INSERT OR IGNORE — never overwrites a real,
+  // already-refreshed row.
+  db.run(`INSERT OR IGNORE INTO trending_context (id, trend_hook, trend_summary) VALUES (
+    'current',
+    'Nervous-system training / "mental fitness" — a real, widely-recognised wellness category distinct from generic mindfulness or meditation framing, about training the body directly rather than more insight.',
+    'Seeded default, not yet refreshed by a live search.'
+  )`);
+
   // ── Social posting schedule (Per App 31 — "A" of the streamlining
   // plan) ── One row per platform, not per slot: `days` is a JSON array
   // of allowed day-of-week numbers (0=Sunday..6=Saturday, matching JS
@@ -7723,6 +7756,23 @@ function recordUnsubscribe(userId) {
   getDbSync().run(`UPDATE users SET unsubscribed_at=datetime('now') WHERE id=? AND unsubscribed_at IS NULL`, [userId]);
   save();
 }
+
+// ── Trending context (Per App 31) — see the schema comment above for the
+// full reasoning. getCurrentTrendContext is read by every generator that
+// connects to it; updateTrendContext is called once daily by
+// refreshTrendingContext in server.js.
+function getCurrentTrendContext() {
+  return queryOne(`SELECT * FROM trending_context WHERE id='current'`);
+}
+function updateTrendContext(trendHook, trendSummary) {
+  getDbSync().run(
+    `INSERT INTO trending_context (id, trend_hook, trend_summary, refreshed_at) VALUES ('current', ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET trend_hook=excluded.trend_hook, trend_summary=excluded.trend_summary, refreshed_at=excluded.refreshed_at`,
+    [trendHook, trendSummary || null]
+  );
+  save();
+}
+
 function getUsersDueForWinback(daysSinceUnsub) {
   return queryAll(
     `SELECT id, name, email FROM users
@@ -9446,6 +9496,7 @@ module.exports = {
   getEmailLogRowsPendingDeliveryCheck, updateEmailLogDeliveryStatus, getRecentNewsletterOutcomesForUser, getLastLoginAt,
   setConsecutiveFailedNewslettersCount, flagEmailHealth, resetEmailHealthToOk, confirmEmailHealthFailed, dismissEmailHealthFlag, getFlaggedAndFailedUsers,
   getUsersDueForWinback, markWinbackSent, reportEmailHealth, recordUnsubscribe,
+  getCurrentTrendContext, updateTrendContext,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,
