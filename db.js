@@ -3195,6 +3195,23 @@ function getPublicSchedule() {
 function getPublicCourseOverview(id) {
   return queryOne(`SELECT id, title, description FROM courses WHERE id=?`, [id]);
 }
+// Per App 31 — Finding Mindfulness (and any future course) can have more
+// than one open cohort running at once, each with its own start date.
+// Used by course-instance.html to offer "pick your start date" as a
+// same-page choice rather than making a visitor hunt for a different
+// link per date. Excludes the instance already being viewed from its
+// own list at the call site, not here — this just returns everything
+// open for the course, sorted soonest-first, self-paced instances
+// (start_date NULL) last since "soonest" doesn't mean anything for them.
+function getPublicOpenInstancesForCourse(courseId) {
+  return queryAll(
+    `SELECT id, title, mode, start_date, end_date, schedule_day, schedule_time, price_cents
+     FROM course_instances
+     WHERE course_id=? AND status='open'
+     ORDER BY CASE WHEN start_date IS NULL THEN 1 ELSE 0 END, start_date ASC`,
+    [courseId]
+  );
+}
 // Gated on status != 'draft' rather than status = 'open' only — a
 // facilitator or course page might reasonably link to a past ('closed')
 // instance as a real, honest reference point (this ran, here's when),
@@ -8124,10 +8141,17 @@ function getRecentPlayTimestamps(userId, limit = 50) {
 // carried-over legacy subscriber (see the manual /expiry override) needs
 // exactly the same "your membership renews soon" nudge a live Stripe
 // subscriber gets. Source (Stripe vs manual vs PayPal) is a reporting
-// question, answered elsewhere, never a behavioural gate here.
+// question, answered elsewhere, never a gate on whether this fires.
+// Per App 31 — stripe_subscription_id now selected too: the cadence and
+// eligibility above stay exactly as designed (still no gate on source),
+// but the email/SMS wording itself does need to differ by source —
+// someone with no live subscription won't actually renew on its own on
+// that date, so telling them "nothing to do if that's expected" would be
+// actively wrong. sendRenewalReminders below uses this to pick which
+// wording fires, not whether anything fires.
 function getUpcomingRenewals(daysBefore) {
   return queryAll(
-    `SELECT id, name, email, phone, pref_email_renewal, pref_sms_renewal, member_expires_at, member_tier
+    `SELECT id, name, email, phone, pref_email_renewal, pref_sms_renewal, member_expires_at, member_tier, stripe_subscription_id
      FROM users
      WHERE archived=0
        AND (pref_email_renewal=1 OR pref_sms_renewal=1)
@@ -8722,7 +8746,7 @@ module.exports = {
   getAllAdmins, getAllFacilitators, updateFacilitatorPassword, updateFacilitatorDetails, updateFacilitatorPhone,
   setUserResetToken, getUserByResetToken, clearUserResetToken, adminResetUserPassword,
   setFacilitatorResetToken, getFacilitatorByResetToken, clearFacilitatorResetToken, adminResetFacilitatorPassword,
-  updateFacilitatorProfile, getPublicFacilitator, getPublicSchedule, getPublicCourseOverview, getPublicInstanceOverview,
+  updateFacilitatorProfile, getPublicFacilitator, getPublicSchedule, getPublicCourseOverview, getPublicInstanceOverview, getPublicOpenInstancesForCourse,
   addMessage, getMessageThread, getSessionThreadsForClient, getMessageById, editMessage, deleteMessage,
   markThreadRead, getUnreadMessageCountForFacilitator, getUnreadMessageCountForClient,
   archiveFacilitator, unarchiveFacilitator, deleteFacilitator,

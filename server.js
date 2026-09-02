@@ -1647,27 +1647,48 @@ async function sendCustomReminders() {
 // invoice.payment_succeeded, cleared on cancellation) — see
 // getUpcomingRenewals in db.js for why only active subscriptions match
 // (lifetime members have no expiry to remind about).
-function buildRenewalReminderHtml(user, expiresAt, b, override) {
+// Per App 31 — hasSubscription added. A member with no live Stripe
+// subscription behind their member_expires_at (added manually, or a
+// carried-over legacy grant) won't actually renew on its own on that
+// date — the original wording below ("nothing to do if that's expected")
+// was written assuming everyone auto-renews, which is simply false for
+// this group and risks them believing access continues when it won't.
+// Defaults to true so every existing call site (tests, previews) keeps
+// its current behaviour unless it explicitly says otherwise.
+function buildRenewalReminderHtml(user, expiresAt, b, override, hasSubscription = true) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
   const tokens = buildMessageTokens(user, { extra: { date: dateStr } });
-  const content = resolveMessageContent('renewal', {
-    body: "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
-  }, override);
+  const content = hasSubscription
+    ? resolveMessageContent('renewal', {
+        body: "Just a heads up — your membership renews on <strong>{{date}}</strong>. Nothing to do if that's expected; if you'd like to make changes first, you can manage your subscription any time.",
+      }, override)
+    // Deliberately its own message-type key ('renewal_manual'), not a
+    // branch inside 'renewal' — so if Per ever customises this wording
+    // via the admin message editor, the two audiences can genuinely say
+    // different things rather than one overriding both.
+    : resolveMessageContent('renewal_manual', {
+        body: "Just a heads up — your access is set to end on <strong>{{date}}</strong>. To keep it going, you'll need to subscribe before then — nothing renews automatically on this one.",
+      }, override);
   const bodyText = fillTemplate(content.body, tokens);
+  const ctaLabel = hasSubscription ? 'Manage my membership →' : 'Subscribe now →';
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
       ${renderMessageBody(bodyText, content.format)}
-      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">Manage my membership →</a></p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}/account" style="color:#2d6a4f">${ctaLabel}</a></p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
     </div>`;
 }
-function buildRenewalReminderSms(userName, expiresAt, b, override) {
+function buildRenewalReminderSms(userName, expiresAt, b, override, hasSubscription = true) {
   const dateStr = new Date(expiresAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-  const content = resolveMessageContent('renewal', {
-    extra: { sms_body: 'Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}' },
-  }, override);
+  const content = hasSubscription
+    ? resolveMessageContent('renewal', {
+        extra: { sms_body: 'Hi {{name}}, your membership renews on {{date}}. Manage it any time at {{link}}' },
+      }, override)
+    : resolveMessageContent('renewal_manual', {
+        extra: { sms_body: "Hi {{name}}, your access ends {{date}} — nothing renews automatically. Subscribe to keep it going: {{link}}" },
+      }, override);
   const bodyText = fillTemplate(
     content.extra.sms_body,
     { name: userName, date: dateStr, link: `${APP_URL}/account` }
@@ -1680,17 +1701,23 @@ async function sendRenewalReminders() {
   // message_versions row too, same switch-over as Reminder.
   const content = resolveMessageContent('renewal', { subject: 'Your membership renews soon', extra: { days: 5 } });
   const days = Number.isInteger(content.extra.days) ? content.extra.days : parseInt(content.extra.days, 10) || 5;
+  // Per App 31 — subject for the no-subscription wording is looked up
+  // separately (its own message-type key), so a customised subject line
+  // for one audience doesn't silently take over the other's.
+  const manualContent = resolveMessageContent('renewal_manual', { subject: 'Your access ends soon — subscribe to keep it' });
   const upcoming = db.getUpcomingRenewals(days);
   const b = brand();
   let sentEmail = 0, sentSms = 0;
   for (const user of upcoming) {
+    const hasSubscription = !!user.stripe_subscription_id;
     if (user.pref_email_renewal && user.email) {
-      const subject = fillTemplate(content.subject, buildMessageTokens(user));
-      await sendEmail(user.email, subject, buildRenewalReminderHtml(user, user.member_expires_at, b));
+      const subjectSource = hasSubscription ? content.subject : manualContent.subject;
+      const subject = fillTemplate(subjectSource, buildMessageTokens(user));
+      await sendEmail(user.email, subject, buildRenewalReminderHtml(user, user.member_expires_at, b, null, hasSubscription));
       sentEmail++;
     }
     if (user.pref_sms_renewal && user.phone) {
-      const result = await sms.sendSms(user.phone, buildRenewalReminderSms(user.name, user.member_expires_at, b));
+      const result = await sms.sendSms(user.phone, buildRenewalReminderSms(user.name, user.member_expires_at, b, null, hasSubscription));
       if (result.ok) sentSms++;
     }
     db.markRenewalReminderSent(user.id, user.member_expires_at);
@@ -1981,6 +2008,14 @@ app.get('/api/public/instances/:id', (req, res) => {
     const instance = db.getPublicInstanceOverview(req.params.id);
     if (!instance) return res.status(404).json({ error: 'Not found.' });
     res.json({ ...instance, facilitators: instance.facilitators.map(f => ({ ...f, photoUrl: f.photo_filename ? tomteImageUrl(f.photo_filename) : null })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 31 — every open cohort of one course, for course-instance.html's
+// "pick your start date" picker. Public/no-auth, same as the instance
+// endpoint above — this is landing-page data, not account data.
+app.get('/api/public/courses/:id/instances', (req, res) => {
+  try {
+    res.json(db.getPublicOpenInstancesForCourse(req.params.id));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/public/facilitators/:id', (req, res) => {
@@ -14048,8 +14083,12 @@ app.post('/api/admin/renewal/test', auth.requireAuthApi(['admin']), async (req, 
     const b = brand();
     const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const realUser = db.getUserByEmail(toEmail.toLowerCase());
+    // Per App 31 — previews whichever wording that address would actually
+    // get if this were a real send; falls back to the standard
+    // auto-renews wording when there's no matching account to check.
+    const hasSubscription = !(realUser && !realUser.stripe_subscription_id);
 
-    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildRenewalReminderHtml(realUser || { id: null, name: req.user.name || 'there' }, (realUser && realUser.member_expires_at) || sampleExpiry, b));
+    await sendEmail(toEmail, `[TEST] ${testSubject}`, buildRenewalReminderHtml(realUser || { id: null, name: req.user.name || 'there' }, (realUser && realUser.member_expires_at) || sampleExpiry, b, null, hasSubscription));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('renewal test-send error:', e.message);
@@ -14131,7 +14170,10 @@ const TYPE_TEST_SENDERS = {
   renewal: {
     email: (toEmail, realUser, override) => {
       const sampleExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      return sendEmail(toEmail, `[TEST] ${resolveMessageContent('renewal', { subject: 'Your membership renews soon' }, override).subject}`, buildRenewalReminderHtml(realUser, realUser.member_expires_at || sampleExpiry, brand(), override));
+      // Per App 31 — previews whichever wording this real user would
+      // actually get, same reasoning as the /api/admin/renewal/test route.
+      const hasSubscription = !(realUser && !realUser.stripe_subscription_id);
+      return sendEmail(toEmail, `[TEST] ${resolveMessageContent('renewal', { subject: 'Your membership renews soon' }, override).subject}`, buildRenewalReminderHtml(realUser, realUser.member_expires_at || sampleExpiry, brand(), override, hasSubscription));
     },
     sms: (toPhone, adminName, override) => sms.sendSms(toPhone, buildRenewalReminderSms(adminName, new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), brand(), override)),
   },

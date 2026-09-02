@@ -58,6 +58,12 @@
     .facilitator-name { font-size:15px; color:rgba(255,255,255,0.85); margin-bottom:2px; }
     .facilitator-credentials { font-size:12px; color:rgba(255,255,255,0.4); }
 
+    .date-pick-row { display:flex; align-items:center; gap:12px; padding:12px 8px; border-radius:10px; cursor:pointer; transition:background 0.15s; }
+    .date-pick-row:hover { background:rgba(255,255,255,0.04); }
+    .date-pick-row input[type="radio"] { width:18px; height:18px; accent-color:rgba(180,230,200,0.85); cursor:pointer; flex-shrink:0; }
+    .date-pick-label { font-size:14px; color:rgba(255,255,255,0.8); }
+    .date-pick-sub { font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px; }
+
     .cta-card { text-align:center; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.18); }
     .cta-card h2 { color:rgba(180,230,200,0.85); text-transform:none; letter-spacing:normal; font-size:18px; }
     .cta-btn { display:inline-block; margin-top:6px; padding:14px 28px; border-radius:10px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); font-size:13px; letter-spacing:0.12em; text-transform:uppercase; text-decoration:none; transition:all 0.2s; font-family:'Georgia',serif; }
@@ -108,8 +114,24 @@
     catch(e) { return d; }
   }
 
+  // Per App 31 — whichever instance the Register/Enrol action should
+  // actually act on. Starts as whatever instance this URL loaded;
+  // changes only if the visitor picks a different date from the
+  // "Choose your start date" list below (real radio inputs, so "only one
+  // sticks, picking another switches it" is just native browser
+  // behaviour — no custom untick logic needed).
+  let selectedInstanceId = null;
+
+  function datePickRowLabel(inst) {
+    const parts = [];
+    if (inst.start_date) parts.push(fmtDate(inst.start_date));
+    if (inst.schedule_day) parts.push(inst.schedule_day + (inst.schedule_time ? ', ' + inst.schedule_time : ''));
+    return parts.join(' — ') || inst.title || 'Self-paced — start any time';
+  }
+
   async function loadInstance() {
     const id = location.pathname.split('/').pop();
+    selectedInstanceId = id;
     const el = document.getElementById('content');
     try {
       const res = await fetch(`/api/public/instances/${id}`);
@@ -135,12 +157,44 @@
         </a>
       `).join('') : '<p style="font-size:13px;color:rgba(255,255,255,0.35);font-style:italic">Facilitator details coming soon.</p>';
 
+      // Per App 31 — if this course has more than one open cohort, offer
+      // them all right here instead of the visitor needing a different
+      // link per date. Only fetched/shown when there's genuinely a
+      // choice to make — a single-instance course looks exactly as it
+      // always did.
+      let siblings = [];
+      try {
+        const sibRes = await fetch(`/api/public/courses/${i.course_id}/instances`);
+        if (sibRes.ok) siblings = await sibRes.json();
+      } catch (e) { /* picker just won't show — the single "When" card below still works fine */ }
+      const showPicker = siblings.length > 1;
+      if (showPicker && !siblings.some(s => s.id === id)) selectedInstanceId = siblings[0].id;
+
+      const datePickerHtml = showPicker ? `
+        <div class="card" style="margin-top:22px">
+          <h2>Choose Your Start Date</h2>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            ${siblings.map((s, idx) => `
+              <label class="date-pick-row">
+                <input type="radio" name="instancePick" value="${s.id}" ${s.id === selectedInstanceId ? 'checked' : ''} onchange="onInstancePicked('${s.id}')"/>
+                <div>
+                  <div class="date-pick-label">${datePickRowLabel(s)}</div>
+                  ${s.price_cents ? `<div class="date-pick-sub">£${(s.price_cents / 100).toFixed(2)}</div>` : ''}
+                </div>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      ` : '';
+
       el.innerHTML = `
         <div>
           <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
           <div class="page-title">${i.title}</div>
           <div class="page-subtitle">${i.course_title}</div>
         </div>
+
+        ${datePickerHtml}
 
         <div class="card" style="margin-top:22px">
           <h2>When</h2>
@@ -163,7 +217,7 @@
         <div class="cta-card" id="ctaCard">
           <h2>Ready to Join?</h2>
           <p id="ctaText">Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
-          <a class="cta-btn" id="ctaBtn" href="/register?instance=${i.id}">Register</a>
+          <a class="cta-btn" id="ctaBtn" href="/register?instance=${selectedInstanceId}">Register</a>
         </div>` : ''}
       `;
       // Per's request — instance-aware registration. If the visitor is
@@ -171,12 +225,21 @@
       // while signed in on this device), sending them through /register
       // would just fail with "an account already exists" — check first,
       // and if they're already a client, enrol them directly instead.
-      if (i.status === 'open') checkAlreadyLoggedIn(id);
+      if (i.status === 'open') checkAlreadyLoggedIn();
     } catch(e) {
       el.innerHTML = '<div class="card"><p>Something went wrong loading this course — please try again.</p></div>';
     }
   }
-  async function checkAlreadyLoggedIn(instanceId) {
+  // Per App 31 — flips which instance Register/Enrol act on, and keeps
+  // the visible Register link's href in sync for anyone who hasn't
+  // logged in (the logged-in Enrol path reads selectedInstanceId
+  // directly at click time instead, see checkAlreadyLoggedIn below).
+  function onInstancePicked(id) {
+    selectedInstanceId = id;
+    const btn = document.getElementById('ctaBtn');
+    if (btn && btn.hasAttribute('href')) btn.href = `/register?instance=${id}`;
+  }
+  async function checkAlreadyLoggedIn() {
     try {
       const res = await fetch('/api/account');
       if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register button as-is
@@ -188,7 +251,11 @@
       btn.onclick = async () => {
         btn.textContent = 'Enrolling…';
         try {
-          const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: instanceId }) });
+          // Per App 31 — reads whichever instance is currently selected
+          // at the moment of the actual click, not whatever was loaded
+          // when the page first rendered, so switching the date pick
+          // above and then clicking Enrol acts on the one just chosen.
+          const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: selectedInstanceId }) });
           const data = await r.json();
           if (data.requiresPayment) { location.href = data.checkoutUrl; return; }
           if (data.ok) { location.href = `/client/?course=${instanceId}`; return; }

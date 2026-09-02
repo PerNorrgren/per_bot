@@ -1032,6 +1032,8 @@ VOICE RULES (same as the source content — keep them intact):
 - Religiously and spiritually neutral — no "soul", "blessing", "universe [as a benevolent force]", prayer, or faith-specific language.
 - Plain language throughout.
 
+TRENDING HOOK — Per's standing instruction, keep this prominent rather than buried: nervous-system training / "mental fitness" is a real, widely-recognised 2026 wellness category — distinct from generic "mindfulness" or "meditation" in how people are currently talking about and searching for it. Work that frame in as the entry point wherever a post's opening line allows it: this is training the nervous system directly, not more insight, not another mindfulness app — the same territory "mental fitness" already names, just taught through specific, felt things the body does rather than more thinking. Don't force the literal phrase into every post like a keyword — but that underlying frame (train the nervous system, don't just inform the mind) should be the throughline connecting most posts, especially opening hooks.
+
 WHAT CHANGES PER PLATFORM — the underlying message and voice stay the same; only the shape, length, and framing adapt to how people actually read each platform:
 - facebook: conversational, medium length (roughly 40-80 words), can open with a short relatable line before the core message, soft optional closing question or invitation. No hashtag block, no "link in bio" — Facebook readers don't expect either.
 - linkedin: slightly more reflective register without becoming corporate or clinical, medium length (roughly 60-100 words), fine to end on a single grounded observation rather than a question. No hashtag block, no emoji.
@@ -1051,7 +1053,7 @@ OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform na
 // keeps the URL always correct even if the offer/trial length changes
 // later, and guarantees the model can never hallucinate or mangle it.
 const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a close, on top of the platform-specific shape above:
-- OPENING HOOK: the very first line should be a short, catchy line that sells the message itself and the Deeper Mindfulness name — enough to stop a scroll — before moving into the reformatted message content. Still bound by every voice rule above: no hype words, no clinical terms, no evangelical promises. "Catchy" here means sharp and specific, not loud.
+- OPENING HOOK: the very first line should be a short, catchy line that sells the message itself and the Deeper Mindfulness name — enough to stop a scroll — before moving into the reformatted message content. This is the strongest place to use the trending hook above (nervous-system training / "mental fitness") if it fits the message naturally — that's exactly the "catchy point" it's meant for. Still bound by every voice rule above: no hype words, no clinical terms, no evangelical promises. "Catchy" here means sharp and specific, not loud.
 - CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
 - On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
