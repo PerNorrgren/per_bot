@@ -6613,6 +6613,15 @@ async function generateSocialInfographic(postText, suggestions) {
   const imagePrompt = (await callClaudeWithRetry(prompts.SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT, userMessage, 500, true)).trim();
   return callGptImage(imagePrompt);
 }
+// Per App 31 — Video Generator's "Generate script" button. Pure text
+// (no image/audio call here), so unlike generateSocialImage/Infographic
+// above this doesn't need the background-job/polling pattern — a Claude
+// call is well within a normal request timeout.
+async function generateMarketingScript(contentTitle, contentDescription, durationSeconds) {
+  const promoted = `${contentTitle || 'Deeper Mindfulness'}${contentDescription ? ' — ' + contentDescription.slice(0, 600) : ''}`;
+  const userMessage = `<promoted_content>\n${promoted}\n</promoted_content>\n<duration_seconds>${durationSeconds || 30}</duration_seconds>\n\nWrite the script now.`;
+  return (await callClaudeWithRetry(prompts.MARKETING_SCRIPT_PROMPT, userMessage, 800, true)).trim();
+}
 // Per Bot 22 — background job pattern, not a single long request. A GPT
 // Image call can take up to ~2 minutes (OpenAI's own guidance), and
 // Railway/Cloudflare's edge proxy times out well before that — the
@@ -6736,6 +6745,19 @@ function recoverPendingAiGenerateJobs() {
   }
   db.pruneOldAiGenerateJobs();
 }
+// Per App 31 — Video Generator's "Generate script" button. Synchronous,
+// not a background job like the image types below — a Claude text call
+// comfortably finishes within a normal request timeout, unlike a GPT
+// Image render.
+app.post('/api/admin/video-generator/generate-script', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { contentTitle, contentDescription, durationSeconds } = req.body || {};
+    const script = await generateMarketingScript(contentTitle, contentDescription, durationSeconds);
+    res.json({ ok: true, script });
+  } catch (e) {
+    res.status(500).json({ error: 'Could not generate a script: ' + (e.message || 'unknown error') });
+  }
+});
 app.post('/api/admin/comms-ai-generate', auth.requireAuthApi(['admin']), (req, res) => {
   const { type, context } = req.body;
   const isImageType = type === 'sumie' || type === 'social_image' || type === 'social_infographic';

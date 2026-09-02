@@ -486,6 +486,33 @@
       </div>
       <div style="padding:16px 20px 8px">
         <div class="config-desc" style="margin-bottom:8px">Renders a short vertical video right in this browser — calming background, the message as animated text, narration in your own voice. Nothing is posted anywhere; download it and upload manually, same as the message builder above.</div>
+
+        <!-- Per App 31 — writes pure narration text (no stage directions;
+             see the comment on MARKETING_SCRIPT_PROMPT in prompts.js) for
+             whatever's picked below, straight into vgSource — a real
+             marketing script tied to an actual course/library item and
+             the standing trending-hook framing, not a blank page. -->
+        <div style="border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:12px;margin-bottom:12px">
+          <div class="config-label" style="margin-bottom:8px">Auto-generate a script</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <select class="inline-input" id="vgScriptContentType" style="flex:1;min-width:140px" onchange="vgOnScriptContentTypeChange()">
+              <option value="general">General (trend hook only)</option>
+              <option value="course">A course</option>
+              <option value="library">A library item (post/book)</option>
+            </select>
+            <select class="inline-input" id="vgScriptContentItem" style="flex:2;min-width:180px;display:none"><option value="">Loading…</option></select>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="inline-input" id="vgScriptDuration" style="width:200px">
+              <option value="30">~30 seconds (short video)</option>
+              <option value="180">~3 minutes (audio sample)</option>
+              <option value="60">~60 seconds</option>
+            </select>
+            <button class="btn sm primary" id="vgScriptGenBtn" onclick="vgGenerateScript()">✨ Generate script</button>
+          </div>
+          <div style="margin-top:6px"><div class="feedback" id="vgScriptFeedback"></div></div>
+        </div>
+
         <textarea class="inline-input" id="vgSource" rows="4" style="width:100%;resize:vertical" placeholder="Paste the message to narrate…"></textarea>
         <div style="display:flex;gap:6px;margin-top:8px">
           <button class="btn sm" onclick="vgPullTodayMotd()">Pull today's MOTD</button>
@@ -507,14 +534,16 @@
         </div>
       </div>
       <div class="config-row" style="border-bottom:none">
-        <div class="config-desc" style="max-width:340px">Rendering plays in real time — a 60-second video takes about 60 seconds to render.</div>
+        <div class="config-desc" style="max-width:340px">Rendering plays in real time — a 60-second video takes about 60 seconds to render. Generating audio only is much faster — it skips the video render entirely.</div>
         <div class="config-val">
           <button class="btn primary" id="vgGenerateBtn" onclick="vgGenerate()">🎬 Render video</button>
+          <button class="btn" id="vgAudioOnlyBtn" onclick="vgGenerateAudioOnly()" title="Just the narration — no video, no background, much faster">🎙️ Generate audio only</button>
         </div>
       </div>
       <div style="padding:0 20px 14px"><div class="feedback" id="vgFeedback"></div></div>
       <div id="vgPreviewWrap" style="padding:0 20px 20px;display:none;text-align:center">
         <video id="vgResultVideo" controls style="width:100%;max-width:260px;border-radius:10px;background:#000"></video>
+        <audio id="vgAudioOnlyPlayer" controls style="width:100%;display:none"></audio>
         <div style="margin-top:10px">
           <a class="btn sm primary" id="vgDownloadLink" download="deeper-mindfulness-video.webm">Download video</a>
         </div>
@@ -1886,6 +1915,13 @@
   // (e.g. two platforms clicked back-to-back) racing on that same shared
   // state and one platform silently ending up with the wrong clip.
   let _vgRendering = false;
+  // Per App 31 — standalone audio export, alongside the existing video
+  // render. _vgLastRenderedType tracks whichever finished most recently
+  // ('video' or 'audio') so the single shared Save to library block below
+  // knows which blob to actually save without needing two separate save
+  // UIs.
+  let _vgAudioBlob = null;
+  let _vgLastRenderedType = null;
   let _vgCats = [];
 
   // Per's request — the sumi-e meditation drawing from the "Finding
@@ -2131,13 +2167,111 @@
 
       const blob = new Blob(chunks, { type: 'video/webm' });
       _vgResultBlob = blob;
+      _vgLastRenderedType = 'video';
       const url = URL.createObjectURL(blob);
       document.getElementById('vgResultVideo').src = url;
+      document.getElementById('vgResultVideo').style.display = 'block';
+      document.getElementById('vgAudioOnlyPlayer').style.display = 'none';
       document.getElementById('vgDownloadLink').href = url;
+      document.getElementById('vgDownloadLink').setAttribute('download', 'deeper-mindfulness-video.webm');
+      document.getElementById('vgDownloadLink').textContent = 'Download video';
       document.getElementById('vgPreviewWrap').style.display = 'block';
       document.getElementById('vgSaveTitle').value = (document.getElementById('vgSource').value || '').slice(0, 60).trim() || 'Calming message video';
       document.getElementById('vgSaveFeedback').textContent = '';
       showFeedback('vgFeedback', 'Rendered — preview above, or download to post manually.', 'ok');
+    } catch (e) {
+      showFeedback('vgFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.innerHTML = origHtml;
+      _vgRendering = false;
+    }
+  }
+
+  // Per App 31 — script auto-generator. Content items are only fetched
+  // once per type (courses/library) and cached, since switching the
+  // dropdown back and forth shouldn't re-hit the server every time.
+  let _vgScriptCourses = null;
+  let _vgScriptLibraryItems = null;
+  async function vgOnScriptContentTypeChange() {
+    const type = document.getElementById('vgScriptContentType').value;
+    const itemSel = document.getElementById('vgScriptContentItem');
+    if (type === 'general') { itemSel.style.display = 'none'; return; }
+    itemSel.style.display = 'block';
+    itemSel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      if (type === 'course') {
+        if (!_vgScriptCourses) _vgScriptCourses = await (await fetch('/api/content/courses')).json();
+        itemSel.innerHTML = _vgScriptCourses.map(c => `<option value="${c.id}" data-desc="${escHtml(c.description || '')}">${escHtml(c.title)}</option>`).join('') || '<option value="">No courses yet</option>';
+      } else {
+        if (!_vgScriptLibraryItems) _vgScriptLibraryItems = await (await fetch('/api/content/library')).json();
+        itemSel.innerHTML = _vgScriptLibraryItems.map(f => `<option value="${f.id}" data-desc="${escHtml(f.description || '')}">${escHtml(f.title)}</option>`).join('') || '<option value="">No library items yet</option>';
+      }
+    } catch (e) {
+      itemSel.innerHTML = '<option value="">Could not load — try again</option>';
+    }
+  }
+  async function vgGenerateScript() {
+    const type = document.getElementById('vgScriptContentType').value;
+    const btn = document.getElementById('vgScriptGenBtn');
+    btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Writing…';
+    try {
+      let contentTitle = 'The Deeper Mindfulness practice';
+      let contentDescription = '';
+      if (type !== 'general') {
+        const itemSel = document.getElementById('vgScriptContentItem');
+        const opt = itemSel.options[itemSel.selectedIndex];
+        if (!opt || !opt.value) throw new Error(`Pick ${type === 'course' ? 'a course' : 'a library item'} first.`);
+        contentTitle = opt.textContent;
+        contentDescription = opt.dataset.desc || '';
+      }
+      const durationSeconds = parseInt(document.getElementById('vgScriptDuration').value, 10) || 30;
+      const res = await fetch('/api/admin/video-generator/generate-script', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contentTitle, contentDescription, durationSeconds })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not generate a script.');
+      document.getElementById('vgSource').value = data.script;
+      showFeedback('vgScriptFeedback', 'Script written — review it below, then render video or generate audio.', 'ok');
+    } catch (e) {
+      showFeedback('vgScriptFeedback', e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  // Per App 31 — "just the narration, no video" — skips the canvas/
+  // background/MediaRecorder pipeline entirely and calls the same
+  // /api/speak endpoint vgGenerate already uses for narration, so this
+  // reuses Per's own configured voice with no separate setup. Shares
+  // _vgRendering's lock with the video path (still only one ElevenLabs
+  // call in flight at a time) but is otherwise independent — audio-only
+  // generation typically finishes in a few seconds, not real-time like a
+  // full video render.
+  async function vgGenerateAudioOnly() {
+    if (_vgRendering) { showFeedback('vgFeedback', 'Something is already rendering — wait for it to finish before starting another.', 'err'); return; }
+    const sourceText = document.getElementById('vgSource').value.trim();
+    if (!sourceText) { showFeedback('vgFeedback', 'Paste a script first.', 'err'); return; }
+    _vgRendering = true;
+    const btn = document.getElementById('vgAudioOnlyBtn');
+    btn.disabled = true; const origHtml = btn.innerHTML; btn.innerHTML = 'Generating audio…';
+    try {
+      const res = await fetch('/api/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: sourceText }) });
+      if (!res.ok) throw new Error('Could not generate audio.');
+      const blob = await res.blob();
+      _vgAudioBlob = blob;
+      _vgLastRenderedType = 'audio';
+      const url = URL.createObjectURL(blob);
+      document.getElementById('vgAudioOnlyPlayer').src = url;
+      document.getElementById('vgAudioOnlyPlayer').style.display = 'block';
+      document.getElementById('vgResultVideo').style.display = 'none';
+      document.getElementById('vgDownloadLink').href = url;
+      document.getElementById('vgDownloadLink').setAttribute('download', 'deeper-mindfulness-audio.mp3');
+      document.getElementById('vgDownloadLink').textContent = 'Download audio';
+      document.getElementById('vgPreviewWrap').style.display = 'block';
+      document.getElementById('vgSaveTitle').value = sourceText.slice(0, 60).trim() || 'Audio message';
+      document.getElementById('vgSaveFeedback').textContent = '';
+      showFeedback('vgFeedback', 'Audio ready — preview above, download, or save to the library.', 'ok');
     } catch (e) {
       showFeedback('vgFeedback', e.message, 'err');
     } finally {
@@ -2163,8 +2297,15 @@
     subSel.innerHTML = '<option value="">Subcategory (optional)</option>'
       + _vgCats.filter(c => c.parent_id === catId).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
   }
+  // Per App 31 — now branches on whichever was generated most recently
+  // (_vgLastRenderedType), video or audio-only — everything else about
+  // the save flow (presign → PUT → confirm, or the legacy fallback) is
+  // identical either way, just pointed at a different blob/filename/
+  // content-type.
   async function vgSaveToLibrary() {
-    if (!_vgResultBlob) { showFeedback('vgSaveFeedback', 'Render a video first.', 'err'); return; }
+    const isAudio = _vgLastRenderedType === 'audio';
+    const blob = isAudio ? _vgAudioBlob : _vgResultBlob;
+    if (!blob) { showFeedback('vgSaveFeedback', isAudio ? 'Generate audio first.' : 'Render a video first.', 'err'); return; }
     const title = document.getElementById('vgSaveTitle').value.trim();
     const categoryId = document.getElementById('vgSaveCat').value;
     if (!title) { showFeedback('vgSaveFeedback', 'Give it a title first.', 'err'); return; }
@@ -2173,40 +2314,41 @@
     const visibility = document.getElementById('vgSaveVis').value;
     const btn = document.getElementById('vgSaveBtn');
     btn.disabled = true; btn.textContent = 'Saving…';
-    const filename = `video-message-${Date.now()}.webm`;
+    const contentType = isAudio ? 'audio/mpeg' : 'video/webm';
+    const filename = isAudio ? `audio-message-${Date.now()}.mp3` : `video-message-${Date.now()}.webm`;
     try {
       const presignRes = await fetch('/api/content/library/presign-upload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename, contentType: 'video/webm' })
+        body: JSON.stringify({ filename, contentType })
       });
       if (presignRes.ok) {
         const { uploadUrl, key } = await presignRes.json();
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('PUT', uploadUrl);
-          xhr.setRequestHeader('Content-Type', 'video/webm');
+          xhr.setRequestHeader('Content-Type', contentType);
           xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
           xhr.onerror = () => reject(new Error('Upload failed — network error.'));
-          xhr.send(_vgResultBlob);
+          xhr.send(blob);
         });
         const fd = new FormData();
         fd.append('title', title); fd.append('description', '');
         fd.append('categoryId', categoryId); fd.append('subcategoryId', subcategoryId || '');
         fd.append('visibility', visibility);
         fd.append('r2Key', key); fd.append('originalName', filename);
-        fd.append('contentType', 'video/webm'); fd.append('fileSize', _vgResultBlob.size);
+        fd.append('contentType', contentType); fd.append('fileSize', blob.size);
         const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
         if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');
       } else {
         // R2 not configured — legacy direct-through-Express fallback, same as content.html.
         const fd = new FormData();
-        fd.append('file', _vgResultBlob, filename);
+        fd.append('file', blob, filename);
         fd.append('title', title); fd.append('categoryId', categoryId); fd.append('subcategoryId', subcategoryId || '');
         fd.append('visibility', visibility);
         const res = await fetch('/api/content/library', { method: 'POST', body: fd });
         if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
       }
-      showFeedback('vgSaveFeedback', "Saved to the library — pick it in a lesson's files or an offer's showcase clip.", 'ok');
+      showFeedback('vgSaveFeedback', "Saved to the library — pick it in a lesson's files, an offer's showcase clip, or under Marketing.", 'ok');
     } catch (e) {
       showFeedback('vgSaveFeedback', e.message, 'err');
     } finally {

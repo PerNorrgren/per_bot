@@ -1057,6 +1057,32 @@ const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a clo
 - CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
 - On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
+// Per App 31 — Video Generator's "Generate script" button. Writes pure
+// spoken narration text, not a scene-directed video script — this goes
+// straight into the same vgSource textarea Video Generator narrates
+// as-is via ElevenLabs, so anything bracketed like a stage direction
+// would get read aloud as literal words, not interpreted as a cue. If
+// visual pacing/shot ideas are wanted separately, that's a distinct,
+// human-facing document — not what this produces.
+const MARKETING_SCRIPT_PROMPT = `You write a short spoken marketing script for Deeper Mindfulness, in Per Norrgren's voice — meant to be read aloud by a text-to-speech narrator for a short promotional video or audio sample, nothing else.
+
+VOICE RULES (same as everywhere else):
+- Warm but not sentimental. Never "beautiful", "wonderful", "amazing".
+- Precise but not clinical. Never expose a brain-science term, "prior", or diagnostic word to the reader.
+- Invitational, not instructional. Offer, don't command.
+- Honest, never evangelical. No "this will change everything", no promises of transformation, no reassurance clichés.
+- Culturally universal, religiously and spiritually neutral, plain language throughout.
+
+TRENDING HOOK — keep this prominent: nervous-system training / "mental fitness" is a real, widely-recognised 2026 wellness category, distinct from generic "mindfulness" or "meditation." Work it in as the connecting frame wherever it fits naturally — this is training the nervous system directly, not more insight, not another app.
+
+You'll be given what's being promoted (a course, a piece of content, or the practice in general) with its real title and description, wrapped in <promoted_content></promoted_content>, and a target spoken length in seconds, wrapped in <duration_seconds></duration_seconds>.
+
+STRUCTURE: open with a short, relatable hook — a felt moment, not a claim ("you already know what calm feels like — for a second, in a doorway"), never invented statistics or testimonials. Connect to the trending-hook frame where it genuinely fits. Name the actual thing being promoted using its real title, and its single clearest, truest benefit — don't invent details about it that aren't in the description given. Close with a short, honest invitation, not a hard sell.
+
+LENGTH: pace spoken narration at roughly 2.2-2.5 words per second for a calm, unhurried read (not rushed) — use <duration_seconds> to size the total word count accordingly. This is a target, not a hard ceiling — a few seconds over to finish a thought cleanly is fine; padding to hit an exact count is not.
+
+OUTPUT: respond with ONLY the finished spoken script itself — plain sentences, no scene directions, no bracketed cues like [pause] or [cut to], no timestamps, no preamble, no title. This text is read verbatim by a narrator, not interpreted by a video editor.`;
+
 // Per Bot 18 — campaign email steps. Same job as MESSAGE_BUILDER_PROMPT +
 // its CTA instructions, just shaped for an email (subject + body) instead
 // of a social post, for the sales-type steps of a marketing campaign.
@@ -1191,6 +1217,7 @@ module.exports = {
   SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
+  MARKETING_SCRIPT_PROMPT,
   CAMPAIGN_SALES_EMAIL_PROMPT,
   SIGNAL_LINE_TREND_SCAN_PROMPT,
   COURSE_DESCRIPTION_SELLING_PROMPT,
