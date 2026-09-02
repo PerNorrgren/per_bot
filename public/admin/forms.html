@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Forms — Admin · Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <script src="/js/dialogs.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; font-family:'Georgia',serif; background:#0d1210; color:rgba(255,255,255,0.82); overflow-y:auto; }
+
+    .topbar { padding:14px 28px 12px; background:#0d1210; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; align-items:stretch; gap:10px; position:sticky; top:0; z-index:10; }
+    .logo { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+    .logo-name { font-size:18px; color:rgba(255,255,255,0.78); }
+    .topbar-right { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; justify-content:flex-start; padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); }
+    .btn { padding:7px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; text-decoration:none; display:inline-flex; align-items:center; transition:all 0.2s; }
+    .btn:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.8); }
+    .btn.primary { border-color:rgba(180,230,200,0.35); color:rgba(180,230,200,0.75); }
+    .btn.primary:hover { background:rgba(180,230,200,0.1); }
+    .btn.sm { padding:5px 10px; font-size:10px; }
+    .btn.danger { border-color:rgba(255,100,80,0.25); color:rgba(255,100,80,0.6); }
+    .btn.danger:hover { background:rgba(255,100,80,0.08); color:rgba(255,100,80,0.9); }
+    .nav-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:rgba(220,80,70,0.92); color:#fff; font-size:10px; font-weight:bold; margin-left:5px; line-height:1; vertical-align:middle; }
+
+    .page { max-width:960px; margin:0 auto; padding:32px 28px; display:flex; flex-direction:column; gap:24px; }
+    .section-label { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:14px; }
+
+    .card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; overflow:hidden; }
+    .card-header { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:space-between; }
+    .card-title { font-size:14px; color:rgba(255,255,255,0.75); }
+
+    .doc-row { display:flex; align-items:center; gap:14px; padding:14px 20px; border-bottom:1px solid rgba(255,255,255,0.05); flex-wrap:wrap; }
+    .doc-row:last-child { border-bottom:none; }
+    .doc-title { flex:1.5; min-width:200px; font-size:13.5px; color:rgba(255,255,255,0.8); }
+    .doc-consent { flex:0.9; min-width:160px; font-size:11.5px; color:rgba(255,255,255,0.35); }
+    .doc-actions { display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; }
+    .badge { font-size:10px; padding:3px 8px; border-radius:4px; letter-spacing:0.05em; }
+    .badge-draft { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.35); }
+    .badge-active { background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.8); }
+    .empty { padding:20px; font-size:13px; color:rgba(255,255,255,0.25); font-style:italic; }
+
+    .inline-input, select.inline-input, textarea.inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:7px 10px; font-size:13px; color:rgba(255,255,255,0.85); font-family:'Georgia',serif; outline:none; width:100%; }
+    .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+    .field-label { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:5px; display:block; }
+    .field-row { margin-bottom:12px; }
+    .field-check { display:flex; align-items:center; gap:8px; font-size:12.5px; color:rgba(255,255,255,0.55); }
+
+    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:2000; align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; max-width:640px; width:100%; max-height:86vh; overflow-y:auto; padding:24px; }
+    .modal h3 { font-size:16px; color:rgba(255,255,255,0.85); margin-bottom:16px; font-weight:normal; }
+    .modal-btns { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,0.08); }
+    .modal-cancel { padding:8px 16px; border-radius:7px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12px; cursor:pointer; }
+
+    .q-row { border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:14px; margin-bottom:12px; }
+    .q-row-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px; }
+    .opt-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+    .feedback { font-size:12px; min-height:16px; }
+    .feedback.ok  { color:rgba(180,230,200,0.7); }
+    .feedback.err { color:rgba(255,120,100,0.8); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <div class="logo" data-brand="name">Deeper Mindfulness</div>
+      <div class="logo-name">Forms</div>
+    </div>
+    <div class="topbar-right">
+      <a href="/admin/" class="btn">People</a>
+      <a href="/admin/content" class="btn">Content</a>
+      <a href="/admin/talk" class="btn">Talk &amp; Tomte</a>
+      <a href="/admin/comms" class="btn">Comms 1</a>
+      <a href="/admin/comms2" class="btn">Comms 2</a>
+      <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
+      <a href="/admin/reports" class="btn">Reports</a>
+      <a href="/admin/pages" class="btn">Pages</a>
+      <a href="/admin/social" class="btn">Social</a>
+      <a href="/admin/forms" class="btn primary">Forms</a>
+      <a href="/setup" class="btn">Settings</a>
+    </div>
+  </div>
+
+  <div class="page">
+    <div>
+      <div class="section-label">Forms, Quizzes &amp; Surveys</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">All forms</div>
+          <button class="btn primary" onclick="openNewFormModal()">+ New form</button>
+        </div>
+        <div id="formsList"><div class="loading">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New/duplicate form modal -->
+  <div class="modal-overlay" id="newFormModal">
+    <div class="modal" style="max-width:460px">
+      <h3 id="newFormModalTitle">New form</h3>
+      <div class="field-row">
+        <label class="field-label">Title</label>
+        <input class="inline-input" id="nfTitle"/>
+      </div>
+      <div class="field-row">
+        <label class="field-label">Kind</label>
+        <select class="inline-input" id="nfKind">
+          <option value="form">Form</option>
+          <option value="quiz">Quiz</option>
+          <option value="survey">Survey</option>
+        </select>
+      </div>
+      <div class="feedback" id="nfFeedback"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('newFormModal')">Cancel</button>
+        <button class="btn primary" onclick="saveNewForm()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form builder modal -->
+  <div class="modal-overlay" id="editFormModal">
+    <div class="modal" style="max-width:760px">
+      <h3 id="editFormModalTitle">Edit form</h3>
+
+      <div class="field-row"><label class="field-label">Title</label><input class="inline-input" id="efTitle"/></div>
+      <div style="display:flex;gap:12px">
+        <div class="field-row" style="flex:1"><label class="field-label">Kind</label>
+          <select class="inline-input" id="efKind"><option value="form">Form</option><option value="quiz">Quiz</option><option value="survey">Survey</option></select>
+        </div>
+        <div class="field-row" style="flex:1"><label class="field-label">Status</label>
+          <select class="inline-input" id="efStatus"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select>
+        </div>
+      </div>
+      <div class="field-row"><label class="field-label">Intro text (shown before the questions)</label><textarea class="inline-input" id="efIntro" rows="2"></textarea></div>
+
+      <div class="field-row"><label class="field-label">Data policy — what happens to their answers (shown to the respondent, with a required tick to agree)</label><textarea class="inline-input" id="efPolicy" rows="2"></textarea></div>
+      <div style="display:flex;gap:12px">
+        <div class="field-row" style="flex:1"><label class="field-label">Retention</label>
+          <select class="inline-input" id="efRetention">
+            <option value="delete_after_instance">Delete once the linked instance ends</option>
+            <option value="keep_against_person">Keep against the person's record</option>
+          </select>
+        </div>
+        <div class="field-row" style="flex:1;display:flex;align-items:flex-end;padding-bottom:9px">
+          <label class="field-check"><input type="checkbox" id="efRequireConsent" checked/> Require a consent tick to submit</label>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:18px">Questions</div>
+      <div id="qList"></div>
+      <button class="btn sm" onclick="openNewQuestionModal()">+ Add question</button>
+
+      <div class="feedback" id="efFeedback"></div>
+      <div class="modal-btns">
+        <button class="btn sm" onclick="viewResponses(currentFormId)">View responses</button>
+        <button class="modal-cancel" onclick="closeModal('editFormModal')">Close</button>
+        <button class="btn primary" onclick="saveFormMeta()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Question modal -->
+  <div class="modal-overlay" id="questionModal">
+    <div class="modal" style="max-width:520px">
+      <h3 id="questionModalTitle">Add question</h3>
+      <div class="field-row"><label class="field-label">Question text</label><textarea class="inline-input" id="qmText" rows="2"></textarea></div>
+      <div style="display:flex;gap:12px">
+        <div class="field-row" style="flex:1"><label class="field-label">Type</label>
+          <select class="inline-input" id="qmType" onchange="toggleOptionsVisibility()">
+            <option value="text">Short text</option>
+            <option value="textarea">Long text</option>
+            <option value="radio">Single choice (radio)</option>
+            <option value="checkbox">Multiple choice (checkbox)</option>
+          </select>
+        </div>
+        <div class="field-row" style="flex:1;display:flex;align-items:flex-end;padding-bottom:9px">
+          <label class="field-check"><input type="checkbox" id="qmRequired"/> Required</label>
+        </div>
+      </div>
+
+      <div id="qmOptionsWrap">
+        <label class="field-label">Options</label>
+        <div id="qmOptions"></div>
+        <button class="btn sm" onclick="addOptionRow()">+ Add option</button>
+      </div>
+
+      <div class="field-row" style="margin-top:14px">
+        <label class="field-label">Only show this question if…</label>
+        <select class="inline-input" id="qmShowIfQuestion" onchange="renderShowIfValueField()" style="margin-bottom:6px"><option value="">Always show</option></select>
+        <select class="inline-input" id="qmShowIfValue" style="display:none"></select>
+      </div>
+
+      <div class="feedback" id="qmFeedback"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('questionModal')">Cancel</button>
+        <button class="btn primary" onclick="saveQuestion()">Save question</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Responses modal -->
+  <div class="modal-overlay" id="responsesModal">
+    <div class="modal" style="max-width:640px">
+      <h3>Responses</h3>
+      <div id="responsesList"><div class="loading">Loading…</div></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('responsesModal')">Close</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="responseDetailModal">
+    <div class="modal" style="max-width:560px">
+      <h3>Response</h3>
+      <div id="responseDetailBody"></div>
+      <div class="modal-btns">
+        <button class="modal-cancel" onclick="closeModal('responseDetailModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function openModal(id) { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function showFeedback(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg; el.className = 'feedback ' + type;
+    setTimeout(() => { el.textContent = ''; el.className = 'feedback'; }, 4000);
+  }
+  function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  let formsData = [];
+  let currentFormId = null;
+  let currentFormQuestions = [];
+  let editingQuestionId = null;
+
+  async function loadForms() {
+    try {
+      formsData = await (await fetch('/api/admin/forms')).json();
+      renderFormsList();
+    } catch (e) { document.getElementById('formsList').innerHTML = '<div class="empty">Could not load forms.</div>'; }
+  }
+  function renderFormsList() {
+    const el = document.getElementById('formsList');
+    if (!formsData.length) { el.innerHTML = '<div class="empty">No forms yet.</div>'; return; }
+    el.innerHTML = formsData.map(f => `
+      <div class="doc-row">
+        <div class="doc-title">
+          ${escHtml(f.title)} <span class="badge ${f.status === 'active' ? 'badge-active' : 'badge-draft'}">${f.status}</span>
+          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px">${f.kind}${f.course_title ? ' · ' + escHtml(f.course_title) : ''}${f.instance_title ? ' · ' + escHtml(f.instance_title) : ''}${f.instance_start_date ? ' (' + f.instance_start_date + ')' : ''}</div>
+        </div>
+        <div class="doc-consent">${f.response_count} response${f.response_count === 1 ? '' : 's'}</div>
+        <div class="doc-actions">
+          <button class="btn sm" onclick="openEditFormModal('${f.id}')">Edit</button>
+          <button class="btn sm" onclick="duplicateForm('${f.id}')">Duplicate</button>
+          <button class="btn sm danger" onclick="deleteForm('${f.id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function openNewFormModal() {
+    document.getElementById('nfTitle').value = '';
+    document.getElementById('nfKind').value = 'form';
+    openModal('newFormModal');
+  }
+  async function saveNewForm() {
+    const title = document.getElementById('nfTitle').value.trim();
+    if (!title) { showFeedback('nfFeedback', 'Title is required.', 'err'); return; }
+    try {
+      const res = await fetch('/api/admin/forms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, kind: document.getElementById('nfKind').value }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not create.');
+      closeModal('newFormModal');
+      await loadForms();
+      openEditFormModal(data.id);
+    } catch (e) { showFeedback('nfFeedback', e.message, 'err'); }
+  }
+  async function duplicateForm(id) {
+    try {
+      const res = await fetch(`/api/admin/forms/${id}/duplicate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Could not duplicate.');
+      await loadForms();
+    } catch (e) { alert(e.message); }
+  }
+  async function deleteForm(id) {
+    if (!(await appConfirm('Delete this form? This also deletes every question and response on it — this cannot be undone.'))) return;
+    await fetch(`/api/admin/forms/${id}`, { method: 'DELETE' });
+    await loadForms();
+  }
+
+  async function openEditFormModal(id) {
+    currentFormId = id;
+    const form = await (await fetch(`/api/admin/forms/${id}`)).json();
+    currentFormQuestions = form.questions || [];
+    document.getElementById('efTitle').value = form.title;
+    document.getElementById('efKind').value = form.kind;
+    document.getElementById('efStatus').value = form.status;
+    document.getElementById('efIntro').value = form.intro_text || '';
+    document.getElementById('efPolicy').value = form.data_policy_text || '';
+    document.getElementById('efRetention').value = form.retention_mode;
+    document.getElementById('efRequireConsent').checked = !!form.require_consent;
+    renderQuestionsList();
+    openModal('editFormModal');
+  }
+  async function saveFormMeta() {
+    try {
+      const res = await fetch(`/api/admin/forms/${currentFormId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: document.getElementById('efTitle').value.trim(),
+          kind: document.getElementById('efKind').value,
+          status: document.getElementById('efStatus').value,
+          introText: document.getElementById('efIntro').value,
+          dataPolicyText: document.getElementById('efPolicy').value,
+          retentionMode: document.getElementById('efRetention').value,
+          requireConsent: document.getElementById('efRequireConsent').checked,
+        })
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Could not save.');
+      showFeedback('efFeedback', 'Saved.', 'ok');
+      await loadForms();
+    } catch (e) { showFeedback('efFeedback', e.message, 'err'); }
+  }
+
+  function renderQuestionsList() {
+    const el = document.getElementById('qList');
+    if (!currentFormQuestions.length) { el.innerHTML = '<div class="empty">No questions yet.</div>'; return; }
+    el.innerHTML = currentFormQuestions.map(q => `
+      <div class="q-row">
+        <div class="q-row-head">
+          <div>
+            <div style="font-size:13px">${escHtml(q.question_text)}</div>
+            <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:2px">${q.question_type}${q.required ? ' · required' : ''}${q.show_if_question_id ? ' · conditional' : ''}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn sm" onclick="openEditQuestionModal('${q.id}')">Edit</button>
+            <button class="btn sm danger" onclick="deleteQuestion('${q.id}')">Delete</button>
+          </div>
+        </div>
+        ${q.options && q.options.length ? `<div style="font-size:12px;color:rgba(255,255,255,0.45)">${q.options.map(o => escHtml(o.option_text) + (o.is_correct ? ' ✓' : '')).join(' · ')}</div>` : ''}
+      </div>
+    `).join('');
+  }
+  async function deleteQuestion(id) {
+    if (!(await appConfirm('Delete this question?'))) return;
+    await fetch(`/api/admin/forms/${currentFormId}/questions/${id}`, { method: 'DELETE' });
+    await openEditFormModal(currentFormId);
+  }
+
+  function toggleOptionsVisibility() {
+    const type = document.getElementById('qmType').value;
+    document.getElementById('qmOptionsWrap').style.display = (type === 'radio' || type === 'checkbox') ? 'block' : 'none';
+  }
+  function addOptionRow(text, isCorrect, points, id) {
+    const wrap = document.getElementById('qmOptions');
+    const row = document.createElement('div');
+    row.className = 'opt-row';
+    row.dataset.optionId = id || '';
+    row.innerHTML = `
+      <input class="inline-input opt-text" style="flex:1" value="${escHtml(text || '')}" placeholder="Option text"/>
+      <label class="field-check" style="white-space:nowrap"><input type="checkbox" class="opt-correct" ${isCorrect ? 'checked' : ''}/> Correct</label>
+      <input class="inline-input opt-points" type="number" style="width:60px" value="${points || 0}" title="Points (quiz scoring)"/>
+      <button class="btn sm danger" onclick="this.parentElement.remove()">×</button>
+    `;
+    wrap.appendChild(row);
+  }
+  function renderShowIfValueField() {
+    const qid = document.getElementById('qmShowIfQuestion').value;
+    const valSelect = document.getElementById('qmShowIfValue');
+    if (!qid) { valSelect.style.display = 'none'; valSelect.innerHTML = ''; return; }
+    const q = currentFormQuestions.find(x => x.id === qid);
+    valSelect.style.display = 'block';
+    if (q && q.options && q.options.length) {
+      valSelect.innerHTML = q.options.map(o => `<option value="${o.id}">${escHtml(o.option_text)}</option>`).join('');
+    } else {
+      valSelect.innerHTML = '<option value="">(free text — type the exact expected answer below)</option>';
+      // Free-text branching source: swap the dropdown for a text input inline.
+      const input = document.createElement('input');
+      input.className = 'inline-input'; input.id = 'qmShowIfValueText';
+      input.placeholder = 'Exact expected answer';
+      valSelect.after(input);
+      valSelect.style.display = 'none';
+    }
+  }
+  function openNewQuestionModal() {
+    editingQuestionId = null;
+    document.getElementById('questionModalTitle').textContent = 'Add question';
+    document.getElementById('qmText').value = '';
+    document.getElementById('qmType').value = 'text';
+    document.getElementById('qmRequired').checked = false;
+    document.getElementById('qmOptions').innerHTML = '';
+    toggleOptionsVisibility();
+    const existingTextInput = document.getElementById('qmShowIfValueText');
+    if (existingTextInput) existingTextInput.remove();
+    const showIfSelect = document.getElementById('qmShowIfQuestion');
+    showIfSelect.innerHTML = '<option value="">Always show</option>' + currentFormQuestions.map(q => `<option value="${q.id}">${escHtml(q.question_text.slice(0, 40))}</option>`).join('');
+    showIfSelect.value = '';
+    document.getElementById('qmShowIfValue').style.display = 'none';
+    openModal('questionModal');
+  }
+  function openEditQuestionModal(id) {
+    const q = currentFormQuestions.find(x => x.id === id);
+    if (!q) return;
+    editingQuestionId = id;
+    document.getElementById('questionModalTitle').textContent = 'Edit question';
+    document.getElementById('qmText').value = q.question_text;
+    document.getElementById('qmType').value = q.question_type;
+    document.getElementById('qmRequired').checked = !!q.required;
+    document.getElementById('qmOptions').innerHTML = '';
+    (q.options || []).forEach(o => addOptionRow(o.option_text, o.is_correct, o.points, o.id));
+    toggleOptionsVisibility();
+    const existingTextInput = document.getElementById('qmShowIfValueText');
+    if (existingTextInput) existingTextInput.remove();
+    const showIfSelect = document.getElementById('qmShowIfQuestion');
+    showIfSelect.innerHTML = '<option value="">Always show</option>' + currentFormQuestions.filter(x => x.id !== id).map(x => `<option value="${x.id}">${escHtml(x.question_text.slice(0, 40))}</option>`).join('');
+    showIfSelect.value = q.show_if_question_id || '';
+    renderShowIfValueField();
+    if (q.show_if_question_id) {
+      const valSelect = document.getElementById('qmShowIfValue');
+      if (valSelect.style.display !== 'none') valSelect.value = q.show_if_value || '';
+      const textInput = document.getElementById('qmShowIfValueText');
+      if (textInput) textInput.value = q.show_if_value || '';
+    }
+    openModal('questionModal');
+  }
+  async function saveQuestion() {
+    const questionText = document.getElementById('qmText').value.trim();
+    if (!questionText) { showFeedback('qmFeedback', 'Question text is required.', 'err'); return; }
+    const questionType = document.getElementById('qmType').value;
+    const required = document.getElementById('qmRequired').checked;
+    const showIfQuestionId = document.getElementById('qmShowIfQuestion').value || null;
+    const textInput = document.getElementById('qmShowIfValueText');
+    const showIfValue = showIfQuestionId ? (textInput ? textInput.value : document.getElementById('qmShowIfValue').value) : null;
+    const payload = { questionText, questionType, required, showIfQuestionId, showIfValue };
+    try {
+      let qid = editingQuestionId;
+      if (qid) {
+        const res = await fetch(`/api/admin/forms/${currentFormId}/questions/${qid}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error((await res.json()).error || 'Could not save.');
+      } else {
+        const res = await fetch(`/api/admin/forms/${currentFormId}/questions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not save.');
+        qid = data.id;
+      }
+      // Sync options: simplest correct approach for an admin tool at this
+      // scale is delete-and-recreate rather than diffing — this form
+      // isn't edited concurrently by more than one admin at once.
+      if (questionType === 'radio' || questionType === 'checkbox') {
+        const existingQ = currentFormQuestions.find(x => x.id === qid);
+        if (existingQ) {
+          for (const o of (existingQ.options || [])) await fetch(`/api/admin/forms/${currentFormId}/options/${o.id}`, { method: 'DELETE' });
+        }
+        const rows = [...document.getElementById('qmOptions').children];
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          const optionText = r.querySelector('.opt-text').value.trim();
+          if (!optionText) continue;
+          await fetch(`/api/admin/forms/${currentFormId}/questions/${qid}/options`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ optionText, isCorrect: r.querySelector('.opt-correct').checked, points: parseInt(r.querySelector('.opt-points').value, 10) || 0, sortOrder: i })
+          });
+        }
+      }
+      closeModal('questionModal');
+      await openEditFormModal(currentFormId);
+    } catch (e) { showFeedback('qmFeedback', e.message, 'err'); }
+  }
+
+  async function viewResponses(formId) {
+    const list = await (await fetch(`/api/admin/forms/${formId}/responses`)).json();
+    const el = document.getElementById('responsesList');
+    el.innerHTML = !list.length ? '<div class="empty">No responses yet.</div>' : list.map(r => `
+      <div class="doc-row">
+        <div class="doc-title">${escHtml(r.user_name || 'Unknown')} <div style="font-size:11px;color:rgba(255,255,255,0.35)">${escHtml(r.user_email || '')}</div></div>
+        <div class="doc-consent">${r.completed_at || ''}${r.score !== null && r.score !== undefined ? ' · score ' + r.score : ''}</div>
+        <div class="doc-actions"><button class="btn sm" onclick="viewResponseDetail('${r.id}')">View</button></div>
+      </div>
+    `).join('');
+    openModal('responsesModal');
+  }
+  async function viewResponseDetail(responseId) {
+    const detail = await (await fetch(`/api/admin/forms/${currentFormId}/responses/${responseId}`)).json();
+    document.getElementById('responseDetailBody').innerHTML = (detail.answers || []).map(a => `
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:rgba(255,255,255,0.4)">${escHtml(a.question_text)}</div>
+        <div style="font-size:14px">${escHtml(a.option_text || a.text_value || '—')}</div>
+      </div>
+    `).join('') || '<div class="empty">No answers recorded — this response may have been cleared under its form&rsquo;s data retention policy.</div>';
+    openModal('responseDetailModal');
+  }
+
+  loadForms();
+</script>
+</body>
+</html>

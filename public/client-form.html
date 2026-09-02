@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Deeper Mindfulness</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+<style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; min-height:100%; font-family:'Georgia',serif; background:#0a0f0d; color:rgba(255,255,255,0.85); display:flex; justify-content:center; padding:40px 16px 80px; }
+    .panel { width:100%; max-width:560px; display:flex; flex-direction:column; gap:20px; }
+    .wordmark { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.6); }
+    .title { font-size:24px; color:rgba(255,255,255,0.92); font-weight:normal; }
+    .intro { font-size:14px; color:rgba(255,255,255,0.5); line-height:1.7; }
+    .card { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:22px; }
+    .q-text { font-size:15px; color:rgba(255,255,255,0.85); margin-bottom:12px; }
+    .q-required { color:rgba(255,150,120,0.8); }
+    .opt { display:flex; align-items:center; gap:10px; padding:8px 0; cursor:pointer; }
+    .opt input { width:17px; height:17px; accent-color:rgba(180,230,200,0.85); cursor:pointer; flex-shrink:0; }
+    textarea, input[type="text"] { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; font-size:14px; color:rgba(255,255,255,0.85); font-family:'Georgia',serif; outline:none; }
+    textarea:focus, input[type="text"]:focus { border-color:rgba(180,230,200,0.4); }
+    .consent-card { background:rgba(180,230,200,0.05); border:1px solid rgba(180,230,200,0.15); }
+    .consent-text { font-size:12.5px; color:rgba(255,255,255,0.5); line-height:1.7; margin-bottom:12px; }
+    .consent-check { display:flex; align-items:flex-start; gap:10px; font-size:13px; color:rgba(255,255,255,0.7); cursor:pointer; }
+    .consent-check input { margin-top:2px; width:17px; height:17px; accent-color:rgba(180,230,200,0.85); flex-shrink:0; }
+    .submit-btn { padding:14px; border-radius:10px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.9); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; }
+    .submit-btn:hover { background:rgba(180,230,200,0.22); }
+    .submit-btn:disabled { opacity:0.4; cursor:default; }
+    .err { font-size:13px; color:rgba(255,140,120,0.85); }
+    .loading { text-align:center; padding:60px 20px; color:rgba(255,255,255,0.3); font-size:13px; }
+    .skip-link { text-align:center; font-size:12px; color:rgba(255,255,255,0.3); text-decoration:underline; cursor:pointer; }
+</style>
+</head>
+<body>
+  <div class="panel" id="panel"><div class="loading">Loading…</div></div>
+
+<script>
+  const formId = location.pathname.split('/').pop();
+  let formData = null;
+  let answers = {}; // questionId -> array of comparable values (option ids or text)
+
+  function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // Per App 31 — same visibility rule the server enforces on save/submit
+  // (see isQuestionVisible in server.js); duplicated here so the page
+  // can hide/show questions live as someone answers, without a round
+  // trip per keystroke. The server re-checks independently, so a
+  // mismatch here can only ever hide something it shouldn't, never let
+  // an answer through that shouldn't count.
+  function isVisible(q) {
+    if (!q.show_if_question_id) return true;
+    const prior = answers[q.show_if_question_id];
+    if (!prior || !prior.length) return false;
+    return prior.includes(q.show_if_value);
+  }
+
+  async function load() {
+    try {
+      const res = await fetch(`/api/client/forms/${formId}`);
+      const data = await res.json();
+      if (!res.ok) { document.getElementById('panel').innerHTML = `<div class="card"><p class="err">${escHtml(data.error || 'This form is not available right now.')}</p></div>`; return; }
+      formData = data;
+      answers = data.existingAnswers || {};
+      render();
+    } catch (e) {
+      document.getElementById('panel').innerHTML = '<div class="card"><p class="err">Something went wrong loading this form.</p></div>';
+    }
+  }
+
+  function render() {
+    const visibleQuestions = formData.questions.filter(isVisible);
+    document.getElementById('panel').innerHTML = `
+      <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
+      <div class="title">${escHtml(formData.title)}</div>
+      ${formData.introText ? `<div class="intro">${escHtml(formData.introText)}</div>` : ''}
+      <div id="questionsWrap">${visibleQuestions.map(renderQuestion).join('')}</div>
+      ${formData.dataPolicyText ? `
+      <div class="card consent-card">
+        <div class="consent-text">${escHtml(formData.dataPolicyText)}</div>
+        <label class="consent-check"><input type="checkbox" id="consentCheck"/> I've read this and agree.</label>
+      </div>` : ''}
+      <div id="submitErr" class="err"></div>
+      <button class="submit-btn" id="submitBtn" onclick="submitForm()">Submit</button>
+      <div class="skip-link" onclick="location.href='/client/'">I'll finish this later</div>
+    `;
+  }
+
+  function renderQuestion(q) {
+    const existing = answers[q.id] || [];
+    let inputHtml = '';
+    if (q.question_type === 'text') {
+      inputHtml = `<input type="text" data-qid="${q.id}" class="ans-text" value="${escHtml(existing[0] || '')}" onchange="onAnswerChange('${q.id}')"/>`;
+    } else if (q.question_type === 'textarea') {
+      inputHtml = `<textarea rows="3" data-qid="${q.id}" class="ans-text" onchange="onAnswerChange('${q.id}')">${escHtml(existing[0] || '')}</textarea>`;
+    } else if (q.question_type === 'radio') {
+      inputHtml = q.options.map(o => `
+        <label class="opt"><input type="radio" name="q_${q.id}" value="${o.id}" ${existing.includes(o.id) ? 'checked' : ''} onchange="onAnswerChange('${q.id}')"/> ${escHtml(o.option_text)}</label>
+      `).join('');
+    } else if (q.question_type === 'checkbox') {
+      inputHtml = q.options.map(o => `
+        <label class="opt"><input type="checkbox" data-qid="${q.id}" value="${o.id}" class="ans-check-${q.id}" ${existing.includes(o.id) ? 'checked' : ''} onchange="onAnswerChange('${q.id}')"/> ${escHtml(o.option_text)}</label>
+      `).join('');
+    }
+    return `<div class="card"><div class="q-text">${escHtml(q.question_text)}${q.required ? ' <span class="q-required">*</span>' : ''}</div>${inputHtml}</div>`;
+  }
+
+  let saveTimers = {};
+  function onAnswerChange(qid) {
+    const q = formData.questions.find(x => x.id === qid);
+    let optionIds = null, textValue = null;
+    if (q.question_type === 'radio') {
+      const checked = document.querySelector(`input[name="q_${qid}"]:checked`);
+      optionIds = checked ? [checked.value] : [];
+    } else if (q.question_type === 'checkbox') {
+      optionIds = [...document.querySelectorAll(`.ans-check-${qid}:checked`)].map(el => el.value);
+    } else {
+      textValue = document.querySelector(`[data-qid="${qid}"].ans-text`).value;
+    }
+    answers[qid] = optionIds ? optionIds : (textValue ? [textValue] : []);
+    // A change here can affect which later questions are visible
+    // (branching), so the whole question list re-renders — cheap at this
+    // scale, and guarantees the visible set is always exactly correct
+    // rather than incrementally patched and possibly stale.
+    render();
+    clearTimeout(saveTimers[qid]);
+    saveTimers[qid] = setTimeout(() => saveAnswer(qid, optionIds, textValue), 500);
+  }
+  async function saveAnswer(qid, optionIds, textValue) {
+    try {
+      await fetch(`/api/client/forms/${formId}/responses/${formData.responseId}/answers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionId: qid, optionIds, textValue })
+      });
+    } catch (e) { /* best-effort autosave — submit-time validation is the real backstop */ }
+  }
+
+  async function submitForm() {
+    const btn = document.getElementById('submitBtn');
+    const errEl = document.getElementById('submitErr');
+    errEl.textContent = '';
+    const consentEl = document.getElementById('consentCheck');
+    const consentGiven = consentEl ? consentEl.checked : true;
+    if (formData.requireConsent && !consentGiven) { errEl.textContent = 'Please confirm you agree before submitting.'; return; }
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    try {
+      const res = await fetch(`/api/client/forms/${formId}/responses/${formData.responseId}/complete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consentGiven })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not submit.');
+      document.getElementById('panel').innerHTML = `
+        <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
+        <div class="title">Thank you</div>
+        <div class="card"><p style="font-size:14px;color:rgba(255,255,255,0.7)">Your answers have been recorded.</p></div>
+        <button class="submit-btn" onclick="location.href='/client/'">Continue</button>
+      `;
+    } catch (e) {
+      errEl.textContent = e.message;
+      btn.disabled = false; btn.textContent = 'Submit';
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>

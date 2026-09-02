@@ -12553,6 +12553,12 @@ app.get('/admin/pages',    auth.requireAuth(['admin']), (req, res) => res.sendFi
 // pieces ("B"/"C") to follow in upcoming sessions.
 app.get('/admin/social',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
 app.get('/admin/social/',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
+// Per App 31 — Forms module: forms, quizzes, and surveys, one admin page.
+app.get('/admin/forms',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'forms.html')));
+app.get('/admin/forms/',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'forms.html')));
+// Client-facing fill-out page for one form — gated to logged-in clients,
+// same as every other page under /client/.
+app.get('/forms/:id',      auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'client-form.html')));
 app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 
 // ── Legal document public pages ──
@@ -13466,6 +13472,187 @@ app.post('/api/admin/social-queue/prepare', auth.requireAuthApi(['admin']), asyn
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// FORMS MODULE (Per App 31) — forms, quizzes, and surveys, one engine.
+// See db.js for the schema and the reasoning for keeping this separate
+// from the older lesson-embedded quizzes tables. Admin routes below
+// build/manage a form; client routes further down let a logged-in
+// person fill one out, with branching evaluated server-side on save so
+// a client can't submit answers to a question that shouldn't be visible
+// given their prior answers.
+// ─────────────────────────────────────────────────────────────────────
+
+app.get('/api/admin/forms', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllForms()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/forms', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { title, kind, courseId, courseInstanceId, introText, dataPolicyText, retentionMode, requireConsent } = req.body || {};
+    if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required.' });
+    const id = uuidv4();
+    db.createForm(id, { title: title.trim(), kind, courseId, courseInstanceId, introText, dataPolicyText, retentionMode, requireConsent });
+    res.json({ ok: true, id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/forms/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const form = db.getForm(req.params.id);
+    if (!form) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...form, questions: db.getFormQuestions(form.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/forms/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.updateForm(req.params.id, req.body || {}); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/forms/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteForm(req.params.id); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/forms/:id/duplicate', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const newId = db.duplicateForm(req.params.id, req.body?.title);
+    if (!newId) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true, id: newId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/forms/:id/questions', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { questionText, questionType, required, sortOrder, showIfQuestionId, showIfValue } = req.body || {};
+    if (!questionText || !questionText.trim()) return res.status(400).json({ error: 'Question text is required.' });
+    const id = uuidv4();
+    db.addFormQuestion(id, req.params.id, { questionText: questionText.trim(), questionType, required, sortOrder, showIfQuestionId, showIfValue });
+    res.json({ ok: true, id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/forms/:formId/questions/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.updateFormQuestion(req.params.id, req.body || {}); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/forms/:formId/questions/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteFormQuestion(req.params.id); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/forms/:formId/questions/:qid/options', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { optionText, isCorrect, points, sortOrder } = req.body || {};
+    if (!optionText || !optionText.trim()) return res.status(400).json({ error: 'Option text is required.' });
+    const id = uuidv4();
+    db.addFormOption(id, req.params.qid, { optionText: optionText.trim(), isCorrect, points, sortOrder });
+    res.json({ ok: true, id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/forms/:formId/options/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.updateFormOption(req.params.id, req.body || {}); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/forms/:formId/options/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteFormOption(req.params.id); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Reports — every completed response to a form, and drill-down into one
+// response's actual answers, both admin-only. Per's own request: viewable
+// per instance (the form list already carries which instance a form
+// belongs to) with a link back to the person via user_id.
+app.get('/api/admin/forms/:id/responses', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getFormResponsesForReport(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/forms/:formId/responses/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const detail = db.getFormResponseDetail(req.params.id);
+    if (!detail) return res.status(404).json({ error: 'Not found.' });
+    res.json(detail);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Client-facing fill-out flow ──
+// Evaluates branching server-side from the full question set + the
+// respondent's answers so far — a question only "counts" as due if its
+// show_if condition (if any) is satisfied by what's already been
+// answered. Used both to decide what to serve the client and, on save,
+// to reject an answer to a question that shouldn't be reachable yet.
+function isQuestionVisible(question, answersByQuestionId) {
+  if (!question.show_if_question_id) return true;
+  const priorAnswers = answersByQuestionId[question.show_if_question_id];
+  if (!priorAnswers || !priorAnswers.length) return false;
+  return priorAnswers.some(a => a === question.show_if_value);
+}
+function answersToComparableMap(rawAnswers, questions) {
+  // Reduces each question's saved answer rows into a flat list of
+  // comparable strings (option id for radio/checkbox, the text itself
+  // for free text) — what show_if_value actually gets compared against.
+  const byQuestion = {};
+  rawAnswers.forEach(a => {
+    if (!byQuestion[a.question_id]) byQuestion[a.question_id] = [];
+    byQuestion[a.question_id].push(a.option_id || a.text_value);
+  });
+  return byQuestion;
+}
+
+app.get('/api/client/forms/:id', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const form = db.getForm(req.params.id);
+    if (!form || form.status !== 'active') return res.status(404).json({ error: 'This form is not currently available.' });
+    const questions = db.getFormQuestions(form.id);
+    // Options never carry is_correct/points to the client — that's
+    // scoring information, not something a quiz-taker should see in the
+    // page source before answering.
+    const safeQuestions = questions.map(q => ({ ...q, options: q.options.map(o => ({ id: o.id, sort_order: o.sort_order, option_text: o.option_text })) }));
+    let response = db.getInProgressResponse(form.id, req.user.id);
+    if (!response) {
+      const id = uuidv4();
+      db.createFormResponse(id, form.id, req.user.id, req.body?.courseInstanceId || form.course_instance_id || null);
+      response = db.getFormResponse(id);
+    }
+    const existingAnswers = db.getResponseAnswers(response.id);
+    res.json({
+      id: form.id, title: form.title, kind: form.kind, introText: form.intro_text,
+      dataPolicyText: form.data_policy_text, requireConsent: !!form.require_consent,
+      questions: safeQuestions, responseId: response.id,
+      existingAnswers: answersToComparableMap(existingAnswers, questions),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/forms/:id/responses/:responseId/answers', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const response = db.getFormResponse(req.params.responseId);
+    if (!response || response.user_id !== req.user.id || response.form_id !== req.params.id) return res.status(404).json({ error: 'Not found.' });
+    if (response.status === 'complete') return res.status(400).json({ error: 'This form has already been submitted.' });
+    const questions = db.getFormQuestions(req.params.id);
+    const question = questions.find(q => q.id === req.body?.questionId);
+    if (!question) return res.status(400).json({ error: 'Unknown question.' });
+    // Re-checks visibility against the response's own saved answers, not
+    // whatever the client claims — a branching condition can't be
+    // bypassed by posting straight to this endpoint.
+    const existing = answersToComparableMap(db.getResponseAnswers(response.id), questions);
+    if (!isQuestionVisible(question, existing)) return res.status(400).json({ error: 'This question is not currently applicable.' });
+    db.saveFormAnswer(response.id, question.id, req.body?.optionIds, req.body?.textValue);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/forms/:id/responses/:responseId/complete', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const response = db.getFormResponse(req.params.responseId);
+    if (!response || response.user_id !== req.user.id || response.form_id !== req.params.id) return res.status(404).json({ error: 'Not found.' });
+    const form = db.getForm(req.params.id);
+    if (form.require_consent && !req.body?.consentGiven) return res.status(400).json({ error: 'Please confirm you agree before submitting.' });
+    // Required-question check — only questions actually visible given the
+    // answers so far count; a skipped/branched-away question can never
+    // block submission.
+    const questions = db.getFormQuestions(req.params.id);
+    const answered = answersToComparableMap(db.getResponseAnswers(response.id), questions);
+    const missing = questions.filter(q => q.required && isQuestionVisible(q, answered) && !(answered[q.id] && answered[q.id].length));
+    if (missing.length) return res.status(400).json({ error: `Please answer: ${missing[0].question_text}` });
+    db.completeFormResponse(response.id, req.body?.consentGiven);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Signal lines / line bank (Per Bot 17 phase 6) ──
@@ -14976,7 +15163,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

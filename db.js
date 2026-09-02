@@ -411,6 +411,110 @@ async function getDb() {
     FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
   )`);
 
+  // ── Forms module (Per App 31) ── One generalised engine behind forms,
+  // quizzes, and surveys — `kind` distinguishes them for display/behaviour
+  // (a quiz computes a score from is_correct/points on options; a survey
+  // is typically anonymous, user_id left null; a plain form is neither),
+  // but all three share the exact same schema, builder, and renderer
+  // rather than three separate systems. course_id/course_instance_id are
+  // both optional and purely for reference in the admin Forms list (which
+  // course/intake a form belongs to) — a form isn't required to belong to
+  // a course at all (a standalone survey, for instance).
+  //
+  // Data policy is set per form, not per response: retention_mode governs
+  // what happens to every response to this form uniformly (either kept
+  // against the person's own record, or deleted once the linked
+  // instance's end_date has passed — see cleanupExpiredFormResponses in
+  // server.js). require_consent gates whether a response can be marked
+  // complete without the respondent having ticked "I agree" to
+  // data_policy_text — Per's own stated wording of what happens to their
+  // answers, shown to them before they submit, not decided for them here.
+  db.run(`CREATE TABLE IF NOT EXISTS forms (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'form',
+    course_id TEXT,
+    course_instance_id TEXT,
+    intro_text TEXT DEFAULT '',
+    data_policy_text TEXT DEFAULT '',
+    retention_mode TEXT NOT NULL DEFAULT 'delete_after_instance',
+    require_consent INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (course_id) REFERENCES courses(id),
+    FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
+  )`);
+
+  // show_if_question_id/show_if_value: a single-condition branch ("only
+  // show this question if question X's answer was Y") — deliberately not
+  // a full boolean-logic rule engine. Covers the large majority of real
+  // "skip ahead if this doesn't apply to you" needs without requiring a
+  // visual rule-builder; a question needing genuinely compound
+  // conditions can always be split into two simpler ones.
+  db.run(`CREATE TABLE IF NOT EXISTS form_questions (
+    id TEXT PRIMARY KEY,
+    form_id TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    question_text TEXT NOT NULL,
+    question_type TEXT NOT NULL DEFAULT 'text',
+    required INTEGER DEFAULT 0,
+    show_if_question_id TEXT,
+    show_if_value TEXT,
+    FOREIGN KEY (form_id) REFERENCES forms(id),
+    FOREIGN KEY (show_if_question_id) REFERENCES form_questions(id)
+  )`);
+
+  // is_correct/points only ever mean anything for kind='quiz' forms —
+  // left at their defaults (0) they're simply unused for a plain form or
+  // survey question, never enforced either way at this layer.
+  db.run(`CREATE TABLE IF NOT EXISTS form_question_options (
+    id TEXT PRIMARY KEY,
+    question_id TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    option_text TEXT NOT NULL,
+    is_correct INTEGER DEFAULT 0,
+    points INTEGER DEFAULT 0,
+    FOREIGN KEY (question_id) REFERENCES form_questions(id)
+  )`);
+
+  // user_id nullable — an anonymous survey response is a legitimate,
+  // common case, not an error state. payment_ref isn't wired to anything
+  // yet (no form currently needs it) but exists now per Per's own
+  // request, so a future course-registration form can record which
+  // Stripe payment/enrolment it belongs to without a schema change later.
+  db.run(`CREATE TABLE IF NOT EXISTS form_responses (
+    id TEXT PRIMARY KEY,
+    form_id TEXT NOT NULL,
+    user_id TEXT,
+    course_instance_id TEXT,
+    consent_given INTEGER DEFAULT 0,
+    score INTEGER,
+    payment_ref TEXT,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    started_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT,
+    FOREIGN KEY (form_id) REFERENCES forms(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
+  )`);
+
+  // One row per answered question; a checkbox (multi-select) question
+  // produces one row per ticked option, same table, no special-casing.
+  // GDPR deletion (cleanupExpiredFormResponses) removes rows from this
+  // table specifically, leaving the parent form_responses row in place
+  // as a stripped audit trace (someone did respond, on this date) rather
+  // than erasing that a response ever happened.
+  db.run(`CREATE TABLE IF NOT EXISTS form_response_answers (
+    id TEXT PRIMARY KEY,
+    response_id TEXT NOT NULL,
+    question_id TEXT NOT NULL,
+    option_id TEXT,
+    text_value TEXT,
+    FOREIGN KEY (response_id) REFERENCES form_responses(id),
+    FOREIGN KEY (question_id) REFERENCES form_questions(id),
+    FOREIGN KEY (option_id) REFERENCES form_question_options(id)
+  )`);
+
   // ── Lesson progress ──
   // One row per lesson per enrolment. last_position is a free-text resume
   // pointer (e.g. a lesson_file_refs id, or a timestamp within an audio file)
@@ -2718,6 +2822,11 @@ async function getDb() {
   // hardcoded client-side in Message Builder's "Save to library" action —
   // no picker needed since every save from there goes to the same place.
   db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-social','Social','social',NULL,998)`);
+  // Per App 31 — Marketing category, same reasoning and pattern as
+  // Social just above: a fixed-id home for standalone audio/video
+  // assets saved from the editor (course trailers, sales clips) that
+  // aren't tied to a single social post the way Social's assets are.
+  db.run(`INSERT OR IGNORE INTO categories (id,name,slug,parent_id,sort_order) VALUES ('cat-marketing','Marketing','marketing',NULL,997)`);
 
   // Category tree v2 (Per Bot 8) — University / Mindfulness / FELT·FIBRE /
   // Therapy, replacing the old Mindfulness/FELT·FIBRE/Girls Programme/Therapy
@@ -4814,6 +4923,277 @@ function getAttemptsForEnrolment(enrolmentId, quizId) {
 }
 function getBestAttempt(enrolmentId, quizId) {
   return queryOne('SELECT * FROM quiz_attempts WHERE enrolment_id=? AND quiz_id=? ORDER BY score_pct DESC LIMIT 1', [enrolmentId, quizId]);
+}
+
+// ── Forms module (Per App 31) — forms, quizzes, and surveys, one engine ──
+// Deliberately separate from the quizzes/quiz_questions/quiz_options
+// tables just above: those are lesson-embedded (lesson_id is required),
+// pass/fail against a threshold, no branching, no consent/retention
+// handling — a different, narrower job (in-course knowledge checks).
+// This module is for anything standalone: course-registration forms,
+// pre-course questionnaires, marketing surveys, freestanding quizzes not
+// tied to any one lesson — with conditional branching and GDPR-aware
+// response handling neither the old system nor a form needed before now.
+
+function createForm(id, fields) {
+  getDbSync().run(
+    `INSERT INTO forms (id,title,kind,course_id,course_instance_id,intro_text,data_policy_text,retention_mode,require_consent,status)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [id, fields.title, fields.kind || 'form', fields.courseId || null, fields.courseInstanceId || null,
+     fields.introText || '', fields.dataPolicyText || '', fields.retentionMode || 'delete_after_instance',
+     fields.requireConsent === false ? 0 : 1, fields.status || 'draft']
+  );
+  save();
+}
+function updateForm(id, fields) {
+  const sets = []; const vals = [];
+  const map = { title: 'title', kind: 'kind', courseId: 'course_id', courseInstanceId: 'course_instance_id',
+    introText: 'intro_text', dataPolicyText: 'data_policy_text', retentionMode: 'retention_mode',
+    requireConsent: 'require_consent', status: 'status' };
+  Object.entries(map).forEach(([jsKey, col]) => {
+    if (fields[jsKey] === undefined) return;
+    sets.push(`${col}=?`);
+    vals.push(jsKey === 'requireConsent' ? (fields[jsKey] ? 1 : 0) : fields[jsKey]);
+  });
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE forms SET ${sets.join(',')} WHERE id=?`, vals);
+  save();
+}
+function getForm(id) { return queryOne('SELECT * FROM forms WHERE id=?', [id]); }
+// Joined with course/instance titles purely for the admin Forms list —
+// "which course does this belong to" at a glance, per Per's own request,
+// without a second round trip per row.
+function getAllForms() {
+  return queryAll(`
+    SELECT f.*, c.title as course_title, ci.title as instance_title, ci.start_date as instance_start_date,
+      (SELECT COUNT(*) FROM form_responses r WHERE r.form_id = f.id AND r.status='complete') as response_count
+    FROM forms f
+    LEFT JOIN courses c ON f.course_id = c.id
+    LEFT JOIN course_instances ci ON f.course_instance_id = ci.id
+    ORDER BY f.created_at DESC`);
+}
+function deleteForm(id) {
+  // Cascades by hand (sql.js has no ON DELETE CASCADE enforcement here) —
+  // options, then questions, then responses' answers, then responses,
+  // then the form itself. Order matters: children before parents.
+  const qIds = queryAll('SELECT id FROM form_questions WHERE form_id=?', [id]).map(r => r.id);
+  const rIds = queryAll('SELECT id FROM form_responses WHERE form_id=?', [id]).map(r => r.id);
+  const db_ = getDbSync();
+  qIds.forEach(qid => db_.run('DELETE FROM form_question_options WHERE question_id=?', [qid]));
+  rIds.forEach(rid => db_.run('DELETE FROM form_response_answers WHERE response_id=?', [rid]));
+  db_.run('DELETE FROM form_responses WHERE form_id=?', [id]);
+  db_.run('DELETE FROM form_questions WHERE form_id=?', [id]);
+  db_.run('DELETE FROM forms WHERE id=?', [id]);
+  save();
+}
+// Deep copy — form, every question, every option, with a fresh set of
+// ids throughout (a duplicate must never share a question/option id with
+// its source, or editing one would corrupt the other). show_if
+// references are remapped through an old-id → new-id table built during
+// the question copy, so branching survives the duplicate intact rather
+// than pointing at question ids that don't exist in the new form.
+function duplicateForm(id, newTitle) {
+  const original = getForm(id);
+  if (!original) return null;
+  const newFormId = crypto.randomUUID();
+  createForm(newFormId, {
+    title: newTitle || `${original.title} (copy)`, kind: original.kind,
+    courseId: original.course_id, courseInstanceId: original.course_instance_id,
+    introText: original.intro_text, dataPolicyText: original.data_policy_text,
+    retentionMode: original.retention_mode, requireConsent: !!original.require_consent, status: 'draft',
+  });
+  const questions = queryAll('SELECT * FROM form_questions WHERE form_id=? ORDER BY sort_order ASC', [id]);
+  const idMap = {};
+  questions.forEach(q => { idMap[q.id] = crypto.randomUUID(); });
+  questions.forEach(q => {
+    const newQid = idMap[q.id];
+    addFormQuestion(newQid, newFormId, {
+      sortOrder: q.sort_order, questionText: q.question_text, questionType: q.question_type,
+      required: !!q.required,
+      showIfQuestionId: q.show_if_question_id ? (idMap[q.show_if_question_id] || null) : null,
+      showIfValue: q.show_if_value,
+    });
+    const options = queryAll('SELECT * FROM form_question_options WHERE question_id=? ORDER BY sort_order ASC', [q.id]);
+    options.forEach(o => {
+      addFormOption(crypto.randomUUID(), newQid, { sortOrder: o.sort_order, optionText: o.option_text, isCorrect: !!o.is_correct, points: o.points });
+    });
+  });
+  return newFormId;
+}
+
+function addFormQuestion(id, formId, fields) {
+  getDbSync().run(
+    `INSERT INTO form_questions (id,form_id,sort_order,question_text,question_type,required,show_if_question_id,show_if_value)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [id, formId, fields.sortOrder || 0, fields.questionText, fields.questionType || 'text',
+     fields.required ? 1 : 0, fields.showIfQuestionId || null, fields.showIfValue || null]
+  );
+  save();
+}
+function updateFormQuestion(id, fields) {
+  const sets = []; const vals = [];
+  const map = { sortOrder: 'sort_order', questionText: 'question_text', questionType: 'question_type',
+    required: 'required', showIfQuestionId: 'show_if_question_id', showIfValue: 'show_if_value' };
+  Object.entries(map).forEach(([jsKey, col]) => {
+    if (fields[jsKey] === undefined) return;
+    sets.push(`${col}=?`);
+    vals.push(jsKey === 'required' ? (fields[jsKey] ? 1 : 0) : fields[jsKey]);
+  });
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE form_questions SET ${sets.join(',')} WHERE id=?`, vals);
+  save();
+}
+function deleteFormQuestion(id) {
+  getDbSync().run('DELETE FROM form_question_options WHERE question_id=?', [id]);
+  getDbSync().run('DELETE FROM form_questions WHERE id=?', [id]);
+  save();
+}
+function getFormQuestions(formId) {
+  const questions = queryAll('SELECT * FROM form_questions WHERE form_id=? ORDER BY sort_order ASC', [formId]);
+  const options = queryAll(`SELECT o.* FROM form_question_options o JOIN form_questions q ON o.question_id=q.id WHERE q.form_id=? ORDER BY o.sort_order ASC`, [formId]);
+  return questions.map(q => ({ ...q, options: options.filter(o => o.question_id === q.id) }));
+}
+
+function addFormOption(id, questionId, fields) {
+  getDbSync().run(
+    'INSERT INTO form_question_options (id,question_id,sort_order,option_text,is_correct,points) VALUES (?,?,?,?,?,?)',
+    [id, questionId, fields.sortOrder || 0, fields.optionText, fields.isCorrect ? 1 : 0, fields.points || 0]
+  );
+  save();
+}
+function updateFormOption(id, fields) {
+  const sets = []; const vals = [];
+  const map = { sortOrder: 'sort_order', optionText: 'option_text', isCorrect: 'is_correct', points: 'points' };
+  Object.entries(map).forEach(([jsKey, col]) => {
+    if (fields[jsKey] === undefined) return;
+    sets.push(`${col}=?`);
+    vals.push(jsKey === 'isCorrect' ? (fields[jsKey] ? 1 : 0) : fields[jsKey]);
+  });
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE form_question_options SET ${sets.join(',')} WHERE id=?`, vals);
+  save();
+}
+function deleteFormOption(id) {
+  getDbSync().run('DELETE FROM form_question_options WHERE id=?', [id]);
+  save();
+}
+
+// Responses. A response is created "in_progress" the moment someone
+// starts (so a partially-filled form isn't lost if they leave and come
+// back — see the "represent on every login until filled in" requirement
+// this exists for), then explicitly marked complete once submitted.
+function createFormResponse(id, formId, userId, courseInstanceId) {
+  getDbSync().run(
+    'INSERT INTO form_responses (id,form_id,user_id,course_instance_id) VALUES (?,?,?,?)',
+    [id, formId, userId || null, courseInstanceId || null]
+  );
+  save();
+  return id;
+}
+function getFormResponse(id) { return queryOne('SELECT * FROM form_responses WHERE id=?', [id]); }
+// One user can have at most one in-progress response per form at a time
+// — resumed rather than duplicated on repeat visits (the login-gate
+// re-presents the same response until it's completed).
+function getInProgressResponse(formId, userId) {
+  return queryOne(`SELECT * FROM form_responses WHERE form_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1`, [formId, userId]);
+}
+// Saves one answer, replacing any prior answer(s) to the same question on
+// this response first — going back and changing an earlier answer (which
+// branching makes routine: change it, and a different set of later
+// questions may now apply) must fully replace the old answer, not add to
+// it. `optionIds` is an array so a single checkbox question's multiple
+// selections all save in one call; a radio/text question just passes a
+// one-element (or text-only) call.
+function saveFormAnswer(responseId, questionId, optionIds, textValue) {
+  const db_ = getDbSync();
+  db_.run('DELETE FROM form_response_answers WHERE response_id=? AND question_id=?', [responseId, questionId]);
+  if (Array.isArray(optionIds) && optionIds.length) {
+    optionIds.forEach(optId => {
+      db_.run('INSERT INTO form_response_answers (id,response_id,question_id,option_id) VALUES (?,?,?,?)', [crypto.randomUUID(), responseId, questionId, optId]);
+    });
+  } else if (textValue !== undefined && textValue !== null && textValue !== '') {
+    db_.run('INSERT INTO form_response_answers (id,response_id,question_id,text_value) VALUES (?,?,?,?)', [crypto.randomUUID(), responseId, questionId, textValue]);
+  }
+  save();
+}
+function getResponseAnswers(responseId) {
+  return queryAll('SELECT * FROM form_response_answers WHERE response_id=?', [responseId]);
+}
+// Consent recorded at completion time (not per-answer) — it's a
+// statement about the whole response, matching how it's presented to the
+// respondent (one policy, one tick, at the end). Score is computed here
+// for kind='quiz' forms: sum of points for every selected option that's
+// marked is_correct, left null for form/survey kinds where "correct"
+// doesn't mean anything.
+function completeFormResponse(id, consentGiven) {
+  const response = getFormResponse(id);
+  if (!response) return;
+  const form = getForm(response.form_id);
+  let score = null;
+  if (form && form.kind === 'quiz') {
+    const answers = getResponseAnswers(id);
+    const optionIds = answers.filter(a => a.option_id).map(a => a.option_id);
+    score = 0;
+    if (optionIds.length) {
+      const options = queryAll(`SELECT id, is_correct, points FROM form_question_options WHERE id IN (${optionIds.map(() => '?').join(',')})`, optionIds);
+      score = options.filter(o => o.is_correct).reduce((sum, o) => sum + (o.points || 0), 0);
+    }
+  }
+  getDbSync().run(
+    `UPDATE form_responses SET status='complete', consent_given=?, score=?, completed_at=datetime('now') WHERE id=?`,
+    [consentGiven ? 1 : 0, score, id]
+  );
+  save();
+}
+// For the admin Reports view — every completed response to a form,
+// joined with the respondent's own name/email so "who said what" is one
+// query, not a per-row lookup.
+function getFormResponsesForReport(formId) {
+  return queryAll(`
+    SELECT r.*, u.name as user_name, u.email as user_email
+    FROM form_responses r LEFT JOIN users u ON r.user_id = u.id
+    WHERE r.form_id=? AND r.status='complete'
+    ORDER BY r.completed_at DESC`, [formId]);
+}
+function getFormResponseDetail(responseId) {
+  const response = getFormResponse(responseId);
+  if (!response) return null;
+  const answers = queryAll(`
+    SELECT a.*, q.question_text, q.question_type, o.option_text
+    FROM form_response_answers a
+    JOIN form_questions q ON a.question_id = q.id
+    LEFT JOIN form_question_options o ON a.option_id = o.id
+    WHERE a.response_id=?`, [responseId]);
+  return { ...response, answers };
+}
+// GDPR cleanup (Per App 31) — for any form whose stated policy is
+// "delete after the instance is finished" (retention_mode
+// ='delete_after_instance'), once that instance's own end_date has
+// passed, every response's actual answers are cleared — the
+// form_responses row itself is left in place (stripped of anything
+// identifying what was said) as a minimal trace that a response
+// happened, not erased as if it never did. Forms with no linked
+// instance, or with retention_mode='keep_against_person', are never
+// touched here. Called from a daily cron tick (see server.js).
+function cleanupExpiredFormResponses() {
+  const dueForms = queryAll(`
+    SELECT f.id FROM forms f
+    JOIN course_instances ci ON f.course_instance_id = ci.id
+    WHERE f.retention_mode='delete_after_instance' AND ci.end_date IS NOT NULL AND date(ci.end_date) < date('now')`);
+  const db_ = getDbSync();
+  let cleared = 0;
+  dueForms.forEach(({ id: formId }) => {
+    const responseIds = queryAll('SELECT id FROM form_responses WHERE form_id=?', [formId]).map(r => r.id);
+    responseIds.forEach(rid => {
+      db_.run('DELETE FROM form_response_answers WHERE response_id=?', [rid]);
+      cleared++;
+    });
+  });
+  if (dueForms.length) save();
+  return { formsChecked: dueForms.length, responsesCleared: cleared };
 }
 
 // ── Playlists ──
@@ -8883,6 +9263,11 @@ module.exports = {
   // Social posts (Per Bot 17 phase 4)
   addSocialPost, getAllSocialPosts, getSocialPost, deleteSocialPost, recordSocialPostPublish, updateSocialPostMedia,
   getSocialScheduleConfig, updateSocialScheduleConfig,
+  createForm, updateForm, getForm, getAllForms, deleteForm, duplicateForm,
+  addFormQuestion, updateFormQuestion, deleteFormQuestion, getFormQuestions,
+  addFormOption, updateFormOption, deleteFormOption,
+  createFormResponse, getFormResponse, getInProgressResponse, saveFormAnswer, getResponseAnswers,
+  completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses,
   getNextUnusedMotdForPlatform, markMotdUsedForSocial, getUpcomingQueuedTimesForPlatform,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
