@@ -5799,6 +5799,16 @@ function updateUserPreferences(userId, prefs) {
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
     [...Object.keys(prefs).filter(k => allowed.includes(k)).map(k => prefs[k]), userId]);
+  // Per App 31 — turning newsletters back on is a genuine resubscribe;
+  // clear the win-back bookkeeping here (the one place every preference
+  // update already goes through, including /account) so a future
+  // unsubscribe starts its own fresh cycle. Without this, a stale
+  // unsubscribed_at would make a later win-back sweep think they're
+  // still owed one immediately, and a stale winback_email_sent_at would
+  // silently suppress a legitimate future win-back after they leave again.
+  if (prefs.pref_email_news !== undefined && Number(prefs.pref_email_news)) {
+    getDbSync().run(`UPDATE users SET unsubscribed_at=NULL, winback_email_sent_at=NULL WHERE id=?`, [userId]);
+  }
   save();
 }
 
@@ -7587,6 +7597,159 @@ function clearEmailLogForNewsletter(newsletterId) {
   getDbSync().run('DELETE FROM email_log WHERE newsletter_id=?', [newsletterId]); save();
 }
 
+// ── Email deliverability (Per App 31) — see the schema comments near the
+// top of this file for the full reasoning. Three moving parts: (1) a
+// poller that asks Scaleway what actually happened to a 'sent' email
+// after the fact, (2) auto-flagging built entirely from that history
+// (no fragile incrementing counters that can drift — every check
+// re-derives the real streak from email_log itself), and (3) a
+// win-back email for people who unsubscribed, kept separate from the
+// unrelated Savers system.
+
+// Candidates for the delivery-status poller: sent successfully (our own
+// `status`), have a scaleway_email_id to actually ask about, haven't been
+// checked yet, sent at least 10 minutes ago (Scaleway needs real time to
+// attempt delivery — checking immediately would just find everything
+// still 'new'/'sending' and waste the API call), and not older than 14
+// days (Scaleway's own answer for something that old is no longer
+// actionable either way).
+function getEmailLogRowsPendingDeliveryCheck(limit) {
+  return queryAll(
+    `SELECT * FROM email_log
+     WHERE status='sent' AND scaleway_email_id IS NOT NULL AND delivery_status IS NULL
+       AND created_at <= datetime('now','-10 minutes') AND created_at >= datetime('now','-14 days')
+     ORDER BY created_at ASC LIMIT ?`,
+    [limit || 50]
+  );
+}
+function updateEmailLogDeliveryStatus(id, status, detail) {
+  getDbSync().run(
+    `UPDATE email_log SET delivery_status=?, delivery_status_detail=?, delivery_checked_at=datetime('now') WHERE id=?`,
+    [status, detail || null, id]
+  );
+  save();
+}
+
+// The last N newsletter-kind sends to one person that have actually been
+// resolved (delivered or bounced — anything still pending a delivery
+// check is skipped, since it hasn't happened yet, not "wasn't a
+// failure"). Most recent first — checkAndFlagEmailHealthLogic reads
+// [0..2] as the current streak and the LAST element as the streak's
+// oldest/first bounce when all three match.
+function getRecentNewsletterOutcomesForUser(userId, limit) {
+  return queryAll(
+    `SELECT created_at, delivery_status FROM email_log
+     WHERE user_id=? AND kind='newsletter' AND delivery_status IS NOT NULL
+     ORDER BY created_at DESC LIMIT ?`,
+    [userId, limit || 3]
+  );
+}
+// Reuses the existing login_log table (already written to on every real
+// login — see logLogin) rather than adding a redundant last_login_at
+// column on users. NULL means this account has never logged in at all.
+function getLastLoginAt(userId) {
+  const row = queryOne(`SELECT MAX(logged_in_at) as last_login FROM login_log WHERE user_id=? AND event_type='login'`, [userId]);
+  return row ? row.last_login : null;
+}
+function setConsecutiveFailedNewslettersCount(userId, n) {
+  getDbSync().run('UPDATE users SET consecutive_failed_newsletters=? WHERE id=?', [n, userId]);
+  save();
+}
+// Never called on a user already 'failed' — that's a deliberate admin
+// decision (see confirmEmailHealthFailed below) and automation doesn't
+// get to quietly overwrite it, in either direction.
+function flagEmailHealth(userId, reason) {
+  getDbSync().run(
+    `UPDATE users SET email_health='flagged', email_health_flagged_at=datetime('now'), email_health_reason=? WHERE id=? AND email_health != 'failed'`,
+    [reason, userId]
+  );
+  save();
+}
+// Auto-recovery path: a newsletter reached them again after a flagged
+// streak, so the flag clears itself — 'failed' is excluded here too via
+// the same WHERE guard, since that state only ever changes through the
+// admin's own explicit action.
+function resetEmailHealthToOk(userId) {
+  getDbSync().run(
+    `UPDATE users SET email_health='ok', email_health_flagged_at=NULL, email_health_reason=NULL WHERE id=? AND email_health != 'failed'`,
+    [userId]
+  );
+  save();
+}
+// The actual "remove from list" action — Per's own explicit approval of
+// a flagged row, per the auto-flag-but-I-approve design. Turns off
+// pref_email_news so no further newsletter attempts get wasted on a
+// confirmed-dead address; every other email preference (reminders,
+// renewal, etc.) is left exactly as it was, since a bouncing newsletter
+// says nothing about whether other addresses/channels for this person
+// still work.
+function confirmEmailHealthFailed(userId) {
+  getDbSync().run(`UPDATE users SET email_health='failed', pref_email_news=0 WHERE id=?`, [userId]);
+  save();
+}
+// The admin's other option for a flagged row — a false positive (wrong
+// number, quarantine notice, whatever) — clears it back to normal and
+// resets the visible counter, same effect as an organic recovery.
+function dismissEmailHealthFlag(userId) {
+  getDbSync().run(`UPDATE users SET email_health='ok', email_health_flagged_at=NULL, email_health_reason=NULL, consecutive_failed_newsletters=0 WHERE id=?`, [userId]);
+  save();
+}
+// For the admin Email Health panel — everyone currently flagged or
+// failed, oldest flag first (the ones waiting longest for a decision
+// surface first).
+function getFlaggedAndFailedUsers() {
+  return queryAll(
+    `SELECT id, name, email, member_tier, email_health, email_health_flagged_at, email_health_reason, consecutive_failed_newsletters
+     FROM users WHERE email_health IN ('flagged','failed') AND archived=0
+     ORDER BY (email_health='flagged') DESC, email_health_flagged_at ASC`
+  );
+}
+
+// ── Newsletter win-back (Per App 31) — deliberately separate from the
+// Savers system, which is specifically for Stripe subscription
+// cancellations/payment failures; most newsletter-only contacts have no
+// subscription for Savers' own state machine to attach to at all. One
+// email, once, a while after someone unsubscribes — never repeated
+// (winback_email_sent_at gates it), and automatically called off if they
+// resubscribe in the meantime (see the guard in updateUserPreferences).
+// Sets unsubscribed_at the moment /unsubscribe/:token actually fires —
+// previously nothing recorded when this happened, only that
+// pref_email_news had become 0, with no way to tell a fresh unsubscribe
+// from someone who'd simply always had newsletters off (and so no way
+// to ever know when a win-back email was actually due). Only sets it if
+// not already set, so re-visiting an old unsubscribe link doesn't reset
+// the win-back clock back to today.
+function recordUnsubscribe(userId) {
+  getDbSync().run(`UPDATE users SET unsubscribed_at=datetime('now') WHERE id=? AND unsubscribed_at IS NULL`, [userId]);
+  save();
+}
+function getUsersDueForWinback(daysSinceUnsub) {
+  return queryAll(
+    `SELECT id, name, email FROM users
+     WHERE archived=0 AND pref_email_news=0
+       AND unsubscribed_at IS NOT NULL AND winback_email_sent_at IS NULL
+       AND unsubscribed_at <= datetime('now','-' || ? || ' days')`,
+    [daysSinceUnsub]
+  );
+}
+function markWinbackSent(userId) {
+  getDbSync().run(`UPDATE users SET winback_email_sent_at=datetime('now') WHERE id=?`, [userId]);
+  save();
+}
+
+function reportEmailHealth() {
+  const rows = getFlaggedAndFailedUsers();
+  const flaggedCount = rows.filter(r => r.email_health === 'flagged').length;
+  const failedCount = rows.filter(r => r.email_health === 'failed').length;
+  return {
+    tiles: [
+      { label: 'Flagged — awaiting review', value: flaggedCount },
+      { label: 'Confirmed failed (off the list)', value: failedCount },
+    ],
+    emailHealth: rows,
+  };
+}
+
 // ── Cron job activity log (Per Bot 20) ──
 // logCronRun: called once per scheduled job, after it finishes (success
 // or failure) — deliberately a single insert rather than pending/update
@@ -9280,6 +9443,9 @@ module.exports = {
   getAllQueuedPublishes, getQueuedPublish, createQueuedPublish, updateQueuedPublish, deleteQueuedPublish, markQueuedPublishSent, markQueuedPublishFailed, getCandidateQueuedPublishes, deactivateExpiredQueuedPublishes,
   getOAuthConnection, upsertOAuthConnection, updateOAuthTokens, deleteOAuthConnection,
   logEmailPending, logEmailPendingBatch, logEmailResult, logEmailResultBatch, updateEmailLogResult, getEmailLogForNewsletter, getEmailLogCountsForNewsletter, getRecentEmailLog, getEmailLogById, clearEmailLogForNewsletter, archiveOldEmailBodies,
+  getEmailLogRowsPendingDeliveryCheck, updateEmailLogDeliveryStatus, getRecentNewsletterOutcomesForUser, getLastLoginAt,
+  setConsecutiveFailedNewslettersCount, flagEmailHealth, resetEmailHealthToOk, confirmEmailHealthFailed, dismissEmailHealthFlag, getFlaggedAndFailedUsers,
+  getUsersDueForWinback, markWinbackSent, reportEmailHealth, recordUnsubscribe,
   setTomteName, setTomteImage, setTomteVoiceEnabled, getTomteSettings, updateUserAdminDetails,
   createCall, getCall, getRingingCallForClient, updateCallStatus, setCallConsent, setCallRecording,
   setCallTranscript, setCallShared, getCallsForFacilitatorClient, getAllCallsForClient, getSharedCallsForClient,

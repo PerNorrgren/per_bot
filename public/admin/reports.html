@@ -247,6 +247,45 @@
       }).join('');
   }
 
+  // Per App 31 — Email Health: everyone currently flagged (auto-detected,
+  // awaiting review) or failed (admin-confirmed, already off the
+  // newsletter list). Flagged rows get both actions; failed rows are
+  // shown for visibility only — that state only ever changes by editing
+  // the person directly in People, not from here, since it's already the
+  // settled outcome.
+  async function renderEmailHealthReport(rows) {
+    const el = document.getElementById('reportTable');
+    if (!rows.length) { el.innerHTML = '<div class="empty">Nothing flagged right now.</div>'; return; }
+    el.innerHTML =
+      `<div class="report-table-hdr">
+        <div>Name</div><div>Email</div><div>Status</div><div style="flex:2">Reason</div><div style="flex:0 0 170px"></div>
+      </div>` +
+      rows.map(r => `
+        <div class="report-table-row">
+          <div title="${escHtml(r.name || '—')}">${escHtml(r.name || '—')}</div>
+          <div title="${escHtml(r.email || '—')}">${escHtml(r.email || '—')}</div>
+          <div style="color:${r.email_health === 'failed' ? 'rgba(230,140,120,0.9)' : 'rgba(230,200,120,0.9)'}">${r.email_health}</div>
+          <div style="flex:2;overflow:visible;text-overflow:clip;white-space:normal" title="${escHtml(r.email_health_reason || '')}">${escHtml(r.email_health_reason || '—')}</div>
+          <div style="flex:0 0 170px;text-align:right">
+            ${r.email_health === 'flagged' ? `
+              <button class="btn sm" onclick="dismissEmailHealthFlag('${r.id}')">Dismiss</button>
+              <button class="btn sm" style="border-color:rgba(230,140,120,0.4);color:rgba(230,140,120,0.85)" onclick="confirmEmailHealthFailed('${r.id}')">Confirm failed</button>
+            ` : ''}
+          </div>
+        </div>
+      `).join('');
+  }
+  async function dismissEmailHealthFlag(userId) {
+    if (!(await appConfirm('Dismiss this flag? Their email health resets to normal and they stay on the newsletter list.'))) return;
+    await fetch(`/api/admin/email-health/${userId}/dismiss`, { method: 'POST' });
+    loadReport('email_health');
+  }
+  async function confirmEmailHealthFailed(userId) {
+    if (!(await appConfirm('Confirm this address as failed? This turns off their newsletter emails — their other preferences (reminders, renewal, etc.) are left alone.'))) return;
+    await fetch(`/api/admin/email-health/${userId}/confirm-failed`, { method: 'POST' });
+    loadReport('email_health');
+  }
+
   // Per Bot 22 — Generated Images: the sumi-e image generator's history.
   // A thumbnail grid with a size control, click one to view it full size.
   let _currentImages = [];
@@ -424,6 +463,8 @@
       const tableEl = document.getElementById('reportTable');
       if (data.jobs) {
         renderEmailLogReport(data.jobs);
+      } else if (data.emailHealth) {
+        renderEmailHealthReport(data.emailHealth);
       } else if (data.images) {
         renderGeneratedImagesReport(data.images);
       } else if (data.table && data.table.rows && data.table.rows.length) {

@@ -1725,6 +1725,117 @@ async function sendRenewalReminders() {
   return { ok: true, matched: upcoming.length, sentEmail, sentSms, thresholdDays: days };
 }
 
+// ── Email deliverability (Per App 31) ──────────────────────────────────
+// See the schema/function comments in db.js for the full reasoning
+// (kept there since that's where the actual state lives). Three pieces:
+// pollEmailDeliveryStatus (asks Scaleway what really happened to a
+// 'sent' email), checkAndFlagEmailHealthLogic (re-derives the real
+// bounce streak from email_log every time — no counter to drift),
+// sendNewsletterWinbackEmails (one honest nudge for someone who left).
+
+// Re-checks one person's own recent newsletter history and decides
+// whether their email_health should change — called right after a
+// newsletter-kind delivery status resolves, never on a schedule of its
+// own. Deliberately reads history fresh each time rather than trusting
+// an incrementing counter, so a bug or a manually-corrected row can
+// never leave email_health stuck out of sync with what actually
+// happened.
+async function checkAndFlagEmailHealthLogic(userId) {
+  const user = db.getUser(userId);
+  if (!user || user.email_health === 'failed') return; // 'failed' only ever changes via the admin's own explicit action
+  const recent = db.getRecentNewsletterOutcomesForUser(userId, 3);
+  if (recent.length < 3) return; // not enough resolved history yet either way
+
+  const allBounced = recent.every(r => r.delivery_status === 'bounced');
+  if (!allBounced) {
+    // Streak broken (or genuinely delivered) — clear the counter, and if
+    // this was only ever auto-flagged (not admin-confirmed), un-flag it.
+    // A real recovery shouldn't leave a stale flag sitting there.
+    db.setConsecutiveFailedNewslettersCount(userId, 0);
+    if (user.email_health === 'flagged') db.resetEmailHealthToOk(userId);
+    return;
+  }
+
+  // All 3 most recent resolved newsletter sends bounced — a real streak.
+  db.setConsecutiveFailedNewslettersCount(userId, 3);
+  if (user.email_health === 'flagged') return; // already flagged, nothing further to decide
+
+  // recent[0] is the newest bounce, recent[2] the oldest of the three —
+  // "no login since the first of those 3" means since this oldest one.
+  const firstBounceAt = recent[recent.length - 1].created_at;
+  const lastLoginAt = db.getLastLoginAt(userId);
+  const toDate = (s) => new Date(s.replace(' ', 'T') + 'Z');
+  const noLoginSince = !lastLoginAt || toDate(lastLoginAt) < toDate(firstBounceAt);
+  if (noLoginSince) {
+    db.flagEmailHealth(userId, `3 consecutive newsletter bounces since ${firstBounceAt}, no login since then.`);
+  }
+  // If they HAVE logged in since the first bounce, deliberately don't
+  // flag — real engagement with the app is evidence the account itself
+  // is active even if this particular address is having trouble, per
+  // Per's own call on that nuance.
+}
+
+// The poller itself — checks a bounded batch of not-yet-resolved 'sent'
+// emails against Scaleway each run, so a backlog can't turn one cron
+// tick into thousands of API calls. Only ever writes a FINAL Scaleway
+// status ('sent'->our 'delivered', 'failed'/'canceled'->our 'bounced');
+// a still-transient 'new'/'sending' status is left untouched for the
+// next run, not guessed at.
+async function pollEmailDeliveryStatus() {
+  const rows = db.getEmailLogRowsPendingDeliveryCheck(50);
+  let updated = 0, stillPending = 0, lookupFailed = 0;
+  for (const row of rows) {
+    const status = await scwGetEmailStatus(row.scaleway_email_id);
+    if (!status || !status.status) { lookupFailed++; continue; }
+    if (status.status === 'sent') {
+      db.updateEmailLogDeliveryStatus(row.id, 'delivered', status.status_details || null);
+      updated++;
+    } else if (status.status === 'failed' || status.status === 'canceled') {
+      const detail = status.status_details || (status.status === 'canceled' ? 'Canceled before delivery.' : null);
+      db.updateEmailLogDeliveryStatus(row.id, 'bounced', detail);
+      updated++;
+    } else {
+      stillPending++; // 'new' / 'sending' — genuinely not resolved yet, check again next run
+      continue;
+    }
+    if (row.kind === 'newsletter' && row.user_id) {
+      try { await checkAndFlagEmailHealthLogic(row.user_id); }
+      catch (e) { console.error('[email-health] check failed for', row.user_id, e.message); }
+    }
+  }
+  return { checked: rows.length, updated, stillPending, lookupFailed };
+}
+
+// ── Newsletter win-back (Per App 31) ── One honest nudge, once, a while
+// after someone unsubscribes — deliberately separate from the Savers
+// system (Stripe cancellations), and never repeated (winback_email_sent_at
+// gates it, and a resubscribe clears that gate — see updateUserPreferences
+// in db.js). 21 days feels like enough distance that it doesn't read as
+// immediately chasing someone who just opted out.
+const WINBACK_DAYS_AFTER_UNSUBSCRIBE = 21;
+function buildWinbackHtml(user, b) {
+  const tokens = buildMessageTokens(user);
+  return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${tokens.name},</h1>
+      <p style="font-size:14px;line-height:1.7">A little while ago you unsubscribed from ${b.name}'s newsletter — no hard feelings, and this is the only email you'll get about it.</p>
+      <p style="font-size:14px;line-height:1.7;margin-top:14px">If it was simply too much in your inbox at the time, you're welcome back whenever suits — no pressure either way.</p>
+      <p style="font-size:14px;line-height:1.7;margin-top:22px"><a href="${APP_URL}/account" style="color:#2d6a4f">Turn newsletters back on →</a></p>
+    </div>`;
+}
+async function sendNewsletterWinbackEmails() {
+  const due = db.getUsersDueForWinback(WINBACK_DAYS_AFTER_UNSUBSCRIBE);
+  const b = brand();
+  let sent = 0;
+  for (const user of due) {
+    if (!user.email) continue;
+    const result = await sendEmail(user.email, `Still here whenever you'd like — ${b.name}`, buildWinbackHtml(user, b), { kind: 'other', userId: user.id });
+    if (result.ok) sent++;
+    db.markWinbackSent(user.id); // marked regardless of send success — a genuine failure here will surface via the normal email_log/delivery poller, not by retrying the win-back itself indefinitely
+  }
+  return { ok: true, matched: due.length, sent };
+}
+
 // ── Birthday messages (Per Bot 7) ── Providing a DOB at all is the consent
 // to send this — there's no separate preference toggle to check, unlike
 // every other message type in this file. Month/day only, everywhere —
@@ -1956,7 +2067,10 @@ app.get('/unsubscribe/:token', (req, res) => {
 
   if (!user) return res.status(404).send(page('Link not found', "This unsubscribe link isn't valid — it may have been copied incorrectly."));
 
+  // Per App 31 — records when this happened (previously nothing did),
+  // which is what the win-back sweep needs to know how long it's been.
   db.updateUserPreferences(user.id, { pref_email_news: 0 });
+  db.recordUnsubscribe(user.id);
   res.send(page('You\'re unsubscribed', `You won't receive any more newsletters from ${b.name}. If that was a mistake, you can turn it back on any time from <a href="${APP_URL}/account">My Account</a>.`));
 });
 app.get('/register/',(req, res) => res.sendFile(path.join(__dirname, 'public', 'register.html')));
@@ -8111,6 +8225,22 @@ app.get('/api/admin/email-log/check-status', auth.requireAuthApi(['admin']), asy
   }
 });
 
+// Per App 31 — Email Health admin actions. "Confirm failed" is the real
+// "remove from list" step (turns off pref_email_news so no further
+// newsletter attempts hit a confirmed-dead address); "Dismiss" is for a
+// false positive, clearing the flag back to normal. Both are the only
+// things that ever move a 'failed' row or clear a 'flagged' one besides
+// the automation's own recovery path — see the functions themselves in
+// db.js for the full reasoning.
+app.post('/api/admin/email-health/:userId/confirm-failed', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.confirmEmailHealthFailed(req.params.userId); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/email-health/:userId/dismiss', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.dismissEmailHealthFlag(req.params.userId); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/admin/email-log', auth.requireAuthApi(['admin']), (req, res) => {
   const kind = req.query.kind || null;
   const limit = Math.min(parseInt(req.query.limit, 10) || 200, 2000);
@@ -8171,6 +8301,7 @@ const REPORTS = {
   uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
   cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
   email_log:           { title: 'Email Log',             category: 'System',  run: () => db.reportEmailLog() },
+  email_health:        { title: 'Email Health',          category: 'System',  run: () => db.reportEmailHealth() },
   generated_images:    { title: 'Generated Images',       category: 'System',  run: () => db.reportGeneratedImages() },
 };
 
@@ -15185,7 +15316,7 @@ app.use((err, req, res, next) => {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails });
   }
   server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
 })();

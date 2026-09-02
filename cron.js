@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -128,6 +128,40 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] form response cleanup failed:', e.message);
       record('form_response_cleanup', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Email delivery status poller (Per App 31) — every 30 minutes ──
+  // Asks Scaleway what actually happened to a batch of recently-sent
+  // emails (up to 50 per run) that haven't been resolved yet — genuinely
+  // more frequent than most jobs here on purpose, since email_health's
+  // auto-flagging depends on this catching bounces reasonably promptly,
+  // not once a day. See pollEmailDeliveryStatus in server.js.
+  cron.schedule('*/30 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await pollEmailDeliveryStatus();
+      console.log('[cron] email delivery poll:', JSON.stringify(result));
+      record('email_delivery_poll', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] email delivery poll failed:', e.message);
+      record('email_delivery_poll', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Newsletter win-back sweep (Per App 31) — once daily, 08:10 UTC ──
+  // One honest nudge, once, for anyone who unsubscribed 21+ days ago and
+  // hasn't come back — see sendNewsletterWinbackEmails in server.js.
+  // Staggered after the 08:00 savers protocol slot.
+  cron.schedule('10 8 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendNewsletterWinbackEmails();
+      console.log('[cron] newsletter win-back:', JSON.stringify(result));
+      record('newsletter_winback', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] newsletter win-back failed:', e.message);
+      record('newsletter_winback', 'failed', null, e.message, t0);
     }
   });
 
@@ -336,7 +370,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };
