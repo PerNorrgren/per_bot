@@ -2737,6 +2737,16 @@ async function getDb() {
     // a course can run one instance as a paid-course-only offering and
     // another as this membership-bundled kind.
     "ALTER TABLE course_instances ADD COLUMN grants_membership_months INTEGER",
+    // Per's request — session reminders. Per-enrolment, not a global user
+    // preference: someone might reasonably want SMS for a live cohort
+    // they're paying real attention to but not for another course.
+    // Defaults match Per's own stated defaults (email checked, SMS off)
+    // exactly. reminder_sms=1 is only ever allowed to persist alongside
+    // a real phone number — see the enforcement in the reminder-prefs
+    // endpoint in server.js, not here; a bare column default can't
+    // express "requires a non-null sibling value."
+    "ALTER TABLE enrolments ADD COLUMN reminder_email INTEGER DEFAULT 1",
+    "ALTER TABLE enrolments ADD COLUMN reminder_sms INTEGER DEFAULT 0",
     // Per's request — PDF-to-EPUB conversion on upload. When a PDF gets
     // converted, filename/file_type on this row point at the generated
     // EPUB (so the existing reader picks it up automatically, no client
@@ -3348,19 +3358,43 @@ function getPublicFacilitator(id) {
 // it. status='open' is the same "live and accepting enrolment" signal
 // already used elsewhere in this file (e.g. the Featured-courses check)
 // — no separate public-visibility flag needed at the instance level.
+// Per's request — "Upcoming Courses" is specifically the live/Zoom
+// list; a self-paced course has no date and doesn't belong here at all
+// (see getPublicSelfPacedCourses just below for where those go
+// instead). Since every row is now guaranteed mode='cohort', sorting is
+// just by start_date — no need for the mode-priority CASE any more.
 function getPublicSchedule() {
   return queryAll(`
-    SELECT ci.id, ci.title as instance_title, ci.start_date, ci.end_date, ci.schedule_day, ci.schedule_time,
+    SELECT ci.id, ci.title as instance_title, ci.mode, ci.start_date, ci.end_date, ci.schedule_day, ci.schedule_time,
       c.id as course_id, c.title as course_title,
       GROUP_CONCAT(DISTINCT f.name) as facilitator_names
     FROM course_instances ci
     JOIN courses c ON ci.course_id = c.id
     LEFT JOIN instance_facilitators inf ON inf.course_instance_id = ci.id
     LEFT JOIN facilitators f ON inf.facilitator_id = f.id AND f.public_profile = 1
-    WHERE ci.status = 'open'
+    WHERE ci.status = 'open' AND ci.mode = 'cohort'
     GROUP BY ci.id
     ORDER BY ci.start_date ASC
   `);
+}
+// Per's request — the public courses page's second section: self-paced
+// courses that are always available to members, shown as a teaser with
+// a "subscribe to get access" prompt rather than a date/register flow
+// (there's nothing to register FOR — a member gets these the moment
+// they join, from inside the app itself). One row per course (not per
+// instance — a course could in principle have more than one open
+// self-paced instance, which would be a genuine duplicate here, but
+// that's not a real scenario today). Same required_tier restriction as
+// the old open-courses teaser this replaces: a tier-2/3-locked course
+// isn't a "just subscribe" pitch, it's a higher upsell that doesn't
+// belong in a general membership teaser.
+function getPublicSelfPacedCourses() {
+  return queryAll(`SELECT c.id, c.title, c.description
+    FROM courses c
+    JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open' AND ci.mode='self_paced'
+    WHERE c.access_status='visible' AND (c.required_tier IS NULL OR c.required_tier=0)
+    GROUP BY c.id
+    ORDER BY c.sort_order, c.title`);
 }
 function getPublicCourseOverview(id) {
   return queryOne(`SELECT id, title, description FROM courses WHERE id=?`, [id]);
@@ -3370,14 +3404,21 @@ function getPublicCourseOverview(id) {
 // Used by course-instance.html to offer "pick your start date" as a
 // same-page choice rather than making a visitor hunt for a different
 // link per date. Excludes the instance already being viewed from its
-// own list at the call site, not here — this just returns everything
-// open for the course, sorted soonest-first, self-paced instances
-// (start_date NULL) last since "soonest" doesn't mean anything for them.
+// own list at the call site, not here — this just returns every open
+// COHORT for the course, sorted soonest-first.
+// Per's own correction — this originally also returned self-paced
+// siblings (sorted last, since "soonest" doesn't mean anything for
+// them), which meant a course with a self-paced instance and a cohort
+// showed the self-paced one as an option in a "Choose your start date"
+// list — nonsensical, since it has no date at all. Self-paced enrolment
+// happens inside the app itself once someone's a member, not through
+// this public date-picker, so it's excluded here entirely now, not just
+// deprioritised.
 function getPublicOpenInstancesForCourse(courseId) {
   return queryAll(
     `SELECT id, title, mode, start_date, end_date, schedule_day, schedule_time, price_cents
      FROM course_instances
-     WHERE course_id=? AND status='open'
+     WHERE course_id=? AND status='open' AND mode='cohort'
      ORDER BY CASE WHEN start_date IS NULL THEN 1 ELSE 0 END, start_date ASC`,
     [courseId]
   );
@@ -9408,7 +9449,7 @@ module.exports = {
   setKnowledgeTopicContent, getKnowledgeTopicContent, getKnowledgeTopicAllContent,
   linkKnowledgeTopics, unlinkKnowledgeTopics, getLinkedKnowledgeTopics,
   // Courses
-  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
+  createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getPublicSelfPacedCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   backfillCourseSequenceDefaults,
   setCourseTierGating, setCourseSessionDefaults,

@@ -7940,6 +7940,7 @@
 
   // ── Courses / enrolment / progress / quizzes ──
   let currentInstanceId = null;
+  let _currentInstanceMode = null; // 'cohort' | 'self_paced' — set by openCourseDetail, read by openLesson to skip the completion prompt for a live cohort
   let _currentCourseLessons = []; // cached from the last openCourseDetail call — used to find the next lesson
 
   // Dashboard resume card — checked once on load, independent of which tab is open.
@@ -8115,8 +8116,14 @@
       const data = await res.json();
       if (data.error) { document.getElementById('courseDetailHeader').innerHTML = `<div class="no-content">${data.error}</div>`; return; }
       _currentCourseLessons = data.lessons || [];
+      // Per's request — cohort courses need this readable elsewhere in
+      // this function (button label, skipping the completion prompt) and
+      // in openLesson below, which has no other way to know it.
+      _currentInstanceMode = data.instance.mode;
+      const isCohort = data.instance.mode === 'cohort';
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
+        ${data.course?.description ? `<div class="lesson-item-desc" style="margin-bottom:10px">${data.course.description}</div>` : ''}
       `;
       document.getElementById('courseLessonsList').innerHTML = data.lessons.map(l => {
         const pct = l.fileProgress?.percent ?? 0;
@@ -8128,24 +8135,45 @@
           ? `<span class="lesson-item-lock" title="${l.lockReason === 'admin' ? 'Not currently available' : 'Complete the previous lesson to unlock'}">🔒</span>`
           : '';
         const descLine = l.description ? `<div class="lesson-item-desc">${l.description}</div>` : '';
+        // Per's request — a live session's actual date/time, shown right
+        // on its row. fmtSessionDateTime formats the same UTC ISO string
+        // every other date-ish field in this app already stores/expects.
+        const dateLine = isCohort && l.scheduledAt
+          ? `<div class="lesson-item-desc" style="color:rgba(180,230,200,0.7)">${fmtSessionDateTime(l.scheduledAt)}</div>` : '';
         const openClick = l.lockReason === 'admin'
           ? `showLockedNotice('This lesson is not currently available.')`
           : `openLesson('${l.id}')`;
+        // Per's request — "Start"/"Open" progress framing fits a self-
+        // paced journey; a live class isn't something you "start" and
+        // track completion on, you just open its materials. Cohort rows
+        // always say Open, regardless of progress state.
+        const btnLabel = isCohort ? 'Open' : (l.progress.status==='not_started'?'Start':'Open');
         return `
         <div class="lesson-item-row">
           <div class="lesson-item-num">${l.lesson_number}</div>
           <div class="lesson-item-body">
             <div class="lesson-item-title">${l.title} ${lockBadge}</div>
             ${descLine}
+            ${dateLine}
             <div class="lesson-item-status ${l.progress.status}">${l.progress.status==='completed'?'Completed':l.progress.status==='in_progress'?'In progress':'Not started'}${progressBadge}</div>
           </div>
-          <button class="lesson-open-btn" onclick="${openClick}">${l.progress.status==='not_started'?'Start':'Open'}</button>
+          <button class="lesson-open-btn" onclick="${openClick}">${btnLabel}</button>
         </div>
       `;
       }).join('');
     } catch(e) {
       document.getElementById('courseDetailHeader').innerHTML = '<div class="no-content">Could not load this course.</div>';
     }
+  }
+
+  // Per's request — the same UTC "YYYY-MM-DD HH:MM:SS"-ish ISO string
+  // every session/scheduling field in this app already stores, rendered
+  // in the visitor's own local time/locale rather than raw UTC digits.
+  function fmtSessionDateTime(iso) {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    } catch(e) { return iso; }
   }
 
   function closeCourseDetail() {
@@ -8179,6 +8207,14 @@
       }
 
       const askToComplete = async () => {
+        // Per's request — a live cohort session isn't something you
+        // "complete" the way a self-paced lesson is; opening its
+        // materials shouldn't prompt anything afterward at all.
+        if (_currentInstanceMode === 'cohort') {
+          openCourseDetail(currentInstanceId);
+          loadResumeCard();
+          return;
+        }
         // Per Bot 21 — real bug: revisiting an already-completed lesson
         // and moving on used to ask "Mark as complete?" every single
         // time, since this never checked whether it already was.  Now

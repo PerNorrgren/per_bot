@@ -2512,6 +2512,10 @@ app.get('/api/public/open-courses', (req, res) => {
   try { res.json(db.getPublicOpenCourses()); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/public/self-paced-courses', (req, res) => {
+  try { res.json(db.getPublicSelfPacedCourses()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Per Bot 18 — /promotions showcase clip. Genuinely public, zero login —
 // only ever serves a file an admin explicitly picked as an offer's (or the
@@ -3545,7 +3549,18 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
       .filter(i => !i.course_skin_id || i.course_skin_id === user?.skin_id)
       .filter(i => i.course_access_status !== 'hidden')
       .filter(i => !(isTierGatedForHiding(i) && i.course_hide_when_locked));
-    res.json(visible.map(i => {
+    // Per's request — a live cohort someone can actually join right now
+    // should read as more prominent/urgent than a self-paced course
+    // that's always there, not buried under whatever happened to be
+    // created most recently. Cohorts sort first (soonest start date
+    // first among them); self-paced courses keep their existing relative
+    // order (created_at desc) after that.
+    const sorted = visible.slice().sort((a, b) => {
+      if (a.mode !== b.mode) return a.mode === 'cohort' ? -1 : 1;
+      if (a.mode === 'cohort') return (a.start_date || '9999-99-99').localeCompare(b.start_date || '9999-99-99');
+      return 0;
+    });
+    res.json(sorted.map(i => {
       const enrolment = byInstance[i.id];
       return {
         ...i,
@@ -3728,6 +3743,17 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
     // separately (lockReason) so the frontend can show the right message
     // rather than a generic one for both.
     let prevCompleted = true; // Lesson 1 (or whatever's first) is never locked
+    // Per's request — a cohort lesson row needs its real scheduled date/
+    // time shown, not just the lesson content itself. instance_sessions
+    // is matched to lessons by number (same convention the admin Sessions
+    // "Generate from lessons" feature already uses) — a lesson with no
+    // matching session (self-paced courses, or a cohort lesson session
+    // not created yet) just gets scheduledAt: null, which the client
+    // already needs to handle regardless.
+    const sessionsByNumber = {};
+    if (instance.mode === 'cohort') {
+      db.getSessionsForInstance(instance.id).forEach(s => { sessionsByNumber[s.session_number] = s; });
+    }
     const withProgress = lessons.map(l => {
       const progress = progressByLesson[l.id] || { status: 'not_started', last_position: null };
       const sequenceLocked = !!course?.enforce_lesson_sequence && !prevCompleted;
@@ -3738,10 +3764,11 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
         locked: adminLocked || sequenceLocked,
         lockReason: adminLocked ? 'admin' : (sequenceLocked ? 'sequence' : null),
         fileProgress: db.getLessonFileProgress(req.user.id, l.id),
+        scheduledAt: sessionsByNumber[l.lesson_number]?.scheduled_at || null,
       };
     });
 
-    res.json({ instance, enrolment, lessons: withProgress, resume });
+    res.json({ instance, course, enrolment, lessons: withProgress, resume });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

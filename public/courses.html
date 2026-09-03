@@ -43,6 +43,12 @@
     .instance-meta { display:flex; flex-wrap:wrap; gap:14px; font-size:13px; color:rgba(255,255,255,0.5); }
     .instance-meta-item { display:flex; align-items:center; gap:6px; margin-right:14px; }
     .instance-meta-item:last-child { margin-right:0; }
+    /* Per's request — the whole card was already clickable, but with no
+       visible call-to-action it read as just informational, not
+       "click here to join." Row-click still works exactly as before;
+       this just makes the action obvious too. */
+    .instance-register-btn { display:inline-block; margin-top:14px; padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.4); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.9); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; }
+    .instance-card:hover .instance-register-btn { background:rgba(180,230,200,0.18); }
 
     .empty-note { text-align:center; font-size:14px; color:rgba(255,255,255,0.35); padding:40px 20px; }
 
@@ -74,6 +80,20 @@
   </div>
 
   <div id="scheduleList" class="loading">Loading…</div>
+
+  <!-- Per's request — self-paced courses have no date/register flow (a
+       member gets them the moment they join, from inside the app
+       itself), so they get their own simpler section: title/description
+       only, no meta row, no per-course button — just one shared
+       "subscribe to get access" prompt at the end, since the action is
+       the same regardless of which course caught someone's eye. -->
+  <div style="margin-top:8px">
+    <div class="page-wordmark" style="margin-bottom:6px">Also In The App</div>
+    <div class="page-title" style="font-size:22px">Available Self-Paced Courses</div>
+    <div class="page-desc" style="font-size:13.5px">Free for members, any time — no live sessions, work through them at your own pace.</div>
+  </div>
+
+  <div id="selfPacedList" class="loading">Loading…</div>
 
   <div class="cta-card">
     <h2>Want to Teach a Course Like This?</h2>
@@ -126,6 +146,7 @@
             ${i.start_date ? `<span class="instance-meta-item">Starts ${fmtDate(i.start_date)}</span>` : ''}
             ${i.facilitator_names ? `<span class="instance-meta-item">With ${i.facilitator_names}</span>` : ''}
           </div>
+          <span class="instance-register-btn">Register →</span>
         </a>
       `).join('') + '</div>';
     } catch(e) {
@@ -133,6 +154,34 @@
     }
   }
   loadSchedule();
+
+  // Per's request — the second, simpler section: no dates, no per-card
+  // register button, just title/description and one shared subscribe
+  // prompt underneath (see the .cta-card-like markup below).
+  async function loadSelfPaced() {
+    const el = document.getElementById('selfPacedList');
+    try {
+      const list = await (await fetch('/api/public/self-paced-courses')).json();
+      if (!Array.isArray(list) || !list.length) {
+        el.outerHTML = '<div class="empty-note" id="selfPacedList">Nothing self-paced published yet.</div>';
+        return;
+      }
+      el.outerHTML = '<div style="display:flex;flex-direction:column;gap:14px" id="selfPacedList">' + list.map(c => `
+        <div class="instance-card" style="cursor:default">
+          <div class="instance-title" style="margin-bottom:${c.description ? '8px' : '0'}">${c.title}</div>
+          ${c.description ? `<div class="instance-meta" style="display:block;line-height:1.6">${c.description}</div>` : ''}
+        </div>
+      `).join('') +
+      `<div class="cta-card" style="margin-top:2px">
+        <h2>Not a Member Yet?</h2>
+        <p>Membership includes every self-paced course above, plus the full practice library — no separate payment per course.</p>
+        <a class="cta-btn" href="/join">Subscribe to Get Access</a>
+      </div></div>`;
+    } catch(e) {
+      el.textContent = 'Could not load these right now — please try again.';
+    }
+  }
+  loadSelfPaced();
 </script>
 
 <script>window.TOMTE_PAGE = 'Courses';</script>

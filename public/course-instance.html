@@ -192,6 +192,7 @@
           <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
           <div class="page-title">${i.title}</div>
           <div class="page-subtitle">${i.course_title}</div>
+          ${i.status === 'open' ? `<a class="cta-btn cta-register-btn" style="margin-top:16px;padding:11px 22px;font-size:12px" href="/register?instance=${selectedInstanceId}">Register</a>` : ''}
         </div>
 
         ${datePickerHtml}
@@ -206,7 +207,9 @@
           </div>
         </div>
 
-        ${i.course_description ? `<div class="card"><h2>About This Course</h2><p>${i.course_description}</p></div>` : ''}
+        ${i.course_description ? `<div class="card"><h2>About This Course</h2><p>${i.course_description}</p>
+          ${i.status === 'open' ? `<div style="text-align:center;margin-top:18px"><a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="/register?instance=${selectedInstanceId}">Register</a></div>` : ''}
+        </div>` : ''}
 
         <div class="card">
           <h2>Taught By</h2>
@@ -217,7 +220,7 @@
         <div class="cta-card" id="ctaCard">
           <h2>Ready to Join?</h2>
           <p id="ctaText">Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
-          <a class="cta-btn" id="ctaBtn" href="/register?instance=${selectedInstanceId}">Register</a>
+          <a class="cta-btn cta-register-btn" id="ctaBtn" href="/register?instance=${selectedInstanceId}">Register</a>
         </div>` : ''}
       `;
       // Per's request — instance-aware registration. If the visitor is
@@ -231,42 +234,54 @@
     }
   }
   // Per App 31 — flips which instance Register/Enrol act on, and keeps
-  // the visible Register link's href in sync for anyone who hasn't
-  // logged in (the logged-in Enrol path reads selectedInstanceId
-  // directly at click time instead, see checkAlreadyLoggedIn below).
+  // every Register link's href in sync for anyone who hasn't logged in
+  // (the logged-in Enrol path reads selectedInstanceId directly at click
+  // time instead, see checkAlreadyLoggedIn below). Per's request added
+  // two more Register buttons (top and middle of the page, previously
+  // only the bottom one existed) — all three share the cta-register-btn
+  // class now, so one picked date updates all of them, not just one.
   function onInstancePicked(id) {
     selectedInstanceId = id;
-    const btn = document.getElementById('ctaBtn');
-    if (btn && btn.hasAttribute('href')) btn.href = `/register?instance=${id}`;
+    document.querySelectorAll('.cta-register-btn').forEach(btn => {
+      if (btn.hasAttribute('href')) btn.href = `/register?instance=${id}`;
+    });
   }
   async function checkAlreadyLoggedIn() {
     try {
       const res = await fetch('/api/account');
-      if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register button as-is
-      document.getElementById('ctaText').textContent = "You're logged in — enrol below and you'll find this course in your library right away.";
-      const btn = document.getElementById('ctaBtn');
-      btn.textContent = 'Enrol Now';
-      btn.removeAttribute('href');
-      btn.style.cursor = 'pointer';
-      btn.onclick = async () => {
-        btn.textContent = 'Enrolling…';
-        try {
-          // Per App 31 — reads whichever instance is currently selected
-          // at the moment of the actual click, not whatever was loaded
-          // when the page first rendered, so switching the date pick
-          // above and then clicking Enrol acts on the one just chosen.
-          const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: selectedInstanceId }) });
-          const data = await r.json();
-          if (data.requiresPayment) { location.href = data.checkoutUrl; return; }
-          if (data.ok) { location.href = `/client/?course=${instanceId}`; return; }
-          document.getElementById('ctaText').textContent = data.error || 'Something went wrong — please try again.';
-          btn.textContent = 'Enrol Now';
-        } catch(e) {
-          document.getElementById('ctaText').textContent = 'Something went wrong — please try again.';
-          btn.textContent = 'Enrol Now';
-        }
-      };
-    } catch(e) { /* not logged in — leave the Register button as-is */ }
+      if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register buttons as-is
+      const text = document.getElementById('ctaText');
+      if (text) text.textContent = "You're logged in — enrol below and you'll find this course in your library right away.";
+      document.querySelectorAll('.cta-register-btn').forEach(btn => {
+        btn.textContent = 'Enrol Now';
+        btn.removeAttribute('href');
+        btn.style.cursor = 'pointer';
+        btn.onclick = async () => {
+          document.querySelectorAll('.cta-register-btn').forEach(b => b.textContent = 'Enrolling…');
+          try {
+            // Per App 31 — reads whichever instance is currently selected
+            // at the moment of the actual click, not whatever was loaded
+            // when the page first rendered, so switching the date pick
+            // above and then clicking Enrol acts on the one just chosen.
+            const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: selectedInstanceId }) });
+            const data = await r.json();
+            if (data.requiresPayment) { location.href = data.checkoutUrl; return; }
+            // Per's real bug, found and fixed while merging in the extra
+            // Register buttons — this referenced an undefined
+            // "instanceId" (this function's own parameter was removed
+            // when it switched to reading selectedInstanceId, but this
+            // one line was missed), which would have thrown the moment
+            // a logged-in member actually completed enrolment here.
+            if (data.ok) { location.href = `/client/?course=${selectedInstanceId}`; return; }
+            if (text) text.textContent = data.error || 'Something went wrong — please try again.';
+            document.querySelectorAll('.cta-register-btn').forEach(b => b.textContent = 'Enrol Now');
+          } catch(e) {
+            if (text) text.textContent = 'Something went wrong — please try again.';
+            document.querySelectorAll('.cta-register-btn').forEach(b => b.textContent = 'Enrol Now');
+          }
+        };
+      });
+    } catch(e) { /* not logged in — leave the Register buttons as-is */ }
   }
   loadInstance();
 </script>
