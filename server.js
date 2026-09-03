@@ -4764,6 +4764,40 @@ app.get('/api/admin/backup/download', auth.requireAuthApi(['admin']), (req, res)
     res.status(500).json({ error: 'Could not export the database right now.' });
   }
 });
+// ── Full database restore — urgent one-time recovery tool, built the day
+// this was actually needed (the live volume's data was found empty; a
+// manual backup from Aug 12 was the best recovery point available).
+// Accepts an uploaded .db file (the exact format the download endpoint
+// above already produces), checks it's genuinely a SQLite file before
+// touching anything, writes it to the real path the app boots from, then
+// exits the process on purpose — Railway restarts a stopped process
+// automatically, and that fresh boot reloads from this file through the
+// app's own normal startup sequence, including every pending schema
+// migration since Aug 12, so an older backup catches up to the current
+// app version on its own rather than needing a separate compatibility
+// step here.
+const DB_RESTORE_PATH = path.join(__dirname, 'db', 'perbot.db');
+app.post('/api/admin/backup/restore', auth.requireAuthApi(['admin']), upload.single('dbfile'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file was uploaded.' });
+    const buf = fs.readFileSync(req.file.path);
+    const header = buf.slice(0, 16).toString('utf8');
+    if (!header.startsWith('SQLite format 3')) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "This doesn't look like a valid database file (wrong file header) — nothing was touched." });
+    }
+    fs.mkdirSync(path.dirname(DB_RESTORE_PATH), { recursive: true });
+    fs.copyFileSync(req.file.path, DB_RESTORE_PATH);
+    fs.unlinkSync(req.file.path);
+    res.json({ ok: true, message: 'Restored. The app is restarting now — give it about 30 seconds, then reload.' });
+    // Let the response above actually reach the browser before exiting.
+    setTimeout(() => process.exit(0), 800);
+  } catch (e) {
+    console.error('db restore error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+app.get('/admin/restore', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'restore.html')));
 
 // Export everything as one CSV — for backup, or editing offline before a
 // re-import. Audio-kind rows show the referenced library file's title in
