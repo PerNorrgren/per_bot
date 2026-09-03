@@ -9224,8 +9224,12 @@ app.post('/api/admin/course-instances/:id/sessions/generate-from-lessons', auth.
   try {
     const instance = db.getCourseInstance(req.params.id);
     if (!instance) return res.status(404).json({ error: 'Instance not found.' });
-    const lessons = db.getLessonsForCourse(instance.course_id);
-    if (!lessons.length) return res.status(400).json({ error: 'This course has no lessons yet — add lessons first, then generate sessions from them.' });
+    // Per's request — lesson_number 0 is the self-paced/online "Introduction"
+    // lesson, not a real cohort meeting; cohort sessions start at 1.
+    // Filtered here (not just left to number oddly) so it never shows up
+    // as "Session 0" in a live cohort's schedule.
+    const lessons = db.getLessonsForCourse(instance.course_id).filter(l => l.lesson_number >= 1);
+    if (!lessons.length) return res.status(400).json({ error: 'This course has no lessons numbered 1 or higher yet — add lessons first, then generate sessions from them.' });
     const existingNumbers = new Set(db.getSessionsForInstance(req.params.id).map(s => s.session_number));
     const parsedTime = parseScheduleTimeServerSide(instance.schedule_time);
     let created = 0, skipped = 0;
@@ -9236,6 +9240,8 @@ app.post('/api/admin/course-instances/:id/sessions/generate-from-lessons', auth.
         // Weekly cadence — matches the same assumption the New Instance
         // modal's End Date auto-fill already makes (one session per
         // week on Schedule day), not derived independently here.
+        // Session 1 lands ON start_date itself (lesson_number - 1 = 0
+        // weeks offset), not a week after it.
         const base = new Date(instance.start_date + 'T00:00:00.000Z');
         base.setUTCDate(base.getUTCDate() + (lesson.lesson_number - 1) * 7);
         if (parsedTime) base.setUTCHours(parsedTime.hour, parsedTime.minute, 0, 0);
