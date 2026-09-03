@@ -187,16 +187,25 @@
         </div>
       ` : '';
 
+      // Per's request — a self-paced course has no date/schedule at all,
+      // and its "join" action is "subscribe to become a member," not
+      // "register for this specific instance" — the When card and the
+      // Register wording/link both need to reflect that.
+      const isSelfPaced = i.mode === 'self_paced';
+      const joinHref = isSelfPaced ? '/join' : `/register?instance=${selectedInstanceId}`;
+      const joinLabel = isSelfPaced ? 'Subscribe to Get Access' : 'Register';
+
       el.innerHTML = `
         <div>
           <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
           <div class="page-title">${i.title}</div>
           <div class="page-subtitle">${i.course_title}</div>
-          ${i.status === 'open' ? `<a class="cta-btn cta-register-btn" style="margin-top:16px;padding:11px 22px;font-size:12px" href="/register?instance=${selectedInstanceId}">Register</a>` : ''}
+          ${i.status === 'open' ? `<a class="cta-btn cta-register-btn" style="margin-top:16px;padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a>` : ''}
         </div>
 
         ${datePickerHtml}
 
+        ${!isSelfPaced ? `
         <div class="card" style="margin-top:22px">
           <h2>When</h2>
           <div class="meta-grid">
@@ -206,9 +215,10 @@
             ${i.status === 'closed' ? `<div class="meta-row"><div class="meta-label">Status</div><div class="meta-value">This intake has closed — see the schedule for what's currently open.</div></div>` : ''}
           </div>
         </div>
+        ` : ''}
 
-        ${i.course_description ? `<div class="card"><h2>About This Course</h2><p>${i.course_description}</p>
-          ${i.status === 'open' ? `<div style="text-align:center;margin-top:18px"><a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="/register?instance=${selectedInstanceId}">Register</a></div>` : ''}
+        ${i.course_description ? `<div class="card" style="margin-top:${isSelfPaced ? '22px' : '0'}"><h2>About This Course</h2><p>${i.course_description}</p>
+          ${i.status === 'open' ? `<div style="text-align:center;margin-top:18px"><a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a></div>` : ''}
         </div>` : ''}
 
         <div class="card">
@@ -218,9 +228,9 @@
 
         ${i.status === 'open' ? `
         <div class="cta-card" id="ctaCard">
-          <h2>Ready to Join?</h2>
-          <p id="ctaText">Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.</p>
-          <a class="cta-btn cta-register-btn" id="ctaBtn" href="/register?instance=${selectedInstanceId}">Register</a>
+          <h2>${isSelfPaced ? 'Not a Member Yet?' : 'Ready to Join?'}</h2>
+          <p id="ctaText">${isSelfPaced ? 'Membership includes this course, plus the full practice library — no separate payment per course.' : "Create an account to enrol — once you're registered, you'll find this course waiting for you in your library."}</p>
+          <a class="cta-btn cta-register-btn" id="ctaBtn" href="${joinHref}">${joinLabel}</a>
         </div>` : ''}
       `;
       // Per's request — instance-aware registration. If the visitor is

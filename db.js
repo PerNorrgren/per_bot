@@ -3389,7 +3389,7 @@ function getPublicSchedule() {
 // isn't a "just subscribe" pitch, it's a higher upsell that doesn't
 // belong in a general membership teaser.
 function getPublicSelfPacedCourses() {
-  return queryAll(`SELECT c.id, c.title, c.description
+  return queryAll(`SELECT c.id, c.title, c.description, ci.id as instance_id
     FROM courses c
     JOIN course_instances ci ON ci.course_id=c.id AND ci.status='open' AND ci.mode='self_paced'
     WHERE c.access_status='visible' AND (c.required_tier IS NULL OR c.required_tier=0)
@@ -4564,6 +4564,15 @@ function createEnrolment(id, userId, courseInstanceId, paymentStatus, amountPaid
   save();
 }
 function getEnrolment(id) { return queryOne('SELECT * FROM enrolments WHERE id=?', [id]); }
+// Per's request — student-set reminder channel, editable from the
+// course page any time, not just at enrolment. Validation (SMS
+// requires a real phone number) lives in the route in server.js, not
+// here — this just writes whatever it's given.
+function setEnrolmentReminderPrefs(id, reminderEmail, reminderSms) {
+  getDbSync().run('UPDATE enrolments SET reminder_email=?, reminder_sms=? WHERE id=?',
+    [reminderEmail ? 1 : 0, reminderSms ? 1 : 0, id]);
+  save();
+}
 function getEnrolmentForUserAndInstance(userId, courseInstanceId) {
   return queryOne('SELECT * FROM enrolments WHERE user_id=? AND course_instance_id=?', [userId, courseInstanceId]);
 }
@@ -8946,9 +8955,15 @@ const MESSAGE_TYPE_REGISTRY = {
   // savers_failure_resolved just above, so they simply start with zero
   // versions and run on their built-in defaults until/unless edited.
   enrolment_confirmed:    { label: 'Course enrolment confirmed',       subjectCol: 'enrolment_confirmed_subject',    bodyCol: 'enrolment_confirmed_body',    formatCol: 'enrolment_confirmed_format',    extraCols: {} },
-  session_reminder_3day:  { label: 'Session reminder \u2014 3 days before', subjectCol: 'session_reminder_3day_subject',  bodyCol: 'session_reminder_3day_body',  formatCol: 'session_reminder_3day_format',  extraCols: {} },
-  session_reminder_1day:  { label: 'Session reminder \u2014 1 day before',  subjectCol: 'session_reminder_1day_subject',  bodyCol: 'session_reminder_1day_body',  formatCol: 'session_reminder_1day_format',  extraCols: {} },
-  session_reminder_1hour: { label: 'Session reminder \u2014 1 hour before', subjectCol: 'session_reminder_1hour_subject', bodyCol: 'session_reminder_1hour_body', formatCol: 'session_reminder_1hour_format', extraCols: {} },
+  // Per's request — the interval itself (how long before the session
+  // this fires) is now admin-editable per type via hours_before, same
+  // generic extra-field mechanism 'reminder'/'renewal' already use for
+  // their own "days" threshold. Defaults (72/24/1) match exactly what
+  // was hardcoded before this existed — see sendDueSessionReminders in
+  // server.js, which now reads these instead of a fixed thresholdMs.
+  session_reminder_3day:  { label: 'Session reminder \u2014 3 days before', subjectCol: 'session_reminder_3day_subject',  bodyCol: 'session_reminder_3day_body',  formatCol: 'session_reminder_3day_format',  extraCols: { hours_before: 'session_reminder_3day_hours_before', sms_body: 'session_reminder_3day_sms_body' } },
+  session_reminder_1day:  { label: 'Session reminder \u2014 1 day before',  subjectCol: 'session_reminder_1day_subject',  bodyCol: 'session_reminder_1day_body',  formatCol: 'session_reminder_1day_format',  extraCols: { hours_before: 'session_reminder_1day_hours_before', sms_body: 'session_reminder_1day_sms_body' } },
+  session_reminder_1hour: { label: 'Session reminder \u2014 1 hour before', subjectCol: 'session_reminder_1hour_subject', bodyCol: 'session_reminder_1hour_body', formatCol: 'session_reminder_1hour_format', extraCols: { hours_before: 'session_reminder_1hour_hours_before', sms_body: 'session_reminder_1hour_sms_body' } },
 };
 
 function isKnownMessageType(type) { return Object.prototype.hasOwnProperty.call(MESSAGE_TYPE_REGISTRY, type); }

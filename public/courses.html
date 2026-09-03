@@ -139,8 +139,9 @@
       }
       el.outerHTML = '<div style="display:flex;flex-direction:column;gap:14px" id="scheduleList">' + list.map(i => `
         <a class="instance-card" href="/course-instance/${i.id}">
-          <div class="instance-course">${i.course_title}</div>
-          <div class="instance-title">${i.instance_title}</div>
+          <div class="instance-course">🖥️ Live · Online (Zoom)</div>
+          <div class="instance-title">${i.course_title}</div>
+          <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:-6px;margin-bottom:10px">${i.instance_title}</div>
           <div class="instance-meta">
             ${i.schedule_day ? `<span class="instance-meta-item">📅 ${i.schedule_day}${i.schedule_time ? ', ' + i.schedule_time : ''}</span>` : ''}
             ${i.start_date ? `<span class="instance-meta-item">Starts ${fmtDate(i.start_date)}</span>` : ''}
@@ -167,10 +168,11 @@
         return;
       }
       el.outerHTML = '<div style="display:flex;flex-direction:column;gap:14px" id="selfPacedList">' + list.map(c => `
-        <div class="instance-card" style="cursor:default">
+        <a class="instance-card" href="/course-instance/${c.instance_id}">
           <div class="instance-title" style="margin-bottom:${c.description ? '8px' : '0'}">${c.title}</div>
-          ${c.description ? `<div class="instance-meta" style="display:block;line-height:1.6">${c.description}</div>` : ''}
-        </div>
+          ${c.description ? `<div class="instance-meta" style="display:block;line-height:1.6;margin-bottom:4px">${c.description}</div>` : ''}
+          <span class="instance-register-btn">Find Out More →</span>
+        </a>
       `).join('') +
       `<div class="cta-card" style="margin-top:2px">
         <h2>Not a Member Yet?</h2>
