@@ -136,6 +136,15 @@
           <select class="inline-input" id="efStatus"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select>
         </div>
       </div>
+      <!-- Per's request — links this form to a specific course instance
+           so its public Register button routes here instead of the
+           generic account-signup page (see getPublicInstanceOverview /
+           course-instance.html). Backend already supported this
+           (updateForm's courseInstanceId field); this was the missing
+           piece — nowhere in the admin UI could it actually be set. -->
+      <div class="field-row"><label class="field-label">Linked course instance <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — required for this form to handle a course's paid registration + payment)</span></label>
+        <select class="inline-input" id="efInstance"><option value="">None — a standalone form, not tied to a course</option></select>
+      </div>
       <div class="field-row"><label class="field-label">Intro text (shown before the questions)</label><textarea class="inline-input" id="efIntro" rows="2"></textarea></div>
 
       <div class="field-row"><label class="field-label">Data policy — what happens to their answers (shown to the respondent, with a required tick to agree)</label><textarea class="inline-input" id="efPolicy" rows="2"></textarea></div>
@@ -314,8 +323,24 @@
     document.getElementById('efPolicy').value = form.data_policy_text || '';
     document.getElementById('efRetention').value = form.retention_mode;
     document.getElementById('efRequireConsent').checked = !!form.require_consent;
+    await populateInstancePicker(form.course_instance_id);
     renderQuestionsList();
     openModal('editFormModal');
+  }
+  // Per's request — one flat picker across every course's instances
+  // (not a cascading course-then-instance pair) since most courses only
+  // ever have a handful of instances; simpler for the common case of
+  // picking "that one specific cohort" directly.
+  async function populateInstancePicker(currentInstanceId) {
+    const sel = document.getElementById('efInstance');
+    try {
+      const instances = await (await fetch('/api/admin/course-instances')).json();
+      sel.innerHTML = '<option value="">None — a standalone form, not tied to a course</option>' +
+        instances.map(i => `<option value="${i.id}">${escHtml(i.course_title || '')} — ${escHtml(i.title)}</option>`).join('');
+    } catch(e) {
+      sel.innerHTML = '<option value="">Could not load courses — try reopening this form</option>';
+    }
+    sel.value = currentInstanceId || '';
   }
   async function saveFormMeta() {
     try {
@@ -329,6 +354,7 @@
           dataPolicyText: document.getElementById('efPolicy').value,
           retentionMode: document.getElementById('efRetention').value,
           requireConsent: document.getElementById('efRequireConsent').checked,
+          courseInstanceId: document.getElementById('efInstance').value || null,
         })
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Could not save.');
