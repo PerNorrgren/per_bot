@@ -283,7 +283,12 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           }
 
           db.setFormResponseUserAndPayment(formResponseId, user.id, session.payment_intent || session.id);
-          db.completeFormResponse(formResponseId, response.consent_given);
+          // Per's request — consent as given at the actual checkout
+          // moment (carried through Stripe metadata, see the checkout
+          // endpoint), not response.consent_given on the DB row, which
+          // is never set until completeFormResponse itself runs — reading
+          // it here would always see the pre-completion default.
+          db.completeFormResponse(formResponseId, session.metadata?.consent_given === '1');
 
           if (instance) {
             const b = brand();
@@ -3834,6 +3839,68 @@ function resolveRegistrationContact(responseId) {
   const nameAnswer = nameQ ? answers.find(a => a.question_id === nameQ.id) : null;
   return { email: (emailAnswer?.text_value || '').trim() || null, name: (nameAnswer?.text_value || '').trim() || null };
 }
+// Per's request — public/anonymous access to a course registration Form,
+// for someone who doesn't have an account yet. Deliberately narrow:
+// only ever available when the form is tied to a course instance that
+// actually charges something — a free self-paced course doesn't need
+// this whole payment-gated flow, the normal /register or logged-in
+// enrol path already covers it. Mirrors the authenticated
+// /api/client/forms/... trio almost exactly (same
+// answersToComparableMap/isQuestionVisible helpers, same response
+// shape) so client-form.html can use either path depending on whether
+// the visitor happens to be logged in.
+app.get('/api/public/forms/:id', (req, res) => {
+  try {
+    const form = db.getForm(req.params.id);
+    if (!form || form.status !== 'active') return res.status(404).json({ error: 'This form is not currently available.' });
+    if (!form.course_instance_id) return res.status(403).json({ error: 'This form requires you to be signed in.' });
+    const instance = db.getCourseInstance(form.course_instance_id);
+    if (!instance || !instance.price_cents) return res.status(403).json({ error: 'This form requires you to be signed in.' });
+    const questions = db.getFormQuestions(form.id);
+    const safeQuestions = questions.map(q => ({ ...q, options: q.options.map(o => ({ id: o.id, sort_order: o.sort_order, option_text: o.option_text })) }));
+    // Resumes an existing anonymous response if a valid, still-open one
+    // was passed in (?response=), otherwise starts a fresh one — the
+    // client is responsible for putting the id it gets back into its own
+    // URL so a page refresh resumes rather than starting over.
+    let response = null;
+    const existingId = req.query.response;
+    if (existingId) {
+      const candidate = db.getFormResponse(existingId);
+      if (candidate && candidate.form_id === form.id && !candidate.user_id && candidate.status !== 'complete') response = candidate;
+    }
+    if (!response) {
+      const id = uuidv4();
+      db.createFormResponse(id, form.id, null, form.course_instance_id);
+      response = db.getFormResponse(id);
+    }
+    const existingAnswers = db.getResponseAnswers(response.id);
+    res.json({
+      id: form.id, title: form.title, kind: form.kind, introText: form.intro_text,
+      dataPolicyText: form.data_policy_text, requireConsent: !!form.require_consent,
+      questions: safeQuestions, responseId: response.id,
+      existingAnswers: answersToComparableMap(existingAnswers, questions),
+      requiresPayment: true, priceCents: instance.price_cents,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/public/forms/:id/responses/:responseId/answers', (req, res) => {
+  try {
+    const response = db.getFormResponse(req.params.responseId);
+    // Ownership check for an anonymous response: no user_id to compare
+    // against, so "is this genuinely an unclaimed, anonymous response to
+    // this form" is the check instead — prevents this public endpoint
+    // being used to tamper with an authenticated person's own response.
+    if (!response || response.user_id || response.form_id !== req.params.id) return res.status(404).json({ error: 'Not found.' });
+    if (response.status === 'complete') return res.status(400).json({ error: 'This form has already been submitted.' });
+    const questions = db.getFormQuestions(req.params.id);
+    const question = questions.find(q => q.id === req.body?.questionId);
+    if (!question) return res.status(400).json({ error: 'Unknown question.' });
+    const existing = answersToComparableMap(db.getResponseAnswers(response.id), questions);
+    if (!isQuestionVisible(question, existing)) return res.status(400).json({ error: 'This question is not currently applicable.' });
+    db.saveFormAnswer(response.id, question.id, req.body?.optionIds, req.body?.textValue);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/public/forms/:formId/checkout', async (req, res) => {
   try {
     if (!stripe) return res.status(503).json({ error: "Payment isn't set up yet — please check back soon." });
@@ -3847,6 +3914,17 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
     const response = db.getFormResponse(responseId);
     if (!response || response.form_id !== form.id) return res.status(404).json({ error: 'Response not found — please start the form again.' });
     if (response.status === 'complete') return res.status(400).json({ error: 'This registration has already been completed.' });
+    // Per's request — same validation the authenticated form-complete
+    // endpoint already enforces (see /api/client/forms/:id/responses/
+    // :responseId/complete), applied here since payment is this flow's
+    // actual "submit" moment — a form isn't really finished until
+    // checkout starts, so this is where required/consent must be
+    // checked, not a separate step beforehand that could be skipped.
+    if (form.require_consent && !req.body?.consentGiven) return res.status(400).json({ error: 'Please confirm you agree before continuing to payment.' });
+    const questions = db.getFormQuestions(form.id);
+    const answered = answersToComparableMap(db.getResponseAnswers(responseId), questions);
+    const missing = questions.filter(q => q.required && isQuestionVisible(q, answered) && !(answered[q.id] && answered[q.id].length));
+    if (missing.length) return res.status(400).json({ error: `Please answer: ${missing[0].question_text}` });
     const { email } = resolveRegistrationContact(responseId);
     const session = await stripe.checkout.sessions.create({
       customer_email: email || undefined,
@@ -3858,7 +3936,7 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
       mode: 'payment',
       success_url: `${APP_URL}/course-instance/${instance.id}?registered=1`,
       cancel_url: `${APP_URL}/course-instance/${instance.id}?registered=0`,
-      metadata: { type: 'course_registration_form', form_response_id: responseId, course_instance_id: instance.id },
+      metadata: { type: 'course_registration_form', form_response_id: responseId, course_instance_id: instance.id, consent_given: req.body?.consentGiven ? '1' : '0' },
     });
     res.json({ ok: true, checkoutUrl: session.url });
   } catch(e) {
@@ -13073,7 +13151,17 @@ app.get('/admin/forms',    auth.requireAuth(['admin']), (req, res) => res.sendFi
 app.get('/admin/forms/',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'forms.html')));
 // Client-facing fill-out page for one form — gated to logged-in clients,
 // same as every other page under /client/.
-app.get('/forms/:id',      auth.requireAuth(['client']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'client-form.html')));
+// Per's request — this used to require login before the page would even
+// load at all (auth.requireAuth redirects straight to /login with no
+// way to reach the form), which made a course-registration form
+// completely unreachable for the person it's actually for: someone with
+// no account yet. The real access control now lives one layer down, at
+// the API level — /api/client/forms/:id still requires a signed-in
+// client (unchanged, for an ordinary intake-survey-style form), while
+// /api/public/forms/:id independently checks that a form is genuinely
+// eligible for anonymous access (tied to a paid course instance) before
+// serving anything. The page itself just needs to be reachable either way.
+app.get('/forms/:id',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'client-form.html')));
 app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
 
 // ── Legal document public pages ──
@@ -14037,10 +14125,10 @@ app.post('/api/admin/forms/:id/duplicate', auth.requireAuthApi(['admin']), (req,
 
 app.post('/api/admin/forms/:id/questions', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { questionText, questionType, required, sortOrder, showIfQuestionId, showIfValue } = req.body || {};
+    const { questionText, questionType, required, sortOrder, showIfQuestionId, showIfValue, isEmailField, isNameField } = req.body || {};
     if (!questionText || !questionText.trim()) return res.status(400).json({ error: 'Question text is required.' });
     const id = uuidv4();
-    db.addFormQuestion(id, req.params.id, { questionText: questionText.trim(), questionType, required, sortOrder, showIfQuestionId, showIfValue });
+    db.addFormQuestion(id, req.params.id, { questionText: questionText.trim(), questionType, required, sortOrder, showIfQuestionId, showIfValue, isEmailField, isNameField });
     res.json({ ok: true, id });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -183,6 +183,16 @@
         </div>
       </div>
 
+      <!-- Per's request — course registration via a Form + payment needs
+           to know which answer is the person's email/name once payment
+           completes and their account gets created (see
+           resolveRegistrationContact in server.js). Only makes sense for
+           a short-text answer, so this row only shows for that type. -->
+      <div id="qmContactFieldsWrap" style="display:flex;gap:16px;margin-bottom:14px">
+        <label class="field-check"><input type="checkbox" id="qmIsEmailField"/> This is their email address</label>
+        <label class="field-check"><input type="checkbox" id="qmIsNameField"/> This is their name</label>
+      </div>
+
       <div id="qmOptionsWrap">
         <label class="field-label">Options</label>
         <div id="qmOptions"></div>
@@ -355,6 +365,15 @@
   function toggleOptionsVisibility() {
     const type = document.getElementById('qmType').value;
     document.getElementById('qmOptionsWrap').style.display = (type === 'radio' || type === 'checkbox') ? 'block' : 'none';
+    // Per's request — email/name only make sense for a short-text
+    // answer; hidden (and unchecked, so a stale flag can't silently
+    // persist) for every other question type.
+    const contactWrap = document.getElementById('qmContactFieldsWrap');
+    contactWrap.style.display = type === 'text' ? 'flex' : 'none';
+    if (type !== 'text') {
+      document.getElementById('qmIsEmailField').checked = false;
+      document.getElementById('qmIsNameField').checked = false;
+    }
   }
   function addOptionRow(text, isCorrect, points, id) {
     const wrap = document.getElementById('qmOptions');
@@ -393,6 +412,8 @@
     document.getElementById('qmText').value = '';
     document.getElementById('qmType').value = 'text';
     document.getElementById('qmRequired').checked = false;
+    document.getElementById('qmIsEmailField').checked = false;
+    document.getElementById('qmIsNameField').checked = false;
     document.getElementById('qmOptions').innerHTML = '';
     toggleOptionsVisibility();
     const existingTextInput = document.getElementById('qmShowIfValueText');
@@ -411,6 +432,8 @@
     document.getElementById('qmText').value = q.question_text;
     document.getElementById('qmType').value = q.question_type;
     document.getElementById('qmRequired').checked = !!q.required;
+    document.getElementById('qmIsEmailField').checked = !!q.is_email_field;
+    document.getElementById('qmIsNameField').checked = !!q.is_name_field;
     document.getElementById('qmOptions').innerHTML = '';
     (q.options || []).forEach(o => addOptionRow(o.option_text, o.is_correct, o.points, o.id));
     toggleOptionsVisibility();
@@ -433,10 +456,12 @@
     if (!questionText) { showFeedback('qmFeedback', 'Question text is required.', 'err'); return; }
     const questionType = document.getElementById('qmType').value;
     const required = document.getElementById('qmRequired').checked;
+    const isEmailField = document.getElementById('qmIsEmailField').checked;
+    const isNameField = document.getElementById('qmIsNameField').checked;
     const showIfQuestionId = document.getElementById('qmShowIfQuestion').value || null;
     const textInput = document.getElementById('qmShowIfValueText');
     const showIfValue = showIfQuestionId ? (textInput ? textInput.value : document.getElementById('qmShowIfValue').value) : null;
-    const payload = { questionText, questionType, required, showIfQuestionId, showIfValue };
+    const payload = { questionText, questionType, required, showIfQuestionId, showIfValue, isEmailField, isNameField };
     try {
       let qid = editingQuestionId;
       if (qid) {

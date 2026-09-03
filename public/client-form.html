@@ -41,6 +41,14 @@
   const formId = location.pathname.split('/').pop();
   let formData = null;
   let answers = {}; // questionId -> array of comparable values (option ids or text)
+  // Per's request — course registration for someone who has no account
+  // at all yet. Tries the existing authenticated path first (unchanged
+  // behaviour for every form that isn't this kind), and only falls back
+  // to the public/anonymous path if that fails — so an ordinary
+  // logged-in-client form (an intake survey, say) works exactly as it
+  // always did, and this only ever kicks in for a form that's genuinely
+  // meant to be filled out before an account exists.
+  let usePublicApi = false;
 
   function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -59,11 +67,28 @@
 
   async function load() {
     try {
-      const res = await fetch(`/api/client/forms/${formId}`);
+      let res = await fetch(`/api/client/forms/${formId}`);
+      if (res.status === 401) {
+        // Not signed in — try the public/anonymous path instead. A
+        // ?response= already in the URL resumes a previous anonymous
+        // attempt (e.g. they came back after a cancelled payment).
+        usePublicApi = true;
+        const existing = new URLSearchParams(location.search).get('response');
+        res = await fetch(`/api/public/forms/${formId}${existing ? '?response=' + encodeURIComponent(existing) : ''}`);
+      }
       const data = await res.json();
       if (!res.ok) { document.getElementById('panel').innerHTML = `<div class="card"><p class="err">${escHtml(data.error || 'This form is not available right now.')}</p></div>`; return; }
       formData = data;
       answers = data.existingAnswers || {};
+      // Per's request — so a page refresh resumes the same anonymous
+      // response instead of silently starting a fresh one every time.
+      if (usePublicApi) {
+        const params = new URLSearchParams(location.search);
+        if (params.get('response') !== formData.responseId) {
+          params.set('response', formData.responseId);
+          history.replaceState(null, '', location.pathname + '?' + params.toString());
+        }
+      }
       render();
     } catch (e) {
       document.getElementById('panel').innerHTML = '<div class="card"><p class="err">Something went wrong loading this form.</p></div>';
@@ -76,6 +101,7 @@
       <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
       <div class="title">${escHtml(formData.title)}</div>
       ${formData.introText ? `<div class="intro">${escHtml(formData.introText)}</div>` : ''}
+      ${formData.requiresPayment ? `<div class="intro" style="color:rgba(180,230,200,0.75)">Registration fee: £${(formData.priceCents / 100).toFixed(2)} — you'll pay on the next step, after submitting this form.</div>` : ''}
       <div id="questionsWrap">${visibleQuestions.map(renderQuestion).join('')}</div>
       ${formData.dataPolicyText ? `
       <div class="card consent-card">
@@ -83,8 +109,8 @@
         <label class="consent-check"><input type="checkbox" id="consentCheck"/> I've read this and agree.</label>
       </div>` : ''}
       <div id="submitErr" class="err"></div>
-      <button class="submit-btn" id="submitBtn" onclick="submitForm()">Submit</button>
-      <div class="skip-link" onclick="location.href='/client/'">I'll finish this later</div>
+      <button class="submit-btn" id="submitBtn" onclick="submitForm()">${formData.requiresPayment ? 'Continue to Payment' : 'Submit'}</button>
+      ${!usePublicApi ? `<div class="skip-link" onclick="location.href='/client/'">I'll finish this later</div>` : ''}
     `;
   }
 
@@ -130,7 +156,8 @@
   }
   async function saveAnswer(qid, optionIds, textValue) {
     try {
-      await fetch(`/api/client/forms/${formId}/responses/${formData.responseId}/answers`, {
+      const base = usePublicApi ? '/api/public/forms' : '/api/client/forms';
+      await fetch(`${base}/${formId}/responses/${formData.responseId}/answers`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questionId: qid, optionIds, textValue })
       });
@@ -144,7 +171,28 @@
     const consentEl = document.getElementById('consentCheck');
     const consentGiven = consentEl ? consentEl.checked : true;
     if (formData.requireConsent && !consentGiven) { errEl.textContent = 'Please confirm you agree before submitting.'; return; }
-    btn.disabled = true; btn.textContent = 'Submitting…';
+    btn.disabled = true;
+    // Per's request — for a course-registration form (requiresPayment),
+    // "submit" means "go to Stripe," not "mark this complete" — the
+    // response only actually becomes complete once the
+    // checkout.session.completed webhook fires, after real payment.
+    if (formData.requiresPayment) {
+      btn.textContent = 'Continuing to payment…';
+      try {
+        const res = await fetch(`/api/public/forms/${formId}/checkout`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ responseId: formData.responseId, consentGiven })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not continue to payment.');
+        location.href = data.checkoutUrl;
+      } catch (e) {
+        errEl.textContent = e.message;
+        btn.disabled = false; btn.textContent = 'Submit';
+      }
+      return;
+    }
+    btn.textContent = 'Submitting…';
     try {
       const res = await fetch(`/api/client/forms/${formId}/responses/${formData.responseId}/complete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consentGiven })

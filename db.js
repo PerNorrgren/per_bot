@@ -5172,21 +5172,23 @@ function duplicateForm(id, newTitle) {
 
 function addFormQuestion(id, formId, fields) {
   getDbSync().run(
-    `INSERT INTO form_questions (id,form_id,sort_order,question_text,question_type,required,show_if_question_id,show_if_value)
-     VALUES (?,?,?,?,?,?,?,?)`,
+    `INSERT INTO form_questions (id,form_id,sort_order,question_text,question_type,required,show_if_question_id,show_if_value,is_email_field,is_name_field)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
     [id, formId, fields.sortOrder || 0, fields.questionText, fields.questionType || 'text',
-     fields.required ? 1 : 0, fields.showIfQuestionId || null, fields.showIfValue || null]
+     fields.required ? 1 : 0, fields.showIfQuestionId || null, fields.showIfValue || null,
+     fields.isEmailField ? 1 : 0, fields.isNameField ? 1 : 0]
   );
   save();
 }
 function updateFormQuestion(id, fields) {
   const sets = []; const vals = [];
   const map = { sortOrder: 'sort_order', questionText: 'question_text', questionType: 'question_type',
-    required: 'required', showIfQuestionId: 'show_if_question_id', showIfValue: 'show_if_value' };
+    required: 'required', showIfQuestionId: 'show_if_question_id', showIfValue: 'show_if_value',
+    isEmailField: 'is_email_field', isNameField: 'is_name_field' };
   Object.entries(map).forEach(([jsKey, col]) => {
     if (fields[jsKey] === undefined) return;
     sets.push(`${col}=?`);
-    vals.push(jsKey === 'required' ? (fields[jsKey] ? 1 : 0) : fields[jsKey]);
+    vals.push((jsKey === 'required' || jsKey === 'isEmailField' || jsKey === 'isNameField') ? (fields[jsKey] ? 1 : 0) : fields[jsKey]);
   });
   if (!sets.length) return;
   vals.push(id);
