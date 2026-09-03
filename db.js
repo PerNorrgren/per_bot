@@ -2737,6 +2737,11 @@ async function getDb() {
     // a course can run one instance as a paid-course-only offering and
     // another as this membership-bundled kind.
     "ALTER TABLE course_instances ADD COLUMN grants_membership_months INTEGER",
+    // Per's request — for the facilitator's own course summary view
+    // (participant list, dates, materials) to actually show the real
+    // Zoom link rather than leaving it as something said out loud in an
+    // admin conversation with no home in the data at all.
+    "ALTER TABLE course_instances ADD COLUMN zoom_link TEXT",
     // Per's request — course registration via a custom Form + payment.
     // A flag on any text-type question rather than a rigid "the email
     // question is always called X" convention, so Per can word it
@@ -4554,7 +4559,7 @@ function getAllCourseInstances(filters = {}) {
   return queryAll(sql, params);
 }
 function updateCourseInstance(id, fields) {
-  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time','grants_membership_months'];
+  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time','grants_membership_months','zoom_link'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -5339,6 +5344,17 @@ function getFormResponsesForReport(formId) {
     FROM form_responses r LEFT JOIN users u ON r.user_id = u.id
     WHERE r.form_id=? AND r.status='complete'
     ORDER BY r.completed_at DESC`, [formId]);
+}
+// Per's request — from a course's Roster, a facilitator can click
+// through to see a specific participant's answers to that course's
+// registration form (if one exists and they completed it). Most recent
+// completed response wins if somehow more than one form has ever been
+// linked to this instance over time.
+function getFormResponseForUserAndInstance(userId, courseInstanceId) {
+  return queryOne(`SELECT r.* FROM form_responses r
+    JOIN forms f ON r.form_id = f.id
+    WHERE r.user_id=? AND f.course_instance_id=? AND r.status='complete'
+    ORDER BY r.completed_at DESC LIMIT 1`, [userId, courseInstanceId]);
 }
 function getFormResponseDetail(responseId) {
   const response = getFormResponse(responseId);
@@ -9635,7 +9651,7 @@ module.exports = {
   addFormQuestion, updateFormQuestion, deleteFormQuestion, getFormQuestions,
   addFormOption, updateFormOption, deleteFormOption,
   createFormResponse, getFormResponse, getInProgressResponse, saveFormAnswer, getResponseAnswers,
-  completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses, setFormResponseUserAndPayment,
+  completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses, setFormResponseUserAndPayment, getFormResponseForUserAndInstance,
   getNextUnusedMotdForPlatform, markMotdUsedForSocial, getUpcomingQueuedTimesForPlatform,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,

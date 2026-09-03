@@ -560,6 +560,13 @@
            so the co-pilot has that session's own notes in context. -->
       <div class="left-col" id="instanceWorkspace" style="display:none;flex:1">
         <div style="padding:12px 16px 0;flex-shrink:0">
+          <!-- Per's request — the facilitator's own course summary needs
+               the real Zoom link, not something said out loud in a
+               separate conversation with no home in the app. Hidden
+               entirely when none is set, rather than showing an empty row. -->
+          <div id="instZoomLinkRow" style="display:none;margin-bottom:10px">
+            <a id="instZoomLinkAnchor" href="#" target="_blank" style="display:inline-block;padding:8px 14px;border-radius:8px;background:rgba(180,230,200,0.12);border:1px solid rgba(180,230,200,0.3);color:rgba(180,230,200,0.9);font-size:12px;text-decoration:none">🖥️ Open Zoom link</a>
+          </div>
           <label style="font-size:10.5px;color:rgba(180,230,200,0.6);letter-spacing:0.06em;text-transform:uppercase;display:block;margin-bottom:5px">Teaching right now</label>
           <select id="instTeachingSessionSelect" onchange="restartInstanceWs()" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:8px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:12.5px">
             <option value="">General — no specific session selected</option>
@@ -582,6 +589,19 @@
   </div>
 </div>
 
+
+<!-- Per's request — a roster participant's registration-form answers,
+     lightweight modal rather than a new page (see viewStudentFormAnswers
+     above). Plain overlay/close pattern matching this page's existing
+     modals rather than the shared modal-overlay class, since this page
+     doesn't consistently use that class for every popup already here. -->
+<div id="studentAnswersModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:200;align-items:center;justify-content:center" onclick="if(event.target===this)closeStudentAnswersModal()">
+  <div style="background:#1a1f1c;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:24px;width:90%;max-width:480px;max-height:75vh;overflow-y:auto">
+    <h3 id="studentAnswersTitle" style="font-size:16px;color:rgba(255,255,255,0.9);margin-bottom:16px;font-weight:normal"></h3>
+    <div id="studentAnswersBody"></div>
+    <button class="action-btn" style="margin-top:12px" onclick="closeStudentAnswersModal()">Close</button>
+  </div>
+</div>
 
 <!-- New Client Modal -->
 <div class="modal-overlay" id="newClientModal">
@@ -807,7 +827,23 @@
     loadInstSessions();
     loadInstContent();
     loadInstNotes();
+    loadInstZoomLink();
     openInstanceWs(id, null);
+  }
+  // Per's request — the Zoom link, shown right at the top of the
+  // workspace when the instance has one set (admin adds it in the Edit
+  // Instance modal). Hidden entirely rather than shown empty when none
+  // is set, since most self-paced/no-instance workspaces won't have one.
+  async function loadInstZoomLink() {
+    const row = document.getElementById('instZoomLinkRow');
+    row.style.display = 'none';
+    try {
+      const instance = await fetch(`/api/facilitator/instances/${currentFacInstanceId}`).then(r => r.json());
+      if (instance?.zoom_link) {
+        document.getElementById('instZoomLinkAnchor').href = instance.zoom_link;
+        row.style.display = 'block';
+      }
+    } catch(e) { /* no link to show — row stays hidden */ }
   }
 
   // Per's request — reopens the co-pilot connection with the newly
@@ -838,11 +874,37 @@
           ${r.completed_lessons}/${r.total_lessons} sessions<br>
           <span style="color:rgba(180,230,200,0.75)">${r.percent_complete}%</span>
         </div>
+        <button class="action-btn" style="font-size:10.5px;padding:5px 9px" onclick="viewStudentFormAnswers('${r.user_id}','${(r.user_name||'').replace(/'/g,"\\'")}')">Answers</button>
         <button class="action-btn" style="font-size:10.5px;padding:5px 9px" onclick="messageStudentFromRoster('${r.user_id}','${(r.user_name||'').replace(/'/g,"\\'")}')">Message</button>
         <button class="action-btn" style="font-size:10.5px;padding:5px 9px" onclick="viewStudentNotes('${r.user_id}','${(r.user_name||'').replace(/'/g,"\\'")}')">Notes</button>
       </div>
     `).join('');
   }
+  // Per's request — a roster row's own registration-form answers,
+  // shown in a lightweight modal rather than a whole new page, since
+  // this is a quick "let me check what they said" lookup, not a task
+  // needing its own screen. Reuses the exact same shape
+  // getFormResponseDetail already returns for the admin Forms viewer.
+  async function viewStudentFormAnswers(userId, userName) {
+    const modal = document.getElementById('studentAnswersModal');
+    document.getElementById('studentAnswersTitle').textContent = `${userName}'s answers`;
+    document.getElementById('studentAnswersBody').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
+    modal.style.display = 'flex';
+    try {
+      const detail = await fetch(`/api/facilitator/instances/${currentFacInstanceId}/students/${userId}/form-response`).then(r => r.json());
+      const body = document.getElementById('studentAnswersBody');
+      if (!detail) { body.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.4);font-style:italic">No registration form on file for this course, or they haven\'t completed one.</div>'; return; }
+      body.innerHTML = (detail.answers || []).map(a => `
+        <div style="margin-bottom:14px">
+          <div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-bottom:3px">${a.question_text}</div>
+          <div style="font-size:13.5px;color:rgba(255,255,255,0.85)">${a.option_text || a.text_value || '—'}</div>
+        </div>
+      `).join('') || '<div style="font-size:12px;color:rgba(255,255,255,0.4);font-style:italic">No answers recorded.</div>';
+    } catch(e) {
+      document.getElementById('studentAnswersBody').innerHTML = '<div style="font-size:12px;color:rgba(255,140,120,0.8)">Could not load answers — please try again.</div>';
+    }
+  }
+  function closeStudentAnswersModal() { document.getElementById('studentAnswersModal').style.display = 'none'; }
   // Per's request — "students see and interact with their facilitator."
   // The permission side of this (a course-only relationship, no 1:1
   // client_facilitators row) is already handled server-side —
@@ -931,11 +993,43 @@
     const list = Array.isArray(lessons) ? lessons : [];
     if (!list.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No lessons in this course yet.</div>'; return; }
     el.innerHTML = list.map(l => `
-      <div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:10px 12px;margin-bottom:6px">
-        <div style="font-size:13px;color:rgba(255,255,255,0.25);min-width:20px">${l.lesson_number}</div>
-        <div style="font-size:13px;color:rgba(255,255,255,0.8)">${l.title}</div>
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:10px 12px;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:13px;color:rgba(255,255,255,0.25);min-width:20px">${l.lesson_number}</div>
+          <div style="font-size:13px;color:rgba(255,255,255,0.8)">${l.title}</div>
+        </div>
+        ${(l.files && l.files.length) ? `<div style="margin-top:6px;padding-left:30px;display:flex;flex-wrap:wrap;gap:12px">${l.files.map(f => `<span onclick="openFacFile('${f.id}','${f.file_type||''}')" style="cursor:pointer;color:rgba(180,230,200,0.8);text-decoration:underline;font-size:12px" title="Click to open">${facFicon(f.file_type)} ${f.title}</span>`).join('')}</div>` : ''}
       </div>
     `).join('');
+  }
+  // Per's request — course documents/audio/video, actually openable from
+  // here rather than just named. Deliberately a simpler version of the
+  // admin Lessons list's own toggleLessonFilePreview (same
+  // playback-url endpoint, same pre-opened-tab popup-blocker fix,
+  // proven necessary there — but always opens in a new tab here rather
+  // than an inline audio/video player, since reviewing course material
+  // is this page's use case, not a polished in-page player).
+  async function openFacFile(fileId, fileType) {
+    const isAudio = fileType.includes('audio') || fileType.includes('mpeg');
+    const isVideo = fileType.includes('video') || fileType.includes('mp4');
+    const preopened = window.open('', '_blank');
+    try {
+      const res = await fetch(`/api/content/library/${fileId}/playback-url`);
+      const data = await res.json();
+      if (!res.ok || !data.url) { preopened.close(); appAlert(data.error || 'Could not open this file.'); return; }
+      preopened.location = data.url;
+    } catch(e) {
+      preopened.close();
+      appAlert('Could not reach the server to open this file — check your connection and try again.');
+    }
+  }
+  function facFicon(t) {
+    t = t || '';
+    if (t.includes('audio') || t.includes('mpeg')) return '🎧';
+    if (t.includes('video') || t.includes('mp4')) return '🎬';
+    if (t.includes('pdf')) return '📕';
+    if (t.includes('epub')) return '📖';
+    return '📄';
   }
 
   async function loadInstNotes() {

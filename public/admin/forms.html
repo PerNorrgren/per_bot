@@ -228,6 +228,7 @@
       <h3>Responses</h3>
       <div id="responsesList"><div class="loading">Loading…</div></div>
       <div class="modal-btns">
+        <a class="btn sm" id="downloadResponsesCsvBtn" href="#" download>Download CSV</a>
         <button class="modal-cancel" onclick="closeModal('responsesModal')">Close</button>
       </div>
     </div>
@@ -524,6 +525,7 @@
   }
 
   async function viewResponses(formId) {
+    document.getElementById('downloadResponsesCsvBtn').href = `/api/admin/forms/${formId}/responses.csv`;
     const list = await (await fetch(`/api/admin/forms/${formId}/responses`)).json();
     const el = document.getElementById('responsesList');
     el.innerHTML = !list.length ? '<div class="empty">No responses yet.</div>' : list.map(r => `

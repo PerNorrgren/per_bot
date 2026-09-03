@@ -1164,6 +1164,7 @@
     <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
     <div><label>Stripe Price ID <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank to charge the amount above directly; paste a Price ID from Stripe to use a pre-created Price object instead, e.g. for cleaner reporting)</span></label><input type="text" id="instStripePriceId" placeholder="price_..."/></div>
     <div><label>Also grants membership for (months) <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank for a course-only payment; e.g. 12 for "pay for this course, get a year of membership included")</span></label><input type="number" id="instGrantsMembershipMonths" min="1" placeholder="Leave blank for none"/></div>
+    <div><label>Zoom link <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown to facilitators on their course summary — not shown to students automatically)</span></label><input type="text" id="instZoomLink" placeholder="https://zoom.us/j/..."/></div>
     <div class="modal-err" id="instErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('instanceModal')">Cancel</button>
@@ -3871,10 +3872,31 @@ function renderInstances(){
         ${i.mode==='cohort'?`<button class="btn sm" onclick="openSessionsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Sessions</button>`:''}
         <button class="btn sm" onclick="openEnrolmentsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Enrolments</button>
         <button class="btn sm" onclick="openInstanceFacilitatorsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Facilitators</button>
+        ${i.status==='open'?`<button class="btn sm" onclick="copyInstancePublicLink('${i.id}',this)" title="The public page — shows a date picker if the course has more than one open instance">Copy public link</button>`:''}
         <button class="btn sm danger" onclick="delInstance('${i.id}')">Delete</button>
       </div>
     </div>
   `).join('');
+}
+
+// Per's request — finding the right public URL for an instance meant
+// hunting for its raw id somewhere, every single time a course launches.
+// Only shown for 'open' instances since a draft/closed one has no real
+// public page worth sharing yet. Any one open instance's link works for
+// the whole course, even if there are several — course-instance.html
+// itself shows a "Choose your start date" picker whenever the course has
+// more than one open instance (see the multi-instance picker built
+// earlier), so it's never wrong to share whichever one's link is handy.
+async function copyInstancePublicLink(id, btn){
+  const url = `${location.origin}/course-instance/${id}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  } catch(e) {
+    appAlert(url); // clipboard blocked (e.g. non-HTTPS/local) — show it to copy by hand instead
+  }
 }
 
 function toggleInstanceModeFields(){
@@ -3974,6 +3996,7 @@ async function openNewInstance(){
   document.getElementById('instPrice').value='';
   document.getElementById('instStripePriceId').value='';
   document.getElementById('instGrantsMembershipMonths').value='';
+  document.getElementById('instZoomLink').value='';
   document.getElementById('instStatus').value='draft';
   document.getElementById('instScheduleDay').value='';
   document.getElementById('instScheduleTime').value='';
@@ -4009,6 +4032,7 @@ function editInstance(id){
   document.getElementById('instPrice').value=i.price_cents?(i.price_cents/100).toFixed(2):'';
   document.getElementById('instStripePriceId').value=i.stripe_price_id||'';
   document.getElementById('instGrantsMembershipMonths').value=i.grants_membership_months||'';
+  document.getElementById('instZoomLink').value=i.zoom_link||'';
   document.getElementById('instStatus').value=i.status;
   document.getElementById('instScheduleDay').value=i.schedule_day||'';
   document.getElementById('instScheduleTime').value=i.schedule_time||'';
@@ -4029,6 +4053,7 @@ async function saveInstance(){
   const priceCents=document.getElementById('instPrice').value?Math.round(parseFloat(document.getElementById('instPrice').value)*100):0;
   const stripePriceId=document.getElementById('instStripePriceId').value.trim()||null;
   const grantsMembershipMonths=document.getElementById('instGrantsMembershipMonths').value?parseInt(document.getElementById('instGrantsMembershipMonths').value,10):null;
+  const zoomLink=document.getElementById('instZoomLink').value.trim()||null;
   const status=document.getElementById('instStatus').value;
   const scheduleDay=document.getElementById('instScheduleDay').value.trim()||null;
   const scheduleTime=document.getElementById('instScheduleTime').value.trim()||null;
@@ -4036,7 +4061,7 @@ async function saveInstance(){
   const err=document.getElementById('instErr');
   if(!courseId||!title){err.textContent='Course and title are required.';return;}
 
-  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,grantsMembershipMonths,status,scheduleDay,scheduleTime,scheduleEndTime});
+  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,grantsMembershipMonths,zoomLink,status,scheduleDay,scheduleTime,scheduleEndTime});
   const res=id
     ? await fetch(`/api/admin/course-instances/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body})
     : await fetch('/api/admin/course-instances',{method:'POST',headers:{'Content-Type':'application/json'},body});

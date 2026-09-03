@@ -9432,7 +9432,7 @@ app.patch('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (re
     const fieldMap = { mode:'mode', title:'title', startDate:'start_date', endDate:'end_date',
       capacity:'capacity', priceCents:'price_cents', stripePriceId:'stripe_price_id', status:'status',
       scheduleDay:'schedule_day', scheduleTime:'schedule_time', scheduleEndTime:'schedule_end_time',
-      grantsMembershipMonths:'grants_membership_months' };
+      grantsMembershipMonths:'grants_membership_months', zoomLink:'zoom_link' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     db.updateCourseInstance(req.params.id, fields);
@@ -9611,11 +9611,27 @@ app.get('/api/facilitator/instances/:id/roster', auth.requireAuthApi(['facilitat
   try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a roster row's "view answers" action. Returns null
+// (not an error) when this person never filled out a registration form
+// for this course, or hasn't finished it yet — the client treats both
+// the same way, as "nothing to show."
+app.get('/api/facilitator/instances/:id/students/:userId/form-response', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
+  try {
+    const response = db.getFormResponseForUserAndInstance(req.params.userId, req.params.id);
+    res.json(response ? db.getFormResponseDetail(response.id) : null);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 // Content — the course's own lessons, same list a student sees, so a
 // facilitator can review exactly what students are working through.
+// Per's request — now includes each lesson's actual attached files
+// (handouts, audio, video) rather than just the lesson title, reusing
+// the exact same getFilesForLesson the admin Lessons list and the
+// admin Sessions "Generate from lessons" file-linking already use.
 app.get('/api/facilitator/instances/:id/content', auth.requireAuthApi(['facilitator','admin']), requireInstanceOwnedByFacilitator, (req, res) => {
-  try { res.json(db.getLessonsForCourse(req.facilitatorInstance.course_id)); }
-  catch(e) { res.status(500).json({ error: e.message }); }
+  try {
+    const lessons = db.getLessonsForCourse(req.facilitatorInstance.course_id);
+    res.json(lessons.map(l => ({ ...l, files: db.getFilesForLesson(l.id) })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // Sessions — reuses the exact same instance_sessions functions the admin
 // routes above already use (addInstanceSession/getSessionsForInstance/
@@ -14121,6 +14137,40 @@ app.patch('/api/admin/forms/:id', auth.requireAuthApi(['admin']), (req, res) => 
 app.delete('/api/admin/forms/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteForm(req.params.id); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Per's request — one row per person, one column per question, matching
+// the exact escaping/header convention the signal-scripts export above
+// already established. checkbox answers (more than one option per
+// question) join with '; ' into the same cell rather than spreading
+// across extra columns, since the column set is fixed per question.
+app.get('/api/admin/forms/:id/responses.csv', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const form = db.getForm(req.params.id);
+    if (!form) return res.status(404).json({ error: 'Not found.' });
+    const questions = db.getFormQuestions(req.params.id);
+    const responses = db.getFormResponsesForReport(req.params.id);
+    const esc = (v) => {
+      const s = String(v == null ? '' : v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const header = ['name', 'email', 'completed_at', 'score', ...questions.map(q => q.question_text)];
+    const lines = [header.join(',')];
+    responses.forEach(r => {
+      const detail = db.getFormResponseDetail(r.id);
+      const answerByQuestion = {};
+      (detail?.answers || []).forEach(a => {
+        const val = a.option_text || a.text_value || '';
+        answerByQuestion[a.question_id] = answerByQuestion[a.question_id] ? answerByQuestion[a.question_id] + '; ' + val : val;
+      });
+      const row = [r.user_name || '', r.user_email || '', r.completed_at || '', r.score ?? '', ...questions.map(q => answerByQuestion[q.id] || '')];
+      lines.push(row.map(esc).join(','));
+    });
+    const csv = lines.join('\n');
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${(form.title || 'form').replace(/[^a-z0-9]/gi, '_')}-responses-${stamp}.csv"`);
+    res.send(csv);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/forms/:id/duplicate', auth.requireAuthApi(['admin']), (req, res) => {
   try {
