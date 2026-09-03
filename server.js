@@ -188,13 +188,40 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
           const user = db.getUser(userId);
           const instance = db.getCourseInstance(courseInstanceId);
+
+          // Per's original request — a course fee that also functions as
+          // a year (or however many months) of membership, granted here
+          // rather than the buyer needing to do anything separate.
+          // Deliberately mirrors the referral-reward pattern above: if
+          // they're already a paying member with time left, this extends
+          // from their CURRENT expiry rather than resetting the clock to
+          // "now + N months" and shortchanging time they'd already paid
+          // for. setMemberTier's own stripe_subscription_id COALESCE
+          // means this never touches/invents a subscription id — exactly
+          // right for a one-off payment with no real subscription behind
+          // it, and exactly what the renewal-reminder system already
+          // knows how to word correctly for someone in that position.
+          let grantedMembership = false;
+          if (instance?.grants_membership_months && user) {
+            const base = user.member_expires_at && new Date(user.member_expires_at) > new Date()
+              ? new Date(user.member_expires_at) : new Date();
+            base.setMonth(base.getMonth() + parseInt(instance.grants_membership_months, 10));
+            db.setMemberTier(userId, Math.max(user.member_tier || 0, 1), base.toISOString(), user.trial_ends_at, null, null);
+            grantedMembership = true;
+            console.log(`[stripe] course_enrolment — user ${userId} also granted ${instance.grants_membership_months} month(s) membership via instance ${courseInstanceId}`);
+          }
+
           if (user?.email && instance) {
             const b = brand();
+            const membershipLine = grantedMembership
+              ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership is included too — the full practice library is yours for the next ${instance.grants_membership_months} month${instance.grants_membership_months == 1 ? '' : 's'}, no extra step needed.</p>`
+              : '';
             await sendEmail(user.email, `You're enrolled — ${instance.title}`,
               `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
                 <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
                 <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${user.name}.</h2>
                 <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — you're enrolled in <strong>${instance.title}</strong>. Start whenever you're ready.</p>
+                ${membershipLine}
                 <a href="${APP_URL}/client/" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Go to your course</a>
                 <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
                 <p style="font-size:12px;color:#aaa">${b.tagline}</p>
@@ -9092,10 +9119,10 @@ app.get('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res
 });
 app.post('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime } = req.body;
+    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime, grantsMembershipMonths } = req.body;
     if (!courseId || !title || !title.trim()) return res.status(400).json({ error: 'courseId and title are required.' });
     const id = uuidv4();
-    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime);
+    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime, grantsMembershipMonths);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -9110,7 +9137,8 @@ app.patch('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (re
   try {
     const fieldMap = { mode:'mode', title:'title', startDate:'start_date', endDate:'end_date',
       capacity:'capacity', priceCents:'price_cents', stripePriceId:'stripe_price_id', status:'status',
-      scheduleDay:'schedule_day', scheduleTime:'schedule_time', scheduleEndTime:'schedule_end_time' };
+      scheduleDay:'schedule_day', scheduleTime:'schedule_time', scheduleEndTime:'schedule_end_time',
+      grantsMembershipMonths:'grants_membership_months' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     db.updateCourseInstance(req.params.id, fields);

@@ -2725,6 +2725,18 @@ async function getDb() {
     // template's session length when both are known (see
     // recalcInstanceEndTime in content.html), always freely editable.
     "ALTER TABLE course_instances ADD COLUMN schedule_end_time TEXT",
+    // Per's own original request — a course fee that also functions as a
+    // year of membership. NULL (the default) means exactly what it did
+    // before this column existed: a course-only payment, nothing more.
+    // Set to a real number of months and the Stripe webhook (see
+    // checkout.session.completed's course_enrolment branch) grants/
+    // extends membership by that much on successful payment, in addition
+    // to the normal course enrolment — the buyer experiences it as "I
+    // paid for a course," membership just shows up as the bonus, exactly
+    // as originally scoped. Deliberately per-instance, not per-course —
+    // a course can run one instance as a paid-course-only offering and
+    // another as this membership-bundled kind.
+    "ALTER TABLE course_instances ADD COLUMN grants_membership_months INTEGER",
     // Per's request — PDF-to-EPUB conversion on upload. When a PDF gets
     // converted, filename/file_type on this row point at the generated
     // EPUB (so the existing reader picks it up automatically, no client
@@ -4446,11 +4458,11 @@ function getLessonFileProgress(userId, lessonId) {
 }
 
 // ── Course instances ──
-function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime) {
+function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime, grantsMembershipMonths) {
   getDbSync().run(
-    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status,schedule_day,schedule_time,schedule_end_time)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft', scheduleDay||null, scheduleTime||null, scheduleEndTime||null]
+    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status,schedule_day,schedule_time,schedule_end_time,grants_membership_months)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft', scheduleDay||null, scheduleTime||null, scheduleEndTime||null, grantsMembershipMonths||null]
   );
   save();
 }
@@ -4475,7 +4487,7 @@ function getAllCourseInstances(filters = {}) {
   return queryAll(sql, params);
 }
 function updateCourseInstance(id, fields) {
-  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time'];
+  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time','grants_membership_months'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

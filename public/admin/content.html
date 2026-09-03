@@ -1163,6 +1163,7 @@
     </div>
     <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
     <div><label>Stripe Price ID <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank to charge the amount above directly; paste a Price ID from Stripe to use a pre-created Price object instead, e.g. for cleaner reporting)</span></label><input type="text" id="instStripePriceId" placeholder="price_..."/></div>
+    <div><label>Also grants membership for (months) <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank for a course-only payment; e.g. 12 for "pay for this course, get a year of membership included")</span></label><input type="number" id="instGrantsMembershipMonths" min="1" placeholder="Leave blank for none"/></div>
     <div class="modal-err" id="instErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('instanceModal')">Cancel</button>
@@ -3972,6 +3973,7 @@ async function openNewInstance(){
   document.getElementById('instStart').value='';document.getElementById('instEnd').value='';document.getElementById('instCapacity').value='';
   document.getElementById('instPrice').value='';
   document.getElementById('instStripePriceId').value='';
+  document.getElementById('instGrantsMembershipMonths').value='';
   document.getElementById('instStatus').value='draft';
   document.getElementById('instScheduleDay').value='';
   document.getElementById('instScheduleTime').value='';
@@ -3981,11 +3983,15 @@ async function openNewInstance(){
   openModal('instanceModal');
   // Per App 31 — only for a genuinely new instance, never when editing an
   // existing one (which already has its own real saved values) — see
-  // editInstance below, which deliberately does not call this.
+  // editInstance below, which deliberately does not call this. Defaults
+  // the membership bonus to 12 months alongside the price/Stripe ID
+  // default, matching the actual intent behind pricing a course at the
+  // annual plan's amount in the first place — editable/clearable either way.
   const annualPlan = await getAnnualPlanDefault();
   if (annualPlan && !document.getElementById('instPrice').value) {
     document.getElementById('instPrice').value = (annualPlan.price_pence / 100).toFixed(2);
     if (annualPlan.stripe_price_id) document.getElementById('instStripePriceId').value = annualPlan.stripe_price_id;
+    document.getElementById('instGrantsMembershipMonths').value = '12';
   }
 }
 
@@ -4002,6 +4008,7 @@ function editInstance(id){
   document.getElementById('instCapacity').value=i.capacity||'';
   document.getElementById('instPrice').value=i.price_cents?(i.price_cents/100).toFixed(2):'';
   document.getElementById('instStripePriceId').value=i.stripe_price_id||'';
+  document.getElementById('instGrantsMembershipMonths').value=i.grants_membership_months||'';
   document.getElementById('instStatus').value=i.status;
   document.getElementById('instScheduleDay').value=i.schedule_day||'';
   document.getElementById('instScheduleTime').value=i.schedule_time||'';
@@ -4021,6 +4028,7 @@ async function saveInstance(){
   const capacity=document.getElementById('instCapacity').value?parseInt(document.getElementById('instCapacity').value):null;
   const priceCents=document.getElementById('instPrice').value?Math.round(parseFloat(document.getElementById('instPrice').value)*100):0;
   const stripePriceId=document.getElementById('instStripePriceId').value.trim()||null;
+  const grantsMembershipMonths=document.getElementById('instGrantsMembershipMonths').value?parseInt(document.getElementById('instGrantsMembershipMonths').value,10):null;
   const status=document.getElementById('instStatus').value;
   const scheduleDay=document.getElementById('instScheduleDay').value.trim()||null;
   const scheduleTime=document.getElementById('instScheduleTime').value.trim()||null;
@@ -4028,7 +4036,7 @@ async function saveInstance(){
   const err=document.getElementById('instErr');
   if(!courseId||!title){err.textContent='Course and title are required.';return;}
 
-  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status,scheduleDay,scheduleTime,scheduleEndTime});
+  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,grantsMembershipMonths,status,scheduleDay,scheduleTime,scheduleEndTime});
   const res=id
     ? await fetch(`/api/admin/course-instances/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body})
     : await fetch('/api/admin/course-instances',{method:'POST',headers:{'Content-Type':'application/json'},body});
