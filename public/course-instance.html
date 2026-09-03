@@ -200,7 +200,13 @@
           <div class="page-wordmark" data-brand="name">Deeper Mindfulness</div>
           <div class="page-title">${i.title}</div>
           <div class="page-subtitle">${i.course_title}</div>
-          ${i.status === 'open' ? `<a class="cta-btn cta-register-btn" style="margin-top:16px;padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a>` : ''}
+          ${i.status === 'open' ? `
+          <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a>
+            ${!isSelfPaced && i.price_cents ? `<span style="font-size:13px;color:rgba(255,255,255,0.4)">£${(i.price_cents/100).toFixed(2)} for Explorers · free for Members</span>` : ''}
+          </div>
+          <div id="signInHint" style="margin-top:8px;font-size:12px;color:rgba(255,255,255,0.35)">Already a member? <a href="/login?next=${encodeURIComponent('/course-instance/' + selectedInstanceId)}" style="color:rgba(180,230,200,0.75)">Sign in</a> to join at no charge.</div>
+          ` : ''}
         </div>
 
         ${datePickerHtml}
@@ -229,7 +235,7 @@
         ${i.status === 'open' ? `
         <div class="cta-card" id="ctaCard">
           <h2>${isSelfPaced ? 'Not a Member Yet?' : 'Ready to Join?'}</h2>
-          <p id="ctaText">${isSelfPaced ? 'Membership includes this course, plus the full practice library — no separate payment per course.' : "Create an account to enrol — once you're registered, you'll find this course waiting for you in your library."}</p>
+          <p id="ctaText">${isSelfPaced ? 'Membership includes this course, plus the full practice library — no separate payment per course.' : (i.price_cents ? `£${(i.price_cents/100).toFixed(2)} for Explorers — Members enrol at no charge. Create an account to register.` : "Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.")}</p>
           <a class="cta-btn cta-register-btn" id="ctaBtn" href="${joinHref}">${joinLabel}</a>
         </div>` : ''}
       `;
@@ -260,6 +266,12 @@
     try {
       const res = await fetch('/api/account');
       if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register buttons as-is
+      // Per's request — the "Already a member? Sign in" hint only makes
+      // sense for someone who ISN'T signed in yet; once we know they are,
+      // hide it rather than leave a stale "sign in" prompt sitting above
+      // a button that already says Enrol Now.
+      const hint = document.getElementById('signInHint');
+      if (hint) hint.style.display = 'none';
       const text = document.getElementById('ctaText');
       if (text) text.textContent = "You're logged in — enrol below and you'll find this course in your library right away.";
       document.querySelectorAll('.cta-register-btn').forEach(btn => {
