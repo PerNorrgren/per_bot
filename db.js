@@ -2737,6 +2737,15 @@ async function getDb() {
     // a course can run one instance as a paid-course-only offering and
     // another as this membership-bundled kind.
     "ALTER TABLE course_instances ADD COLUMN grants_membership_months INTEGER",
+    // Per's request — course registration via a custom Form + payment.
+    // A flag on any text-type question rather than a rigid "the email
+    // question is always called X" convention, so Per can word it
+    // however fits the form; at most one question should carry each
+    // flag, and if more than one somehow does, the first by sort_order
+    // wins (see resolveRegistrationContact in server.js) rather than
+    // erroring the whole checkout over it.
+    "ALTER TABLE form_questions ADD COLUMN is_email_field INTEGER DEFAULT 0",
+    "ALTER TABLE form_questions ADD COLUMN is_name_field INTEGER DEFAULT 0",
     // Per's request — session reminders. Per-enrolment, not a global user
     // preference: someone might reasonably want SMS for a live cohort
     // they're paying real attention to but not for another course.
@@ -3446,7 +3455,15 @@ function getPublicInstanceOverview(id) {
     SELECT f.id, f.name, f.credentials, f.photo_filename FROM instance_facilitators inf
     JOIN facilitators f ON inf.facilitator_id = f.id
     WHERE inf.course_instance_id=? AND f.public_profile=1`, [id]);
-  return { ...instance, facilitators };
+  // Per's request — when a paid instance has a custom registration Form
+  // attached (forms.course_instance_id, status='active'), the public
+  // Register button should go there instead of the generic account-
+  // creation page, since that's where email/contact fields get captured
+  // and payment actually happens. At most one active form per instance
+  // is the assumption; if somehow more than one exists, the most
+  // recently created wins rather than erroring the whole page over it.
+  const registrationForm = queryOne(`SELECT id FROM forms WHERE course_instance_id=? AND status='active' ORDER BY created_at DESC LIMIT 1`, [id]);
+  return { ...instance, facilitators, registration_form_id: registrationForm?.id || null };
 }
 
 // ── Categories ──
@@ -5279,7 +5296,19 @@ function completeFormResponse(id, consentGiven) {
   );
   save();
 }
-// For the admin Reports view — every completed response to a form,
+// Per's request — a course-registration form is filled out anonymously
+// (no account exists yet), so the response starts with user_id=null.
+// Called from the checkout.session.completed webhook once payment
+// succeeds and the account has actually been created/found, to link
+// this response to the right person and record which payment paid for
+// it — always called just before completeFormResponse, never after
+// (the response should never sit "complete" with no owner or payment
+// reference for a paid-form registration).
+function setFormResponseUserAndPayment(id, userId, paymentRef) {
+  getDbSync().run('UPDATE form_responses SET user_id=?, payment_ref=? WHERE id=?', [userId, paymentRef, id]);
+  save();
+}
+
 // joined with the respondent's own name/email so "who said what" is one
 // query, not a per-row lookup.
 function getFormResponsesForReport(formId) {
@@ -9584,7 +9613,7 @@ module.exports = {
   addFormQuestion, updateFormQuestion, deleteFormQuestion, getFormQuestions,
   addFormOption, updateFormOption, deleteFormOption,
   createFormResponse, getFormResponse, getInProgressResponse, saveFormAnswer, getResponseAnswers,
-  completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses,
+  completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses, setFormResponseUserAndPayment,
   getNextUnusedMotdForPlatform, markMotdUsedForSocial, getUpcomingQueuedTimesForPlatform,
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,

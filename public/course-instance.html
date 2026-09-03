@@ -84,6 +84,8 @@
     All courses
   </a>
 
+  <div id="registeredBanner" style="display:none;background:rgba(180,230,200,0.1);border:1px solid rgba(180,230,200,0.3);border-radius:12px;padding:16px 20px;font-size:14px;color:rgba(180,230,200,0.9)"></div>
+
   <div id="content" class="loading">Loading…</div>
 
 </div>
@@ -190,9 +192,15 @@
       // Per's request — a self-paced course has no date/schedule at all,
       // and its "join" action is "subscribe to become a member," not
       // "register for this specific instance" — the When card and the
-      // Register wording/link both need to reflect that.
+      // Register wording/link both need to reflect that. A paid cohort
+      // with a registration Form attached (see registration_form_id,
+      // set by getPublicInstanceOverview) routes to that form instead of
+      // the generic account-creation page — that's where the custom
+      // fields Per adds get captured and payment actually happens.
       const isSelfPaced = i.mode === 'self_paced';
-      const joinHref = isSelfPaced ? '/join' : `/register?instance=${selectedInstanceId}`;
+      const joinHref = isSelfPaced ? '/join'
+        : i.registration_form_id ? `/forms/${i.registration_form_id}`
+        : `/register?instance=${selectedInstanceId}`;
       const joinLabel = isSelfPaced ? 'Subscribe to Get Access' : 'Register';
 
       el.innerHTML = `
@@ -305,6 +313,30 @@
       });
     } catch(e) { /* not logged in — leave the Register buttons as-is */ }
   }
+  // Per's request — the success/cancel redirect target for the Forms-
+  // based course registration checkout (see /api/public/forms/:formId/
+  // checkout and the course_registration_form webhook branch). Shown
+  // once, from the URL, then cleaned off so refreshing the page doesn't
+  // keep re-showing it.
+  (function showRegisteredBanner() {
+    const params = new URLSearchParams(location.search);
+    const registered = params.get('registered');
+    if (!registered) return;
+    const el = document.getElementById('registeredBanner');
+    if (registered === '1') {
+      el.textContent = "You're registered and your payment went through — check your email for a link to set your password and get straight into your course.";
+      el.style.display = '';
+    } else if (registered === '0') {
+      el.textContent = 'Checkout was cancelled — no payment was taken. You can register again any time from this page.';
+      el.style.display = '';
+      el.style.background = 'rgba(255,255,255,0.06)';
+      el.style.borderColor = 'rgba(255,255,255,0.15)';
+      el.style.color = 'rgba(255,255,255,0.6)';
+    }
+    params.delete('registered');
+    const cleanUrl = location.pathname + (params.toString() ? '?' + params.toString() : '');
+    history.replaceState(null, '', cleanUrl);
+  })();
   loadInstance();
 </script>
 

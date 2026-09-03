@@ -232,6 +232,82 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
           break;
         }
 
+        // Per's request — course registration via a custom Form, for a
+        // paid cohort instance where the person had no account at all
+        // when they paid. Creates the account here, on successful
+        // payment, with no password set — buildMessageTokens' own
+        // hasLogin check already knows to build a /join/{token} "set
+        // your password, then land on your course" link for exactly
+        // this state (used elsewhere for trial/renewal emails; reused
+        // as-is here, not reimplemented).
+        if (session.metadata?.type === 'course_registration_form') {
+          const formResponseId = session.metadata?.form_response_id;
+          const courseInstanceId = session.metadata?.course_instance_id;
+          if (!formResponseId || !courseInstanceId) break;
+          const response = db.getFormResponse(formResponseId);
+          if (!response) { console.error(`[stripe] course_registration_form — response ${formResponseId} not found`); break; }
+          if (response.status === 'complete') { console.log(`[stripe] course_registration_form — response ${formResponseId} already completed, skipping duplicate webhook`); break; }
+
+          const { email, name } = resolveRegistrationContact(formResponseId);
+          const paymentEmail = session.customer_details?.email || email;
+          if (!paymentEmail) { console.error(`[stripe] course_registration_form — no email resolved for response ${formResponseId}`); break; }
+
+          let user = db.getUserByEmail(paymentEmail);
+          if (!user) {
+            const newUserId = uuidv4();
+            db.registerUser(newUserId, name || paymentEmail.split('@')[0], paymentEmail, null, 'en',
+              { consentGiven: !!response.consent_given, consentVersion: 'course-registration-form-v1' },
+              14, null, 'course_registration_form');
+            user = db.getUser(newUserId);
+            console.log(`[stripe] course_registration_form — created new account for ${paymentEmail}`);
+          }
+
+          const alreadyEnrolled = db.getEnrolmentForUserAndInstance(user.id, courseInstanceId);
+          if (!alreadyEnrolled) {
+            const enrolId = uuidv4();
+            db.createEnrolment(enrolId, user.id, courseInstanceId, 'paid', session.amount_total || 0, session.payment_intent || null);
+          }
+
+          const instance = db.getCourseInstance(courseInstanceId);
+          // Per's original request — same course-fee-grants-membership
+          // mechanic as the direct course_enrolment path above, reused
+          // identically here so it behaves the same regardless of which
+          // door someone came in through.
+          let grantedMembership = false;
+          if (instance?.grants_membership_months) {
+            const base = user.member_expires_at && new Date(user.member_expires_at) > new Date()
+              ? new Date(user.member_expires_at) : new Date();
+            base.setMonth(base.getMonth() + parseInt(instance.grants_membership_months, 10));
+            db.setMemberTier(user.id, Math.max(user.member_tier || 0, 1), base.toISOString(), user.trial_ends_at, null, null);
+            grantedMembership = true;
+          }
+
+          db.setFormResponseUserAndPayment(formResponseId, user.id, session.payment_intent || session.id);
+          db.completeFormResponse(formResponseId, response.consent_given);
+
+          if (instance) {
+            const b = brand();
+            const tokens = buildMessageTokens(db.getUser(user.id), { courseInstanceId });
+            const membershipLine = grantedMembership
+              ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership is included too — the full practice library is yours for the next ${instance.grants_membership_months} month${instance.grants_membership_months == 1 ? '' : 's'}, no extra step needed.</p>`
+              : '';
+            await sendEmail(paymentEmail, `Your place is secured — ${instance.title}`,
+              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+                <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
+                <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${tokens.name}.</h2>
+                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
+                ${membershipLine}
+                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
+                <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
+                <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
+                <p style="font-size:12px;color:#aaa">${b.tagline}</p>
+              </div>`
+            );
+          }
+          console.log(`[stripe] course_registration_form completed — ${paymentEmail} → instance ${courseInstanceId}`);
+          break;
+        }
+
         // Membership upgrade (existing flow, unchanged).
         const tier    = parseInt(session.metadata?.tier || '1');
         const billing = session.metadata?.billing;
@@ -3736,6 +3812,59 @@ app.patch('/api/client/enrolments/:id/reminder-prefs', auth.requireAuthApi(['cli
     db.setEnrolmentReminderPrefs(req.params.id, !!reminderEmail, !!reminderSms);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per's request — course registration via a custom Form, for a paid
+// cohort instance. Public (no auth) since the person filling this out
+// has no account yet — one gets created automatically once payment
+// actually completes (see the checkout.session.completed webhook branch
+// for type='course_registration_form'), never before. Mirrors the
+// existing course_enrolment checkout-session shape (same line_items/
+// price-source logic just below in /api/client/enrol) but with no
+// Stripe customer, since there's no user record yet to attach one to —
+// customer_email pre-fills Stripe's own checkout page instead, when a
+// question on the form has been flagged as the email field.
+function resolveRegistrationContact(responseId) {
+  const response = db.getFormResponse(responseId);
+  if (!response) return { email: null, name: null };
+  const answers = db.getResponseAnswers(responseId);
+  const questions = db.getFormQuestions(response.form_id);
+  const emailQ = questions.filter(q => q.is_email_field).sort((a, b) => a.sort_order - b.sort_order)[0];
+  const nameQ = questions.filter(q => q.is_name_field).sort((a, b) => a.sort_order - b.sort_order)[0];
+  const emailAnswer = emailQ ? answers.find(a => a.question_id === emailQ.id) : null;
+  const nameAnswer = nameQ ? answers.find(a => a.question_id === nameQ.id) : null;
+  return { email: (emailAnswer?.text_value || '').trim() || null, name: (nameAnswer?.text_value || '').trim() || null };
+}
+app.post('/api/public/forms/:formId/checkout', async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ error: "Payment isn't set up yet — please check back soon." });
+    const form = db.getForm(req.params.formId);
+    if (!form || form.status !== 'active') return res.status(404).json({ error: 'Form not found.' });
+    if (!form.course_instance_id) return res.status(400).json({ error: 'This form is not linked to a paid course.' });
+    const instance = db.getCourseInstance(form.course_instance_id);
+    if (!instance || instance.status !== 'open') return res.status(400).json({ error: 'This course is not currently open for registration.' });
+    if (!instance.price_cents) return res.status(400).json({ error: 'This course has no charge — no payment step needed here.' });
+    const { responseId } = req.body;
+    const response = db.getFormResponse(responseId);
+    if (!response || response.form_id !== form.id) return res.status(404).json({ error: 'Response not found — please start the form again.' });
+    if (response.status === 'complete') return res.status(400).json({ error: 'This registration has already been completed.' });
+    const { email } = resolveRegistrationContact(responseId);
+    const session = await stripe.checkout.sessions.create({
+      customer_email: email || undefined,
+      payment_method_types: ['card'],
+      line_items: [instance.stripe_price_id
+        ? { price: instance.stripe_price_id, quantity: 1 }
+        : { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 }
+      ],
+      mode: 'payment',
+      success_url: `${APP_URL}/course-instance/${instance.id}?registered=1`,
+      cancel_url: `${APP_URL}/course-instance/${instance.id}?registered=0`,
+      metadata: { type: 'course_registration_form', form_response_id: responseId, course_instance_id: instance.id },
+    });
+    res.json({ ok: true, checkoutUrl: session.url });
+  } catch(e) {
+    console.error('[stripe form checkout]', e.message);
+    res.status(500).json({ error: 'Could not start checkout. Please try again.' });
+  }
 });
 app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) => {
   try {
