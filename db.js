@@ -2427,6 +2427,17 @@ async function getDb() {
     // behaviour, just triggered by tier instead of an admin's manual
     // flip. 1 = don't show at all below the required tier.
     "ALTER TABLE courses ADD COLUMN hide_when_locked INTEGER DEFAULT 0",
+    // Per App 31 — for auto-filling a cohort instance's End Date/End Time
+    // from the course template, per Per's own request when setting up
+    // Finding Mindfulness. Deliberately their own explicit fields, not
+    // derived from a lesson count — a course's lesson structure doesn't
+    // always mirror its live-session structure 1:1 (extra reading-only
+    // lessons, a self-paced variant with different pacing, etc.), so
+    // guessing from lessons would be wrong often enough to not trust.
+    // Both nullable: a course with neither set just means the New
+    // Instance form has nothing to auto-fill from, same as today.
+    "ALTER TABLE courses ADD COLUMN default_session_count INTEGER",
+    "ALTER TABLE courses ADD COLUMN default_session_minutes INTEGER",
     // Per Bot 18 — fills the untouched week between the day-3 and day-10
     // trial emails with a real mid-trial nudge.
     "ALTER TABLE users ADD COLUMN trial_email_day7_sent INTEGER DEFAULT 0",
@@ -2709,6 +2720,11 @@ async function getDb() {
     "ALTER TABLE facilitators ADD COLUMN public_profile INTEGER DEFAULT 0",
     "ALTER TABLE course_instances ADD COLUMN schedule_day TEXT",
     "ALTER TABLE course_instances ADD COLUMN schedule_time TEXT",
+    // Per App 31 — same plain-text convention as schedule_time above, for
+    // the same reason. Best-effort auto-suggested from the course
+    // template's session length when both are known (see
+    // recalcInstanceEndTime in content.html), always freely editable.
+    "ALTER TABLE course_instances ADD COLUMN schedule_end_time TEXT",
     // Per's request — PDF-to-EPUB conversion on upload. When a PDF gets
     // converted, filename/file_type on this row point at the generated
     // EPUB (so the existing reader picks it up automatically, no client
@@ -4174,6 +4190,17 @@ function setCourseTierGating(id, requiredTier, hideWhenLocked) {
   getDbSync().run('UPDATE courses SET required_tier=?, hide_when_locked=? WHERE id=?',
     [requiredTier === null || requiredTier === '' ? null : parseInt(requiredTier, 10), hideWhenLocked ? 1 : 0, id]); save();
 }
+// Per App 31 — separate small setter rather than extending createCourse/
+// updateCourse's positional signature, same pattern as setCourseTierGating
+// just above (an add-on field group, not core course identity). Either
+// value can be null independently — a course might have a known session
+// count but no fixed duration yet, or vice versa.
+function setCourseSessionDefaults(id, sessionCount, sessionMinutes) {
+  getDbSync().run('UPDATE courses SET default_session_count=?, default_session_minutes=? WHERE id=?',
+    [sessionCount === null || sessionCount === '' ? null : parseInt(sessionCount, 10),
+     sessionMinutes === null || sessionMinutes === '' ? null : parseInt(sessionMinutes, 10), id]);
+  save();
+}
 function getAllCourses(filters = {}) {
   let sql = `SELECT c.*, cat.name as category_name, sub.name as subcategory_name, sk.name as skin_name,
     (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) as lesson_count,
@@ -4419,11 +4446,11 @@ function getLessonFileProgress(userId, lessonId) {
 }
 
 // ── Course instances ──
-function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime) {
+function createCourseInstance(id, courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime) {
   getDbSync().run(
-    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status,schedule_day,schedule_time)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft', scheduleDay||null, scheduleTime||null]
+    `INSERT INTO course_instances (id,course_id,mode,title,start_date,end_date,capacity,price_cents,stripe_price_id,status,schedule_day,schedule_time,schedule_end_time)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, courseId, mode||'self_paced', title, startDate||null, endDate||null, capacity||null, priceCents||0, stripePriceId||null, status||'draft', scheduleDay||null, scheduleTime||null, scheduleEndTime||null]
   );
   save();
 }
@@ -4448,7 +4475,7 @@ function getAllCourseInstances(filters = {}) {
   return queryAll(sql, params);
 }
 function updateCourseInstance(id, fields) {
-  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time'];
+  const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(
@@ -9372,7 +9399,7 @@ module.exports = {
   createCourse, updateCourse, getCourse, getAllCourses, deleteCourse, setCourseFeatured, setCourseSortOrder, getFeaturedCourses, getPublicOpenCourses, getFeaturedLibraryFiles, getRecentStandaloneFiles, getTalkPractices,
   setCourseSequenceFlags,
   backfillCourseSequenceDefaults,
-  setCourseTierGating,
+  setCourseTierGating, setCourseSessionDefaults,
   // Lessons
   createLesson, updateLesson, getLessonsForCourse, getLesson, deleteLesson,
   setLessonFileSequenceOverride,

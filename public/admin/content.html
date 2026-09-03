@@ -1032,6 +1032,17 @@
         <input type="checkbox" id="cdHideWhenLocked"/> Hide entirely below that tier (instead of showing locked)
       </label>
     </div>
+    <!-- Per App 31 — used only to auto-fill a new cohort instance's End
+         Date (Start Date + (sessions-1) weeks) and End Time (Schedule
+         Time + length) — see openNewInstance/onInstanceAutofillInputsChanged
+         further down. Doesn't affect anything else about the course; both
+         fields stay optional. -->
+    <div id="cdSessionDefaultsRow" style="display:flex;gap:12px;margin-bottom:14px;font-size:12px;color:rgba(255,255,255,0.6);align-items:center;flex-wrap:wrap">
+      <span>Cohort defaults:</span>
+      <span style="display:flex;align-items:center;gap:6px">Sessions <input type="number" id="cdSessionCount" min="1" style="width:56px;font-size:12px"/></span>
+      <span style="display:flex;align-items:center;gap:6px">Each (minutes) <input type="number" id="cdSessionMinutes" min="1" style="width:56px;font-size:12px"/></span>
+      <span style="color:rgba(255,255,255,0.3)">Used to auto-fill End Date/End Time when starting a new cohort instance of this course.</span>
+    </div>
     <div id="cdBody"></div>
     <!-- Per Bot 24 — 2-second confirmation toast, shown in place while
          the modal is still open (rather than after closing, where it
@@ -1117,7 +1128,7 @@
   <div class="modal" style="max-width:560px">
     <h3 id="instModalTitle">New instance</h3>
     <input type="hidden" id="instId"/>
-    <div><label>Course</label><select id="instCourseSel"><option value="">Select…</option></select></div>
+    <div><label>Course</label><select id="instCourseSel" onchange="onInstanceCourseChanged()"><option value="">Select…</option></select></div>
     <div><label>Instance title</label><input type="text" id="instTitle" placeholder="e.g. Self-Paced, or Sept 2026 Cohort"/></div>
     <div class="modal-row">
       <div><label>Mode</label><select id="instMode" onchange="toggleInstanceModeFields()"><option value="self_paced">Self-paced</option><option value="cohort">Cohort</option></select></div>
@@ -1125,7 +1136,7 @@
     </div>
     <div id="instCohortFields">
       <div class="modal-row">
-        <div><label>Start date</label><input type="date" id="instStart"/></div>
+        <div><label>Start date</label><input type="date" id="instStart" onchange="recalcInstanceEndDate()"/></div>
         <div><label>End date</label><input type="date" id="instEnd"/></div>
       </div>
       <div><label>Capacity</label><input type="number" id="instCapacity" min="1" placeholder="Leave blank for unlimited"/></div>
@@ -1136,7 +1147,18 @@
            complexity a recurring, timezone-correct schedule would add. -->
       <div class="modal-row">
         <div><label>Schedule day <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown on the public course catalog)</span></label><input type="text" id="instScheduleDay" placeholder="e.g. Tuesdays"/></div>
-        <div><label>Schedule time</label><input type="text" id="instScheduleTime" placeholder="e.g. 7:00pm GMT"/></div>
+        <div><label>Schedule time</label><input type="text" id="instScheduleTime" placeholder="e.g. 7:00pm GMT" onchange="recalcInstanceEndTime()"/></div>
+      </div>
+      <!-- Per App 31 — best-effort auto-suggestion only, same reasoning
+           as Schedule day/time being plain text above: this parses a
+           handful of common time formats (7:00pm GMT / 19:00 UK Time /
+           7pm) and adds the selected course's own session length, but
+           never blocks on a format it doesn't recognise — it just leaves
+           this blank for a manual fill-in instead of guessing wrong.
+           Always freely editable either way. -->
+      <div class="modal-row">
+        <div><label>Schedule end time <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(auto-suggested from the course's session length, when known)</span></label><input type="text" id="instScheduleEndTime" placeholder="e.g. 7:30pm GMT"/></div>
+        <div></div>
       </div>
     </div>
     <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
@@ -3859,7 +3881,89 @@ function toggleInstanceModeFields(){
   document.getElementById('instCohortFields').style.display=isCohort?'':'none';
 }
 
-function openNewInstance(){
+// Per App 31 — cohort auto-fill helpers. All three (End Date, End Time,
+// Price/Stripe ID) are genuine defaults, not locked values — every field
+// they touch stays a normal editable input, and typing over any of them
+// afterward simply overrides the suggestion, same as before this existed.
+
+// End Date = Start Date + (sessions-1) weeks, only when the selected
+// course has a known session count and Start Date is filled in. Weekly
+// cadence is assumed (matching how every cohort course here actually
+// runs — one session per week on Schedule day) rather than trying to
+// derive cadence from anything else.
+function recalcInstanceEndDate(){
+  if (document.getElementById('instMode').value !== 'cohort') return;
+  const startVal = document.getElementById('instStart').value;
+  if (!startVal) return;
+  const courseId = document.getElementById('instCourseSel').value;
+  const course = allCourses.find(c => c.id === courseId);
+  const sessionCount = course && course.default_session_count;
+  if (!sessionCount || sessionCount < 1) return;
+  const start = new Date(startVal + 'T00:00:00Z');
+  const end = new Date(start.getTime() + (sessionCount - 1) * 7 * 24 * 60 * 60 * 1000);
+  document.getElementById('instEnd').value = end.toISOString().slice(0, 10);
+}
+
+// Best-effort parse of a handful of common Schedule time formats
+// ("7:00pm GMT", "19:00 UK Time", "7pm") — deliberately not a full time
+// parser (Schedule time is plain text on purpose, see the field's own
+// note). Returns {hour24, minute, suffix} or null if the format isn't
+// one of the ones recognised, in which case the caller leaves End time
+// alone rather than guess at it.
+function parseScheduleTimeBestEffort(text){
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(.*)$/i.exec((text||'').trim());
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = m[3] ? m[3].toLowerCase() : null;
+  if (isNaN(hour) || hour > 23 || minute > 59) return null;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  return { hour24: hour, minute, ampm, suffix: (m[4]||'').trim() };
+}
+function formatScheduleTimeBestEffort(hour24, minute, ampm, suffix){
+  let out;
+  if (ampm) {
+    let h12 = hour24 % 12; if (h12 === 0) h12 = 12;
+    out = `${h12}:${String(minute).padStart(2,'0')}${ampm}`;
+  } else {
+    out = `${String(hour24).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  }
+  return suffix ? `${out} ${suffix}` : out;
+}
+function recalcInstanceEndTime(){
+  const courseId = document.getElementById('instCourseSel').value;
+  const course = allCourses.find(c => c.id === courseId);
+  const minutes = course && course.default_session_minutes;
+  if (!minutes || minutes < 1) return;
+  const parsed = parseScheduleTimeBestEffort(document.getElementById('instScheduleTime').value);
+  if (!parsed) return; // unrecognised format — leave End time for a manual fill-in rather than guess
+  const totalMinutes = parsed.hour24 * 60 + parsed.minute + minutes;
+  const endHour = Math.floor(totalMinutes / 60) % 24;
+  const endMinute = totalMinutes % 60;
+  document.getElementById('instScheduleEndTime').value = formatScheduleTimeBestEffort(endHour, endMinute, parsed.ampm, parsed.suffix);
+}
+function onInstanceCourseChanged(){
+  recalcInstanceEndDate();
+  recalcInstanceEndTime();
+}
+
+// Fetched once and cached — the annual Member 1 plan is the general
+// "standard year of membership" reference price for the course-fee-that-
+// grants-a-year-of-membership pattern, independent of which course this
+// instance belongs to, so it's only ever looked up once per page load,
+// not per course.
+let _annualPlanCache = null;
+async function getAnnualPlanDefault(){
+  if (_annualPlanCache !== null) return _annualPlanCache;
+  try {
+    const plans = await (await fetch('/api/admin/membership/plans')).json();
+    _annualPlanCache = plans.find(p => p.tier === 1 && p.billing_cycle === 'annual') || false;
+  } catch(e) { _annualPlanCache = false; }
+  return _annualPlanCache;
+}
+
+async function openNewInstance(){
   document.getElementById('instId').value='';
   document.getElementById('instModalTitle').textContent='New instance';
   document.getElementById('instCourseSel').value='';
@@ -3871,9 +3975,18 @@ function openNewInstance(){
   document.getElementById('instStatus').value='draft';
   document.getElementById('instScheduleDay').value='';
   document.getElementById('instScheduleTime').value='';
+  document.getElementById('instScheduleEndTime').value='';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
   openModal('instanceModal');
+  // Per App 31 — only for a genuinely new instance, never when editing an
+  // existing one (which already has its own real saved values) — see
+  // editInstance below, which deliberately does not call this.
+  const annualPlan = await getAnnualPlanDefault();
+  if (annualPlan && !document.getElementById('instPrice').value) {
+    document.getElementById('instPrice').value = (annualPlan.price_pence / 100).toFixed(2);
+    if (annualPlan.stripe_price_id) document.getElementById('instStripePriceId').value = annualPlan.stripe_price_id;
+  }
 }
 
 function editInstance(id){
@@ -3892,6 +4005,7 @@ function editInstance(id){
   document.getElementById('instStatus').value=i.status;
   document.getElementById('instScheduleDay').value=i.schedule_day||'';
   document.getElementById('instScheduleTime').value=i.schedule_time||'';
+  document.getElementById('instScheduleEndTime').value=i.schedule_end_time||'';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
   openModal('instanceModal');
@@ -3910,10 +4024,11 @@ async function saveInstance(){
   const status=document.getElementById('instStatus').value;
   const scheduleDay=document.getElementById('instScheduleDay').value.trim()||null;
   const scheduleTime=document.getElementById('instScheduleTime').value.trim()||null;
+  const scheduleEndTime=document.getElementById('instScheduleEndTime').value.trim()||null;
   const err=document.getElementById('instErr');
   if(!courseId||!title){err.textContent='Course and title are required.';return;}
 
-  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status,scheduleDay,scheduleTime});
+  const body=JSON.stringify({courseId,mode,title,startDate,endDate,capacity,priceCents,stripePriceId,status,scheduleDay,scheduleTime,scheduleEndTime});
   const res=id
     ? await fetch(`/api/admin/course-instances/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body})
     : await fetch('/api/admin/course-instances',{method:'POST',headers:{'Content-Type':'application/json'},body});
@@ -4263,6 +4378,8 @@ async function openCourseDetail(courseId){
   document.getElementById('cdEnforceFileSeq').checked=!!c.enforce_file_sequence;
   document.getElementById('cdRequiredTier').value = (c.required_tier===null||c.required_tier===undefined) ? '' : String(c.required_tier);
   document.getElementById('cdHideWhenLocked').checked=!!c.hide_when_locked;
+  document.getElementById('cdSessionCount').value = (c.default_session_count===null||c.default_session_count===undefined) ? '' : String(c.default_session_count);
+  document.getElementById('cdSessionMinutes').value = (c.default_session_minutes===null||c.default_session_minutes===undefined) ? '' : String(c.default_session_minutes);
   // Per Bot 24 — snapshot of what's actually saved right now, so Cancel
   // can revert the fields above without needing a full re-fetch. Retaken
   // on every call to this function, including the internal ones after a
@@ -4273,6 +4390,8 @@ async function openCourseDetail(courseId){
     enforceFileSeq: !!c.enforce_file_sequence,
     requiredTier: document.getElementById('cdRequiredTier').value,
     hideWhenLocked: !!c.hide_when_locked,
+    sessionCount: document.getElementById('cdSessionCount').value,
+    sessionMinutes: document.getElementById('cdSessionMinutes').value,
   };
   document.getElementById('cdSaveToast').textContent = '';
   document.getElementById('alCourseId').value=courseId;
@@ -4450,6 +4569,16 @@ async function saveCourseTierGating(){
   if(c){c.required_tier=requiredTier;c.hide_when_locked=hideWhenLocked?1:0;}
 }
 
+async function saveCourseSessionDefaults(){
+  if(!curCourseId) return;
+  const sessionCount=document.getElementById('cdSessionCount').value||null;
+  const sessionMinutes=document.getElementById('cdSessionMinutes').value||null;
+  await fetch(`/api/content/courses/${curCourseId}/session-defaults`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sessionCount,sessionMinutes})});
+  const c=allCourses.find(x=>x.id===curCourseId);
+  if(c){c.default_session_count=sessionCount?parseInt(sessionCount,10):null;c.default_session_minutes=sessionMinutes?parseInt(sessionMinutes,10):null;}
+}
+
 // Per Bot 24 — the actual Save/Cancel pair for the four settings fields
 // above (sequence + tier gating), which used to fire saveCourseSequence/
 // saveCourseTierGating individually on every single change with no
@@ -4468,6 +4597,7 @@ function _cdShowToast(msg) {
 async function saveCourseDetailChanges() {
   await saveCourseSequence();
   await saveCourseTierGating();
+  await saveCourseSessionDefaults();
   _cdShowToast('Saved ok');
 }
 function cancelCourseDetail() {
@@ -4476,6 +4606,8 @@ function cancelCourseDetail() {
     document.getElementById('cdEnforceFileSeq').checked = _cdOriginal.enforceFileSeq;
     document.getElementById('cdRequiredTier').value = _cdOriginal.requiredTier;
     document.getElementById('cdHideWhenLocked').checked = _cdOriginal.hideWhenLocked;
+    document.getElementById('cdSessionCount').value = _cdOriginal.sessionCount;
+    document.getElementById('cdSessionMinutes').value = _cdOriginal.sessionMinutes;
   }
   _cdShowToast('Cancelled ok');
 }

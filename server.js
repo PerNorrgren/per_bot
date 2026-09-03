@@ -9092,10 +9092,10 @@ app.get('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res
 });
 app.post('/api/admin/course-instances', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime } = req.body;
+    const { courseId, mode, title, startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime } = req.body;
     if (!courseId || !title || !title.trim()) return res.status(400).json({ error: 'courseId and title are required.' });
     const id = uuidv4();
-    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime);
+    db.createCourseInstance(id, courseId, mode, title.trim(), startDate, endDate, capacity, priceCents, stripePriceId, status, scheduleDay, scheduleTime, scheduleEndTime);
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -9110,7 +9110,7 @@ app.patch('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (re
   try {
     const fieldMap = { mode:'mode', title:'title', startDate:'start_date', endDate:'end_date',
       capacity:'capacity', priceCents:'price_cents', stripePriceId:'stripe_price_id', status:'status',
-      scheduleDay:'schedule_day', scheduleTime:'schedule_time' };
+      scheduleDay:'schedule_day', scheduleTime:'schedule_time', scheduleEndTime:'schedule_end_time' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
     db.updateCourseInstance(req.params.id, fields);
@@ -11464,6 +11464,14 @@ app.patch('/api/content/courses/:id/sequence', auth.requireAuthApi(['admin']), (
 app.patch('/api/content/courses/:id/tier-gating', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     db.setCourseTierGating(req.params.id, req.body.requiredTier, !!req.body.hideWhenLocked);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 31 — course-template defaults used to auto-fill a new cohort
+// instance's End Date/End Time. See setCourseSessionDefaults in db.js.
+app.patch('/api/content/courses/:id/session-defaults', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.setCourseSessionDefaults(req.params.id, req.body.sessionCount, req.body.sessionMinutes);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
