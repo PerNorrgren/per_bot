@@ -5464,4 +5464,225 @@ async function saveBreathingPattern() {
   }
   const body = { name, situation, defaultCycles, phases };
   const res = _breathingEditId
-    ? await fetch(`/api/admin/breathing-patterns/${_breathing
+    ? await fetch(`/api/admin/breathing-patterns/${_breathingEditId}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    : await fetch('/api/admin/breathing-patterns', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    err.textContent = data.error || 'Could not save.';
+    return;
+  }
+  closeModal('breathingPatternModal');
+  loadBreathingPatternsAdmin();
+}
+
+loadAll();
+loadBreathingPatternsAdmin();
+
+// ══ Poems audio (Per Bot 25) ══
+// makeSmartList copied from admin/talk.html — same searchable/sortable/
+// scrollable list component already established there for signal
+// scripts (Per: "this might be the same" — it is; this is that exact
+// pattern, not a new one). No changes from the original.
+window.__smartLists = window.__smartLists || {};
+function makeSmartList(opts) {
+  let allRows = [];
+  let sort = { col: opts.columns[0].key, dir: 'asc' };
+  let query = '';
+  let selected = new Set();
+
+  function getFiltered() {
+    let rows = allRows;
+    if (query) {
+      rows = rows.filter(r => opts.columns.some(c =>
+        c.searchable !== false && String((c.sortValue ? c.sortValue(r) : r[c.key]) ?? '').toLowerCase().includes(query)
+      ));
+    }
+    const col = opts.columns.find(c => c.key === sort.col);
+    const getVal = (col && col.sortValue) ? col.sortValue : (r => r[sort.col]);
+    return [...rows].sort((a, b) => {
+      const av = getVal(a), bv = getVal(b);
+      if (av < bv) return sort.dir === 'asc' ? -1 : 1;
+      if (av > bv) return sort.dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  function updateBulkBar() {
+    const bar = document.getElementById(opts.containerId + 'BulkBar');
+    if (!bar) return;
+    bar.style.display = selected.size ? 'flex' : 'none';
+    const countEl = document.getElementById(opts.containerId + 'BulkCount');
+    if (countEl) countEl.textContent = selected.size + (selected.size === 1 ? ' selected' : ' selected');
+  }
+
+  function render() {
+    const el = document.getElementById(opts.containerId);
+    if (!allRows.length) { el.innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:8px 2px">${opts.emptyText || 'None yet.'}</div>`; updateBulkBar(); return; }
+    const filtered = getFiltered();
+    const arrow = (c) => sort.col === c ? (sort.dir === 'asc' ? ' \u25b2' : ' \u25bc') : '';
+    const allChecked = filtered.length > 0 && filtered.every(r => selected.has(opts.getId(r)));
+    const thead = `<tr style="border-bottom:1px solid rgba(255,255,255,0.12)">
+      <th style="width:26px;padding:8px 6px"><input type="checkbox" ${allChecked ? 'checked' : ''} onchange="window.__smartLists['${opts.containerId}'].toggleAll(this.checked)"/></th>
+      ${opts.columns.map(c => `<th style="text-align:left;padding:8px 10px;${c.sortable === false ? '' : 'cursor:pointer;'}color:rgba(255,255,255,0.5);user-select:none;white-space:nowrap"${c.sortable === false ? '' : ` onclick="window.__smartLists['${opts.containerId}'].onSort('${c.key}')"`}>${c.label}${c.sortable === false ? '' : arrow(c.key)}</th>`).join('')}
+      <th style="padding:8px 10px"></th>
+    </tr>`;
+    const tbody = filtered.map(r => {
+      const id = opts.getId(r);
+      return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">
+        <td style="padding:8px 6px"><input type="checkbox" ${selected.has(id) ? 'checked' : ''} onchange="window.__smartLists['${opts.containerId}'].toggleRow('${id}')"/></td>
+        ${opts.columns.map(c => `<td style="padding:8px 10px;color:rgba(255,255,255,${c.primary ? '0.75' : '0.5'});${c.nowrap ? 'white-space:nowrap' : ''}">${c.render ? c.render(r) : (r[c.key] ?? '')}</td>`).join('')}
+        <td style="padding:8px 10px;white-space:nowrap">${opts.rowActions ? opts.rowActions(r) : ''}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+    if (!filtered.length) el.innerHTML += `<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:10px 2px">No matches.</div>`;
+    updateBulkBar();
+  }
+
+  const api = {
+    setRows(rows) { allRows = rows; selected.clear(); render(); },
+    onSearch(q) { query = (q || '').toLowerCase(); render(); },
+    onSort(col) {
+      if (sort.col === col) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+      else sort = { col, dir: 'asc' };
+      render();
+    },
+    toggleRow(id) { if (selected.has(id)) selected.delete(id); else selected.add(id); updateBulkBar(); },
+    toggleAll(checked) {
+      const visible = getFiltered();
+      visible.forEach(r => checked ? selected.add(opts.getId(r)) : selected.delete(opts.getId(r)));
+      render();
+    },
+    getSelected() { return [...selected]; },
+    clearSelected() { selected.clear(); updateBulkBar(); },
+    render, getFiltered,
+  };
+  window.__smartLists[opts.containerId] = api;
+  return api;
+}
+
+const poemsList = makeSmartList({
+  containerId: 'poemsTable',
+  emptyText: 'No poems yet.',
+  getId: r => r.id,
+  columns: [
+    { key: 'title', label: 'Title', primary: true },
+    {
+      key: 'audio', label: 'Audio', sortable: false, searchable: false,
+      render: r => r.audio_key
+        ? (r.audio_voice_id === 'manual'
+            ? '<span style="color:rgba(180,230,200,0.8)">✓ uploaded</span>'
+            : '<span style="color:rgba(180,230,200,0.8)">✓ generated</span>')
+        : '<span style="color:rgba(255,255,255,0.3)">— none yet</span>',
+    },
+    { key: 'created_at', label: 'Added', nowrap: true, sortValue: r => r.created_at || '' },
+  ],
+  rowActions: r => `
+    <button class="btn sm" onclick="previewPoemAudio('${r.id}', this)">🔊 Preview</button>
+    <button class="btn sm" onclick="promptPoemAudioUpload('${r.id}')">${r.audio_key ? 'Replace' : 'Upload'}</button>
+    ${!r.audio_key ? `<button class="btn sm" onclick="generatePoemAudio('${r.id}', this)">Auto-generate</button>` : ''}
+    ${r.audio_key ? `<button class="btn sm danger" onclick="removePoemAudio('${r.id}')">Remove</button>` : ''}
+  `,
+});
+
+async function loadPoemsAdmin() {
+  try {
+    const data = await (await fetch('/api/admin/poems')).json();
+    poemsList.setRows(data.rows || []);
+  } catch (e) {
+    document.getElementById('poemsTable').innerHTML = '<div class="msg" style="color:rgba(255,140,120,0.85)">Could not load.</div>';
+  }
+}
+
+let _poemAudioPreview = null;
+async function previewPoemAudio(id, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Loading…';
+  try {
+    const res = await fetch(`/api/client/poems/${id}/audio-url`);
+    const data = await res.json();
+    if (!data.url) throw new Error(data.error || 'Could not load audio.');
+    if (_poemAudioPreview) _poemAudioPreview.pause();
+    _poemAudioPreview = new Audio(data.url);
+    _poemAudioPreview.play();
+    btn.textContent = orig; btn.disabled = false;
+  } catch (e) {
+    appAlert(e.message || 'Could not play this poem right now.');
+    btn.textContent = orig; btn.disabled = false;
+  }
+}
+
+async function generatePoemAudio(id, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    const res = await fetch(`/api/admin/poems/${id}/generate-audio`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Could not generate audio.');
+    loadPoemsAdmin();
+  } catch (e) {
+    appAlert(e.message || 'Could not generate audio for this poem right now.');
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+let _poemAudioUploadTargetId = null;
+function promptPoemAudioUpload(id) {
+  _poemAudioUploadTargetId = id;
+  document.getElementById('poemAudioFileInput').click();
+}
+async function onPoemAudioFileChosen() {
+  const input = document.getElementById('poemAudioFileInput');
+  const file = input.files[0];
+  input.value = '';
+  if (!file || !_poemAudioUploadTargetId) return;
+  try {
+    // Per's audit — a manually-uploaded poem narration was routing
+    // straight through this Node server, same risk as every other
+    // route fixed in this pass. Same presigned-direct-to-R2 pattern
+    // already proven for the general library upload, falls back to the
+    // old server-relayed path if presigning fails for any reason.
+    const presignRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio/presign-upload`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type || 'audio/mpeg' }),
+    });
+    let confirmRes;
+    if (presignRes.ok) {
+      const { uploadUrl, key } = await presignRes.json();
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'audio/mpeg');
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(`Upload failed (${xhr.status}).`));
+        xhr.onerror = () => reject(new Error('Upload failed — network error.'));
+        xhr.send(file);
+      });
+      confirmRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: key }),
+      });
+    } else {
+      const fd = new FormData();
+      fd.append('file', file);
+      confirmRes = await fetch(`/api/admin/poems/${_poemAudioUploadTargetId}/audio`, { method: 'POST', body: fd });
+    }
+    const data = await confirmRes.json();
+    if (!confirmRes.ok || !data.ok) throw new Error(data.error || 'Could not upload audio.');
+    loadPoemsAdmin();
+  } catch (e) {
+    appAlert(e.message || 'Could not upload audio for this poem right now.');
+  }
+}
+async function removePoemAudio(id) {
+  if (!(await appConfirm('Remove this poem\'s linked audio? The automatic narration will take over again next time someone taps Listen.'))) return;
+  await fetch(`/api/admin/poems/${id}/audio`, { method: 'DELETE' });
+  loadPoemsAdmin();
+}
+
+loadPoemsAdmin();
+</script>
+
+<script>window.TOMTE_PAGE = 'Admin — Content';</script>
+<script src="/tomte-widget.js" defer></script>
+</body>
+</html>
