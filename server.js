@@ -9150,8 +9150,28 @@ app.delete('/api/admin/course-instances/:id/facilitators/:facilitatorId', auth.r
 
 // ── Cohort live sessions ──
 app.get('/api/admin/course-instances/:id/sessions', auth.requireAuthApi(['admin']), (req, res) => {
-  try { res.json(db.getSessionsForInstance(req.params.id)); }
-  catch(e) { res.status(500).json({ error: e.message }); }
+  try {
+    const sessions = db.getSessionsForInstance(req.params.id);
+    const instance = db.getCourseInstance(req.params.id);
+    // Per App 31 — each session's matching lesson (same course, same
+    // number) already has its real handout/teacher's-guide files
+    // attached via the existing Lessons file-picker. Surfaced here as
+    // direct links to those same files rather than asking anyone to
+    // retype content or upload a second copy — session numbering doesn't
+    // always line up with a lesson 1:1 (a session added by hand with no
+    // matching lesson), so this is best-effort: no match, no files
+    // shown, nothing else about the session is affected either way.
+    if (instance) {
+      const lessons = db.getLessonsForCourse(instance.course_id);
+      const lessonByNumber = {};
+      lessons.forEach(l => { lessonByNumber[l.lesson_number] = l; });
+      sessions.forEach(s => {
+        const lesson = lessonByNumber[s.session_number];
+        s.lesson_files = lesson ? db.getFilesForLesson(lesson.id) : [];
+      });
+    }
+    res.json(sessions);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/course-instances/:id/sessions', auth.requireAuthApi(['admin']), (req, res) => {
   try {
@@ -9174,6 +9194,58 @@ app.patch('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (r
 app.delete('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteInstanceSession(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 31 — server-side twin of content.html's
+// parseScheduleTimeBestEffort (the New Instance modal's End Time
+// helper). Same reasoning: Schedule time is deliberately plain text
+// ("7:00pm GMT"), so this is best-effort only — an unrecognised format
+// just means the generated session gets the right DATE at midnight UTC
+// rather than blocking generation entirely over a time it can't parse.
+function parseScheduleTimeServerSide(text) {
+  const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec((text || '').trim());
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = m[3] ? m[3].toLowerCase() : null;
+  if (isNaN(hour) || hour > 23 || minute > 59) return null;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  return { hour, minute };
+}
+// Per App 31 — "the course template applied to each instance," per Per's
+// own request: one instance_session per LESSON in the course (lessons
+// already ARE the course-level template — title, number, and their own
+// attached files), numbered/dated to match, rather than typing every
+// session by hand for every new cohort. Idempotent by session_number —
+// safe to click again after adding a lesson later; existing sessions
+// (including any hand-added ones with no matching lesson) are never
+// touched or duplicated.
+app.post('/api/admin/course-instances/:id/sessions/generate-from-lessons', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const instance = db.getCourseInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found.' });
+    const lessons = db.getLessonsForCourse(instance.course_id);
+    if (!lessons.length) return res.status(400).json({ error: 'This course has no lessons yet — add lessons first, then generate sessions from them.' });
+    const existingNumbers = new Set(db.getSessionsForInstance(req.params.id).map(s => s.session_number));
+    const parsedTime = parseScheduleTimeServerSide(instance.schedule_time);
+    let created = 0, skipped = 0;
+    lessons.forEach(lesson => {
+      if (existingNumbers.has(lesson.lesson_number)) { skipped++; return; }
+      let scheduledAt = null;
+      if (instance.start_date) {
+        // Weekly cadence — matches the same assumption the New Instance
+        // modal's End Date auto-fill already makes (one session per
+        // week on Schedule day), not derived independently here.
+        const base = new Date(instance.start_date + 'T00:00:00.000Z');
+        base.setUTCDate(base.getUTCDate() + (lesson.lesson_number - 1) * 7);
+        if (parsedTime) base.setUTCHours(parsedTime.hour, parsedTime.minute, 0, 0);
+        scheduledAt = base.toISOString();
+      }
+      db.addInstanceSession(uuidv4(), req.params.id, lesson.lesson_number, lesson.title, scheduledAt, '', '');
+      created++;
+    });
+    res.json({ ok: true, created, skipped });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Facilitator-side course teaching (Per's request — allowing other

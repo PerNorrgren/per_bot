@@ -4061,6 +4061,7 @@ async function refreshSessionsModal(){
         <input type="text" value="${escAttr(s.title)}" id="sesstitle-${s.id}" style="flex:1"/>
         <input type="text" value="${escAttr(s.scheduled_at||'')}" id="sessdate-${s.id}" placeholder="YYYY-MM-DD HH:MM" style="width:160px"/>
       </div>
+      ${renderSessionLessonFiles(s)}
       <textarea id="sesshandout-${s.id}" placeholder="Handout (visible to students)" rows="2" style="width:100%;margin-bottom:6px">${escAttr(s.handout)}</textarea>
       <textarea id="sessnotes-${s.id}" placeholder="Facilitator notes (private)" rows="2" style="width:100%">${escAttr(s.facilitator_notes)}</textarea>
       <div style="margin-top:8px;display:flex;gap:6px">
@@ -4069,7 +4070,10 @@ async function refreshSessionsModal(){
       </div>
     </div>
   `).join('');
-  h+=`<button class="btn primary sm" onclick="addSession()">+ Add session</button>`;
+  h+=`<div style="display:flex;gap:8px">
+    <button class="btn primary sm" onclick="addSession()">+ Add session</button>
+    <button class="btn sm" onclick="generateSessionsFromLessons()" title="Creates one session per lesson in this course, numbered and dated to match — skips any session number that already exists">Generate from lessons</button>
+  </div>`;
   el.innerHTML=h;
   // These two fields are recreated fresh on every refresh (new session added/
   // deleted, etc.) — force-mount rather than reusing a stale Quill instance
@@ -4078,6 +4082,32 @@ async function refreshSessionsModal(){
     mountRichEditor(`sesshandout-${s.id}`, true);
     mountRichEditor(`sessnotes-${s.id}`, true);
   });
+}
+// Per App 31 — the actual "auto-fill from the uploaded files" piece: not
+// copied text (a PDF's content dumped into a textbox would look wrong
+// and drift out of sync the moment the real file is updated), but a
+// direct, always-current link to the same files already attached to
+// this session's matching lesson — reuses the exact same
+// toggleLessonFilePreview click-to-open the Lessons file list itself
+// uses, so "open" behaves identically everywhere in this app.
+function renderSessionLessonFiles(s){
+  const files = s.lesson_files || [];
+  if (!files.length) return '';
+  const studentFiles = files.filter(f => !f.facilitator_resource);
+  const guideFiles = files.filter(f => f.facilitator_resource);
+  const fileLink = f => `<span onclick="toggleLessonFilePreview('${f.ref_id}','${f.id}','${f.file_type||''}')" style="cursor:pointer;color:rgba(180,230,200,0.8);text-decoration:underline;margin-right:10px" title="Click to open/play">${ficon(f.file_type)} ${f.title}</span>`;
+  return `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px;padding:6px 8px;background:rgba(255,255,255,0.02);border-radius:6px">
+    ${studentFiles.length ? `<div>Student handout: ${studentFiles.map(fileLink).join('')}</div>` : ''}
+    ${guideFiles.length ? `<div${studentFiles.length?' style="margin-top:4px"':''}>Teacher's guide: ${guideFiles.map(fileLink).join('')}</div>` : ''}
+  </div>`;
+}
+async function generateSessionsFromLessons(){
+  const instanceId=document.getElementById('sessInstanceId').value;
+  const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/generate-from-lessons`,{method:'POST'});
+  const d=await res.json();
+  if(d.error){appAlert(d.error);return;}
+  await refreshSessionsModal();
+  appAlert(`${d.created} session${d.created===1?'':'s'} created${d.skipped?`, ${d.skipped} already existed and were left as-is`:''}.`);
 }
 async function addSession(){
   const instanceId=document.getElementById('sessInstanceId').value;
