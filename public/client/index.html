@@ -1220,6 +1220,19 @@
           <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Make a note</button>
         </div>
 
+        <!-- Per's request — "a little note when they log in to remind
+             them of an upcoming lesson this week." Independent of the
+             resume/next-action cards below (a schedule reminder, not a
+             content-progress one) — can show alongside either of them,
+             not mutually exclusive. Placed first since a live session
+             coming up is more time-sensitive than "continue where you
+             left off." -->
+        <div class="resume-card" id="upcomingSessionCard" style="display:none" onclick="jumpToUpcomingSession()">
+          <div class="resume-card-label">Coming up this week</div>
+          <div class="resume-card-title" id="upcomingSessionTitle"></div>
+          <div class="resume-card-sub" id="upcomingSessionSub"></div>
+        </div>
+
         <!-- Per Bot 21 — moved here from the Talk page per Per's request;
              loadResumeCard() already runs on general app boot regardless
              of which tab is open, so nothing about the loading logic
@@ -7944,6 +7957,29 @@
   let _currentCourseLessons = []; // cached from the last openCourseDetail call — used to find the next lesson
 
   // Dashboard resume card — checked once on load, independent of which tab is open.
+  // Per's request — the actual note itself. Independent check from
+  // loadResumeCard (schedule reminder, not content progress), called
+  // alongside it at boot so both can show at once if relevant.
+  async function loadUpcomingSessionBanner() {
+    try {
+      const res = await fetch('/api/client/upcoming-session');
+      if (!res.ok) throw new Error('none');
+      const s = await res.json();
+      if (!s) throw new Error('none');
+      document.getElementById('upcomingSessionTitle').textContent = `${s.course_title} — ${s.session_title}`;
+      document.getElementById('upcomingSessionSub').textContent = fmtSessionDateTime(s.scheduled_at);
+      document.getElementById('upcomingSessionCard').dataset.instanceId = s.instance_id;
+      document.getElementById('upcomingSessionCard').style.display = 'block';
+    } catch(e) {
+      document.getElementById('upcomingSessionCard').style.display = 'none';
+    }
+  }
+  function jumpToUpcomingSession() {
+    const instanceId = document.getElementById('upcomingSessionCard').dataset.instanceId;
+    if (!instanceId) return;
+    switchTab('courses');
+    openCourseDetail(instanceId);
+  }
   async function loadResumeCard() {
     try {
       const res  = await fetch('/api/client/resume');
@@ -8124,7 +8160,33 @@
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
         ${data.course?.description ? `<div class="lesson-item-desc" style="margin-bottom:10px">${data.course.description}</div>` : ''}
+        ${isCohort ? `
+        <div id="reminderPrefsCard" style="margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:13px">
+          <div style="margin-bottom:8px;color:rgba(255,255,255,0.6)">Session reminders</div>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="checkbox" id="remindEmailChk" ${data.enrolment.reminder_email ? 'checked' : ''}/> Email
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
+            <input type="checkbox" id="remindSmsChk" onchange="toggleReminderPhoneField()" ${data.enrolment.reminder_sms ? 'checked' : ''}/> Text message (SMS)
+          </label>
+          <div id="reminderPhoneWrap" style="display:${data.enrolment.reminder_sms ? '' : 'none'};margin:6px 0">
+            <input type="tel" id="remindPhoneInput" placeholder="Phone number" style="width:100%"/>
+          </div>
+          <div id="reminderPrefsMsg" style="font-size:12px;margin-top:4px"></div>
+          <button class="lesson-open-btn" style="margin-top:6px" onclick="saveReminderPrefs('${data.enrolment.id}')">Save</button>
+        </div>
+        ` : ''}
       `;
+      // Per's request — pre-fill from the account's own phone number
+      // (not returned by the course-detail endpoint itself) so the field
+      // isn't blank for someone who already has one on file elsewhere in
+      // the app (e.g. set for a different reminder type already).
+      if (isCohort) {
+        fetch('/api/account').then(r => r.ok ? r.json() : null).then(acc => {
+          const input = document.getElementById('remindPhoneInput');
+          if (input && acc?.phone) input.value = acc.phone;
+        }).catch(() => {});
+      }
       document.getElementById('courseLessonsList').innerHTML = data.lessons.map(l => {
         const pct = l.fileProgress?.percent ?? 0;
         const isDone = l.progress.status === 'completed';
@@ -8163,6 +8225,37 @@
       }).join('');
     } catch(e) {
       document.getElementById('courseDetailHeader').innerHTML = '<div class="no-content">Could not load this course.</div>';
+    }
+  }
+
+  // Per's request — the same UTC "YYYY-MM-DD HH:MM:SS"-ish ISO string
+  // every session/scheduling field in this app already stores, rendered
+  // in the visitor's own local time/locale rather than raw UTC digits.
+  function toggleReminderPhoneField() {
+    const checked = document.getElementById('remindSmsChk').checked;
+    document.getElementById('reminderPhoneWrap').style.display = checked ? '' : 'none';
+  }
+  // Per's request — "if they leave it blank we remind them at save so
+  // they can add it or un-check sms." The server is the real
+  // enforcement (see the reminder-prefs route in server.js); this is
+  // just the friendly, immediate version of the same message so it
+  // doesn't need a round-trip to show up.
+  async function saveReminderPrefs(enrolmentId) {
+    const reminderEmail = document.getElementById('remindEmailChk').checked;
+    const reminderSms = document.getElementById('remindSmsChk').checked;
+    const phone = document.getElementById('remindPhoneInput').value.trim();
+    const msg = document.getElementById('reminderPrefsMsg');
+    msg.textContent = ''; msg.style.color = '';
+    try {
+      const res = await fetch(`/api/client/enrolments/${enrolmentId}/reminder-prefs`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminderEmail, reminderSms, phone })
+      });
+      const data = await res.json();
+      if (!res.ok) { msg.textContent = data.error || 'Could not save — please try again.'; msg.style.color = 'rgba(230,140,120,0.9)'; return; }
+      msg.textContent = 'Saved.'; msg.style.color = 'rgba(180,230,200,0.85)';
+    } catch(e) {
+      msg.textContent = 'Could not save — please try again.'; msg.style.color = 'rgba(230,140,120,0.9)';
     }
   }
 
@@ -8835,6 +8928,7 @@
   // Kick off the resume card check as soon as the page loads, independent of
   // whichever tab happens to be active first.
   loadResumeCard();
+  loadUpcomingSessionBanner();
   loadA11yPrefsFromServer();
   checkOnboarding();
   checkPendingConsents(); // Per Bot 24 — see the function itself for why this one gate covers every account-creation path at once.

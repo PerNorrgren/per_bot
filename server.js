@@ -3695,6 +3695,13 @@ app.get('/api/client/resume', auth.requireAuthApi(['client']), (req, res) => {
   try { res.json(db.getDashboardResumeCard(req.user.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — "a little note when they log in to remind them of an
+// upcoming lesson this week." Returns null when there's nothing within
+// the next 7 days, which the client treats as "don't show the banner."
+app.get('/api/client/upcoming-session', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getUpcomingSessionThisWeek(req.user.id) || null); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
 app.get('/api/client/activity-home', auth.requireAuthApi(['client']), (req, res) => {

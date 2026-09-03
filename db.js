@@ -4909,6 +4909,26 @@ function addInstanceSession(id, courseInstanceId, sessionNumber, title, schedule
 function getSessionsForInstance(courseInstanceId) {
   return queryAll('SELECT * FROM instance_sessions WHERE course_instance_id=? ORDER BY session_number ASC', [courseInstanceId]);
 }
+// Per's request — "a little note when they log in to remind them of an
+// upcoming lesson this week." The soonest live cohort session, across
+// every course this person is actively enrolled in, that falls within
+// the next 7 days — null if there's nothing that close, which the
+// client treats the same as "don't show the banner at all."
+function getUpcomingSessionThisWeek(userId) {
+  return queryOne(`
+    SELECT s.title as session_title, s.scheduled_at, ci.id as instance_id, c.title as course_title
+    FROM instance_sessions s
+    JOIN course_instances ci ON s.course_instance_id = ci.id
+    JOIN courses c ON ci.course_id = c.id
+    JOIN enrolments e ON e.course_instance_id = ci.id
+    WHERE e.user_id = ? AND e.status = 'active' AND ci.mode = 'cohort'
+      AND s.scheduled_at IS NOT NULL
+      AND s.scheduled_at > datetime('now')
+      AND s.scheduled_at <= datetime('now', '+7 days')
+    ORDER BY s.scheduled_at ASC
+    LIMIT 1
+  `, [userId]);
+}
 // Per's request — a single-row getter, needed so a PATCH/DELETE on one
 // session (identified only by its own id in the URL, not also its
 // instance id) can still look up which instance it belongs to, for the
@@ -9526,7 +9546,7 @@ module.exports = {
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
-  addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession,
+  addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession, getUpcomingSessionThisWeek,
   getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent,
   // Student notes
   addStudentNote, getNotesForStudentInInstance, getNotesForInstance,
