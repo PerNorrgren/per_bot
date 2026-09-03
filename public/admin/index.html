@@ -159,8 +159,6 @@
       <a href="/admin/sales" class="btn">Sales &amp; Marketing</a>
       <a href="/admin/reports" class="btn">Reports</a>
       <a href="/admin/pages" class="btn">Pages</a>
-      <a href="/admin/social" class="btn">Social</a>
-      <a href="/admin/forms" class="btn">Forms</a>
       <a href="/setup" class="btn">Settings</a>
     </div>
   </div>
@@ -1278,6 +1276,7 @@
         <div class="table-hdr-cell col-name" onclick="facSort('name')">Name ${sortIndicator('fac','name')}</div>
         <div class="table-hdr-cell col-email" onclick="facSort('email')">Email ${sortIndicator('fac','email')}</div>
         <div class="table-hdr-cell col-level" onclick="facSort('role')">Status ${sortIndicator('fac','role')}</div>
+        <div class="table-hdr-cell" style="flex:0 0 90px">Public bio</div>
       </div>` +
       list.map(f => {
         const isArchived = f.role === 'facilitator_archived';
@@ -1290,6 +1289,14 @@
             <span class="status-badge ${isArchived?'status-archived':isPending?'status-pending':'status-active'}">
               ${isArchived?'Archived':isPending?'Pending':'Active'}
             </span>
+          </div>
+          <!-- Per's request — this used to only be checkable by opening
+               each facilitator's edit modal, which made it easy to think
+               a checkbox had been saved when it actually hadn't (Save
+               bio page is its own button, separate from Save details
+               just above it in that modal) — visible at a glance now. -->
+          <div style="flex:0 0 90px">
+            <span class="status-badge ${f.public_profile ? 'status-active' : 'status-archived'}">${f.public_profile ? 'Public' : 'Private'}</span>
           </div>
         </div>`;
       }).join('');

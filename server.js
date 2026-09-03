@@ -1393,6 +1393,24 @@ function emailSessionReminder1Hour(user, courseTitle, sessionTitle, sessionDateS
     `{{session_title}} starts in about an hour, at {{session_date}}.`,
     { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr }, courseInstanceId, override);
 }
+// Per's request — SMS didn't exist for these three reminders at all
+// before; same resolveMessageContent/extra.sms_body pattern
+// buildReminderSms already uses for the inactivity reminder, just with
+// the session-specific tokens session_title/session_date instead.
+function smsSessionReminderBody(type, defaultSmsBody, courseTitle, sessionTitle, sessionDateStr, override) {
+  const content = resolveMessageContent(type, { extra: { sms_body: defaultSmsBody } }, override);
+  return fillTemplate(content.extra.sms_body, { course_title: courseTitle, session_title: sessionTitle, session_date: sessionDateStr });
+}
+// Per's request — the interval itself, now admin-editable per type
+// (see the hours_before extra field, editable in Comms) rather than a
+// fixed 72/24/1 hardcoded in this file. Falls back to the same numbers
+// that were hardcoded before this existed, so an admin who never
+// touches the new field sees no change in behaviour at all.
+function getSessionReminderHoursBefore(type, fallbackHours) {
+  const content = resolveMessageContent(type, { extra: { hours_before: fallbackHours } }, null);
+  const hours = Number(content.extra.hours_before);
+  return isNaN(hours) || hours < 0 ? fallbackHours : hours;
+}
 
 // Per Bot 18 — fires when a manually-honoured membership period (set by
 // hand in People admin, not tied to any Stripe subscription — the
@@ -2745,7 +2763,18 @@ app.get('/api/admin/admins', auth.requireAuthApi(['admin']), (req, res) => {
 });
 app.patch('/api/admin/facilitators/:id', auth.requireAuthApi(['admin']), async (req, res) => {
   const { name, email, action, bio, credentials, publicProfile } = req.body;
-  if (action === 'archive')   { db.archiveFacilitator(req.params.id); return res.json({ ok: true }); }
+  // Per's real bug fix, guard side — now that admin accounts can appear
+  // in the same facilitator list/dropdowns (so an admin teaching their
+  // own course can actually be assigned and have a public bio), archive
+  // must never be allowed to target one. Losing the only admin account
+  // this way would be a genuine lockout: the startup bootstrap only
+  // creates a fresh admin if none exists for ADMIN_EMAIL at all, it
+  // doesn't notice or fix an existing one that got archived.
+  if (action === 'archive') {
+    const target = db.getFacilitatorById(req.params.id);
+    if (target?.role === 'admin') return res.status(400).json({ error: "Can't archive an admin account from here." });
+    db.archiveFacilitator(req.params.id); return res.json({ ok: true });
+  }
   if (action === 'unarchive') { db.unarchiveFacilitator(req.params.id); return res.json({ ok: true }); }
   if (action === 'reset_password') {
     const fac = db.getFacilitatorById(req.params.id);
@@ -3684,6 +3713,30 @@ async function attemptEnrolUser(user, courseInstanceId) {
 // requires payment first (Stripe integration is the next build — this
 // deliberately returns a clear "payment required" error rather than
 // pretending to enrol someone who hasn't paid).
+// Per's request — the student's own reminder channel choice, editable
+// any time from the course page. reminder_sms is only ever allowed to
+// persist as true alongside a real phone number: if it's being turned
+// on and neither the account already has a phone nor one was given in
+// this same request, this rejects clearly rather than silently saving a
+// checked box that can never actually fire — the person then either
+// adds a number or unchecks it, exactly as asked.
+app.patch('/api/client/enrolments/:id/reminder-prefs', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const enrolment = db.getEnrolment(req.params.id);
+    if (!enrolment || enrolment.user_id !== req.user.id) return res.status(404).json({ error: 'Enrolment not found.' });
+    const { reminderEmail, reminderSms, phone } = req.body;
+    const trimmedPhone = (phone || '').trim();
+    if (reminderSms) {
+      const user = db.getUser(req.user.id);
+      if (!trimmedPhone && !user?.phone) {
+        return res.status(400).json({ error: 'Add a phone number to get reminders by text, or leave SMS unchecked.' });
+      }
+    }
+    if (trimmedPhone) db.updateUserPreferences(req.user.id, { phone: trimmedPhone });
+    db.setEnrolmentReminderPrefs(req.params.id, !!reminderEmail, !!reminderSms);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const { courseInstanceId } = req.body;
@@ -15039,7 +15092,17 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
 // Guarded by IS_STAGING same as the manual endpoint below, and by
 // last_sent_date so a slow run or an extra cron tick within the same
 // hour never double-sends the same occurrence.
-// Per's request — session reminders, 3 days / 1 day / 1 hour before.
+// Per's request — session reminders, admin-configurable interval per
+// type (hours_before, editable in Comms — see getSessionReminderHoursBefore
+// above), sent via whichever channel(s) each enrolment actually chose
+// (reminder_email/reminder_sms on the enrolment itself, defaulting to
+// email-on/SMS-off — see the ALTER TABLE comment in db.js). SMS is only
+// ever attempted when the enrolment has both opted in AND the person
+// has a real phone number on file; a missing phone with SMS somehow
+// still checked is silently skipped here rather than erroring the whole
+// reminder run — the actual prevention of that state living in the
+// first place is the reminder-prefs endpoint's own validation, not this
+// send loop.
 // Deliberately "has this already been sent" rather than a narrow time
 // window, so this is robust against whatever the actual cron interval
 // turns out to be: a session crosses into a threshold once, gets its
@@ -15051,9 +15114,9 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
 async function sendDueSessionReminders() {
   if (IS_STAGING) return { skipped: 'staging' };
   const REMINDER_TYPES = [
-    { type: '3day', thresholdMs: 3 * 24 * 60 * 60 * 1000, emailFn: emailSessionReminder3Day },
-    { type: '1day', thresholdMs: 1 * 24 * 60 * 60 * 1000, emailFn: emailSessionReminder1Day },
-    { type: '1hour', thresholdMs: 60 * 60 * 1000, emailFn: emailSessionReminder1Hour },
+    { type: '3day', hoursBefore: getSessionReminderHoursBefore('session_reminder_3day', 72), emailFn: emailSessionReminder3Day, defaultSmsBody: '{{course_title}}: {{session_title}} is on {{session_date}}.' },
+    { type: '1day', hoursBefore: getSessionReminderHoursBefore('session_reminder_1day', 24), emailFn: emailSessionReminder1Day, defaultSmsBody: '{{course_title}}: {{session_title}} is tomorrow, {{session_date}}.' },
+    { type: '1hour', hoursBefore: getSessionReminderHoursBefore('session_reminder_1hour', 1), emailFn: emailSessionReminder1Hour, defaultSmsBody: '{{course_title}}: {{session_title}} starts in about an hour, {{session_date}}.' },
   ];
   const now = new Date();
   const sessions = db.getUpcomingSessionsWithScheduledTime();
@@ -15064,8 +15127,8 @@ async function sendDueSessionReminders() {
     if (isNaN(sessionDate.getTime())) continue; // malformed date — skip rather than crash the whole run
     const msUntil = sessionDate.getTime() - now.getTime();
     if (msUntil <= 0) continue; // already happened
-    for (const { type, thresholdMs, emailFn } of REMINDER_TYPES) {
-      if (msUntil > thresholdMs) continue; // not close enough yet for this reminder tier
+    for (const { type, hoursBefore, emailFn, defaultSmsBody } of REMINDER_TYPES) {
+      if (msUntil > hoursBefore * 60 * 60 * 1000) continue; // not close enough yet for this reminder tier
       const enrolments = db.getEnrolmentsForInstance(session.course_instance_id);
       for (const enrolment of enrolments) {
         if (db.hasSentSessionReminder(session.id, enrolment.id, type)) continue;
@@ -15073,7 +15136,13 @@ async function sendDueSessionReminders() {
           const user = db.getUser(enrolment.user_id);
           if (!user) continue;
           const sessionDateStr = sessionDate.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
-          await emailFn(user, session.course_title, session.title, sessionDateStr, session.course_instance_id);
+          if (enrolment.reminder_email === undefined || enrolment.reminder_email) {
+            await emailFn(user, session.course_title, session.title, sessionDateStr, session.course_instance_id);
+          }
+          if (enrolment.reminder_sms && user.phone) {
+            const smsBody = smsSessionReminderBody(`session_reminder_${type}`, defaultSmsBody, session.course_title, session.title, sessionDateStr);
+            await sms.sendSms(user.phone, smsBody);
+          }
           db.markSessionReminderSent(uuidv4(), session.id, enrolment.id, type);
           sentCount++;
         } catch(e) {

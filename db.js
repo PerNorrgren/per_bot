@@ -3318,11 +3318,20 @@ function updateFacilitatorPhone(id, phone) {
 function getAllAdmins() {
   return queryAll("SELECT id,name,email,role,must_change_password,created_at FROM facilitators WHERE role='admin' ORDER BY name ASC");
 }
+// Per's real bug — an admin teaching their own course (a very normal
+// case, not an edge case) had no way to appear here at all: this used
+// to filter role='facilitator' only, which meant an admin account could
+// never be selected in the instance-facilitator-assignment dropdown,
+// and never appeared in People to have their own public bio/photo
+// edited either. Now includes admin rows too. Archiving an admin
+// account specifically is blocked server-side (see the archive route in
+// server.js) — showing them here doesn't mean every bulk action is now
+// safe to run on them.
 function getAllFacilitators(includeArchived=false) {
   if (includeArchived) {
-    return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role!='admin' ORDER BY name ASC");
+    return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role IN ('facilitator','facilitator_archived','admin') ORDER BY name ASC");
   }
-  return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role='facilitator' ORDER BY name ASC");
+  return queryAll("SELECT id,name,email,role,must_change_password,created_at,bio,credentials,photo_filename,public_profile FROM facilitators WHERE role IN ('facilitator','admin') ORDER BY name ASC");
 }
 // Per's request — a facilitator's public bio-page content (photo,
 // credentials, bio text) and whether they've opted into having it shown
