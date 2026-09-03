@@ -2876,6 +2876,25 @@ async function getDb() {
   // the templates.
   const existingConfig = queryAll('SELECT id FROM app_config LIMIT 1');
   if (!existingConfig.length) seedAppConfig();
+  // Per's real incident — an already-live site (real legal documents,
+  // real course/library data, all of it) got redirected to the first-run
+  // setup wizard because its own app_config row had setup_completed=0.
+  // seedAppConfig's own "alreadyLive" correction only ever applies to a
+  // BRAND NEW row (it's called only when existingConfig is empty, right
+  // above) — it never corrects a row that already existed with the flag
+  // wrong, e.g. from this column being added via a later ALTER TABLE
+  // that defaulted every existing row to 0, on a site that had been live
+  // long before this concept existed at all. This runs unconditionally
+  // on every boot (a single indexed UPDATE, effectively free once
+  // correct) and backfills exactly that case — never touches a
+  // genuinely fresh deployment (no legal_documents yet, so alreadyLive
+  // is false and nothing happens), and never re-triggers the setup
+  // wizard's own legal-document regeneration, which this kind of already-
+  // established site never needs or wants.
+  const alreadyLiveNow = queryAll('SELECT id FROM legal_documents LIMIT 1').length > 0;
+  if (alreadyLiveNow) {
+    getDbSync().run(`UPDATE app_config SET setup_completed=1 WHERE id='default' AND setup_completed=0`);
+  }
 
   // Seed categories if empty
   const existing = queryAll('SELECT id FROM categories LIMIT 1');
