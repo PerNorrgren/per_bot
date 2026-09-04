@@ -3727,6 +3727,7 @@ app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
         enrolled: !!enrolment,
         enrolment_id: enrolment?.id || null,
         percent_complete: enrolment?.percent_complete ?? null,
+        last_activity_at: enrolment?.last_activity_at || null,
         locked: i.course_access_status === 'locked' || isTierGatedForAccess(i),
       };
     }));

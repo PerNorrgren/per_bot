@@ -4706,7 +4706,23 @@ function getEnrolmentsForUser(userId) {
       `SELECT COUNT(*) as n FROM lesson_progress WHERE enrolment_id=? AND status='completed'`, [r.id]
     ).n;
     const percentComplete = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
-    return { ...r, total_lessons: totalLessons, completed_lessons: completedLessons, percent_complete: percentComplete };
+    // Per's request — "My Courses" ordered by date last accessed. There's
+    // no generic "last touched" column on lesson_progress, but
+    // started_at/completed_at together are a genuine, honest proxy: the
+    // single most recent value across every lesson in this enrolment is
+    // the most recent real interaction actually on record. Falls back to
+    // enrolled_at for a course that's been joined but never opened yet,
+    // so a brand-new enrolment still sorts sensibly (by when it was
+    // joined) rather than having an undefined position.
+    const activity = queryOne(
+      `SELECT MAX(ts) as last_activity FROM (
+         SELECT started_at as ts FROM lesson_progress WHERE enrolment_id=?
+         UNION ALL
+         SELECT completed_at as ts FROM lesson_progress WHERE enrolment_id=?
+       )`, [r.id, r.id]
+    );
+    const lastActivityAt = (activity && activity.last_activity) || r.enrolled_at;
+    return { ...r, total_lessons: totalLessons, completed_lessons: completedLessons, percent_complete: percentComplete, last_activity_at: lastActivityAt };
   });
 }
 function getEnrolmentsForInstance(courseInstanceId) {

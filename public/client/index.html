@@ -1675,10 +1675,10 @@
     <!-- Courses -->
     <div class="courses-view" id="coursesView">
       <div class="courses-scroll" id="coursesListScroll">
-        <div class="courses-section-label">My Courses</div>
-        <div id="myCoursesList"><div class="no-content">Loading…</div></div>
-        <div class="courses-section-label" style="margin-top:22px">Available Courses</div>
+        <div class="courses-section-label">Available Courses</div>
         <div id="browseCoursesList"></div>
+        <div class="courses-section-label" style="margin-top:22px">My Courses</div>
+        <div id="myCoursesList"><div class="no-content">Loading…</div></div>
       </div>
       <div class="courses-scroll" id="courseDetailScroll" style="display:none">
         <button class="courses-back-btn" onclick="closeCourseDetail()">&larr; Back to courses</button>
@@ -8039,6 +8039,11 @@
       const res  = await fetch('/api/client/courses');
       const list = await res.json();
       const mine = list.filter(i => i.enrolled);
+      // Per's request — "My Courses" ordered by date last accessed, most
+      // recent first. Deliberately only reorders this list — Available
+      // Courses keeps its own existing cohort-first/start-date ordering
+      // from the server untouched.
+      mine.sort((a, b) => new Date(b.last_activity_at || 0) - new Date(a.last_activity_at || 0));
       const browse = list.filter(i => !i.enrolled);
       renderMyCourses(mine);
       // Per Bot 16 — a Member always enrols free regardless of a course's
