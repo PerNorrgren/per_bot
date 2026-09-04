@@ -1160,13 +1160,13 @@
         <div><label>Schedule end time <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(auto-suggested from the course's session length, when known)</span></label><input type="text" id="instScheduleEndTime" placeholder="e.g. 7:30pm GMT"/></div>
         <div></div>
       </div>
+      <div><label>Zoom link <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown to facilitators on their course summary — not shown to students automatically)</span></label><input type="text" id="instZoomLink" placeholder="https://zoom.us/j/..."/></div>
     </div>
     <div id="instPaidFields">
       <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
       <div><label>Stripe Price ID <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank to charge the amount above directly; paste a Price ID from Stripe to use a pre-created Price object instead, e.g. for cleaner reporting)</span></label><input type="text" id="instStripePriceId" placeholder="price_..."/></div>
       <div><label>Also grants membership for (months) <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — leave blank for a course-only payment; e.g. 12 for "pay for this course, get a year of membership included")</span></label><input type="number" id="instGrantsMembershipMonths" min="1" placeholder="Leave blank for none"/></div>
     </div>
-    <div><label>Zoom link <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown to facilitators on their course summary — not shown to students automatically)</span></label><input type="text" id="instZoomLink" placeholder="https://zoom.us/j/..."/></div>
     <div class="modal-err" id="instErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('instanceModal')">Cancel</button>
@@ -3910,14 +3910,16 @@ async function copyInstancePublicLink(id, btn){
 // instance opened already pre-priced, requiring a manual clear — exactly
 // backwards from Per's actual workflow (no plans to ever charge for
 // self-paced right now). Fix: fold the three price-related fields into
-// their own group (instPaidFields) and treat it exactly like the
-// existing instCohortFields group above it — hidden AND cleared for
-// Self-paced, so nothing stray rides along on a free instance; visible,
-// and still usefully defaulted from the annual plan, only for Cohort.
-// The annual-plan default only ever applies to a genuinely new instance
-// (no instId yet) with an empty Price field — never overwrites a saved
-// instance's real values when editing, and never overwrites anything
-// someone's already typed in.
+// their own group (instPaidFields), and move Zoom link (only ever
+// meaningful for a live cohort session — self-paced is just using the
+// app) into the existing instCohortFields group alongside schedule day/
+// time. Both groups follow the same show/hide-and-clear pattern: hidden
+// AND cleared for Self-paced, so nothing stray rides along on a
+// self-paced instance; visible, and still usefully defaulted from the
+// annual plan for pricing, only for Cohort. The annual-plan default only
+// ever applies to a genuinely new instance (no instId yet) with an empty
+// Price field — never overwrites a saved instance's real values when
+// editing, and never overwrites anything someone's already typed in.
 async function toggleInstanceModeFields(){
   const isCohort=document.getElementById('instMode').value==='cohort';
   document.getElementById('instCohortFields').style.display=isCohort?'':'none';
@@ -3926,6 +3928,7 @@ async function toggleInstanceModeFields(){
     document.getElementById('instPrice').value='';
     document.getElementById('instStripePriceId').value='';
     document.getElementById('instGrantsMembershipMonths').value='';
+    document.getElementById('instZoomLink').value='';
     return;
   }
   const isNew = !document.getElementById('instId').value;
