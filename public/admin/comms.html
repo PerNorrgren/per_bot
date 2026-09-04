@@ -1439,7 +1439,7 @@
     // still works exactly as before; mountRich returns a real Quill
     // instance, same as `new Quill(...)` did.
     platforms.forEach(p => {
-      const q = MessageEditor.mountRich(`mbEditorWrap_${p}`, '', { toolbar: 'social' });
+      const q = MessageEditor.mountRich(`mbEditorWrap_${p}`, '', { toolbar: 'social', marketingContext: true });
       q.setText(results[p] || '');
       mbQuillInstances[p] = q;
       mbRenderMediaBadge(p); // sets the initial "required" state for Instagram, blank for everyone else
@@ -2924,7 +2924,7 @@
   // insertNewsletterToken) without having to rewrite each of them.
   function getQuill() {
     if (!MessageEditor.isMounted('newsletterRichEditor')) {
-      MessageEditor.mountRich('newsletterRichEditor', '', { placeholder: 'Write it as it will appear in the email.' });
+      MessageEditor.mountRich('newsletterRichEditor', '', { placeholder: 'Write it as it will appear in the email.', marketingContext: true });
     }
     return MessageEditor.getInstance('newsletterRichEditor');
   }

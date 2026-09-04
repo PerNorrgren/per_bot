@@ -1265,6 +1265,8 @@ RULES:
 You will be given the title and type of whatever this promo currently links to (may be none — text-only), and the current draft line (may be empty). Write one fresh line following the shape and rules above. Respond with ONLY the line itself — no preamble, no markdown, no quotation marks around it, no explanation.` + TREND_CONTEXT_USAGE_MARKETING + BELONGING_ANGLE_USAGE_MARKETING;
 
 module.exports = {
+  TREND_CONTEXT_USAGE_MARKETING,
+  BELONGING_ANGLE_USAGE_MARKETING,
   TRENDING_CONTEXT_REFRESH_PROMPT,
   MOTD_GENERATION_PROMPT,
   AI_POLISH_SIGNAL_PROMPT,

@@ -7299,12 +7299,32 @@ app.get('/api/admin/comms-ai-generate/:jobId', auth.requireAuthApi(['admin']), (
 
 app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
   try {
-    const { html } = req.body;
+    const { html, marketingContext } = req.body;
     const plain = (html || '').replace(/<[^>]+>/g, '').trim();
     if (!plain) return res.status(400).json({ error: 'Write something first.' });
     const b = brand();
     const language = getAdminLanguage();
-    const systemPrompt = prompts.AI_POLISH_SIGNAL_PROMPT(b.name, language);
+    // Per App 32 — this endpoint is shared by every rich editor in the
+    // app (session notes, client chat, facilitator notes, the
+    // newsletter, the social post composer, and more), so the trend
+    // hook and belonging-as-selling-point angle can't be baked into the
+    // base prompt unconditionally — most of those contexts have nothing
+    // to do with selling anything. marketingContext is set true only by
+    // the specific mountRich() call sites that are genuinely promotional
+    // (see editorOpts in message-editor.js) and defaults to false/off
+    // everywhere else, so this stays a plain clarity pass by default.
+    let systemPrompt = prompts.AI_POLISH_SIGNAL_PROMPT(b.name, language);
+    let userContent = html;
+    if (marketingContext) {
+      // This prompt's base instructions say to preserve the input HTML
+      // exactly and output only the revised HTML — unlike the other
+      // generators that use these two fragments, there's no existing
+      // notion here of "context vs. content to rewrite," so without this
+      // explicit carve-out the model could easily echo the literal
+      // <current_trend> tag straight into the polished newsletter.
+      systemPrompt += prompts.TREND_CONTEXT_USAGE_MARKETING + prompts.BELONGING_ANGLE_USAGE_MARKETING + '\n\nIMPORTANT FOR THIS EDITOR SPECIFICALLY: a <current_trend> block, if present, is appended after the actual message content below as separate context only — it is never part of the message itself. Never preserve it, quote it, or include it anywhere in your output. Respond with ONLY the polished version of the actual content that precedes it.';
+      userContent = html + getCurrentTrendBlock();
+    }
     // Per Bot 39 — bumped 2000 -> 6000 and thinking disabled (this task
     // doesn't need extended reasoning, and thinking draws from this same
     // budget — see the Per Bot 15t comment on anthropicFetch). At 2000
@@ -7320,7 +7340,7 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     // thrown error here means that replace never happens and the
     // person's original message is left untouched; a truncated .html
     // used to mean it got silently overwritten and lost.
-    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: html }], 6000, true);
+    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userContent }], 6000, true);
     res.json({ html: reply.trim() });
   } catch(e) {
     console.error('ai-polish error:', e.message);

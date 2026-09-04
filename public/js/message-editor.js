@@ -12,6 +12,16 @@
   'use strict';
 
   const instances = {}; // containerId -> Quill instance, one per mounted rich field
+  // Per App 32 — parallel map so runAiPolish (below) can tell whether
+  // THIS specific editor instance is genuinely promotional content
+  // (newsletter, social post composer) versus one of the many other
+  // things this same shared editor is used for (session notes, client
+  // chat, facilitator notes) where injecting the daily trend hook or a
+  // belonging sales angle would be completely wrong. Set via
+  // mountRich(containerId, html, { marketingContext: true }) at the
+  // specific call sites that are actually promotional — never a global
+  // default, since this editor's whole point is being reused everywhere.
+  const editorOpts = {};
 
   // ── Plain input/textarea token insertion — insert at cursor, refocus. ──
   function insertTokenAtField(el, token) {
@@ -944,7 +954,7 @@
       window.appAlert('Could not open AI Help here — please try reloading the page.');
       return;
     }
-    aiPolishState[containerId] = { q, html: q.root.innerHTML };
+    aiPolishState[containerId] = { q, html: q.root.innerHTML, marketingContext: !!(editorOpts[containerId] && editorOpts[containerId].marketingContext) };
     panel.style.display = 'block';
     // Per's report: "AI Help does nothing." It wasn't doing nothing —
     // the panel lives right after the whole editor block in the
@@ -965,7 +975,7 @@
     document.getElementById(`${containerId}_polishInsert`).style.display = 'none';
     document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">Improving your message…</span>`;
     try {
-      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: st.html }) });
+      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: st.html, marketingContext: st.marketingContext }) });
       const data = await res.json();
       if (!res.ok || !data.html) throw new Error(data.error || 'Could not get a suggestion right now.');
       st.result = data.html;
@@ -992,6 +1002,7 @@
 
   function mountRich(containerId, initialHtml, opts) {
     opts = opts || {};
+    editorOpts[containerId] = opts;
     ensureStyles();
     ensureBlotsRegistered();
     if (instances[containerId]) { destroy(containerId); }
