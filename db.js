@@ -6,14 +6,64 @@ const crypto = require('crypto');
 const DB_PATH = path.join(__dirname, 'db', 'perbot.db');
 let db = null;
 
+// ── Boot-time DB load — hardened after the Sept 3 2026 data-loss incident ──
+// The original version of this function treated a missing file at DB_PATH
+// as "this is a brand-new deployment, start with an empty database" — no
+// distinction between that and "the volume just hasn't finished mounting
+// yet". On Railway, a mounted volume isn't always guaranteed to be visible
+// to the app the instant it starts; if fs.existsSync(DB_PATH) is checked
+// too early, it can come back false even though the real file is sitting
+// right there a few seconds later. Combined with save() (below) running
+// unconditionally after every single write and overwriting DB_PATH with
+// whatever's currently in memory, a false negative here for even one boot
+// is enough to silently replace months of real data with an empty schema
+// the moment anything writes — no error, no warning, nothing in the logs
+// pointing at what happened.
+//
+// Fix: retry with backoff (3s, then 5s, then 15s) before concluding the
+// file genuinely isn't there. If it's still missing after ~23 seconds —
+// long enough for any normal volume-mount delay to have resolved — this
+// is now a hard, fatal error. It refuses to fall back to a fresh empty
+// database on its own, ever. The only way to actually start a brand-new
+// database is the explicit ALLOW_FRESH_DB_INIT=true environment variable,
+// set on purpose for a genuine first-ever deploy — never as an automatic
+// fallback path anything can trigger by accident.
+const DB_INIT_RETRY_DELAYS_MS = [3000, 5000, 15000];
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function loadOrRefuseDb(SQL) {
+  if (fs.existsSync(DB_PATH)) {
+    return new SQL.Database(fs.readFileSync(DB_PATH));
+  }
+
+  console.error(`db.js: ${DB_PATH} not found on first check at boot. This normally means the database is missing, but can also mean the Railway volume simply hasn't finished mounting yet. Retrying before treating this as fatal...`);
+
+  for (let i = 0; i < DB_INIT_RETRY_DELAYS_MS.length; i++) {
+    const waitMs = DB_INIT_RETRY_DELAYS_MS[i];
+    console.error(`db.js: retry ${i + 1}/${DB_INIT_RETRY_DELAYS_MS.length} — waiting ${waitMs}ms before checking again...`);
+    await delay(waitMs);
+    if (fs.existsSync(DB_PATH)) {
+      console.error(`db.js: ${DB_PATH} found after waiting — volume mount was just slow, not actually missing. Continuing normally.`);
+      return new SQL.Database(fs.readFileSync(DB_PATH));
+    }
+  }
+
+  if (process.env.ALLOW_FRESH_DB_INIT === 'true') {
+    console.error(`db.js: ${DB_PATH} still not found after all retries, but ALLOW_FRESH_DB_INIT=true is set — creating a brand-new empty database ON PURPOSE. This should only ever happen for a genuine first-ever deploy.`);
+    return new SQL.Database();
+  }
+
+  console.error(`db.js: FATAL — ${DB_PATH} was not found after 3s + 5s + 15s of retries (23s total). Refusing to start with a fresh empty database, since that file should already exist in production. If this really is a brand-new deployment that needs an empty database, set ALLOW_FRESH_DB_INIT=true explicitly and redeploy — this is never done automatically.`);
+  process.exit(1);
+}
+
 async function getDb() {
   if (db) return db;
   const SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    db = new SQL.Database(fs.readFileSync(DB_PATH));
-  } else {
-    db = new SQL.Database();
-  }
+  db = await loadOrRefuseDb(SQL);
 
   // ── App configuration (Path A: one deployment per facilitator/org) ──
   // Single-row settings for THIS deployment's brand identity and business
