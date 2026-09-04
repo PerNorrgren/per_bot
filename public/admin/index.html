@@ -2008,22 +2008,35 @@
   async function editSelectedMemberDetails() {
     const id = [...memberSel.sel][0]; if (!id) return;
     const u = _memberData.find(x => x.id === id); if (!u) return;
-    await ensureUdLookupsLoaded();
     document.getElementById('udUserId').value = id;
     document.getElementById('udName').value = u.name || '';
     document.getElementById('udEmail').value = u.email || '';
     document.getElementById('udPhone').value = u.phone || '';
-    document.getElementById('udLanguage').value = u.language || '';
     document.getElementById('udTomteName').value = u.tomte_name || '';
     document.getElementById('udTomteImgPreview').src = tomteImgSrc(u.tomte_image_filename);
-    document.getElementById('udTomteLanguage').value = u.tomte_language || '';
-    document.getElementById('udTomteVoice').value = u.voice_id || '';
     document.getElementById('udTomteVoiceEnabled').value = u.tomte_voice_enabled === null || u.tomte_voice_enabled === undefined ? '' : (u.tomte_voice_enabled ? '1' : '0');
     document.getElementById('udErr').textContent = '';
     _udSelectedImageFilename = null; // no new gallery pick yet this session — keep whatever's already set
-    renderUdImageGallery(u.tomte_image_filename || null);
-    loadExtraFacilitators(id, u.facilitator_id);
+    // Per's report — this modal used to wait on 2-3 network calls
+    // (language list, voice list, existing-image gallery) before becoming
+    // visible at all, with zero feedback while waiting — slow enough
+    // that people would click Edit details several more times, not
+    // realising anything was already happening. Now the modal opens
+    // immediately with everything already known from the row clicked,
+    // and only the handful of fields that genuinely need a lookup show a
+    // plain "Loading…" placeholder until ensureUdLookupsLoaded() (still
+    // cached after the first open this session) actually resolves.
+    document.getElementById('udLanguage').innerHTML = '<option>Loading…</option>';
+    document.getElementById('udTomteLanguage').innerHTML = '<option>Loading…</option>';
+    document.getElementById('udTomteVoice').innerHTML = '<option>Loading…</option>';
+    document.getElementById('udTomteImgGallery').innerHTML = '';
     openModal('userDetailsModal');
+    loadExtraFacilitators(id, u.facilitator_id);
+    await ensureUdLookupsLoaded();
+    document.getElementById('udLanguage').value = u.language || '';
+    document.getElementById('udTomteLanguage').value = u.tomte_language || '';
+    document.getElementById('udTomteVoice').value = u.voice_id || '';
+    renderUdImageGallery(u.tomte_image_filename || null);
   }
 
   // ── Additional facilitators (Per Bot 13) — everything beyond the
@@ -2401,11 +2414,6 @@
     // and the modal never opened. Falling back only when nothing was passed.
     ids = ids || [...userSel.sel];
     if (!ids.length) return;
-    const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
-    const facEl=document.getElementById('upgradeAssignFac');
-    facEl.innerHTML='<option value="">No facilitator</option>';
-    facs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}">${f.name}</option>`; });
-    facEl.value = currentFacId || '';
     document.getElementById('upgradeUserName').textContent = name || `${ids.length} user${ids.length>1?'s':''} selected`;
     document.getElementById('upgradeUserId').value = ids.join(',');
     if (level) document.getElementById('upgradeMemberLevel').value = level;
@@ -2428,7 +2436,17 @@
       expiryNote.textContent = `Leave blank for permanent, no automatic expiry. If set, this same date applies to all ${ids.length} selected people — e.g. set 2 weeks out to give this whole group a trial period.`;
     }
     document.getElementById('upgradeErr').textContent='';
+    // Per's report — this modal used to wait on a facilitator-list fetch
+    // before becoming visible at all, same underlying issue as Edit
+    // details above. Opens immediately now, with a plain "Loading…"
+    // placeholder in the facilitator dropdown until the real list arrives.
+    const facEl=document.getElementById('upgradeAssignFac');
+    facEl.innerHTML='<option>Loading…</option>';
     openModal('upgradeModal');
+    const facRes=await fetch('/api/admin/facilitators'), facs=await facRes.json();
+    facEl.innerHTML='<option value="">No facilitator</option>';
+    facs.forEach(f=>{ facEl.innerHTML+=`<option value="${f.id}">${f.name}</option>`; });
+    facEl.value = currentFacId || '';
   }
   function toggleRegrantTrialCustom() {
     const isCustom = document.getElementById('regrantTrialPreset').value === 'custom';
