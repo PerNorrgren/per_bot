@@ -211,9 +211,9 @@
           ${i.status === 'open' ? `
           <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a>
-            ${!isSelfPaced && i.price_cents ? `<span style="font-size:13px;color:rgba(255,255,255,0.4)">£${(i.price_cents/100).toFixed(2)} for Explorers · free for Members</span>` : ''}
+            ${!isSelfPaced && i.price_cents ? `<span style="font-size:20px;font-weight:bold;color:rgba(180,230,200,0.95)">£${(i.price_cents/100).toFixed(2)}</span>` : ''}
           </div>
-          <div id="signInHint" style="margin-top:8px;font-size:12px;color:rgba(255,255,255,0.35)">Already a member? <a href="/login?next=${encodeURIComponent('/course-instance/' + selectedInstanceId)}" style="color:rgba(180,230,200,0.75)">Sign in</a> to join at no charge.</div>
+          <div id="signInHint" style="margin-top:10px;font-size:16px;font-weight:bold"><a href="/login?next=${encodeURIComponent('/course-instance/' + selectedInstanceId)}" style="color:rgba(180,230,200,0.95);text-decoration:underline">Members — Log in to register.</a></div>
           ` : ''}
         </div>
 
@@ -243,7 +243,7 @@
         ${i.status === 'open' ? `
         <div class="cta-card" id="ctaCard">
           <h2>${isSelfPaced ? 'Not a Member Yet?' : 'Ready to Join?'}</h2>
-          <p id="ctaText">${isSelfPaced ? 'Membership includes this course, plus the full practice library — no separate payment per course.' : (i.price_cents ? `£${(i.price_cents/100).toFixed(2)} for Explorers — Members enrol at no charge. Create an account to register.` : "Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.")}</p>
+          <p id="ctaText">${isSelfPaced ? 'Membership includes this course, plus the full practice library — no separate payment per course.' : (i.price_cents ? `<span style="display:block;font-size:20px;font-weight:bold;color:rgba(180,230,200,0.95);margin-bottom:8px">£${(i.price_cents/100).toFixed(2)} to register</span><a href="/login?next=${encodeURIComponent('/course-instance/' + selectedInstanceId)}" style="font-size:16px;font-weight:bold;color:rgba(180,230,200,0.95);text-decoration:underline">Members — Log in to register.</a>` : "Create an account to enrol — once you're registered, you'll find this course waiting for you in your library.")}</p>
           <a class="cta-btn cta-register-btn" id="ctaBtn" href="${joinHref}">${joinLabel}</a>
         </div>` : ''}
       `;
