@@ -140,6 +140,56 @@ const OPENAI_API_KEY     = process.env.OPENAI_API_KEY;
 const app    = express();
 const server = http.createServer(app);
 
+// ── Maintenance mode gate — added Sept 2026 after the data-loss incident ──
+// If the database fails to load at boot (see db.js's loadOrRefuseDb), the
+// old behaviour was either to silently start with an empty database (the
+// original Sept 3 bug) or, in the interim hardened version, to refuse to
+// start at all — leaving Railway's own generic "Application failed to
+// respond" page showing to anyone who visited, since the process never
+// even bound a port. Neither is acceptable for a facilitator or a paying
+// member to land on. This gate lets the server bind the port and serve a
+// real, on-brand maintenance page for every request instead. A background
+// retry (see the boot sequence near the bottom of this file) keeps trying
+// to load the real database — the moment it succeeds, DB_READY flips to
+// true and the app becomes fully live again with no redeploy needed.
+let DB_READY = false;
+const MAINTENANCE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Essential Maintenance — Deeper Mindfulness</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F6F3EE; color: #2E2A25; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; text-align: center; }
+  .card { max-width: 440px; }
+  h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 12px; color: #2E2A25; }
+  p { font-size: 1rem; line-height: 1.5; color: #55504A; margin: 0 0 8px; }
+  .badge { display: inline-block; background: #B4E6C8; color: #1F4B33; font-size: 0.8rem; font-weight: 600; padding: 4px 12px; border-radius: 999px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Essential Maintenance</div>
+    <h1>We'll be back shortly</h1>
+    <p>We're carrying out some essential maintenance right now. This shouldn't take long — please check back again in a few minutes.</p>
+    <p>Thank you for your patience.</p>
+  </div>
+</body>
+</html>`;
+// X-Maintenance is what lets the app's own service worker (see
+// public/service-worker.js) tell this apart from an ordinary unrelated
+// error page — without it, a fetch() that merely gets a 503 back doesn't
+// throw, so the service worker's offline-shell fallback would never
+// trigger and someone's already-downloaded offline library would be
+// hidden behind this page instead of still being reachable.
+app.use((req, res, next) => {
+  if (DB_READY) return next();
+  if (req.path.startsWith('/api/')) {
+    return res.status(503).set('X-Maintenance', 'true').json({ error: 'Essential maintenance — please try again shortly.' });
+  }
+  return res.status(503).set('X-Maintenance', 'true').type('html').send(MAINTENANCE_HTML);
+});
+
 // ── Stripe webhook — MUST be registered before app.use(express.json()) below. ──
 // Stripe signature verification needs the exact raw request bytes; if the global
 // json() parser runs first, it consumes the body and re-parses it into an object,
@@ -15820,9 +15870,11 @@ app.use((err, req, res, next) => {
   next();
 });
 
-// ── Start ──
-(async () => {
-  await db.getDb();
+// ── Deferred boot tasks — everything that requires a real, loaded
+// database. Split out from the boot sequence below so it can run either
+// immediately (normal boot) or later, the moment a background retry
+// successfully loads the database after starting in maintenance mode.
+async function runPostDbBootTasks() {
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';
@@ -15840,5 +15892,43 @@ app.use((err, req, res, next) => {
   } else {
     startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
   }
-  server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
+}
+
+// ── Start ──
+// If db.getDb() throws (see db.js — happens only after 23s of retries
+// found no real database file, and ALLOW_FRESH_DB_INIT wasn't set), the
+// app no longer crashes outright. It starts in maintenance mode instead:
+// the port is bound so visitors get the real MAINTENANCE_HTML page above
+// rather than a bare connection failure, and a background retry every 60
+// seconds keeps trying to load the actual database. The moment a retry
+// succeeds — e.g. because a slow volume mount finally became available —
+// DB_READY flips to true, the deferred boot tasks run, and the app is
+// fully live again with no redeploy needed. Nothing here ever creates a
+// fresh empty database on its own; that still only ever happens via the
+// explicit ALLOW_FRESH_DB_INIT=true environment variable.
+(async () => {
+  try {
+    await db.getDb();
+    await runPostDbBootTasks();
+    DB_READY = true;
+    server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
+  } catch (e) {
+    console.error('FATAL at boot — database could not be loaded:', e.message);
+    console.error('Starting in MAINTENANCE MODE. Every visitor will see the maintenance page until the database becomes available. Retrying in the background every 60 seconds. No fresh/empty database will ever be created automatically — see ALLOW_FRESH_DB_INIT in db.js if this really is meant to be a brand-new deployment.');
+    server.listen(PORT, () => console.log(`Per Bot running on port ${PORT} in MAINTENANCE MODE (database unavailable)`));
+
+    const retryInterval = setInterval(async () => {
+      console.log('Maintenance mode: retrying database load...');
+      try {
+        await db.getDb();
+        await runPostDbBootTasks();
+        DB_READY = true;
+        clearInterval(retryInterval);
+        console.log('Database loaded successfully — maintenance mode ended, app is fully live again.');
+      } catch (e2) {
+        console.error('Maintenance mode: retry failed again —', e2.message);
+      }
+    }, 60000);
+  }
 })();
+

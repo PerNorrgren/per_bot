@@ -23,11 +23,16 @@ let db = null;
 // Fix: retry with backoff (3s, then 5s, then 15s) before concluding the
 // file genuinely isn't there. If it's still missing after ~23 seconds —
 // long enough for any normal volume-mount delay to have resolved — this
-// is now a hard, fatal error. It refuses to fall back to a fresh empty
-// database on its own, ever. The only way to actually start a brand-new
-// database is the explicit ALLOW_FRESH_DB_INIT=true environment variable,
-// set on purpose for a genuine first-ever deploy — never as an automatic
-// fallback path anything can trigger by accident.
+// is now a fatal error: getDb() throws rather than silently falling back
+// to a fresh empty database. server.js catches that throw and starts the
+// app in maintenance mode (see the gate + background retry near the top
+// of server.js) instead of crashing outright, so a real outage shows
+// visitors an actual "we'll be back shortly" page rather than either
+// silent data loss or a bare connection failure. The only way to
+// actually start a brand-new database is the explicit
+// ALLOW_FRESH_DB_INIT=true environment variable, set on purpose for a
+// genuine first-ever deploy — never as an automatic fallback path
+// anything can trigger by accident.
 const DB_INIT_RETRY_DELAYS_MS = [3000, 5000, 15000];
 
 function delay(ms) {
@@ -57,7 +62,7 @@ async function loadOrRefuseDb(SQL) {
   }
 
   console.error(`db.js: FATAL — ${DB_PATH} was not found after 3s + 5s + 15s of retries (23s total). Refusing to start with a fresh empty database, since that file should already exist in production. If this really is a brand-new deployment that needs an empty database, set ALLOW_FRESH_DB_INIT=true explicitly and redeploy — this is never done automatically.`);
-  process.exit(1);
+  throw new Error(`Database file not found at ${DB_PATH} after 23s of retries.`);
 }
 
 async function getDb() {

@@ -156,8 +156,40 @@ self.addEventListener('fetch', (event) => {
   if (req.method === 'GET' && (req.mode === 'navigate' || isShellAsset(req.url))) {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE_NAME);
+
+      // Sept 2026 — shared fallback path, used both when fetch() throws
+      // (a genuine network failure) and when the server is deliberately
+      // serving its maintenance page (see below). Tries the cached shell
+      // first; only shows liveResponse (the actual maintenance page, or
+      // the generic offline text) if nothing was ever cached on this
+      // device.
+      const fallbackToCache = async (liveResponse) => {
+        if (req.mode === 'navigate') {
+          for (const url of [req.url, SHELL_URL, '/client', '/']) {
+            const hit = await cache.match(url);
+            if (hit) return hit;
+          }
+          return liveResponse || new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        }
+        const hit = await cache.match(req);
+        return hit || liveResponse || new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+      };
+
       try {
         const netRes = await fetch(req);
+        // A maintenance response (e.g. the database being unavailable at
+        // boot — see server.js) is still a completed HTTP response as
+        // far as fetch() is concerned; it does NOT throw the way a real
+        // network failure does. Without this check, it would sail
+        // straight past the offline fallback below and get shown as-is —
+        // hiding someone's already-downloaded offline library behind a
+        // maintenance message their device could otherwise have worked
+        // around entirely. The server marks this specific case with
+        // X-Maintenance so it can be told apart from an ordinary,
+        // unrelated error page, which should still be shown as-is.
+        if (netRes.status === 503 && netRes.headers.get('X-Maintenance') === 'true') {
+          return await fallbackToCache(netRes);
+        }
         if (netRes.ok) cache.put(req, netRes.clone());
         return netRes;
       } catch (e) {
@@ -174,15 +206,7 @@ self.addEventListener('fetch', (event) => {
         // successfully before going offline is the one this needs to
         // find), rather than assuming only one fixed string was ever
         // the one that got cached.
-        if (req.mode === 'navigate') {
-          for (const url of [req.url, SHELL_URL, '/client', '/']) {
-            const hit = await cache.match(url);
-            if (hit) return hit;
-          }
-          return new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
-        }
-        const fallback = await cache.match(req);
-        return fallback || new Response('This app has not been opened on this device before, so there is nothing saved to open offline yet.', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        return await fallbackToCache();
       }
     })());
     return;
