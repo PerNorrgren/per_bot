@@ -7360,7 +7360,7 @@ app.post('/api/admin/whats-new-polish', auth.requireAuthApi(['admin']), async (r
     const plain = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const language = getAdminLanguage();
     const linkDesc = linkTitle ? `${linkType === 'course' ? 'a course' : 'a practice/book/poem'} titled "${linkTitle}"` : 'nothing (text-only, no link)';
-    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCURRENTLY LINKS TO: ${linkDesc}\n\nCURRENT DRAFT LINE: ${plain || '(none yet — write one from the link alone)'}`;
+    const userMessage = `WRITE IN LANGUAGE: ${language}\n\nCURRENTLY LINKS TO: ${linkDesc}\n\nCURRENT DRAFT LINE: ${plain || '(none yet — write one from the link alone)'}` + getCurrentTrendBlock();
     const reply = await callClaudeRaw(prompts.WHATS_NEW_PROMO_PROMPT, [{ role: 'user', content: userMessage }], 300);
     res.json({ text: reply.trim() });
   } catch(e) {
@@ -12974,7 +12974,7 @@ async function generateCampaignStepContent(campaign, step, brief) {
   const ctaInstructions = prompts.MESSAGE_BUILDER_CTA_INSTRUCTIONS.replace(/\{\{TRIAL_DAYS\}\}/g, offer.trial_days);
   const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', ctaInstructions);
   const userBrief = brief || `${offer.headline || offer.name}. ${offer.description || ''}`.trim();
-  const userMessage = `SOURCE CONTENT:\n${userBrief}\n\nPLATFORMS TO PRODUCE: ${step.channel}\n\nRespond with only the JSON object, nothing else.`;
+  const userMessage = `SOURCE CONTENT:\n${userBrief}\n\nPLATFORMS TO PRODUCE: ${step.channel}\n\nRespond with only the JSON object, nothing else.` + getCurrentTrendBlock();
   const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 800);
   let parsed;
   try { parsed = JSON.parse(raw); }
