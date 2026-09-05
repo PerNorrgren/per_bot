@@ -290,6 +290,14 @@
         <div class="skeleton" style="width:120px;height:26px;border-radius:13px"></div>
         <div class="skeleton" style="width:180px"></div>
       </div>
+      <!-- Per's request — self-serve cancellation, but only ever shown
+           for a genuine recurring subscription (see renderMembership's
+           own check on stripe_subscription_id). A course-linked or
+           admin-granted membership has nothing to cancel here — it just
+           lapses naturally on its own. -->
+      <div id="manageBillingSection" style="display:none;margin-top:10px">
+        <button class="upgrade-btn" id="manageBillingBtn" onclick="openBillingPortal()" style="background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.6)">Manage or cancel membership</button>
+      </div>
       <div id="upgradeSection" style="display:none">
         <div class="upgrade-cta">
           <div class="upgrade-cta-title" id="upgradeCtaTitle">Unlock more</div>
@@ -1124,6 +1132,27 @@
     }
   }
 
+  // Per's request — opens Stripe's own hosted billing portal so a real
+  // subscriber can manage or cancel from inside the app. Everything
+  // about what that flow actually looks like (cancel wording, whether
+  // it's immediate or at-period-end, proration) is configured in the
+  // Stripe Dashboard, not here.
+  async function openBillingPortal() {
+    const btn = document.getElementById('manageBillingBtn');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Opening…';
+    try {
+      const res = await fetch('/api/client/billing-portal', { method: 'POST' });
+      const data = await res.json();
+      if (data.url) { location.href = data.url; return; }
+      alert(data.error || 'Could not open billing management right now.');
+    } catch (e) {
+      alert('Could not open billing management right now. Please try again.');
+    }
+    btn.disabled = false;
+    btn.textContent = original;
+  }
   function renderMembership(a) {
     const tier  = a.member_tier || 0;
     const label = TIER_LABELS[tier] || 'Explorer';
@@ -1150,6 +1179,14 @@
     }
 
     document.getElementById('membershipStatus').innerHTML = html;
+
+    // Per's request — only ever meaningful for a genuine recurring
+    // subscription. stripe_subscription_id stays null for both the
+    // course-linked one-off grant and any admin-set manual expiry (see
+    // setMemberTier's own COALESCE in db.js) — those simply lapse on
+    // their own, there's no live Stripe subscription behind them to
+    // manage or cancel here.
+    document.getElementById('manageBillingSection').style.display = a.stripe_subscription_id ? 'block' : 'none';
 
     // Show the upgrade card for anyone below the top tier — previously
     // this only ever appeared for Explorers (tier 0), so an existing

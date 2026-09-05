@@ -12431,6 +12431,32 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per's request — self-serve cancellation for a genuine recurring
+// membership, available in the app under You/Account. Deliberately only
+// meaningful for someone with a real stripe_subscription_id — a
+// course-linked or admin-granted membership has no actual subscription
+// behind it to manage this way (see the course_registration_form and
+// course_enrolment webhook branches above, which never set one on
+// purpose), so the client only shows this option when that field is
+// present. Stripe's own hosted portal handles the actual cancel
+// UI/wording (configured in the Stripe Dashboard, not here) and stops
+// billing itself the moment they confirm — the existing
+// customer.subscription.updated webhook above already reacts to that
+// and kicks off the Savers Protocol emails, no new code needed for that
+// part.
+app.post('/api/client/billing-portal', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ error: "Payments aren't set up yet." });
+    const user = db.getUser(req.user.id);
+    if (!user?.stripe_customer_id) return res.status(400).json({ error: "No active subscription found on this account." });
+    const portal = await stripe.billingPortal.sessions.create({ customer: user.stripe_customer_id, return_url: `${APP_URL}/account` });
+    res.json({ url: portal.url });
+  } catch (e) {
+    console.error('[client billing portal]', e.message);
+    res.status(500).json({ error: 'Could not open billing management right now. Please try again.' });
+  }
+});
+
 // Per Bot 24 (activity/engagement, group 1) — one call, both pieces:
 // this week's consistency count and any newly-crossed milestone. Marks
 // the milestone as seen the moment it's returned rather than requiring a
