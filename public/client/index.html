@@ -4092,6 +4092,8 @@
   // risks running into device storage limits, not either alone.
   async function onCourseOfflineAllToggled(instanceId, checkboxEl) {
     checkboxEl.disabled = true;
+    const feedback = document.getElementById('courseOfflineAllFeedback');
+    if (feedback) feedback.style.display = 'none';
     try {
       if (checkboxEl.checked) {
         const res = await fetch(`/api/client/courses/${instanceId}/offline-summary`);
@@ -4110,11 +4112,15 @@
         const data = await markRes.json();
         await loadOfflineMarkedIds();
         (data.fileIds || []).forEach(id => cacheFileForOffline(id));
+        // Per's request — the checkbox alone gave no sign anything had
+        // actually happened.
+        if (feedback) { feedback.textContent = 'All course material is now available for offline view.'; feedback.style.display = ''; }
       } else {
         const unmarkRes = await fetch(`/api/client/courses/${instanceId}/offline-unmark-all`, { method: 'POST' });
         const data = await unmarkRes.json();
         await loadOfflineMarkedIds();
         (data.fileIds || []).forEach(id => removeFileFromOfflineCache(id));
+        if (feedback) { feedback.textContent = 'Removed — course material is no longer stored offline.'; feedback.style.display = ''; }
       }
     } catch (e) {
       checkboxEl.checked = !checkboxEl.checked; // roll back the optimistic click on a genuine failure
@@ -8257,6 +8263,7 @@
               <input type="checkbox" id="courseOfflineAllChk" onchange="onCourseOfflineAllToggled('${instanceId}', this)"/>
               Take all course material offline
             </label>
+            <div id="courseOfflineAllFeedback" style="font-size:12px;color:rgba(140,220,170,0.85);margin-top:6px;margin-left:26px;display:none"></div>
           </div>`
         : '';
       document.getElementById('courseDetailHeader').innerHTML = `
