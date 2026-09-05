@@ -558,6 +558,7 @@
     <div class="modal">
       <h3 id="confirmTitle">Are you sure?</h3>
       <p class="modal-note" id="confirmMsg"></p>
+      <div id="confirmExtra"></div>
       <div class="modal-btns">
         <button class="modal-cancel" onclick="closeModal('confirmModal')">Cancel</button>
         <button class="btn danger" id="confirmOkBtn" style="padding:8px 18px;border-radius:8px;font-family:Georgia,serif;font-size:13px" onclick="confirmAction()">Confirm</button>
@@ -1159,9 +1160,15 @@
 
   // ── Confirm modal ──
   let _confirmFn = null;
-  function showConfirm(title, msg, fn) {
+  function showConfirm(title, msg, fn, extraHtml) {
     document.getElementById('confirmTitle').textContent = title;
     document.getElementById('confirmMsg').textContent   = msg;
+    // Per's request — an optional extra bit of interactive content
+    // (currently just the "also reset welcome popup" checkbox on Log in
+    // as) without changing behaviour for every other showConfirm caller,
+    // which don't pass this and get an empty, invisible div exactly as
+    // before.
+    document.getElementById('confirmExtra').innerHTML = extraHtml || '';
     _confirmFn = fn;
     openModal('confirmModal');
   }
@@ -2233,12 +2240,24 @@
       `You'll see the app exactly as ${name} does, in their real account — every action while impersonating is genuinely theirs. A red frame stays on screen the whole time, with a one-click way back to admin. Continue?`,
       async () => {
         try {
+          if (document.getElementById('loginAsResetFanfareChk')?.checked) {
+            await fetch(`/api/admin/users/${ids[0]}/reset-welcome-fanfare`, { method: 'POST' }).catch(() => {});
+          }
           const res = await fetch(`/api/admin/users/${ids[0]}/impersonate`, { method: 'POST' });
           const data = await res.json();
           if (data.ok) { window.location.href = data.redirect; }
           else { appAlert(data.error || 'Could not start this.'); }
         } catch(e) { appAlert('Network error — could not start this.'); }
-      });
+      },
+      // Per's request — folded into this same confirm screen rather than
+      // a separate button, since resetting it is really just "one more
+      // thing to do before logging in as them" most of the time this
+      // gets used for testing.
+      `<label style="display:flex;align-items:center;gap:8px;margin:14px 0 4px;font-size:13px;color:rgba(255,255,255,0.6);cursor:pointer">
+        <input type="checkbox" id="loginAsResetFanfareChk"/>
+        Also reset welcome popup (testing only — re-triggers the one-time course registration popup)
+      </label>`
+    );
   }
   async function getSelectedUserSubscriptions() { return getSubscriptionsFor([...userSel.sel], 'userGetSubsBtn'); }
   function loginAsSelectedUser() {
@@ -2249,12 +2268,20 @@
       `You'll see the app exactly as ${name} does, in their real account — every action while impersonating is genuinely theirs. A red frame stays on screen the whole time, with a one-click way back to admin. Continue?`,
       async () => {
         try {
+          if (document.getElementById('loginAsResetFanfareChk')?.checked) {
+            await fetch(`/api/admin/users/${ids[0]}/reset-welcome-fanfare`, { method: 'POST' }).catch(() => {});
+          }
           const res = await fetch(`/api/admin/users/${ids[0]}/impersonate`, { method: 'POST' });
           const data = await res.json();
           if (data.ok) { window.location.href = data.redirect; }
           else { appAlert(data.error || 'Could not start this.'); }
         } catch(e) { appAlert('Network error — could not start this.'); }
-      });
+      },
+      `<label style="display:flex;align-items:center;gap:8px;margin:14px 0 4px;font-size:13px;color:rgba(255,255,255,0.6);cursor:pointer">
+        <input type="checkbox" id="loginAsResetFanfareChk"/>
+        Also reset welcome popup (testing only — re-triggers the one-time course registration popup)
+      </label>`
+    );
   }
   async function getSubscriptionsFor(ids, btnId) {
     if (!ids.length) return;

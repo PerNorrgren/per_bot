@@ -3786,7 +3786,13 @@ app.post('/api/client/enrolments/:id/mark-welcomed', auth.requireAuthApi(['clien
   try {
     const enrolment = db.getEnrolment(req.params.id);
     if (!enrolment || enrolment.user_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
-    db.markEnrolmentWelcomed(req.params.id);
+    // Per's request — the fanfare itself still shows during "Log in as"
+    // (useful for testing, and unlike the data-gathering nudges above,
+    // this one isn't asking the real person anything), but dismissing it
+    // during an impersonated session must never actually consume it —
+    // an admin checking on a real customer's account shouldn't be able
+    // to accidentally rob them of their own one-time celebration.
+    if (!req.user.impersonatedBy) db.markEnrolmentWelcomed(req.params.id);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -12351,6 +12357,16 @@ app.post('/api/admin/users/:id/impersonate', auth.requireAuthApi(['admin']), (re
     res.status(500).json({ error: e.message });
   }
 });
+// Per's request — a way to re-trigger the one-time welcome fanfare for
+// testing, since by design it only ever fires once per enrolment.
+app.post('/api/admin/users/:id/reset-welcome-fanfare', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const target = db.getUser(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Person not found.' });
+    db.resetWelcomeFanfare(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // No role restriction here on purpose — this is how ANY impersonated
 // session ends, and by definition the current session's role is
@@ -12385,7 +12401,15 @@ app.get('/api/account', auth.requireAuthApi(['client']), (req, res) => {
     // app knows to render the red frame + exit control the whole time
     // an admin is genuinely looking at this exact session, not guessing
     // from any other signal.
-    if (req.user.impersonatedBy) safe.impersonating = req.user.impersonatedBy;
+    if (req.user.impersonatedBy) {
+      safe.impersonating = req.user.impersonatedBy;
+      // Per's request — an admin using "Log in as" shouldn't trigger the
+      // onboarding stepper for the real person's account. Faked complete
+      // here, in the response only — never actually written to the real
+      // record, so the real person still gets it themselves if it was
+      // genuinely still outstanding.
+      safe.onboarding_completed = 1;
+    }
     res.json(safe);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -12401,7 +12425,11 @@ app.get('/api/my/activity-summary', auth.requireAuthApi(['client']), (req, res) 
   try {
     const consistency = db.getConsistencyStats(req.user.id);
     const milestone = db.getNewMilestone(req.user.id);
-    if (milestone) db.markMilestoneSeen(req.user.id, milestone.key);
+    // Per's request — an admin viewing via "Log in as" shouldn't consume
+    // the real person's one-time milestone celebration. Still shown here
+    // (useful to see it while testing), just never marked seen, so it
+    // genuinely still surfaces for them at their own next real login.
+    if (milestone && !req.user.impersonatedBy) db.markMilestoneSeen(req.user.id, milestone.key);
     res.json({ ...consistency, milestone });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -12416,6 +12444,11 @@ app.get('/api/my/activity-summary', auth.requireAuthApi(['client']), (req, res) 
 // eligibility later on its own).
 app.get('/api/my/referral-prompt', auth.requireAuthApi(['client']), (req, res) => {
   try {
+    // Per's request — never show this to an admin browsing via "Log in
+    // as," and critically never risk starting/consuming the real
+    // person's own cooldown by having their session's onShown/respond
+    // calls fire on the admin's behalf.
+    if (req.user.impersonatedBy) return res.json({ show: false });
     const trigger = db.getReferralPromptTrigger(req.user.id);
     res.json(trigger ? { show: true, ...trigger } : { show: false });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -12435,6 +12468,7 @@ app.post('/api/my/referral-prompt/respond', auth.requireAuthApi(['client']), (re
 // fields list — see updateAccount's allowed array), not a new endpoint.
 app.get('/api/my/birthday-prompt', auth.requireAuthApi(['client']), (req, res) => {
   try {
+    if (req.user.impersonatedBy) return res.json({ show: false });
     const trigger = db.getBirthdayPromptTrigger(req.user.id);
     res.json(trigger || { show: false });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -12451,7 +12485,10 @@ app.post('/api/my/birthday-prompt/respond', auth.requireAuthApi(['client']), (re
 // ── New library files login notification (Per Bot 25) ── see the
 // getNewLibraryFilesCount comment in db.js for the reasoning.
 app.get('/api/my/library-notification', auth.requireAuthApi(['client']), (req, res) => {
-  try { res.json({ count: db.getNewLibraryFilesCount(req.user.id) }); }
+  try {
+    if (req.user.impersonatedBy) return res.json({ count: 0 });
+    res.json({ count: db.getNewLibraryFilesCount(req.user.id) });
+  }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/my/library-notification/seen', auth.requireAuthApi(['client']), (req, res) => {

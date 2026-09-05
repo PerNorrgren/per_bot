@@ -4707,6 +4707,15 @@ function markEnrolmentWelcomed(id) {
   getDbSync().run('UPDATE enrolments SET welcomed_at=datetime(\'now\') WHERE id=?', [id]);
   save();
 }
+// Per's request — a way to re-trigger the welcome fanfare for testing,
+// since it's designed to only ever fire once per enrolment. Resets every
+// cohort enrolment for this user, not just the newest — simplest, and
+// harmless since getPendingWelcomeEnrolment only ever surfaces one at a
+// time (the most recent) regardless of how many have welcomed_at cleared.
+function resetWelcomeFanfare(userId) {
+  getDbSync().run(`UPDATE enrolments SET welcomed_at=NULL WHERE user_id=? AND course_instance_id IN (SELECT id FROM course_instances WHERE mode='cohort')`, [userId]);
+  save();
+}
 // Per's request — student-set reminder channel, editable from the
 // course page any time, not just at enrolment. Validation (SMS
 // requires a real phone number) lives in the route in server.js, not
@@ -9718,7 +9727,7 @@ module.exports = {
   updateCourseInstance, deleteCourseInstance,
   // Enrolments
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
-  getPendingWelcomeEnrolment, markEnrolmentWelcomed,
+  getPendingWelcomeEnrolment, markEnrolmentWelcomed, resetWelcomeFanfare,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
