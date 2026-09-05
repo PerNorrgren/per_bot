@@ -295,11 +295,21 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
             const membershipLine = grantedMembership
               ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership is included too — the full practice library is yours for the next ${instance.grants_membership_months} month${instance.grants_membership_months == 1 ? '' : 's'}, no extra step needed.</p>`
               : '';
+            // Per's request — the confirmation email named the course but
+            // not when it actually happens, which is exactly the detail
+            // someone wants confirmed right after paying.
+            const whenParts = [];
+            if (instance.schedule_day) whenParts.push(instance.schedule_day + (instance.schedule_time ? `, ${instance.schedule_time}` : ''));
+            if (instance.start_date) whenParts.push(`starting ${new Date(instance.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`);
+            const whenLine = whenParts.length
+              ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Meets ${whenParts.join(', ')}.</p>`
+              : '';
             await sendEmail(paymentEmail, `Your place is secured — ${instance.title}`,
               `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
                 <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
                 <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${tokens.name}.</h2>
                 <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
+                ${whenLine}
                 ${membershipLine}
                 <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
                 <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
@@ -13349,6 +13359,13 @@ app.get('/api/legal/:slug/history', (req, res) => {
 // ── Legal consent — authenticated users ──
 app.get('/api/my/consents', auth.requireAuthApi(['client']), (req, res) => {
   try {
+    // Per's report — an admin using "Log in as" to check on someone's
+    // account shouldn't have to click through THAT PERSON's own
+    // outstanding consent requirements just to get in and look around.
+    // impersonatedBy is a claim on the JWT itself (see the impersonate
+    // endpoint), not something the client can forge, so this is safe to
+    // trust as-is.
+    if (req.user.impersonatedBy) return res.json({ pending: [], history: [] });
     const pending = db.getPendingConsentsForUser(req.user.id);
     const history = db.getUserConsentHistory(req.user.id);
     res.json({ pending, history });
