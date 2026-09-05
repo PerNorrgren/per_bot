@@ -236,6 +236,7 @@
         <button class="nav-tab" data-tab="categories">Categories</button>
         <button class="nav-tab" data-tab="breathing">Breathing</button>
         <button class="nav-tab" data-tab="poems">Poems</button>
+        <button class="nav-tab" data-tab="certificates">Certificates</button>
       </div>
       <!-- Per Bot 24 — persistent upload ticker. Hidden unless a bulk
            upload is actually running (see _bulkUploadState), so it stays
@@ -424,6 +425,24 @@
         </div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — full control over certificates: create, edit,
+     delete, assign to an instance, all through the standard rich
+     editor (same component used for newsletters/handouts). One row per
+     template; clicking it opens the same editor used from an
+     instance's own Certificate button. -->
+<div class="panel" id="panel-certificates" style="padding:28px">
+  <div class="section-label">Certificate Templates</div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Templates</div>
+      <button class="btn primary sm" onclick="openCertificateTemplateEditor(null)">+ New template</button>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div id="certTemplatesTable"><div class="loading">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -1167,6 +1186,12 @@
         <div></div>
       </div>
       <div><label>Zoom link <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(shown to facilitators on their course summary — not shown to students automatically)</span></label><input type="text" id="instZoomLink" placeholder="https://zoom.us/j/..."/></div>
+      <!-- Per's request — full control over the certificate: create,
+           edit, delete, and assign, all through the standard rich
+           editor. Only shown once the instance itself has been saved
+           (a brand-new, unsaved instance has no id yet to assign
+           anything to) — see the id check in openInstanceCertificate. -->
+      <div id="instCertificateSection" style="margin-top:4px"></div>
     </div>
     <div id="instPaidFields">
       <div><label>Price (£, one-off — Explorers only; Members always enrol free)</label><input type="number" id="instPrice" min="0" step="0.01" placeholder="0.00"/></div>
@@ -1217,6 +1242,49 @@
     <div id="survBody" style="overflow-y:auto;max-height:55vh"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('surveysModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — the certificate PICKER, shown when an instance has
+     no certificate assigned yet: pick an existing template (then edit
+     it), or start a brand-new one. -->
+<div class="modal-overlay" id="certPickerModal">
+  <div class="modal" style="max-width:480px">
+    <h3>Choose a certificate</h3>
+    <div class="modal-note">This instance doesn't have a certificate assigned yet. Pick an existing template, or start a new one — either way you'll land in the editor.</div>
+    <input type="hidden" id="certPickerInstanceId"/>
+    <div id="certPickerList" style="max-height:280px;overflow-y:auto;margin:12px 0"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('certPickerModal')">Cancel</button>
+      <button class="modal-ok" onclick="startNewCertificateFromPicker()">+ New template</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — the actual editor, "must use the standard editor."
+     Same MessageEditor rich-text component as newsletters/handouts,
+     with {{name}}/{{course_title}}/{{date}}/{{attendance_pct}} tokens
+     the person can type directly into the content. Reachable either
+     from an instance's own Certificate button, or from the standalone
+     Templates table — same modal either way. -->
+<div class="modal-overlay" id="certEditorModal">
+  <div class="modal wide" style="max-width:700px">
+    <h3 id="certEditorTitle">Certificate</h3>
+    <input type="hidden" id="certEditorId"/>
+    <input type="hidden" id="certEditorInstanceId"/>
+    <div><label>Name <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(for your own reference — not shown on the certificate itself)</span></label><input type="text" id="certEditorName" placeholder="e.g. Standard Completion Certificate"/></div>
+    <div class="modal-note" style="margin-top:6px">Tokens available: <code>{{name}}</code>, <code>{{course_title}}</code>, <code>{{date}}</code>, <code>{{attendance_pct}}</code> — type these directly into the content below and they'll be filled in for each person.</div>
+    <textarea id="certEditorContent" rows="10"></textarea>
+    <div id="certEditorRecipients" style="margin-top:14px;display:none">
+      <div class="section-label" style="font-size:11px;margin-bottom:6px">Sent to</div>
+      <div id="certEditorRecipientsList" style="max-height:140px;overflow-y:auto;font-size:12px;color:rgba(255,255,255,0.5)"></div>
+    </div>
+    <div class="modal-err" id="certEditorErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('certEditorModal')">Close</button>
+      <button class="btn sm danger" id="certEditorDeleteBtn" onclick="deleteCertificateTemplateFromEditor()" style="display:none">Delete</button>
+      <button class="modal-ok" onclick="saveCertificateTemplateFromEditor()">Save</button>
     </div>
   </div>
 </div>
@@ -1408,6 +1476,7 @@ document.querySelectorAll('.nav-tab').forEach(t=>t.addEventListener('click',()=>
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
   document.getElementById('panel-'+t.dataset.tab).classList.add('active');
+  if (t.dataset.tab === 'certificates') loadCertificateTemplatesTab();
 }));
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -4088,6 +4157,7 @@ async function openNewInstance(){
   document.getElementById('instScheduleTime').value='';
   document.getElementById('instScheduleEndTime').value='';
   document.getElementById('instErr').textContent='';
+  document.getElementById('instCertificateSection').innerHTML='';
   await toggleInstanceModeFields();
   openModal('instanceModal');
 }
@@ -4113,6 +4183,16 @@ function editInstance(id){
   document.getElementById('instScheduleEndTime').value=i.schedule_end_time||'';
   document.getElementById('instErr').textContent='';
   toggleInstanceModeFields();
+  // Per's request — full control over the certificate, reached from
+  // right here. Only makes sense for a cohort (a self-paced course has
+  // no "you attended enough sessions" concept), and only once the
+  // instance itself has been saved and has a real id.
+  const certSection = document.getElementById('instCertificateSection');
+  if (i.mode === 'cohort') {
+    certSection.innerHTML = `<button class="btn sm" type="button" onclick="openInstanceCertificate('${id}','${i.certificate_template_id||''}')">Certificate${i.certificate_template_id ? ' — assigned' : ' — none yet'}</button>`;
+  } else {
+    certSection.innerHTML = '';
+  }
   openModal('instanceModal');
 }
 
@@ -4240,6 +4320,113 @@ async function sendSurveyRow(enrolmentId, btn){
     btn.disabled = false;
     btn.textContent = original;
   }
+}
+
+// ── Certificate templates (Per's request — full control) ──
+async function loadCertificateTemplatesTab(){
+  const el = document.getElementById('certTemplatesTable');
+  el.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const templates = await fetch('/api/admin/certificate-templates').then(r=>r.json());
+    if (!templates.length) { el.innerHTML = '<div class="empty" style="padding:20px">No certificate templates yet — click "+ New template" to create one.</div>'; return; }
+    el.innerHTML = templates.map(t => `
+      <div class="item-row" style="cursor:pointer;margin-bottom:8px" onclick="openCertificateTemplateEditor('${t.id}')">
+        <div class="item-row-info">
+          <div class="item-row-title">${escHtml(t.name)}</div>
+          <div class="item-row-meta">${t.instance_count ? t.instance_count + ' instance' + (t.instance_count===1?'':'s') : 'Not assigned to any instance'} · Updated ${new Date(t.updated_at).toLocaleDateString()}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { el.innerHTML = '<div class="empty">Could not load templates.</div>'; }
+}
+// pendingAssignInstanceId — set only when reached via an instance's own
+// Certificate button with nothing assigned yet, so saving here also
+// assigns the (new or picked) template to that instance in one step.
+let _certPendingAssignInstanceId = null;
+async function openCertificateTemplateEditor(templateId){
+  closeModal('certPickerModal');
+  document.getElementById('certEditorId').value = templateId || '';
+  document.getElementById('certEditorErr').textContent = '';
+  document.getElementById('certEditorDeleteBtn').style.display = templateId ? '' : 'none';
+  mountRichEditor('certEditorContent', true);
+  if (templateId) {
+    document.getElementById('certEditorTitle').textContent = 'Edit certificate';
+    const t = await fetch(`/api/admin/certificate-templates/${templateId}`).then(r=>r.json());
+    document.getElementById('certEditorName').value = t.name;
+    setRichEditorContent('certEditorContent', t.content || '');
+    if (t.recipients && t.recipients.length) {
+      document.getElementById('certEditorRecipients').style.display = '';
+      document.getElementById('certEditorRecipientsList').innerHTML = t.recipients.map(r =>
+        `<div style="padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05)">${escHtml(r.user_name)} — ${escHtml(r.instance_title)} — ${new Date(r.issued_at).toLocaleDateString()}</div>`
+      ).join('');
+    } else {
+      document.getElementById('certEditorRecipients').style.display = 'none';
+    }
+  } else {
+    document.getElementById('certEditorTitle').textContent = 'New certificate';
+    document.getElementById('certEditorName').value = '';
+    setRichEditorContent('certEditorContent', '');
+    document.getElementById('certEditorRecipients').style.display = 'none';
+  }
+  openModal('certEditorModal');
+}
+async function saveCertificateTemplateFromEditor(){
+  const id = document.getElementById('certEditorId').value;
+  const name = document.getElementById('certEditorName').value.trim();
+  const content = document.getElementById('certEditorContent').value;
+  const err = document.getElementById('certEditorErr');
+  if (!name) { err.textContent = 'Give this certificate a name first.'; return; }
+  err.textContent = '';
+  try {
+    let templateId = id;
+    if (id) {
+      await fetch(`/api/admin/certificate-templates/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name, content }) });
+    } else {
+      const created = await fetch('/api/admin/certificate-templates', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name, content }) }).then(r=>r.json());
+      templateId = created.id;
+    }
+    if (_certPendingAssignInstanceId) {
+      await fetch(`/api/admin/course-instances/${_certPendingAssignInstanceId}/certificate-template`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ templateId }) });
+      _certPendingAssignInstanceId = null;
+      loadAll(); // refreshes allInstances so the instance modal's button label is right next time it opens
+    }
+    closeModal('certEditorModal');
+    if (document.getElementById('panel-certificates').classList.contains('active')) loadCertificateTemplatesTab();
+  } catch(e) { err.textContent = 'Could not save — please try again.'; }
+}
+async function deleteCertificateTemplateFromEditor(){
+  const id = document.getElementById('certEditorId').value;
+  if (!id) return;
+  if (!(await appConfirm('Delete this certificate template? Any instance currently assigned it will show "none yet" again. Certificates already issued from it are not affected.'))) return;
+  await fetch(`/api/admin/certificate-templates/${id}`, { method:'DELETE' });
+  closeModal('certEditorModal');
+  loadAll();
+  if (document.getElementById('panel-certificates').classList.contains('active')) loadCertificateTemplatesTab();
+}
+// Reached from an instance's own Certificate button.
+async function openInstanceCertificate(instanceId, currentTemplateId){
+  if (currentTemplateId) {
+    _certPendingAssignInstanceId = null; // already assigned — just editing it directly, no new assignment needed
+    openCertificateTemplateEditor(currentTemplateId);
+    return;
+  }
+  // Nothing assigned yet — show the picker.
+  document.getElementById('certPickerInstanceId').value = instanceId;
+  const templates = await fetch('/api/admin/certificate-templates').then(r=>r.json());
+  const listEl = document.getElementById('certPickerList');
+  listEl.innerHTML = templates.length
+    ? templates.map(t => `<div class="item-row" style="cursor:pointer;margin-bottom:6px" onclick="pickExistingCertificate('${t.id}','${instanceId}')"><div class="item-row-info"><div class="item-row-title">${escHtml(t.name)}</div></div></div>`).join('')
+    : '<div class="modal-note">No existing templates yet — start a new one below.</div>';
+  openModal('certPickerModal');
+}
+function pickExistingCertificate(templateId, instanceId){
+  _certPendingAssignInstanceId = instanceId;
+  openCertificateTemplateEditor(templateId);
+}
+function startNewCertificateFromPicker(){
+  const instanceId = document.getElementById('certPickerInstanceId').value;
+  _certPendingAssignInstanceId = instanceId;
+  openCertificateTemplateEditor(null);
 }
 async function refreshSessionsModal(){
   const instanceId=document.getElementById('sessInstanceId').value;

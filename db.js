@@ -634,11 +634,29 @@ async function getDb() {
     enrolment_id TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL,
     course_instance_id TEXT NOT NULL,
+    certificate_template_id TEXT,
     attendance_pct INTEGER NOT NULL,
     issued_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (enrolment_id) REFERENCES enrolments(id),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
+  )`);
+
+  // ── Certificate templates (Per's request — full control) ── edited
+  // via the standard rich editor, same component used for newsletters
+  // and handouts — content is real HTML (paragraphs, headings, bold,
+  // images) rendered into the certificate PDF, with {{name}},
+  // {{course_title}}, {{date}}, {{attendance_pct}} tokens substituted
+  // at issue/view time. A template is reusable across many instances,
+  // but each certificate ROW above locks in which template id was
+  // actually used at issue time, so editing a template later never
+  // silently rewrites someone's already-earned certificate.
+  db.run(`CREATE TABLE IF NOT EXISTS certificate_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
   )`);
 
   // ── Student notes ──
@@ -2899,6 +2917,34 @@ async function getDb() {
   // cohort run of it.
   try { db.run(`ALTER TABLE courses ADD COLUMN certificate_threshold_pct INTEGER NOT NULL DEFAULT 80`); } catch(e) {}
   try { db.run(`ALTER TABLE courses ADD COLUMN survey_form_id TEXT`); } catch(e) {}
+  // Per's request — the certificate TEMPLATE is assigned per instance,
+  // not per course, since a specific cohort run might reasonably want
+  // different wording/branding than another run of the same course.
+  try { db.run(`ALTER TABLE course_instances ADD COLUMN certificate_template_id TEXT`); } catch(e) {}
+
+  // Per's request — one starter template, editable/deletable/replaceable
+  // like any other, so there's something to assign and see immediately
+  // rather than every instance starting with nothing at all.
+  const defaultTemplateExists = queryOne(`SELECT id FROM certificate_templates LIMIT 1`);
+  if (!defaultTemplateExists) {
+    db.run(`INSERT INTO certificate_templates (id, name, content) VALUES (?,?,?)`, [
+      'seed-cert-default',
+      'Certificate of Completion (default)',
+      `<p style="text-align:center"><img src="/assets/certificate/logo.png" width="220"></p>
+       <p style="text-align:center"><br></p>
+       <p style="text-align:center">CERTIFICATE OF COMPLETION</p>
+       <p style="text-align:center"><br></p>
+       <p style="text-align:center">This certifies that</p>
+       <h1 style="text-align:center">{{name}}</h1>
+       <p style="text-align:center">has completed</p>
+       <h2 style="text-align:center">{{course_title}}</h2>
+       <p style="text-align:center"><br></p>
+       <p style="text-align:center">Awarded {{date}}</p>
+       <p style="text-align:center"><br></p>
+       <p style="text-align:center"><img src="/assets/certificate/signature.png" width="180"></p>
+       <p style="text-align:center">Per Norrgren, Deeper Mindfulness</p>`
+    ]);
+  }
 
   // Per's request — seed the "meeting what was promised" survey
   // template once, on whichever boot first finds it missing. Deliberately
@@ -5207,11 +5253,13 @@ function getCertificateForEnrolment(enrolmentId) {
   return queryOne('SELECT * FROM certificates WHERE enrolment_id=?', [enrolmentId]);
 }
 function getCertificate(id) {
-  return queryOne(`SELECT c.*, ci.title as instance_title, co.title as course_title, u.name as user_name
+  return queryOne(`SELECT c.*, ci.title as instance_title, co.title as course_title, u.name as user_name,
+    ct.content as template_content
     FROM certificates c
     JOIN course_instances ci ON c.course_instance_id = ci.id
     JOIN courses co ON ci.course_id = co.id
     JOIN users u ON c.user_id = u.id
+    LEFT JOIN certificate_templates ct ON c.certificate_template_id = ct.id
     WHERE c.id=?`, [id]);
 }
 function getCertificatesForUser(userId) {
@@ -5234,10 +5282,55 @@ function issueCertificateIfEligible(id, enrolmentId) {
   const course = getCourse(instance.course_id);
   const pct = getAttendancePct(enrolmentId, enrolment.course_instance_id);
   if (pct < (course.certificate_threshold_pct ?? 80)) return null;
-  getDbSync().run(`INSERT INTO certificates (id, enrolment_id, user_id, course_instance_id, attendance_pct) VALUES (?,?,?,?,?)`,
-    [id, enrolmentId, enrolment.user_id, enrolment.course_instance_id, pct]);
+  getDbSync().run(`INSERT INTO certificates (id, enrolment_id, user_id, course_instance_id, certificate_template_id, attendance_pct) VALUES (?,?,?,?,?,?)`,
+    [id, enrolmentId, enrolment.user_id, enrolment.course_instance_id, instance.certificate_template_id || null, pct]);
   save();
   return getCertificate(id);
+}
+
+// ── Certificate templates (Per's request — full control) ──
+function getCertificateTemplates() {
+  return queryAll(`SELECT ct.*,
+    (SELECT COUNT(*) FROM course_instances ci WHERE ci.certificate_template_id = ct.id) as instance_count
+    FROM certificate_templates ct ORDER BY ct.updated_at DESC`);
+}
+function getCertificateTemplate(id) { return queryOne('SELECT * FROM certificate_templates WHERE id=?', [id]); }
+function createCertificateTemplate(id, name, content) {
+  getDbSync().run(`INSERT INTO certificate_templates (id, name, content) VALUES (?,?,?)`, [id, name, content || '']);
+  save();
+  return getCertificateTemplate(id);
+}
+function updateCertificateTemplate(id, name, content) {
+  getDbSync().run(`UPDATE certificate_templates SET name=?, content=?, updated_at=datetime('now') WHERE id=?`, [name, content, id]);
+  save();
+  return getCertificateTemplate(id);
+}
+function deleteCertificateTemplate(id) {
+  // Per's request — deleting a template doesn't touch any certificate
+  // already issued from it (certificates.certificate_template_id stays
+  // as-is, orphaned but harmless — the PDF renderer falls back to a
+  // plain "certificate" if the template's gone by the time someone
+  // views it), and clears the assignment from any instance still
+  // pointing at it so that instance's Certificate button correctly
+  // shows "pick one" again rather than a dead reference.
+  getDbSync().run(`UPDATE course_instances SET certificate_template_id=NULL WHERE certificate_template_id=?`, [id]);
+  getDbSync().run(`DELETE FROM certificate_templates WHERE id=?`, [id]);
+  save();
+}
+function assignCertificateTemplateToInstance(instanceId, templateId) {
+  getDbSync().run(`UPDATE course_instances SET certificate_template_id=? WHERE id=?`, [templateId || null, instanceId]);
+  save();
+}
+// Everyone this template has actually been issued to (i.e. who's earned
+// a real certificate from it), for the "who's this been sent to" view —
+// not everyone it's merely assigned/available to.
+function getCertificateTemplateRecipients(templateId) {
+  return queryAll(`SELECT c.id, c.issued_at, u.name as user_name, u.email as user_email, ci.title as instance_title
+    FROM certificates c
+    JOIN users u ON c.user_id = u.id
+    JOIN course_instances ci ON c.course_instance_id = ci.id
+    WHERE c.certificate_template_id = ?
+    ORDER BY c.issued_at DESC`, [templateId]);
 }
 
 // ── Course-level certificate/survey settings (Per's request) ──
@@ -9113,6 +9206,25 @@ function reportGeneratedImages() {
   };
 }
 
+// Per's request — "a history log in reports where you can see who you
+// sent certificates to." Reuses the existing email_log table (every
+// certificate send, whether self-serve from the client's own Account
+// page or triggered some other way, already goes through sendEmail
+// with kind:'certificate') rather than a separate tracking mechanism.
+function reportCertificatesSent() {
+  const rows = getRecentEmailLog(500, 'certificate');
+  return {
+    tiles: [
+      { label: 'Certificates emailed (last 500)', value: rows.length },
+      { label: 'Failed', value: rows.filter(r => r.status === 'failed').length },
+    ],
+    table: {
+      columns: ['Recipient', 'Subject', 'Status', 'Sent'],
+      rows: rows.map(r => [r.email, r.subject, r.status, r.created_at]),
+    },
+    note: 'Every certificate email, whether sent by a member from their own Account page or by hand from admin — the subject line names the course.',
+  };
+}
 function reportEmailLog() {
   const jobs = getEmailJobs(100);
   const rows = getRecentEmailLog(200, null);
@@ -9891,7 +10003,7 @@ module.exports = {
   logLogin, pruneLoginLog, getImpersonationLog,
   addWhatsNewItem, updateWhatsNewItem, deleteWhatsNewItem, getWhatsNewItem, getAllWhatsNewItems, getActiveWhatsNewItems,
   startTalkSession, endTalkSession,
-  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage, reportEmailLog,
+  reportMigrations, reportRegistrations, reportMembership, reportContentEngagement, reportUploads, reportCronActivity, reportLogins, reportTalkUsage, reportEmailLog, reportCertificatesSent,
   getDb, save,
   // Facilitators
   createFacilitator, getFacilitatorByEmail, getFacilitatorById,
@@ -9955,6 +10067,8 @@ module.exports = {
   getExplorerCoursePromo, dismissExplorerCoursePromo,
   getAttendanceForSession, markAttendance, getAttendancePct, isLastSessionOfInstance,
   getCertificateForEnrolment, getCertificate, getCertificatesForUser, issueCertificateIfEligible,
+  getCertificateTemplates, getCertificateTemplate, createCertificateTemplate, updateCertificateTemplate,
+  deleteCertificateTemplate, assignCertificateTemplateToInstance, getCertificateTemplateRecipients,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,

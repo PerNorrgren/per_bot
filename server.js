@@ -21,6 +21,7 @@ const fetch      = require('node-fetch');
 const cookieParser = require('cookie-parser');
 const crypto       = require('crypto');
 const PDFDocument = require('pdfkit');
+const { parse: parseHtml } = require('node-html-parser');
 
 // ── Stripe ──
 const Stripe = require('stripe');
@@ -8946,6 +8947,7 @@ const REPORTS = {
   uploads:             { title: 'Uploads',               category: 'Content', run: () => db.reportUploads() },
   cron_activity:       { title: 'Cron Job Activity',     category: 'System',  run: () => db.reportCronActivity() },
   email_log:           { title: 'Email Log',             category: 'System',  run: () => db.reportEmailLog() },
+  certificates_sent:   { title: 'Certificates Sent',      category: 'Content', run: () => db.reportCertificatesSent() },
   email_health:        { title: 'Email Health',          category: 'System',  run: () => db.reportEmailHealth() },
   generated_images:    { title: 'Generated Images',       category: 'System',  run: () => db.reportGeneratedImages() },
 };
@@ -9861,47 +9863,119 @@ app.post('/api/admin/enrolments/:id/send-survey', auth.requireAuthApi(['admin'])
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Certificates (Per's request) ──
-// Generated fresh on every request, never stored as a file — a later
-// name correction or brand change is reflected automatically rather
-// than needing regeneration. Deliberately plain and calm (single serif
-// typeface, generous white space, one accent colour) rather than the
-// ornate gold-border look most certificate generators default to —
-// matches the brand's own actual visual language everywhere else.
-// Returns the PDFDocument itself, already fully drawn but not yet
-// piped anywhere — the two callers below (direct download, email
-// attachment) each pipe it to a different destination.
-function buildCertificateDoc(certificate) {
+// ── Certificates (Per's request — full control via the standard editor) ──
+// Templates are edited as real HTML (paragraphs, headings, bold, images)
+// through the same rich editor used for newsletters/handouts, with
+// {{name}}, {{course_title}}, {{date}}, {{attendance_pct}} tokens
+// substituted at render time. PDFKit itself can't render HTML — this is
+// a deliberately narrow renderer covering exactly the tags Quill's
+// editor actually produces, not a general-purpose one.
+function substituteCertTokens(html, tokens) {
+  return html.replace(/\{\{(\w+)\}\}/g, (match, key) => (tokens[key] !== undefined ? String(tokens[key]) : match));
+}
+async function fetchCertImageBuffer(src) {
+  try {
+    if (/^https?:\/\//i.test(src)) {
+      const res = await fetch(src);
+      if (!res.ok) return null;
+      return Buffer.from(await res.arrayBuffer());
+    }
+    const localPath = path.join(__dirname, 'public', src.replace(/^\//, ''));
+    if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
+    return null;
+  } catch (e) { return null; }
+}
+function getCertElementAlign(el) {
+  const style = el.getAttribute('style') || '';
+  const cls = el.getAttribute('class') || '';
+  if (/text-align:\s*center/.test(style) || /ql-align-center/.test(cls)) return 'center';
+  if (/text-align:\s*right/.test(style) || /ql-align-right/.test(cls)) return 'right';
+  return 'left';
+}
+async function renderCertHtmlToPdf(doc, html, tokens) {
+  const root = parseHtml(substituteCertTokens(html, tokens));
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  for (const el of root.childNodes) {
+    if (el.nodeType !== 1) continue; // element nodes only, skip stray text/whitespace
+    const tag = (el.tagName || '').toLowerCase();
+    const align = getCertElementAlign(el);
+
+    if (tag === 'img') {
+      const src = el.getAttribute('src');
+      const width = parseInt(el.getAttribute('width'), 10) || 200;
+      if (src) {
+        const buf = await fetchCertImageBuffer(src);
+        if (buf) {
+          const x = align === 'center' ? doc.page.margins.left + (pageWidth - width) / 2
+                  : align === 'right' ? doc.page.margins.left + (pageWidth - width)
+                  : doc.page.margins.left;
+          doc.image(buf, x, doc.y, { width });
+          doc.moveDown(0.3);
+        }
+      }
+      continue;
+    }
+    if (tag === 'p' || tag === 'div') {
+      // Per's finding, testing node-html-parser directly — Quill wraps
+      // an inserted image in a paragraph (<p><img ...></p>), so an
+      // image essentially never appears as a bare top-level <img> the
+      // way this loop originally assumed. Checked here BEFORE reading
+      // .text, since a paragraph containing only an image has empty
+      // text and would otherwise be silently skipped as a blank line.
+      const nestedImg = el.querySelector('img');
+      if (nestedImg) {
+        const src = nestedImg.getAttribute('src');
+        const width = parseInt(nestedImg.getAttribute('width'), 10) || 200;
+        if (src) {
+          const buf = await fetchCertImageBuffer(src);
+          if (buf) {
+            const x = align === 'center' ? doc.page.margins.left + (pageWidth - width) / 2
+                    : align === 'right' ? doc.page.margins.left + (pageWidth - width)
+                    : doc.page.margins.left;
+            doc.image(buf, x, doc.y, { width });
+            doc.moveDown(0.3);
+          }
+        }
+        continue;
+      }
+      const text = (el.text || '').trim();
+      if (!text) { doc.moveDown(0.5); continue; }
+      const isBold = !!el.querySelector('b, strong');
+      doc.font(isBold ? 'Times-Bold' : 'Times-Roman').fontSize(13).fillColor('#333').text(text, { align });
+      doc.moveDown(0.4);
+      continue;
+    }
+    if (tag === 'h1') { doc.font('Times-Bold').fontSize(32).fillColor('#1a1a1a').text((el.text||'').trim(), { align }); doc.moveDown(0.5); continue; }
+    if (tag === 'h2') { doc.font('Times-Bold').fontSize(22).fillColor('#2d7873').text((el.text||'').trim(), { align }); doc.moveDown(0.5); continue; }
+    if (tag === 'h3') { doc.font('Times-Bold').fontSize(17).fillColor('#333').text((el.text||'').trim(), { align }); doc.moveDown(0.4); continue; }
+  }
+}
+async function buildCertificateDoc(certificate) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margins: { top: 50, bottom: 50, left: 60, right: 60 } });
-  const pageWidth = doc.page.width;
-  const logoPath = path.join(__dirname, 'public', 'assets', 'certificate', 'logo.png');
-  const signaturePath = path.join(__dirname, 'public', 'assets', 'certificate', 'signature.png');
+  doc.rect(30, 30, doc.page.width - 60, doc.page.height - 60).lineWidth(1.2).strokeColor('#2d7873').stroke();
 
-  doc.rect(30, 30, pageWidth - 60, doc.page.height - 60).lineWidth(1.2).strokeColor('#2d7873').stroke();
+  const tokens = {
+    name: certificate.user_name,
+    course_title: certificate.course_title,
+    date: new Date(certificate.issued_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+    attendance_pct: certificate.attendance_pct,
+  };
 
-  if (fs.existsSync(logoPath)) {
-    doc.image(logoPath, pageWidth / 2 - 110, 60, { width: 220 });
+  if (certificate.template_content) {
+    await renderCertHtmlToPdf(doc, certificate.template_content, tokens);
+  } else {
+    // Fallback for a certificate whose template was later deleted, or
+    // one issued before templates existed — never show a broken PDF.
+    doc.font('Times-Roman').fontSize(15).fillColor('#444').text('This certifies that', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.font('Times-Bold').fontSize(32).fillColor('#1a1a1a').text(tokens.name, { align: 'center' });
+    doc.moveDown(0.6);
+    doc.font('Times-Roman').fontSize(15).fillColor('#444').text('has completed', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.font('Times-Bold').fontSize(22).fillColor('#2d7873').text(tokens.course_title, { align: 'center' });
+    doc.moveDown(0.6);
+    doc.font('Times-Roman').fontSize(13).fillColor('#666').text(`Awarded ${tokens.date}`, { align: 'center' });
   }
-
-  doc.moveDown(4);
-  doc.font('Times-Roman').fontSize(13).fillColor('#888').text('CERTIFICATE OF COMPLETION', { align: 'center', characterSpacing: 3 });
-  doc.moveDown(1.5);
-  doc.font('Times-Roman').fontSize(15).fillColor('#444').text('This certifies that', { align: 'center' });
-  doc.moveDown(0.6);
-  doc.font('Times-Bold').fontSize(32).fillColor('#1a1a1a').text(certificate.user_name, { align: 'center' });
-  doc.moveDown(0.8);
-  doc.font('Times-Roman').fontSize(15).fillColor('#444').text('has completed', { align: 'center' });
-  doc.moveDown(0.6);
-  doc.font('Times-Bold').fontSize(22).fillColor('#2d7873').text(certificate.course_title, { align: 'center' });
-  doc.moveDown(1.2);
-  const issuedDate = new Date(certificate.issued_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  doc.font('Times-Roman').fontSize(13).fillColor('#666').text(`Awarded ${issuedDate}`, { align: 'center' });
-
-  const sigY = doc.page.height - 140;
-  if (fs.existsSync(signaturePath)) {
-    doc.image(signaturePath, pageWidth / 2 - 90, sigY, { width: 180 });
-  }
-  doc.font('Times-Roman').fontSize(12).fillColor('#444').text('Per Norrgren, Deeper Mindfulness', 0, sigY + 62, { align: 'center' });
 
   doc.end();
   return doc;
@@ -9910,13 +9984,13 @@ app.get('/api/client/certificates', auth.requireAuthApi(['client']), (req, res) 
   try { res.json(db.getCertificatesForUser(req.user.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
-app.get('/api/client/certificates/:id/pdf', auth.requireAuthApi(['client']), (req, res) => {
+app.get('/api/client/certificates/:id/pdf', auth.requireAuthApi(['client']), async (req, res) => {
   try {
     const certificate = db.getCertificate(req.params.id);
     if (!certificate || certificate.user_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="Certificate - ${certificate.course_title.replace(/[^\w\s-]/g, '')}.pdf"`);
-    buildCertificateDoc(certificate).pipe(res);
+    (await buildCertificateDoc(certificate)).pipe(res);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/client/certificates/:id/email', auth.requireAuthApi(['client']), async (req, res) => {
@@ -9928,10 +10002,11 @@ app.post('/api/client/certificates/:id/email', auth.requireAuthApi(['client']), 
 
     const chunks = [];
     const doneWriting = new Promise((resolve, reject) => {
-      const doc = buildCertificateDoc(certificate);
-      doc.on('data', c => chunks.push(c));
-      doc.on('end', resolve);
-      doc.on('error', reject);
+      buildCertificateDoc(certificate).then(doc => {
+        doc.on('data', c => chunks.push(c));
+        doc.on('end', resolve);
+        doc.on('error', reject);
+      }).catch(reject);
     });
     await doneWriting;
     const pdfBuffer = Buffer.concat(chunks);
@@ -9945,13 +10020,50 @@ app.post('/api/client/certificates/:id/email', auth.requireAuthApi(['client']), 
         <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
         <p style="font-size:12px;color:#aaa">${b.tagline}</p>
       </div>`,
-      { attachments: [{ filename: `Certificate - ${certificate.course_title}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] }
+      { kind: 'certificate', attachments: [{ filename: `Certificate - ${certificate.course_title}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] }
     );
     res.json({ ok: true });
   } catch(e) {
     console.error('[certificate email]', e.message);
     res.status(500).json({ error: 'Could not send this right now. Please try again.' });
   }
+});
+
+// ── Certificate templates — admin CRUD, full control (Per's request) ──
+app.get('/api/admin/certificate-templates', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getCertificateTemplates()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/certificate-templates/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const t = db.getCertificateTemplate(req.params.id);
+    if (!t) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...t, recipients: db.getCertificateTemplateRecipients(req.params.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/certificate-templates', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { name, content } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'A name is required.' });
+    const id = uuidv4();
+    res.json(db.createCertificateTemplate(id, name.trim(), content || ''));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/certificate-templates/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { name, content } = req.body;
+    res.json(db.updateCertificateTemplate(req.params.id, name, content));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/certificate-templates/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteCertificateTemplate(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/course-instances/:id/certificate-template', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.assignCertificateTemplateToInstance(req.params.id, req.body.templateId || null);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Per App 31 — server-side twin of content.html's
