@@ -4159,7 +4159,14 @@ app.get('/api/client/courses/:instanceId', auth.requireAuthApi(['client']), (req
       };
     });
 
-    res.json({ instance, course, enrolment, lessons: withProgress, resume });
+    // Per's request — Zoom link only for a genuine Member, never an
+    // Explorer, regardless of how they got enrolled (e.g. a staff
+    // preview enrolment above, or any future free/trial enrolment path).
+    // Stripped here rather than just hidden client-side, since the raw
+    // instance object would otherwise leak it straight into the API
+    // response for anyone who opens devtools.
+    const instanceForClient = userTierForCourse >= 1 ? instance : { ...instance, zoom_link: null };
+    res.json({ instance: instanceForClient, course, enrolment, lessons: withProgress, resume });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

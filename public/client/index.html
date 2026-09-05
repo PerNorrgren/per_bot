@@ -1675,10 +1675,10 @@
     <!-- Courses -->
     <div class="courses-view" id="coursesView">
       <div class="courses-scroll" id="coursesListScroll">
-        <div class="courses-section-label">Available Courses</div>
-        <div id="browseCoursesList"></div>
-        <div class="courses-section-label" style="margin-top:22px">My Courses</div>
+        <div class="courses-section-label">My Courses</div>
         <div id="myCoursesList"><div class="no-content">Loading…</div></div>
+        <div class="courses-section-label" style="margin-top:22px">Available Courses</div>
+        <div id="browseCoursesList"></div>
       </div>
       <div class="courses-scroll" id="courseDetailScroll" style="display:none">
         <button class="courses-back-btn" onclick="closeCourseDetail()">&larr; Back to courses</button>
@@ -8162,9 +8162,24 @@
       // in openLesson below, which has no other way to know it.
       _currentInstanceMode = data.instance.mode;
       const isCohort = data.instance.mode === 'cohort';
+      // Per's request — the course-detail page needs the instance's
+      // meeting day/time visible at a glance, and the Zoom link itself
+      // only for a genuine Member — the server already strips zoom_link
+      // from the response entirely for anyone below Member tier, so this
+      // is just "show it if it's there," not a second access check.
+      const whenParts = [];
+      if (data.instance.schedule_day) whenParts.push(data.instance.schedule_day + (data.instance.schedule_time ? `, ${data.instance.schedule_time}` : ''));
+      if (data.instance.start_date) whenParts.push(`starts ${new Date(data.instance.start_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`);
+      const instanceWhenLine = isCohort && whenParts.length
+        ? `<div class="lesson-item-desc" style="margin-top:6px;color:rgba(255,255,255,0.6)">Meets ${whenParts.join(', ')}.</div>` : '';
+      const zoomLine = isCohort && data.instance.zoom_link
+        ? `<div style="margin-top:10px"><a href="${data.instance.zoom_link}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 20px;border-radius:10px;background:rgba(180,230,200,0.12);border:1px solid rgba(180,230,200,0.3);color:rgba(180,230,200,0.9);text-decoration:none;font-size:13px">Join Zoom session →</a></div>`
+        : '';
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
         ${data.course?.description ? `<div class="lesson-item-desc" style="margin-bottom:10px">${data.course.description}</div>` : ''}
+        ${instanceWhenLine}
+        ${zoomLine}
         ${isCohort ? `
         <div id="reminderPrefsCard" style="margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:13px">
           <div style="margin-bottom:8px;color:rgba(255,255,255,0.6)">Session reminders</div>
