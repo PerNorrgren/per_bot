@@ -221,6 +221,97 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
       case 'checkout.session.completed': {
         const session = event.data.object;
+
+        // Per's report, root cause found — the public course-registration
+        // form flow deliberately has no client_reference_id or
+        // metadata.user_id at checkout-creation time (see
+        // /api/public/forms/:formId/checkout above): there's no user yet,
+        // that's the whole point, the account gets created right here on
+        // successful payment. The userId guard further below exists for
+        // the OTHER two flows (an already-logged-in person paying for
+        // membership or a course), which do have a real user id at
+        // checkout time. With that guard running first regardless of
+        // metadata.type, every single course_registration_form payment
+        // hit `if (!userId) break` immediately and silently did nothing —
+        // no account, no enrolment, no membership, no email — while
+        // Stripe still received a clean 200 OK, since the handler
+        // completed without throwing. Checking for this specific type
+        // FIRST, before the userId guard even runs, is what actually
+        // fixes it — logic itself below is otherwise unchanged from
+        // before, just moved earlier in this same case block.
+        if (session.metadata?.type === 'course_registration_form') {
+          const formResponseId = session.metadata?.form_response_id;
+          const courseInstanceId = session.metadata?.course_instance_id;
+          if (!formResponseId || !courseInstanceId) break;
+          const response = db.getFormResponse(formResponseId);
+          if (!response) { console.error(`[stripe] course_registration_form — response ${formResponseId} not found`); break; }
+          if (response.status === 'complete') { console.log(`[stripe] course_registration_form — response ${formResponseId} already completed, skipping duplicate webhook`); break; }
+
+          const { email, name } = resolveRegistrationContact(formResponseId);
+          const paymentEmail = session.customer_details?.email || email;
+          if (!paymentEmail) { console.error(`[stripe] course_registration_form — no email resolved for response ${formResponseId}`); break; }
+
+          let user = db.getUserByEmail(paymentEmail);
+          if (!user) {
+            const newUserId = uuidv4();
+            db.registerUser(newUserId, name || paymentEmail.split('@')[0], paymentEmail, null, 'en',
+              { consentGiven: !!response.consent_given, consentVersion: 'course-registration-form-v1' },
+              14, null, 'course_registration_form');
+            user = db.getUser(newUserId);
+            console.log(`[stripe] course_registration_form — created new account for ${paymentEmail}`);
+          }
+
+          const alreadyEnrolled = db.getEnrolmentForUserAndInstance(user.id, courseInstanceId);
+          if (!alreadyEnrolled) {
+            const enrolId = uuidv4();
+            db.createEnrolment(enrolId, user.id, courseInstanceId, 'paid', session.amount_total || 0, session.payment_intent || null);
+          }
+
+          const instance = db.getCourseInstance(courseInstanceId);
+          // Per's original request — same course-fee-grants-membership
+          // mechanic as the direct course_enrolment path below, reused
+          // identically here so it behaves the same regardless of which
+          // door someone came in through.
+          let grantedMembership = false;
+          if (instance?.grants_membership_months) {
+            const base = user.member_expires_at && new Date(user.member_expires_at) > new Date()
+              ? new Date(user.member_expires_at) : new Date();
+            base.setMonth(base.getMonth() + parseInt(instance.grants_membership_months, 10));
+            db.setMemberTier(user.id, Math.max(user.member_tier || 0, 1), base.toISOString(), user.trial_ends_at, null, null);
+            grantedMembership = true;
+          }
+
+          db.setFormResponseUserAndPayment(formResponseId, user.id, session.payment_intent || session.id);
+          // Per's request — consent as given at the actual checkout
+          // moment (carried through Stripe metadata, see the checkout
+          // endpoint), not response.consent_given on the DB row, which
+          // is never set until completeFormResponse itself runs — reading
+          // it here would always see the pre-completion default.
+          db.completeFormResponse(formResponseId, session.metadata?.consent_given === '1');
+
+          if (instance) {
+            const b = brand();
+            const tokens = buildMessageTokens(db.getUser(user.id), { courseInstanceId });
+            const membershipLine = grantedMembership
+              ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership is included too — the full practice library is yours for the next ${instance.grants_membership_months} month${instance.grants_membership_months == 1 ? '' : 's'}, no extra step needed.</p>`
+              : '';
+            await sendEmail(paymentEmail, `Your place is secured — ${instance.title}`,
+              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+                <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
+                <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${tokens.name}.</h2>
+                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
+                ${membershipLine}
+                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
+                <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
+                <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
+                <p style="font-size:12px;color:#aaa">${b.tagline}</p>
+              </div>`
+            );
+          }
+          console.log(`[stripe] course_registration_form completed — ${paymentEmail} → instance ${courseInstanceId}`);
+          break;
+        }
+
         const userId  = session.client_reference_id || session.metadata?.user_id;
         if (!userId) break;
 
@@ -279,87 +370,6 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
             );
           }
           console.log(`[stripe] course_enrolment completed — user ${userId} → instance ${courseInstanceId}`);
-          break;
-        }
-
-        // Per's request — course registration via a custom Form, for a
-        // paid cohort instance where the person had no account at all
-        // when they paid. Creates the account here, on successful
-        // payment, with no password set — buildMessageTokens' own
-        // hasLogin check already knows to build a /join/{token} "set
-        // your password, then land on your course" link for exactly
-        // this state (used elsewhere for trial/renewal emails; reused
-        // as-is here, not reimplemented).
-        if (session.metadata?.type === 'course_registration_form') {
-          const formResponseId = session.metadata?.form_response_id;
-          const courseInstanceId = session.metadata?.course_instance_id;
-          if (!formResponseId || !courseInstanceId) break;
-          const response = db.getFormResponse(formResponseId);
-          if (!response) { console.error(`[stripe] course_registration_form — response ${formResponseId} not found`); break; }
-          if (response.status === 'complete') { console.log(`[stripe] course_registration_form — response ${formResponseId} already completed, skipping duplicate webhook`); break; }
-
-          const { email, name } = resolveRegistrationContact(formResponseId);
-          const paymentEmail = session.customer_details?.email || email;
-          if (!paymentEmail) { console.error(`[stripe] course_registration_form — no email resolved for response ${formResponseId}`); break; }
-
-          let user = db.getUserByEmail(paymentEmail);
-          if (!user) {
-            const newUserId = uuidv4();
-            db.registerUser(newUserId, name || paymentEmail.split('@')[0], paymentEmail, null, 'en',
-              { consentGiven: !!response.consent_given, consentVersion: 'course-registration-form-v1' },
-              14, null, 'course_registration_form');
-            user = db.getUser(newUserId);
-            console.log(`[stripe] course_registration_form — created new account for ${paymentEmail}`);
-          }
-
-          const alreadyEnrolled = db.getEnrolmentForUserAndInstance(user.id, courseInstanceId);
-          if (!alreadyEnrolled) {
-            const enrolId = uuidv4();
-            db.createEnrolment(enrolId, user.id, courseInstanceId, 'paid', session.amount_total || 0, session.payment_intent || null);
-          }
-
-          const instance = db.getCourseInstance(courseInstanceId);
-          // Per's original request — same course-fee-grants-membership
-          // mechanic as the direct course_enrolment path above, reused
-          // identically here so it behaves the same regardless of which
-          // door someone came in through.
-          let grantedMembership = false;
-          if (instance?.grants_membership_months) {
-            const base = user.member_expires_at && new Date(user.member_expires_at) > new Date()
-              ? new Date(user.member_expires_at) : new Date();
-            base.setMonth(base.getMonth() + parseInt(instance.grants_membership_months, 10));
-            db.setMemberTier(user.id, Math.max(user.member_tier || 0, 1), base.toISOString(), user.trial_ends_at, null, null);
-            grantedMembership = true;
-          }
-
-          db.setFormResponseUserAndPayment(formResponseId, user.id, session.payment_intent || session.id);
-          // Per's request — consent as given at the actual checkout
-          // moment (carried through Stripe metadata, see the checkout
-          // endpoint), not response.consent_given on the DB row, which
-          // is never set until completeFormResponse itself runs — reading
-          // it here would always see the pre-completion default.
-          db.completeFormResponse(formResponseId, session.metadata?.consent_given === '1');
-
-          if (instance) {
-            const b = brand();
-            const tokens = buildMessageTokens(db.getUser(user.id), { courseInstanceId });
-            const membershipLine = grantedMembership
-              ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Your membership is included too — the full practice library is yours for the next ${instance.grants_membership_months} month${instance.grants_membership_months == 1 ? '' : 's'}, no extra step needed.</p>`
-              : '';
-            await sendEmail(paymentEmail, `Your place is secured — ${instance.title}`,
-              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-                <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
-                <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${tokens.name}.</h2>
-                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
-                ${membershipLine}
-                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
-                <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
-                <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
-                <p style="font-size:12px;color:#aaa">${b.tagline}</p>
-              </div>`
-            );
-          }
-          console.log(`[stripe] course_registration_form completed — ${paymentEmail} → instance ${courseInstanceId}`);
           break;
         }
 
