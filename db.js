@@ -2846,6 +2846,14 @@ async function getDb() {
     db.run(`UPDATE enrolments SET welcomed_at = enrolled_at WHERE welcomed_at IS NULL`);
   } catch(e) { /* column already exists — ignore */ }
 
+  // Per's request — one dismiss-forever flag for the "New Live Course"
+  // promo shown to Explorers on every login. No backfill needed here
+  // (unlike welcomed_at above) — this is opt-in dismissible from day
+  // one, not a one-time thing that could surprise an existing user.
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN explorer_course_promo_dismissed_at TEXT`);
+  } catch(e) { /* column already exists — ignore */ }
+
   // Must run after migrations, not with the other CREATE INDEX statements
   // above — invite_token doesn't exist until the migration above adds it.
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_invite_token ON users(invite_token)`);
@@ -4714,6 +4722,24 @@ function markEnrolmentWelcomed(id) {
 // time (the most recent) regardless of how many have welcomed_at cleared.
 function resetWelcomeFanfare(userId) {
   getDbSync().run(`UPDATE enrolments SET welcomed_at=NULL WHERE user_id=? AND course_instance_id IN (SELECT id FROM course_instances WHERE mode='cohort')`, [userId]);
+  save();
+}
+// Per's request — "New Live Course — Register here" promo for Explorers,
+// every login until they either register (member_tier check below
+// naturally stops it — no separate state needed) or dismiss it for good.
+// Earliest still-open, still-upcoming cohort wins if more than one
+// exists, since that's the one most worth surfacing right now.
+function getExplorerCoursePromo(userId) {
+  const user = getUser(userId);
+  if (!user || user.member_tier > 0 || user.explorer_course_promo_dismissed_at) return null;
+  return queryOne(`
+    SELECT id, title, schedule_day, schedule_time, start_date
+    FROM course_instances
+    WHERE mode='cohort' AND status='open' AND start_date >= date('now')
+    ORDER BY start_date ASC LIMIT 1`);
+}
+function dismissExplorerCoursePromo(userId) {
+  getDbSync().run(`UPDATE users SET explorer_course_promo_dismissed_at=datetime('now') WHERE id=?`, [userId]);
   save();
 }
 // Per's request — student-set reminder channel, editable from the
@@ -9728,6 +9754,7 @@ module.exports = {
   // Enrolments
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
   getPendingWelcomeEnrolment, markEnrolmentWelcomed, resetWelcomeFanfare,
+  getExplorerCoursePromo, dismissExplorerCoursePromo,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,

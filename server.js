@@ -3797,6 +3797,23 @@ app.post('/api/client/enrolments/:id/mark-welcomed', auth.requireAuthApi(['clien
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per's request — "New Live Course — Register here" promo for
+// Explorers, every login until they register or dismiss it for good.
+// Shown during impersonation too (useful for testing, same reasoning as
+// the welcome fanfare above), but dismissing it during an impersonated
+// session is a safe no-op — an admin checking a real Explorer's account
+// shouldn't be able to permanently switch this off on their behalf.
+app.get('/api/client/explorer-course-promo', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getExplorerCoursePromo(req.user.id) || null); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/explorer-course-promo/dismiss', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    if (!req.user.impersonatedBy) db.dismissExplorerCoursePromo(req.user.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
 app.get('/api/client/activity-home', auth.requireAuthApi(['client']), (req, res) => {
   try { res.json(db.getActivityHome(req.user.id)); }

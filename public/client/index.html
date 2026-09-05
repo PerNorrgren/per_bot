@@ -1846,6 +1846,23 @@
   </div>
 </div>
 
+<!-- Per's request — "New Live Course — Register here" promo for
+     Explorers, shown every login (checkExplorerCoursePromo below) until
+     they either register (member_tier check server-side naturally stops
+     it — no separate state needed) or dismiss it for good. -->
+<div class="pw-overlay" id="explorerPromoOverlay" style="z-index:470">
+  <div class="pw-modal" style="max-width:420px;text-align:center">
+    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.7);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">New live course</div>
+    <h3 id="explorerPromoTitle" style="margin-top:4px"></h3>
+    <div id="explorerPromoWhen" style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6"></div>
+    <div class="pw-btns" style="justify-content:center;margin-top:6px">
+      <a id="explorerPromoRegisterBtn" class="pw-ok" style="text-decoration:none" target="_blank" rel="noopener" onclick="dismissExplorerPromo(false)">Register here →</a>
+    </div>
+    <button onclick="dismissExplorerPromo(false)" style="background:none;border:none;color:rgba(255,255,255,0.35);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Not now</button>
+    <button onclick="dismissExplorerPromo(true)" style="background:none;border:none;color:rgba(255,255,255,0.25);font-family:Georgia,serif;font-size:11px;text-decoration:underline;cursor:pointer;margin-top:6px;display:block;margin-left:auto;margin-right:auto">Don't show this again</button>
+  </div>
+</div>
+
 <!-- Per Bot 25 — one shared login-notification popup, queued: after the
      (mandatory, blocking) consent gate above resolves, checkLoginNotifications()
      checks a short fixed sequence — new library files, then referral,
@@ -9116,12 +9133,41 @@
     if (goToCourse && instanceId) { switchTab('courses'); openCourseDetail(instanceId); }
   }
 
+  // Per's request — "New Live Course" promo for Explorers, every login
+  // until they register or dismiss for good. Deliberately independent of
+  // the welcome-fanfare check above — a fresh check each load, since
+  // whether someone's still an Explorer (and which course is currently
+  // open) can change between logins.
+  async function checkExplorerCoursePromo() {
+    try {
+      const res = await fetch('/api/client/explorer-course-promo');
+      if (!res.ok) return;
+      const p = await res.json();
+      if (!p) return;
+      document.getElementById('explorerPromoTitle').textContent = p.title;
+      const whenParts = [];
+      if (p.schedule_day) whenParts.push(p.schedule_day + (p.schedule_time ? `, ${p.schedule_time}` : ''));
+      if (p.start_date) whenParts.push(`starts ${new Date(p.start_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`);
+      document.getElementById('explorerPromoWhen').textContent = whenParts.length ? `Meets ${whenParts.join(', ')}.` : '';
+      document.getElementById('explorerPromoRegisterBtn').href = `/course-instance/${p.id}`;
+      document.getElementById('explorerPromoOverlay').classList.add('visible');
+    } catch(e) { /* skip silently — this is a nice-to-have nudge, not something worth erroring over */ }
+  }
+  function dismissExplorerPromo(forGood) {
+    document.getElementById('explorerPromoOverlay').classList.remove('visible');
+    if (forGood) fetch('/api/client/explorer-course-promo/dismiss', { method: 'POST' }).catch(() => {});
+    // "Not now" (forGood === false) intentionally does nothing server-side
+    // — it just closes for this session, and reappears next login exactly
+    // as requested ("every login until they register or dismiss for good").
+  }
+
   loadResumeCard();
   loadUpcomingSessionBanner();
   loadA11yPrefsFromServer();
   checkOnboarding();
   checkPendingConsents(); // Per Bot 24 — see the function itself for why this one gate covers every account-creation path at once.
   checkPendingWelcome();
+  checkExplorerCoursePromo();
   // Per Bot 25 — login notifications (new files/referral/birthday), same
   // "once at boot" timing as the two checks above, not tied to Home's
   // render. Short delay purely to let the two mandatory/blocking checks
