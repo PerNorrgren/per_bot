@@ -20,6 +20,7 @@ const { v4: uuidv4 } = require('uuid');
 const fetch      = require('node-fetch');
 const cookieParser = require('cookie-parser');
 const crypto       = require('crypto');
+const PDFDocument = require('pdfkit');
 
 // ── Stripe ──
 const Stripe = require('stripe');
@@ -916,17 +917,31 @@ async function sendEmail(to, subject, html, meta = {}) {
     return { ok: false, error: 'Email not configured.' };
   }
   try {
+    const body = {
+      from: { name: brand().name, email: EMAIL_FROM },
+      to: [{ email: to }],
+      subject,
+      text: htmlToText(html),
+      html,
+      project_id: SCW_PROJECT_ID,
+    };
+    // Per's request — certificate PDFs emailed as attachments. Scaleway's
+    // own field names are name/type/content (base64), not the
+    // filename/contentType convention used elsewhere — meta.attachments
+    // is `[{ filename, content: Buffer, contentType }]` at the call
+    // site (matches how every other part of this codebase already
+    // refers to a file), translated to Scaleway's shape only here.
+    if (meta.attachments && meta.attachments.length) {
+      body.attachments = meta.attachments.map(a => ({
+        name: a.filename,
+        type: a.contentType,
+        content: Buffer.isBuffer(a.content) ? a.content.toString('base64') : a.content,
+      }));
+    }
     const res = await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails`, {
       method: 'POST',
       headers: { 'X-Auth-Token': SCW_SECRET_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: { name: brand().name, email: EMAIL_FROM },
-        to: [{ email: to }],
-        subject,
-        text: htmlToText(html),
-        html,
-        project_id: SCW_PROJECT_ID,
-      })
+      body: JSON.stringify(body)
     });
     const data = await res.json().catch(() => {});
     if (!res.ok) {
@@ -3974,6 +3989,48 @@ app.patch('/api/client/enrolments/:id/reminder-prefs', auth.requireAuthApi(['cli
 // Stripe customer, since there's no user record yet to attach one to —
 // customer_email pre-fills Stripe's own checkout page instead, when a
 // question on the form has been flagged as the email field.
+// Per's request — sends (or resends) the post-course survey to one
+// enrolment. Reuses whatever response already exists for this user on
+// this course's survey form rather than creating a duplicate every time
+// this gets called — the automatic last-session trigger and a later
+// manual resend from the survey list both go through this same
+// function, so that dedup matters. forceResend=true (the manual path)
+// will still email out a link to an already-completed response, in case
+// someone genuinely wants to look at their own answers again; the
+// automatic path never does that.
+async function sendCourseSurveyForEnrolment(enrolmentId, forceResend) {
+  const enrolment = db.getEnrolment(enrolmentId);
+  if (!enrolment) return false;
+  const instance = db.getCourseInstance(enrolment.course_instance_id);
+  if (!instance) return false;
+  const course = db.getCourse(instance.course_id);
+  if (!course?.survey_form_id) return false;
+  const user = db.getUser(enrolment.user_id);
+  if (!user?.email) return false;
+
+  let response = db.getAnyResponseForUser(course.survey_form_id, user.id, enrolment.course_instance_id);
+  if (response && response.status === 'complete' && !forceResend) return false;
+  if (!response) {
+    const responseId = uuidv4();
+    db.createFormResponse(responseId, course.survey_form_id, user.id, enrolment.course_instance_id);
+    response = db.getFormResponse(responseId);
+  }
+
+  const b = brand();
+  const surveyUrl = `${APP_URL}/forms/${course.survey_form_id}?response=${response.id}`;
+  await sendEmail(user.email, `How did ${instance.title} actually land?`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
+      <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">One honest question, ${user.name}.</h2>
+      <p style="font-size:15px;line-height:1.8;margin-bottom:20px">You've finished <strong>${instance.title}</strong>. Before anything else, we want to know one thing — did it actually do what we said it would? Five quick questions, two minutes, and we genuinely read every answer.</p>
+      <a href="${surveyUrl}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Answer the five questions →</a>
+      <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.tagline}</p>
+    </div>`
+  );
+  return true;
+}
+
 function resolveRegistrationContact(responseId) {
   const response = db.getFormResponse(responseId);
   if (!response) return { email: null, name: null };
@@ -9745,6 +9802,158 @@ app.delete('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (
   try { db.deleteInstanceSession(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── Attendance register (Per's request) ──
+app.get('/api/admin/instance-sessions/:id/attendance', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAttendanceForSession(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/instance-sessions/:id/attendance', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { enrolmentId, attended } = req.body;
+    if (!enrolmentId) return res.status(400).json({ error: 'enrolmentId is required.' });
+    db.markAttendance(uuidv4(), req.params.id, enrolmentId, !!attended, req.user.id);
+
+    // Per's request — marking attendance on the LAST session of the
+    // instance is what fires both the certificate check and the survey
+    // send, for this one student, right here — not a separate cron job
+    // or bulk step. Runs regardless of whether attended was true or
+    // false, since "the course is over for this person" is true either
+    // way; issueCertificateIfEligible itself is what actually gates on
+    // the real attendance percentage.
+    let certificateIssued = null;
+    let surveySent = false;
+    if (db.isLastSessionOfInstance(req.params.id)) {
+      certificateIssued = db.issueCertificateIfEligible(uuidv4(), enrolmentId);
+      surveySent = await sendCourseSurveyForEnrolment(enrolmentId);
+    }
+    res.json({ ok: true, certificateIssued: !!certificateIssued, surveySent });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per's request — course-level certificate threshold and survey form,
+// settable from the course edit screen (Content → Courses).
+app.patch('/api/admin/courses/:id/certificate-settings', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { certificateThresholdPct, surveyFormId } = req.body;
+    db.updateCourseCertificateSettings(req.params.id, certificateThresholdPct, surveyFormId || null);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/survey-forms', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getSurveyForms()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per's request — "the list of surveys," with a manual send option
+// alongside the automatic last-session trigger above. Shows every
+// enrolment in a course instance whose course has a survey form linked,
+// and whether/when it's been sent and completed.
+app.get('/api/admin/course-instances/:id/surveys', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getSurveyStatusForInstance(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/enrolments/:id/send-survey', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const sent = await sendCourseSurveyForEnrolment(req.params.id, true);
+    if (!sent) return res.status(400).json({ error: 'No survey form is linked to this course, or the enrolment could not be found.' });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Certificates (Per's request) ──
+// Generated fresh on every request, never stored as a file — a later
+// name correction or brand change is reflected automatically rather
+// than needing regeneration. Deliberately plain and calm (single serif
+// typeface, generous white space, one accent colour) rather than the
+// ornate gold-border look most certificate generators default to —
+// matches the brand's own actual visual language everywhere else.
+// Returns the PDFDocument itself, already fully drawn but not yet
+// piped anywhere — the two callers below (direct download, email
+// attachment) each pipe it to a different destination.
+function buildCertificateDoc(certificate) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margins: { top: 50, bottom: 50, left: 60, right: 60 } });
+  const pageWidth = doc.page.width;
+  const logoPath = path.join(__dirname, 'public', 'assets', 'certificate', 'logo.png');
+  const signaturePath = path.join(__dirname, 'public', 'assets', 'certificate', 'signature.png');
+
+  doc.rect(30, 30, pageWidth - 60, doc.page.height - 60).lineWidth(1.2).strokeColor('#2d7873').stroke();
+
+  if (fs.existsSync(logoPath)) {
+    doc.image(logoPath, pageWidth / 2 - 110, 60, { width: 220 });
+  }
+
+  doc.moveDown(4);
+  doc.font('Times-Roman').fontSize(13).fillColor('#888').text('CERTIFICATE OF COMPLETION', { align: 'center', characterSpacing: 3 });
+  doc.moveDown(1.5);
+  doc.font('Times-Roman').fontSize(15).fillColor('#444').text('This certifies that', { align: 'center' });
+  doc.moveDown(0.6);
+  doc.font('Times-Bold').fontSize(32).fillColor('#1a1a1a').text(certificate.user_name, { align: 'center' });
+  doc.moveDown(0.8);
+  doc.font('Times-Roman').fontSize(15).fillColor('#444').text('has completed', { align: 'center' });
+  doc.moveDown(0.6);
+  doc.font('Times-Bold').fontSize(22).fillColor('#2d7873').text(certificate.course_title, { align: 'center' });
+  doc.moveDown(1.2);
+  const issuedDate = new Date(certificate.issued_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  doc.font('Times-Roman').fontSize(13).fillColor('#666').text(`Awarded ${issuedDate}`, { align: 'center' });
+
+  const sigY = doc.page.height - 140;
+  if (fs.existsSync(signaturePath)) {
+    doc.image(signaturePath, pageWidth / 2 - 90, sigY, { width: 180 });
+  }
+  doc.font('Times-Roman').fontSize(12).fillColor('#444').text('Per Norrgren, Deeper Mindfulness', 0, sigY + 62, { align: 'center' });
+
+  doc.end();
+  return doc;
+}
+app.get('/api/client/certificates', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getCertificatesForUser(req.user.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/client/certificates/:id/pdf', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const certificate = db.getCertificate(req.params.id);
+    if (!certificate || certificate.user_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Certificate - ${certificate.course_title.replace(/[^\w\s-]/g, '')}.pdf"`);
+    buildCertificateDoc(certificate).pipe(res);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/certificates/:id/email', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const certificate = db.getCertificate(req.params.id);
+    if (!certificate || certificate.user_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    const user = db.getUser(req.user.id);
+    if (!user?.email) return res.status(400).json({ error: 'No email address on this account.' });
+
+    const chunks = [];
+    const doneWriting = new Promise((resolve, reject) => {
+      const doc = buildCertificateDoc(certificate);
+      doc.on('data', c => chunks.push(c));
+      doc.on('end', resolve);
+      doc.on('error', reject);
+    });
+    await doneWriting;
+    const pdfBuffer = Buffer.concat(chunks);
+
+    const b = brand();
+    await sendEmail(user.email, `Your certificate — ${certificate.course_title}`,
+      `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+        <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
+        <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">Your certificate is attached.</h2>
+        <p style="font-size:15px;line-height:1.8;margin-bottom:20px">For <strong>${certificate.course_title}</strong> — well earned.</p>
+        <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
+        <p style="font-size:12px;color:#aaa">${b.tagline}</p>
+      </div>`,
+      { attachments: [{ filename: `Certificate - ${certificate.course_title}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] }
+    );
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[certificate email]', e.message);
+    res.status(500).json({ error: 'Could not send this right now. Please try again.' });
+  }
+});
+
 // Per App 31 — server-side twin of content.html's
 // parseScheduleTimeBestEffort (the New Instance modal's End Time
 // helper). Same reasoning: Schedule time is deliberately plain text

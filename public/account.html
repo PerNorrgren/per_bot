@@ -308,6 +308,17 @@
     </div>
   </div>
 
+  <!-- ── Certificates (Per's request) — only shown at all once there's
+       at least one to show; earning one requires attending enough of a
+       live course, so most accounts will never see this card, which is
+       correct rather than a bug. -->
+  <div class="card" id="certificatesCard" style="display:none">
+    <div class="card-header collapsible" onclick="toggleCard(this)"><div class="card-title">Certificates</div><span class="card-chevron open">▾</span></div>
+    <div class="card-body">
+      <div id="certificatesList" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+  </div>
+
   <!-- ── Display (Per Bot 25) — accessibility: moved here from a small
        header icon in the app itself after a member flagged the app being
        too dark/low-contrast to read comfortably. Kept open by default
@@ -806,6 +817,7 @@
     // Membership
     renderMembership(a);
     renderFacilitatorCard(a);
+    loadCertificates();
 
     // Voice
     myVoiceId = a.voice_id || null;
@@ -1137,6 +1149,42 @@
   // about what that flow actually looks like (cancel wording, whether
   // it's immediate or at-period-end, proration) is configured in the
   // Stripe Dashboard, not here.
+  // Per's request — certificates live under You/Account, viewable,
+  // downloadable, printable (all three via the same PDF endpoint, which
+  // the browser's own PDF viewer already handles), and emailable to
+  // yourself. Card only shows at all once there's something to show.
+  async function loadCertificates() {
+    try {
+      const certs = await fetch('/api/client/certificates').then(r => r.json());
+      if (!certs.length) return;
+      document.getElementById('certificatesCard').style.display = '';
+      document.getElementById('certificatesList').innerHTML = certs.map(c => {
+        const issuedDate = new Date(c.issued_at).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+        return `
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px">
+          <div style="font-size:15px;color:rgba(255,255,255,0.85);margin-bottom:2px">${c.course_title}</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:10px">Awarded ${issuedDate}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="upgrade-btn" href="/api/client/certificates/${c.id}/pdf" target="_blank" style="padding:8px 16px;font-size:12px">View / print / download</a>
+            <button class="upgrade-btn" onclick="emailCertificateToSelf('${c.id}', this)" style="padding:8px 16px;font-size:12px;background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.6)">Email to myself</button>
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) { /* certificates are a bonus, not core — fail quietly */ }
+  }
+  async function emailCertificateToSelf(id, btn) {
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Sending…';
+    try {
+      const res = await fetch(`/api/client/certificates/${id}/email`, { method: 'POST' });
+      const data = await res.json();
+      btn.textContent = data.ok ? 'Sent ✓' : (data.error || 'Could not send');
+    } catch (e) {
+      btn.textContent = 'Could not send';
+    }
+    setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 2500);
+  }
   async function openBillingPortal() {
     const btn = document.getElementById('manageBillingBtn');
     btn.disabled = true;

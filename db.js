@@ -604,6 +604,43 @@ async function getDb() {
     FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
   )`);
 
+  // ── Session attendance (Per's request) ── one row per (session,
+  // enrolment) once a facilitator has actually marked it — no row at
+  // all means "not yet marked," not "absent," so a facilitator working
+  // through a register mid-course doesn't accidentally read unmarked
+  // students as having missed a session. attended is a plain 0/1: this
+  // is a register, not a detailed check-in log.
+  db.run(`CREATE TABLE IF NOT EXISTS session_attendance (
+    id TEXT PRIMARY KEY,
+    instance_session_id TEXT NOT NULL,
+    enrolment_id TEXT NOT NULL,
+    attended INTEGER NOT NULL DEFAULT 0,
+    marked_at TEXT DEFAULT (datetime('now')),
+    marked_by TEXT,
+    UNIQUE(instance_session_id, enrolment_id),
+    FOREIGN KEY (instance_session_id) REFERENCES instance_sessions(id),
+    FOREIGN KEY (enrolment_id) REFERENCES enrolments(id)
+  )`);
+
+  // ── Certificates (Per's request) ── issued once per enrolment, the
+  // moment attendance crosses the course's own threshold (see
+  // courses.certificate_threshold_pct below) — never re-issued, so the
+  // date on it is genuinely when they earned it, not whenever it was
+  // last viewed. The PDF itself is generated on demand from this row
+  // plus the enrolment/course data, not stored as a file — nothing here
+  // can ever go stale relative to a later name change, for instance.
+  db.run(`CREATE TABLE IF NOT EXISTS certificates (
+    id TEXT PRIMARY KEY,
+    enrolment_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    course_instance_id TEXT NOT NULL,
+    attendance_pct INTEGER NOT NULL,
+    issued_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (enrolment_id) REFERENCES enrolments(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (course_instance_id) REFERENCES course_instances(id)
+  )`);
+
   // ── Student notes ──
   // A facilitator's private notes on one student within one cohort instance —
   // separate from the clinical `sessions` table, which is 1:1 client work,
@@ -2854,6 +2891,49 @@ async function getDb() {
     db.run(`ALTER TABLE users ADD COLUMN explorer_course_promo_dismissed_at TEXT`);
   } catch(e) { /* column already exists — ignore */ }
 
+  // Per's request — settable attendance threshold for issuing a
+  // certificate (default 80%), and the survey form to send on course
+  // completion. Both live on courses, not course_instances -- these are
+  // properties of the course itself, same as everything else
+  // course-level (title, description), reused across every instance/
+  // cohort run of it.
+  try { db.run(`ALTER TABLE courses ADD COLUMN certificate_threshold_pct INTEGER NOT NULL DEFAULT 80`); } catch(e) {}
+  try { db.run(`ALTER TABLE courses ADD COLUMN survey_form_id TEXT`); } catch(e) {}
+
+  // Per's request — seed the "meeting what was promised" survey
+  // template once, on whichever boot first finds it missing. Deliberately
+  // NOT linked to any specific course here — Per links it to the actual
+  // live course(s) from the course-edit screen (courses.survey_form_id),
+  // same as any other admin-configurable setting. Five questions, about
+  // whether the course delivered on what it actually said it would —
+  // not a satisfaction/star-rating survey.
+  const surveyFormExists = queryOne(`SELECT id FROM forms WHERE kind='survey' AND title='Live Course — Did It Deliver?'`);
+  if (!surveyFormExists) {
+    const formId = 'seed-survey-' + Date.now();
+    db.run(`INSERT INTO forms (id, title, kind, intro_text, require_consent, status) VALUES (?,?,?,?,?,?)`,
+      [formId, 'Live Course — Did It Deliver?', 'survey',
+       "This isn't a satisfaction survey — we're not asking whether you enjoyed it. We're asking whether it did what we said it would. Five quick questions, honest answers welcome either way.",
+       0, 'active']);
+    const questions = [
+      { text: 'The course said your nervous system would settle through the body, not through thinking your way there. Did that actually happen for you?', type: 'radio', options: ['Yes, clearly', 'Somewhat', 'Not really'] },
+      { text: "We said belonging would be built into the practices themselves, not left to chance. Did it feel that way?", type: 'radio', options: ['Yes, clearly', 'Somewhat', 'Not really'] },
+      { text: 'Were you ever handed a technique and left to use it completely on your own, with no support?', type: 'radio', options: ['No, never', 'Once or twice', 'Yes, often'] },
+      { text: 'Did the live sessions feel like a genuine part of the practice, not just an add-on to the material?', type: 'radio', options: ['Yes, clearly', 'Somewhat', 'Not really'] },
+      { text: "Was there a specific promise this course made that it didn't keep for you? If so, what?", type: 'textarea', options: null },
+    ];
+    questions.forEach((q, i) => {
+      const qId = `${formId}-q${i}`;
+      db.run(`INSERT INTO form_questions (id, form_id, sort_order, question_text, question_type, required) VALUES (?,?,?,?,?,?)`,
+        [qId, formId, i, q.text, q.type, 0]);
+      if (q.options) {
+        q.options.forEach((opt, j) => {
+          db.run(`INSERT INTO form_question_options (id, question_id, sort_order, option_text) VALUES (?,?,?,?)`,
+            [`${qId}-o${j}`, qId, j, opt]);
+        });
+      }
+    });
+  }
+
   // Must run after migrations, not with the other CREATE INDEX statements
   // above — invite_token doesn't exist until the migration above adds it.
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_invite_token ON users(invite_token)`);
@@ -5077,6 +5157,119 @@ function addInstanceSession(id, courseInstanceId, sessionNumber, title, schedule
 function getSessionsForInstance(courseInstanceId) {
   return queryAll('SELECT * FROM instance_sessions WHERE course_instance_id=? ORDER BY session_number ASC', [courseInstanceId]);
 }
+
+// ── Attendance register (Per's request) ──
+// One register per session: every enrolled student, whether or not
+// they've been marked yet (mark = null means "not yet marked", distinct
+// from attended = 0 meaning "marked absent").
+function getAttendanceForSession(sessionId) {
+  return queryAll(`
+    SELECT e.id as enrolment_id, u.name as user_name, u.email as user_email,
+           sa.attended, sa.marked_at
+    FROM instance_sessions s
+    JOIN enrolments e ON e.course_instance_id = s.course_instance_id
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN session_attendance sa ON sa.instance_session_id = s.id AND sa.enrolment_id = e.id
+    WHERE s.id=?
+    ORDER BY u.name ASC`, [sessionId]);
+}
+function markAttendance(id, sessionId, enrolmentId, attended, markedBy) {
+  const existing = queryOne('SELECT id FROM session_attendance WHERE instance_session_id=? AND enrolment_id=?', [sessionId, enrolmentId]);
+  if (existing) {
+    getDbSync().run(`UPDATE session_attendance SET attended=?, marked_at=datetime('now'), marked_by=? WHERE id=?`, [attended ? 1 : 0, markedBy || null, existing.id]);
+  } else {
+    getDbSync().run(`INSERT INTO session_attendance (id, instance_session_id, enrolment_id, attended, marked_by) VALUES (?,?,?,?,?)`,
+      [id, sessionId, enrolmentId, attended ? 1 : 0, markedBy || null]);
+  }
+  save();
+}
+// Percentage of this course instance's sessions the enrolment was marked
+// present for, out of sessions that have actually been marked at all
+// (an unmarked future session doesn't count against them yet).
+function getAttendancePct(enrolmentId, courseInstanceId) {
+  const row = queryOne(`
+    SELECT COUNT(*) as marked, SUM(CASE WHEN sa.attended=1 THEN 1 ELSE 0 END) as present
+    FROM instance_sessions s
+    JOIN session_attendance sa ON sa.instance_session_id = s.id AND sa.enrolment_id = ?
+    WHERE s.course_instance_id=?`, [enrolmentId, courseInstanceId]);
+  if (!row || !row.marked) return 0;
+  return Math.round((row.present / row.marked) * 100);
+}
+function isLastSessionOfInstance(sessionId) {
+  const session = queryOne('SELECT * FROM instance_sessions WHERE id=?', [sessionId]);
+  if (!session) return false;
+  const maxRow = queryOne('SELECT MAX(session_number) as maxNum FROM instance_sessions WHERE course_instance_id=?', [session.course_instance_id]);
+  return maxRow && session.session_number === maxRow.maxNum;
+}
+
+// ── Certificates (Per's request) ──
+function getCertificateForEnrolment(enrolmentId) {
+  return queryOne('SELECT * FROM certificates WHERE enrolment_id=?', [enrolmentId]);
+}
+function getCertificate(id) {
+  return queryOne(`SELECT c.*, ci.title as instance_title, co.title as course_title, u.name as user_name
+    FROM certificates c
+    JOIN course_instances ci ON c.course_instance_id = ci.id
+    JOIN courses co ON ci.course_id = co.id
+    JOIN users u ON c.user_id = u.id
+    WHERE c.id=?`, [id]);
+}
+function getCertificatesForUser(userId) {
+  return queryAll(`SELECT c.*, ci.title as instance_title, co.title as course_title
+    FROM certificates c
+    JOIN course_instances ci ON c.course_instance_id = ci.id
+    JOIN courses co ON ci.course_id = co.id
+    WHERE c.user_id=? ORDER BY c.issued_at DESC`, [userId]);
+}
+// Issues a certificate if attendance is at/above the course's own
+// threshold and one doesn't already exist — silently does nothing
+// otherwise (below threshold, or already issued). Called from the
+// last-session attendance-marking path; never re-evaluates or revokes
+// an already-issued certificate even if attendance is edited afterward.
+function issueCertificateIfEligible(id, enrolmentId) {
+  const enrolment = getEnrolment(enrolmentId);
+  if (!enrolment) return null;
+  if (getCertificateForEnrolment(enrolmentId)) return null;
+  const instance = getCourseInstance(enrolment.course_instance_id);
+  const course = getCourse(instance.course_id);
+  const pct = getAttendancePct(enrolmentId, enrolment.course_instance_id);
+  if (pct < (course.certificate_threshold_pct ?? 80)) return null;
+  getDbSync().run(`INSERT INTO certificates (id, enrolment_id, user_id, course_instance_id, attendance_pct) VALUES (?,?,?,?,?)`,
+    [id, enrolmentId, enrolment.user_id, enrolment.course_instance_id, pct]);
+  save();
+  return getCertificate(id);
+}
+
+// ── Course-level certificate/survey settings (Per's request) ──
+function updateCourseCertificateSettings(courseId, certificateThresholdPct, surveyFormId) {
+  getDbSync().run(`UPDATE courses SET certificate_threshold_pct=?, survey_form_id=? WHERE id=?`,
+    [certificateThresholdPct ?? 80, surveyFormId, courseId]);
+  save();
+}
+function getSurveyForms() {
+  return queryAll(`SELECT id, title FROM forms WHERE kind='survey' ORDER BY title ASC`);
+}
+// Every enrolment in this instance, alongside whether the course even
+// has a survey linked, and — if so — whether/when it's been sent and
+// completed. Deliberately still returns a full row even with no survey
+// linked (form_response fields just come back null), so the admin list
+// can show "no survey set up for this course" rather than an empty page.
+function getSurveyStatusForInstance(courseInstanceId) {
+  const instance = getCourseInstance(courseInstanceId);
+  if (!instance) return [];
+  const course = getCourse(instance.course_id);
+  const surveyFormId = course?.survey_form_id;
+  return queryAll(`
+    SELECT e.id as enrolment_id, u.name as user_name, u.email as user_email,
+           fr.id as response_id, fr.status as survey_status, fr.started_at as survey_sent_at, fr.completed_at as survey_completed_at
+    FROM enrolments e
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN form_responses fr ON fr.user_id = e.user_id AND fr.course_instance_id = e.course_instance_id AND fr.form_id = ?
+    WHERE e.course_instance_id = ?
+    ORDER BY u.name ASC`, [surveyFormId || '__none__', courseInstanceId]).map(r => ({ ...r, survey_form_linked: !!surveyFormId }));
+}
+
+
 // Per's request — "a little note when they log in to remind them of an
 // upcoming lesson this week." The soonest live cohort session, across
 // every course this person is actively enrolled in, that falls within
@@ -5437,6 +5630,11 @@ function getFormResponse(id) { return queryOne('SELECT * FROM form_responses WHE
 // re-presents the same response until it's completed).
 function getInProgressResponse(formId, userId) {
   return queryOne(`SELECT * FROM form_responses WHERE form_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1`, [formId, userId]);
+}
+// Per's request — any existing response at all (any status), for the
+// survey-send path to check against before creating a duplicate.
+function getAnyResponseForUser(formId, userId, courseInstanceId) {
+  return queryOne(`SELECT * FROM form_responses WHERE form_id=? AND user_id=? AND course_instance_id=? ORDER BY started_at DESC LIMIT 1`, [formId, userId, courseInstanceId]);
 }
 // Saves one answer, replacing any prior answer(s) to the same question on
 // this response first — going back and changing an earlier answer (which
@@ -9755,6 +9953,8 @@ module.exports = {
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
   getPendingWelcomeEnrolment, markEnrolmentWelcomed, resetWelcomeFanfare,
   getExplorerCoursePromo, dismissExplorerCoursePromo,
+  getAttendanceForSession, markAttendance, getAttendancePct, isLastSessionOfInstance,
+  getCertificateForEnrolment, getCertificate, getCertificatesForUser, issueCertificateIfEligible,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
@@ -9848,7 +10048,7 @@ module.exports = {
   createForm, updateForm, getForm, getAllForms, deleteForm, duplicateForm,
   addFormQuestion, updateFormQuestion, deleteFormQuestion, getFormQuestions,
   addFormOption, updateFormOption, deleteFormOption,
-  createFormResponse, getFormResponse, getInProgressResponse, saveFormAnswer, getResponseAnswers,
+  createFormResponse, getFormResponse, getInProgressResponse, getAnyResponseForUser, saveFormAnswer, getResponseAnswers,
   completeFormResponse, getFormResponsesForReport, getFormResponseDetail, cleanupExpiredFormResponses, setFormResponseUserAndPayment, getFormResponseForUserAndInstance,
   getNextUnusedMotdForPlatform, markMotdUsedForSocial, getUpcomingQueuedTimesForPlatform,
   // Signal lines (Per Bot 17 phase 6)

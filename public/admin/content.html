@@ -953,6 +953,12 @@
       <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px">Also needs an open instance under Instances for this course to actually show up — the carousel only lists courses someone can currently enrol in.</div>
     </div>
     <div class="modal-note" style="margin-top:4px">Lessons are added after saving, from the course's own page — each one lets you set its number, title, and files together in one step.</div>
+    <!-- Per's request — settable per course, since these only matter for
+         a live cohort course, not every course in the catalogue. -->
+    <div class="modal-row">
+      <div><label>Certificate threshold <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(% of sessions attended to earn a certificate)</span></label><input type="number" id="cCertThreshold" min="0" max="100" placeholder="80"/></div>
+      <div><label>Post-course survey <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(sent automatically when the last session's attendance is marked)</span></label><select id="cSurveyForm"><option value="">None</option></select></div>
+    </div>
     <div class="modal-err" id="cErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('newCourseModal')">Cancel</button>
@@ -1183,6 +1189,34 @@
     <div id="sessBody" style="overflow-y:auto;max-height:55vh"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('sessionsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — attendance register, one session at a time. Marking
+     attendance on the LAST session of the instance also triggers the
+     certificate-eligibility check and survey send for that student,
+     server-side — nothing extra to do here beyond marking the tick. -->
+<div class="modal-overlay" id="attendanceModal">
+  <div class="modal wide" style="max-width:560px">
+    <h3 id="attModalTitle">Attendance</h3>
+    <input type="hidden" id="attSessionId"/>
+    <div id="attBody" style="overflow-y:auto;max-height:55vh"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('attendanceModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — "the list of surveys," per instance, with a manual
+     send/resend option alongside the automatic last-session trigger. -->
+<div class="modal-overlay" id="surveysModal">
+  <div class="modal wide" style="max-width:620px">
+    <h3 id="survModalTitle">Surveys</h3>
+    <input type="hidden" id="survInstanceId"/>
+    <div id="survBody" style="overflow-y:auto;max-height:55vh"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('surveysModal')">Close</button>
     </div>
   </div>
 </div>
@@ -3872,6 +3906,7 @@ function renderInstances(){
       <div class="item-row-actions">
         <button class="btn sm" onclick="editInstance('${i.id}')">Edit</button>
         ${i.mode==='cohort'?`<button class="btn sm" onclick="openSessionsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Sessions</button>`:''}
+        ${i.mode==='cohort'?`<button class="btn sm" onclick="openSurveysModal('${i.id}','${i.title.replace(/'/g,"\\'")}')" title="Post-course survey status for everyone enrolled — also lets you send or resend it by hand">Surveys</button>`:''}
         <button class="btn sm" onclick="openEnrolmentsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Enrolments</button>
         <button class="btn sm" onclick="openInstanceFacilitatorsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Facilitators</button>
         ${i.status==='open'?`<button class="btn sm" onclick="copyInstancePublicLink('${i.id}',this)" title="The public page — shows a date picker if the course has more than one open instance">Copy public link</button>`:''}
@@ -4122,6 +4157,90 @@ async function openSessionsModal(instanceId,instanceTitle){
   await refreshSessionsModal();
   openModal('sessionsModal');
 }
+// Per's request — attendance register for one session. Every enrolled
+// student shows up whether or not they've been marked yet (unmarked ≠
+// absent — see getAttendanceForSession's own comment in db.js).
+async function openAttendanceModal(sessionId, sessionTitle){
+  document.getElementById('attSessionId').value = sessionId;
+  document.getElementById('attModalTitle').textContent = 'Attendance — ' + sessionTitle;
+  await refreshAttendanceModal();
+  openModal('attendanceModal');
+}
+async function refreshAttendanceModal(){
+  const sessionId = document.getElementById('attSessionId').value;
+  const roster = await fetch(`/api/admin/instance-sessions/${sessionId}/attendance`).then(r=>r.json());
+  const el = document.getElementById('attBody');
+  el.innerHTML = roster.map(r => `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="flex:1">
+        <div>${escHtml(r.user_name)}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35)">${escHtml(r.user_email)}</div>
+      </div>
+      <button class="btn sm ${r.attended===1?'primary':''}" onclick="markAttendanceRow('${r.enrolment_id}',1,this)">Present</button>
+      <button class="btn sm ${r.attended===0?'danger':''}" onclick="markAttendanceRow('${r.enrolment_id}',0,this)">Absent</button>
+    </div>
+  `).join('') || '<div class="loading">No one enrolled in this course yet.</div>';
+}
+async function markAttendanceRow(enrolmentId, attended, btn){
+  const sessionId = document.getElementById('attSessionId').value;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/instance-sessions/${sessionId}/attendance`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ enrolmentId, attended })
+    });
+    const data = await res.json();
+    await refreshAttendanceModal();
+    if (data.certificateIssued) appAlert('Certificate issued — attendance met the threshold for this course.');
+    if (data.surveySent) appAlert('Last session marked — the post-course survey has been sent.');
+  } catch(e) { appAlert('Could not save this — please try again.'); }
+  btn.disabled = false;
+}
+// Per's request — survey status per instance, with a manual send/resend
+// button per student alongside the automatic last-session trigger.
+async function openSurveysModal(instanceId, instanceTitle){
+  document.getElementById('survInstanceId').value = instanceId;
+  document.getElementById('survModalTitle').textContent = 'Surveys — ' + instanceTitle;
+  await refreshSurveysModal();
+  openModal('surveysModal');
+}
+async function refreshSurveysModal(){
+  const instanceId = document.getElementById('survInstanceId').value;
+  const rows = await fetch(`/api/admin/course-instances/${instanceId}/surveys`).then(r=>r.json());
+  const el = document.getElementById('survBody');
+  if (rows.length && !rows[0].survey_form_linked) {
+    el.innerHTML = '<div class="modal-note">No survey form is linked to this course yet — set one on the course itself (Content → Courses → Edit → Post-course survey).</div>';
+    return;
+  }
+  el.innerHTML = rows.map(r => {
+    const status = r.survey_completed_at ? 'Completed' : (r.response_id ? 'Sent, not yet completed' : 'Not sent yet');
+    const statusColor = r.survey_completed_at ? 'rgba(140,220,170,0.9)' : (r.response_id ? 'rgba(230,190,120,0.9)' : 'rgba(255,255,255,0.35)');
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="flex:1">
+        <div>${escHtml(r.user_name)}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35)">${escHtml(r.user_email)}</div>
+      </div>
+      <div style="font-size:12px;color:${statusColor};min-width:150px">${status}</div>
+      <button class="btn sm" onclick="sendSurveyRow('${r.enrolment_id}',this)">${r.response_id ? 'Resend' : 'Send now'}</button>
+    </div>`;
+  }).join('') || '<div class="loading">No one enrolled in this course yet.</div>';
+}
+async function sendSurveyRow(enrolmentId, btn){
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await fetch(`/api/admin/enrolments/${enrolmentId}/send-survey`, { method:'POST' });
+    const data = await res.json();
+    if (data.error) { appAlert(data.error); btn.disabled = false; btn.textContent = original; return; }
+    await refreshSurveysModal();
+  } catch(e) {
+    appAlert('Could not send this — please try again.');
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
 async function refreshSessionsModal(){
   const instanceId=document.getElementById('sessInstanceId').value;
   const sessions=await fetch(`/api/admin/course-instances/${instanceId}/sessions`).then(r=>r.json());
@@ -4138,6 +4257,7 @@ async function refreshSessionsModal(){
       <textarea id="sessnotes-${s.id}" placeholder="Facilitator notes (private)" rows="2" style="width:100%">${escAttr(s.facilitator_notes)}</textarea>
       <div style="margin-top:8px;display:flex;gap:6px">
         <button class="btn sm" onclick="saveSession('${s.id}')">Save</button>
+        <button class="btn sm" onclick="openAttendanceModal('${s.id}','${escAttr(s.title)}')" title="Mark who attended this session — marking the last session also triggers the certificate check and survey send for each student">Take attendance</button>
         <button class="btn sm danger" onclick="deleteSession('${s.id}')">Delete</button>
       </div>
     </div>
@@ -4410,7 +4530,7 @@ function openNewCourse(){
 // Edit — same modal as New course, minus the (now-removed) lesson
 // builder either way: lessons for an existing course are always managed
 // from the course detail view, one at a time, via "+ Add lesson".
-function editCourse(courseId){
+async function editCourse(courseId){
   const c=allCourses.find(x=>x.id===courseId);
   if(!c)return;
   document.getElementById('ncTitle').textContent='Edit course';
@@ -4424,8 +4544,21 @@ function editCourse(courseId){
   document.getElementById('cSkin').value=c.skin_id||'';
   document.getElementById('cAccessStatus').value=c.access_status||'visible';
   document.getElementById('cFeatured').checked=!!c.featured;
+  document.getElementById('cCertThreshold').value=c.certificate_threshold_pct || 80;
+  await populateSurveyFormOptions(c.survey_form_id || '');
   document.getElementById('cErr').textContent='';
   openModal('newCourseModal');
+}
+// Per's request — survey form picker, loaded fresh each time the course
+// modal opens rather than once at page load, since a survey form could
+// be added/renamed at any point.
+async function populateSurveyFormOptions(selectedId){
+  const sel = document.getElementById('cSurveyForm');
+  try {
+    const forms = await fetch('/api/admin/survey-forms').then(r=>r.json());
+    sel.innerHTML = '<option value="">None</option>' + forms.map(f=>`<option value="${f.id}">${escHtml(f.title)}</option>`).join('');
+  } catch(e) { sel.innerHTML = '<option value="">None</option>'; }
+  sel.value = selectedId || '';
 }
 
 async function saveCourse(){
@@ -4449,6 +4582,10 @@ async function saveCourse(){
     // separate call rather than folded into the main PATCH body so both
     // entry points keep working identically.
     await fetch(`/api/content/courses/${editId}/featured`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({featured})});
+    // Per's request — certificate threshold / survey form, same PATCH-
+    // after-save pattern as Featured just above.
+    await fetch(`/api/admin/courses/${editId}/certificate-settings`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({certificateThresholdPct: parseInt(document.getElementById('cCertThreshold').value,10) || 80, surveyFormId: document.getElementById('cSurveyForm').value || null})});
     closeModal('newCourseModal');loadAll();
     return;
   }
