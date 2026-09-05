@@ -995,6 +995,24 @@
     .lesson-chooser-list { max-height:60vh; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-right:4px; }
     .chooser-tick { float:right; color:rgba(140,220,170,0.9); font-weight:bold; }
     .chooser-mandatory-badge { float:right; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:rgba(220,90,80,0.85); color:#fff; font-size:11px; font-weight:bold; }
+    /* Per's request — the lesson file chooser as a proper sortable table
+       instead of a stack of big buttons. overflow-x:auto rather than
+       trying to squeeze five columns onto a narrow phone screen. */
+    .lesson-file-table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .lesson-file-table { width:100%; border-collapse:collapse; font-size:13px; min-width:420px; }
+    .lesson-file-table th { text-align:left; padding:8px 10px; font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(255,255,255,0.4); border-bottom:1px solid rgba(255,255,255,0.12); cursor:pointer; white-space:nowrap; user-select:none; }
+    .lesson-file-table th:hover { color:rgba(255,255,255,0.7); }
+    .lesson-file-table th .sort-arrow { opacity:0.5; margin-left:3px; font-size:10px; }
+    .lesson-file-table td { padding:9px 10px; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:middle; }
+    .lesson-file-table tr.chooser-locked-row td { opacity:0.5; }
+    .lesson-file-table .file-type-icon { font-size:17px; width:26px; text-align:center; }
+    .lesson-file-table .file-name-cell { color:rgba(255,255,255,0.85); }
+    .lesson-file-table .file-action-btn { padding:6px 16px; border-radius:8px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:12px; cursor:pointer; white-space:nowrap; }
+    .lesson-file-table .file-action-btn.is-locked { background:none; border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.4); }
+    /* Per's request — the offline arrow needs to be clearly visible, not
+       a faint 0.3-opacity icon someone has to look for. */
+    .lesson-file-table .offline-tick-btn { opacity:0.6; font-size:19px; }
+    .lesson-file-table .offline-tick-btn.active { opacity:1; }
     /* No opacity dimming — see .shelf-card.locked note above. */
     .chooser-locked { cursor:pointer; }
     .text-doc-reader {
@@ -1808,6 +1826,23 @@
     <div class="pw-btns">
       <button class="pw-ok" id="consentGateBtn" onclick="submitConsentGate()" disabled>Continue</button>
     </div>
+  </div>
+</div>
+
+<!-- Per's request — one-time "you're registered" celebration, shown once
+     on the first login after a new cohort registration (checkPendingWelcome
+     below), never again after that. Deliberately queued after the
+     consent gate (z-index below it) — legal consent always takes
+     priority over a nice-to-have celebration. -->
+<div class="pw-overlay" id="welcomeFanfareOverlay" style="z-index:480">
+  <div class="pw-modal" style="max-width:420px;text-align:center">
+    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.7);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">You're registered</div>
+    <h3 id="welcomeFanfareTitle" style="margin-top:4px"></h3>
+    <div id="welcomeFanfareWhen" style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6"></div>
+    <div class="pw-btns" style="justify-content:center;margin-top:6px">
+      <button class="pw-ok" onclick="dismissWelcomeFanfare(true)">Take me there</button>
+    </div>
+    <button onclick="dismissWelcomeFanfare(false)" style="background:none;border:none;color:rgba(255,255,255,0.35);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Maybe later</button>
   </div>
 </div>
 
@@ -4048,6 +4083,43 @@
       // changed after all.
       btn.classList.toggle('active', wasMarked);
       if (wasMarked) _offlineMarkedIds.add(fileId); else _offlineMarkedIds.delete(fileId);
+    }
+  }
+  // Per's request — course-level "take it all offline," cohort courses
+  // only (see the checkbox itself, only rendered for isCohort). Warns
+  // first if this download is genuinely large AND the person already has
+  // several files stored offline — the two together are what actually
+  // risks running into device storage limits, not either alone.
+  async function onCourseOfflineAllToggled(instanceId, checkboxEl) {
+    checkboxEl.disabled = true;
+    try {
+      if (checkboxEl.checked) {
+        const res = await fetch(`/api/client/courses/${instanceId}/offline-summary`);
+        const summary = await res.json();
+        const bigDownload = summary.courseBytes > 150 * 1024 * 1024; // ~150MB
+        const alreadyHasSeveral = summary.alreadyOfflineFileCount >= 5;
+        if (bigDownload && alreadyHasSeveral) {
+          const proceed = confirm(
+            `This will download about ${formatOfflineBytes(summary.courseBytes)} across ${summary.courseFileCount} files. ` +
+            `You already have ${summary.alreadyOfflineFileCount} files (${formatOfflineBytes(summary.alreadyOfflineBytes)}) stored offline — ` +
+            `adding this much more could use up a lot of space on your device. Continue anyway?`
+          );
+          if (!proceed) { checkboxEl.checked = false; checkboxEl.disabled = false; return; }
+        }
+        const markRes = await fetch(`/api/client/courses/${instanceId}/offline-mark-all`, { method: 'POST' });
+        const data = await markRes.json();
+        await loadOfflineMarkedIds();
+        (data.fileIds || []).forEach(id => cacheFileForOffline(id));
+      } else {
+        const unmarkRes = await fetch(`/api/client/courses/${instanceId}/offline-unmark-all`, { method: 'POST' });
+        const data = await unmarkRes.json();
+        await loadOfflineMarkedIds();
+        (data.fileIds || []).forEach(id => removeFileFromOfflineCache(id));
+      }
+    } catch (e) {
+      checkboxEl.checked = !checkboxEl.checked; // roll back the optimistic click on a genuine failure
+    } finally {
+      checkboxEl.disabled = false;
     }
   }
   async function markWholeLessonOffline(lessonId, btn) {
@@ -8175,11 +8247,24 @@
       const zoomLine = isCohort && data.instance.zoom_link
         ? `<div style="margin-top:10px"><a href="${data.instance.zoom_link}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 20px;border-radius:10px;background:rgba(180,230,200,0.12);border:1px solid rgba(180,230,200,0.3);color:rgba(180,230,200,0.9);text-decoration:none;font-size:13px">Join Zoom session →</a></div>`
         : '';
+      // Per's request — "take all course material offline," cohort only.
+      // A self-paced course's full video library is usually too large
+      // for this to make sense as a single action, so this option is
+      // deliberately scoped to live cohort courses.
+      const offlineAllLine = isCohort
+        ? `<div style="margin-top:12px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.6)">
+              <input type="checkbox" id="courseOfflineAllChk" onchange="onCourseOfflineAllToggled('${instanceId}', this)"/>
+              Take all course material offline
+            </label>
+          </div>`
+        : '';
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
         ${data.course?.description ? `<div class="lesson-item-desc" style="margin-bottom:10px">${data.course.description}</div>` : ''}
         ${instanceWhenLine}
         ${zoomLine}
+        ${offlineAllLine}
         ${isCohort ? `
         <div id="reminderPrefsCard" style="margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:13px">
           <div style="margin-bottom:8px;color:rgba(255,255,255,0.6)">Session reminders</div>
@@ -8410,6 +8495,74 @@
   // day's Read and Listen sit next to each other (rather than every Read
   // first, then every Listen) and scrollable for long lists on mobile.
   let _lessonChooserFiles = [];
+  // Per's request — the file table's own display sort (Type/Name,
+  // toggling ascending/descending), kept entirely separate from the
+  // underlying day/kind sequence order in _lessonChooserFiles itself.
+  // Sequencing/locking always follows the real course order regardless
+  // of how the table happens to be sorted for browsing right now.
+  let _chooserSortKey = null;
+  let _chooserSortDir = 1;
+  let _chooserRenderArgs = null; // { sorted, cleanedTitles, lessonLocked } — reused when a header is clicked
+  function fileTypeLabel(f) { return isVideo(f) ? 'Watch' : isAudio(f) ? 'Listen' : 'Read'; }
+  function fileTypeIcon(f) { return isVideo(f) ? '🎬' : isAudio(f) ? '🎧' : '📖'; }
+  function sortChooserTable(key) {
+    if (_chooserSortKey === key) _chooserSortDir = -_chooserSortDir;
+    else { _chooserSortKey = key; _chooserSortDir = 1; }
+    if (_chooserRenderArgs) {
+      const wrap = document.getElementById('lessonFileTableWrap');
+      if (wrap) wrap.innerHTML = renderLessonFileTable(_chooserRenderArgs.sorted, _chooserRenderArgs.cleanedTitles, _chooserRenderArgs.lessonLocked);
+    }
+  }
+  function renderLessonFileTable(sorted, cleanedTitles, lessonLocked) {
+    _chooserRenderArgs = { sorted, cleanedTitles, lessonLocked };
+    // originalIndex is what every click handler below actually uses —
+    // it's the file's position in the real day/kind sequence, which is
+    // what showLockedFileNotice and chooseLessonFile need to find "the
+    // previous item" correctly. displayOrder is purely cosmetic.
+    let displayOrder = sorted.map((f, i) => ({ f, originalIndex: i }));
+    if (_chooserSortKey === 'type') {
+      displayOrder.sort((a, b) => _chooserSortDir * fileTypeLabel(a.f).localeCompare(fileTypeLabel(b.f)));
+    } else if (_chooserSortKey === 'name') {
+      displayOrder.sort((a, b) => _chooserSortDir * cleanedTitles.get(a.f).localeCompare(cleanedTitles.get(b.f)));
+    }
+    const arrow = (key) => _chooserSortKey === key ? `<span class="sort-arrow">${_chooserSortDir === 1 ? '▲' : '▼'}</span>` : '';
+    const rows = displayOrder.map(({ f, originalIndex: i }) => {
+      const locked = lessonLocked || f.locked;
+      const tick = f.opened
+        ? '<span class="chooser-tick">✓</span>'
+        : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');
+      const nameCell = `<td class="file-name-cell">${cleanedTitles.get(f)}${tick}</td>`;
+      const typeCell = `<td class="file-type-icon" title="${fileTypeLabel(f)}">${fileTypeIcon(f)}</td>`;
+      if (locked) {
+        return `<tr class="chooser-locked-row">
+          ${typeCell}
+          ${nameCell}
+          <td></td>
+          <td><button type="button" class="file-action-btn is-locked" onclick="showLockedFileNotice(${i}, ${lessonLocked ? 'true' : 'false'})">🔒 ${fileTypeLabel(f)}</button></td>
+        </tr>`;
+      }
+      // Per Bot 51 — offline tick is its own cell rather than inside the
+      // action button, so tapping it doesn't also open/play the file.
+      const offlineTick = `<button type="button" class="offline-tick-btn ${isMarkedOffline(f.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${f.id}', this)" title="Available offline">⬇</button>`;
+      return `<tr>
+        ${typeCell}
+        ${nameCell}
+        <td>${offlineTick}</td>
+        <td><button type="button" class="file-action-btn" onclick="chooseLessonFile(${i})">${fileTypeLabel(f)}</button></td>
+      </tr>`;
+    }).join('');
+    return `<table class="lesson-file-table">
+        <thead>
+          <tr>
+            <th onclick="sortChooserTable('type')">Type${arrow('type')}</th>
+            <th onclick="sortChooserTable('name')">Name${arrow('name')}</th>
+            <th>Offline</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
   // Per Bot 15k — friendly popup for tapping a locked item. Auto-dismisses
   // after a few seconds; tapping it again just restarts the timer rather
   // than stacking multiple notices.
@@ -8458,6 +8611,8 @@
   }
   function openLessonChooser(lesson, files, lessonLocked) {
     resetStuckScrollPosition();
+    _chooserSortKey = null;
+    _chooserSortDir = 1;
     // Preserve whatever lock state was already known (from the initial API
     // response) across re-renders that don't pass it explicitly — e.g. the
     // reopen-after-closing-a-file calls elsewhere only pass (lesson, files).
@@ -8530,31 +8685,7 @@
     document.getElementById('playerMedia').innerHTML = `
       ${!lessonLocked ? `<button type="button" onclick="markWholeLessonOffline('${lesson.id}', this)" style="width:100%;margin-bottom:12px;background:rgba(140,190,230,0.1);border:1px solid rgba(140,190,230,0.3);border-radius:8px;color:rgba(160,200,235,0.9);font-family:Georgia,serif;font-size:12.5px;padding:9px;cursor:pointer">⬇ Mark whole lesson offline</button>` : ''}
       <div class="lesson-chooser-list">
-        ${sorted.map((f, i) => {
-          const locked = lessonLocked || f.locked;
-          const label = `${isVideo(f) ? '🎬 Watch' : isAudio(f) ? '🎧 Listen' : '📖 Read'} — ${cleanedTitles.get(f)}`;
-          const tick = f.opened
-            ? '<span class="chooser-tick">✓</span>'
-            : (f.mandatory ? '<span class="chooser-mandatory-badge" title="Required">M</span>' : '');
-          if (locked) {
-            // Per Bot 15k — was a disabled button, which meant tapping it did
-            // nothing at all. Now clickable, showing a friendly popup naming
-            // specifically what needs to happen first: the previous lesson,
-            // if that's what's blocking it, or otherwise the specific
-            // previous file in this same lesson that hasn't been opened yet.
-            return `<button class="doc-link chooser-locked" onclick="showLockedFileNotice(${i}, ${lessonLocked ? 'true' : 'false'})">🔒 ${label}${tick}</button>`;
-          }
-          // Per Bot 51 — offline tick sits beside the row rather than
-          // inside its button, so tapping it doesn't also open/play the
-          // file. stopPropagation isn't actually needed here (it's a
-          // sibling, not a nested element) but is harmless insurance
-          // against this markup ever getting nested later.
-          const offlineTick = `<button type="button" class="offline-tick-btn ${isMarkedOffline(f.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${f.id}', this)" title="Available offline">⬇</button>`;
-          return `<div style="display:flex;align-items:center;gap:4px;margin-bottom:10px">
-            <button class="doc-link" style="flex:1;margin-bottom:0" onclick="chooseLessonFile(${i})">${label}${tick}</button>
-            ${offlineTick}
-          </div>`;
-        }).join('')}
+        <div class="lesson-file-table-wrap" id="lessonFileTableWrap">${renderLessonFileTable(sorted, cleanedTitles, lessonLocked)}</div>
       </div>
       ${(() => {
         // Previous/Next — only rendered when we actually know the course's
@@ -8945,13 +9076,45 @@
     }
   }
 
-  // Kick off the resume card check as soon as the page loads, independent of
-  // whichever tab happens to be active first.
+  // Per's request — one-time "you're registered" celebration. Checked
+  // fresh on every home-load, same reasoning as the consent gate above
+  // it: cheap enough, and correctly reflects whatever's genuinely
+  // pending right now rather than something cached client-side that
+  // could go stale.
+  let _pendingWelcomeInstanceId = null;
+  let _pendingWelcomeEnrolmentId = null;
+  async function checkPendingWelcome() {
+    try {
+      const res = await fetch('/api/client/pending-welcome');
+      if (!res.ok) return;
+      const e = await res.json();
+      if (!e) return;
+      _pendingWelcomeInstanceId = e.course_instance_id;
+      _pendingWelcomeEnrolmentId = e.id;
+      document.getElementById('welcomeFanfareTitle').textContent = e.instance_title;
+      const whenParts = [];
+      if (e.schedule_day) whenParts.push(e.schedule_day + (e.schedule_time ? `, ${e.schedule_time}` : ''));
+      if (e.start_date) whenParts.push(`starts ${new Date(e.start_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`);
+      document.getElementById('welcomeFanfareWhen').textContent = whenParts.length ? `Meets ${whenParts.join(', ')}.` : '';
+      document.getElementById('welcomeFanfareOverlay').classList.add('visible');
+    } catch(e) { /* if this genuinely fails, better to just skip the celebration than block anything */ }
+  }
+  function dismissWelcomeFanfare(goToCourse) {
+    document.getElementById('welcomeFanfareOverlay').classList.remove('visible');
+    const enrolmentId = _pendingWelcomeEnrolmentId;
+    const instanceId = _pendingWelcomeInstanceId;
+    _pendingWelcomeEnrolmentId = null;
+    _pendingWelcomeInstanceId = null;
+    if (enrolmentId) fetch(`/api/client/enrolments/${enrolmentId}/mark-welcomed`, { method: 'POST' }).catch(() => {});
+    if (goToCourse && instanceId) { switchTab('courses'); openCourseDetail(instanceId); }
+  }
+
   loadResumeCard();
   loadUpcomingSessionBanner();
   loadA11yPrefsFromServer();
   checkOnboarding();
   checkPendingConsents(); // Per Bot 24 — see the function itself for why this one gate covers every account-creation path at once.
+  checkPendingWelcome();
   // Per Bot 25 — login notifications (new files/referral/birthday), same
   // "once at boot" timing as the two checks above, not tied to Home's
   // render. Short delay purely to let the two mandatory/blocking checks

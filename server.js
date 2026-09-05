@@ -3774,6 +3774,23 @@ app.get('/api/client/upcoming-session', auth.requireAuthApi(['client']), (req, r
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per's request — one-time "you're registered" celebration, shown once
+// on the first login after a new cohort registration, never again after
+// that. Checked fresh on every home-load, same pattern as the consent
+// gate and upcoming-session banner right above.
+app.get('/api/client/pending-welcome', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getPendingWelcomeEnrolment(req.user.id) || null); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/enrolments/:id/mark-welcomed', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const enrolment = db.getEnrolment(req.params.id);
+    if (!enrolment || enrolment.user_id !== req.user.id) return res.status(404).json({ error: 'Not found.' });
+    db.markEnrolmentWelcomed(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
 app.get('/api/client/activity-home', auth.requireAuthApi(['client']), (req, res) => {
   try { res.json(db.getActivityHome(req.user.id)); }
@@ -8501,6 +8518,44 @@ app.post('/api/client/offline-marks/lesson/:lessonId', auth.requireAuthApi(['cli
     const files = db.getFilesForLesson(req.params.lessonId);
     files.forEach(f => db.addOfflineMark(uuidv4(), req.user.id, f.id));
     res.json({ ok: true, marked: files.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per's request — "take all course material offline," for a live cohort
+// course specifically (a self-paced video course's full library is
+// usually far too large for this to make sense — the client only shows
+// this option for cohort mode). Split into a summary check and the
+// actual mark-all action so the client can warn about size BEFORE
+// committing to it, using real numbers rather than a guess.
+app.get('/api/client/courses/:instanceId/offline-summary', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const instance = db.getCourseInstance(req.params.instanceId);
+    if (!instance) return res.status(404).json({ error: 'Not found.' });
+    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
+    if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
+    res.json(db.getCourseOfflineSummary(instance.course_id, req.user.id));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/courses/:instanceId/offline-mark-all', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const instance = db.getCourseInstance(req.params.instanceId);
+    if (!instance) return res.status(404).json({ error: 'Not found.' });
+    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
+    if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
+    const files = db.getFilesForCourse(instance.course_id);
+    files.forEach(f => db.addOfflineMark(uuidv4(), req.user.id, f.id));
+    res.json({ ok: true, marked: files.length, fileIds: files.map(f => f.id) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/client/courses/:instanceId/offline-unmark-all', auth.requireAuthApi(['client']), (req, res) => {
+  try {
+    const instance = db.getCourseInstance(req.params.instanceId);
+    if (!instance) return res.status(404).json({ error: 'Not found.' });
+    const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
+    if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
+    const files = db.getFilesForCourse(instance.course_id);
+    files.forEach(f => db.removeOfflineMark(req.user.id, f.id));
+    res.json({ ok: true, fileIds: files.map(f => f.id) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

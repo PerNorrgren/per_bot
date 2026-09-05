@@ -2829,6 +2829,23 @@ async function getDb() {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
   });
 
+  // Per's request — one-time "you're registered" celebration on first
+  // login after a new course registration, never shown again after
+  // that. Kept out of the generic migrations array above and combined
+  // with a same-transaction backfill: the ALTER and the backfill only
+  // ever both run together, the one time this column doesn't exist yet
+  // — every enrolment that already existed before this feature shipped
+  // gets welcomed_at backfilled to its own enrolled_at immediately, so
+  // nobody already enrolled in a live course gets a surprise fanfare
+  // popup for something they've had for ages. On every later boot the
+  // ALTER throws (column already exists) and the backfill is skipped
+  // entirely, so a genuinely new enrolment's welcomed_at stays NULL
+  // exactly as intended.
+  try {
+    db.run(`ALTER TABLE enrolments ADD COLUMN welcomed_at TEXT`);
+    db.run(`UPDATE enrolments SET welcomed_at = enrolled_at WHERE welcomed_at IS NULL`);
+  } catch(e) { /* column already exists — ignore */ }
+
   // Must run after migrations, not with the other CREATE INDEX statements
   // above — invite_token doesn't exist until the migration above adds it.
   db.run(`CREATE INDEX IF NOT EXISTS idx_users_invite_token ON users(invite_token)`);
@@ -4669,6 +4686,27 @@ function createEnrolment(id, userId, courseInstanceId, paymentStatus, amountPaid
   save();
 }
 function getEnrolment(id) { return queryOne('SELECT * FROM enrolments WHERE id=?', [id]); }
+// Per's request — the one enrolment (if any) that hasn't had its
+// first-login "you're registered" celebration shown yet. Cohort mode
+// only, and only while the course genuinely hasn't started yet — a
+// self-paced enrolment doesn't have the same "you just paid for a
+// specific live thing" moment worth celebrating, and neither does a
+// cohort that's already underway or finished by the time someone next
+// logs in. Most recent first, so if someone somehow has more than one
+// pending (shouldn't normally happen — this fires and gets marked seen
+// right at next login), the newest one wins rather than an arbitrary one.
+function getPendingWelcomeEnrolment(userId) {
+  return queryOne(`
+    SELECT e.*, ci.title as instance_title, ci.schedule_day, ci.schedule_time, ci.start_date, ci.mode
+    FROM enrolments e
+    JOIN course_instances ci ON e.course_instance_id = ci.id
+    WHERE e.user_id=? AND e.welcomed_at IS NULL AND ci.mode='cohort' AND ci.start_date >= date('now')
+    ORDER BY e.enrolled_at DESC LIMIT 1`, [userId]);
+}
+function markEnrolmentWelcomed(id) {
+  getDbSync().run('UPDATE enrolments SET welcomed_at=datetime(\'now\') WHERE id=?', [id]);
+  save();
+}
 // Per's request — student-set reminder channel, editable from the
 // course page any time, not just at enrolment. Validation (SMS
 // requires a real phone number) lives in the route in server.js, not
@@ -6749,6 +6787,38 @@ function getOfflineMarkedFiles(clientId) {
   return queryAll(`SELECT lf.*, 1 as is_offline FROM library_files lf
     JOIN user_offline_marks om ON lf.id = om.file_id
     WHERE om.client_id=? ORDER BY om.created_at DESC`, [clientId]);
+}
+// Per's request — every file across every lesson of a course, for the
+// course-level "take it all offline" action. Same join shape as
+// getFilesForLesson, just not scoped to one lesson.
+function getFilesForCourse(courseId) {
+  return queryAll(`SELECT r.id as ref_id, r.lesson_id, r.sort_order, f.*
+    FROM lessons l JOIN lesson_file_refs r ON r.lesson_id = l.id
+    JOIN library_files f ON r.file_id = f.id
+    WHERE l.course_id=? AND l.access_status != 'hidden'
+    ORDER BY l.lesson_number ASC, r.sort_order ASC`, [courseId]);
+}
+// Per's request — the numbers behind the "take it all offline" warning:
+// how big THIS course's files are, and how much this person already has
+// offline in total across everything else, so the client can warn before
+// committing to a large download rather than after storage is already
+// half-gone.
+function getCourseOfflineSummary(courseId, clientId) {
+  const courseTotal = queryOne(`
+    SELECT COALESCE(SUM(f.file_size), 0) as bytes, COUNT(*) as count
+    FROM lessons l JOIN lesson_file_refs r ON r.lesson_id = l.id
+    JOIN library_files f ON r.file_id = f.id
+    WHERE l.course_id=? AND l.access_status != 'hidden'`, [courseId]);
+  const alreadyOffline = queryOne(`
+    SELECT COALESCE(SUM(lf.file_size), 0) as bytes, COUNT(*) as count
+    FROM library_files lf JOIN user_offline_marks om ON lf.id = om.file_id
+    WHERE om.client_id=?`, [clientId]);
+  return {
+    courseBytes: courseTotal?.bytes || 0,
+    courseFileCount: courseTotal?.count || 0,
+    alreadyOfflineBytes: alreadyOffline?.bytes || 0,
+    alreadyOfflineFileCount: alreadyOffline?.count || 0,
+  };
 }
 function clearAllOfflineMarks(clientId) {
   getDbSync().run('DELETE FROM user_offline_marks WHERE client_id=?', [clientId]); save();
@@ -9648,6 +9718,7 @@ module.exports = {
   updateCourseInstance, deleteCourseInstance,
   // Enrolments
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
+  getPendingWelcomeEnrolment, markEnrolmentWelcomed,
   getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
@@ -9703,6 +9774,7 @@ module.exports = {
   // Favourites
   addFavourite, removeFavourite, getFavourites, getNextActionSuggestion,
   addOfflineMark, removeOfflineMark, isFileMarkedOffline, getOfflineMarkedFileIds, getOfflineMarkedFiles, clearAllOfflineMarks,
+  getFilesForCourse, getCourseOfflineSummary,
   getReferralPromptTrigger, markReferralPromptShown, markReferralPromptResponded,
   getBirthdayPromptTrigger, markBirthdayPromptShown, markBirthdayPromptResponded,
   getNewLibraryFilesCount, markLibraryNotificationSeen,
