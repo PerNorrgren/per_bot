@@ -70,6 +70,22 @@
     .cta-btn:hover { background:rgba(180,230,200,0.22); }
 
     .loading { text-align:center; padding:40px; font-size:13px; color:rgba(255,255,255,0.25); }
+
+    /* Per's report — the previous inline banner was too easy to miss
+       entirely (faint, no visual weight, scrolled past without noticing).
+       A modal that has to be manually closed guarantees it's actually
+       seen before anything else happens. */
+    .result-modal-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.72); backdrop-filter:blur(6px); align-items:center; justify-content:center; padding:20px; }
+    .result-modal-overlay.open { display:flex; }
+    .result-modal { background:#141a17; border:1px solid rgba(180,230,200,0.25); border-radius:16px; padding:32px; width:100%; max-width:440px; text-align:center; }
+    .result-modal.is-error { border-color:rgba(255,255,255,0.15); }
+    .result-modal-badge { display:inline-block; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.7); background:rgba(180,230,200,0.1); border-radius:999px; padding:5px 14px; margin-bottom:16px; }
+    .result-modal.is-error .result-modal-badge { color:rgba(255,255,255,0.5); background:rgba(255,255,255,0.06); }
+    .result-modal h3 { font-size:19px; font-weight:normal; color:rgba(255,255,255,0.9); margin-bottom:12px; }
+    .result-modal p { font-size:14px; line-height:1.7; color:rgba(255,255,255,0.6); margin-bottom:8px; }
+    .result-modal-btn { margin-top:18px; padding:12px 32px; border-radius:10px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; transition:background 0.2s; }
+    .result-modal-btn:hover { background:rgba(180,230,200,0.22); }
+    .result-modal-btn:disabled { opacity:0.6; cursor:default; }
   </style>
 </head>
 <body>
@@ -84,10 +100,18 @@
     All courses
   </a>
 
-  <div id="registeredBanner" style="display:none;background:rgba(180,230,200,0.1);border:1px solid rgba(180,230,200,0.3);border-radius:12px;padding:16px 20px;font-size:14px;color:rgba(180,230,200,0.9)"></div>
-
   <div id="content" class="loading">Loading…</div>
 
+</div>
+
+<div class="result-modal-overlay" id="resultModalOverlay">
+  <div class="result-modal" id="resultModal">
+    <div class="result-modal-badge" id="resultModalBadge"></div>
+    <h3 id="resultModalTitle"></h3>
+    <p id="resultModalBody"></p>
+    <p id="resultModalSubBody" style="display:none"></p>
+    <button class="result-modal-btn" id="resultModalBtn" onclick="closeResultModal()">Continue</button>
+  </div>
 </div>
 
 <script>
@@ -139,6 +163,7 @@
       const res = await fetch(`/api/public/instances/${id}`);
       if (!res.ok) { el.innerHTML = '<div class="card"><p>This course could not be found — it may have been removed or is not yet public.</p></div>'; return; }
       const i = await res.json();
+      showRegistrationResultModal(i);
       document.title = `${i.title} — ${i.course_title} — Deeper Mindfulness`;
       // Updates the browser tab and anything reading the DOM after load —
       // not what a share-preview crawler sees (see the comment on the
@@ -313,30 +338,81 @@
       });
     } catch(e) { /* not logged in — leave the Register buttons as-is */ }
   }
-  // Per's request — the success/cancel redirect target for the Forms-
-  // based course registration checkout (see /api/public/forms/:formId/
-  // checkout and the course_registration_form webhook branch). Shown
-  // once, from the URL, then cleaned off so refreshing the page doesn't
-  // keep re-showing it.
-  (function showRegisteredBanner() {
+  // Per's request — the old inline banner was too faint/easy to scroll
+  // past without noticing. This modal requires an explicit close, and —
+  // for a genuine new registration — that close action is also what
+  // sends someone straight into password setup rather than making them
+  // go find an email that might be sitting in a junk folder. The
+  // confirmation email is still sent as a backup (see the webhook), for
+  // anyone who closes the tab before this finishes, or wants to come
+  // back to it later.
+  let _pendingJoinUrl = null;
+  function closeResultModal() {
+    document.getElementById('resultModalOverlay').classList.remove('open');
+    if (_pendingJoinUrl) { location.href = _pendingJoinUrl; }
+  }
+  async function pollRegistrationStatus(formId, responseId, attemptsLeft) {
+    try {
+      const res = await fetch(`/api/public/forms/${formId}/responses/${responseId}/registration-status`);
+      const data = await res.json();
+      if (data.ready && data.joinUrl) return data.joinUrl;
+    } catch (e) { /* treated the same as not-ready-yet below */ }
+    if (attemptsLeft <= 0) return null;
+    await new Promise(r => setTimeout(r, 1200));
+    return pollRegistrationStatus(formId, responseId, attemptsLeft - 1);
+  }
+  async function showRegistrationResultModal(instance) {
     const params = new URLSearchParams(location.search);
     const registered = params.get('registered');
     if (!registered) return;
-    const el = document.getElementById('registeredBanner');
-    if (registered === '1') {
-      el.textContent = "You're registered and your payment went through — check your email for a link to set your password and get straight into your course.";
-      el.style.display = '';
-    } else if (registered === '0') {
-      el.textContent = 'Checkout was cancelled — no payment was taken. You can register again any time from this page.';
-      el.style.display = '';
-      el.style.background = 'rgba(255,255,255,0.06)';
-      el.style.borderColor = 'rgba(255,255,255,0.15)';
-      el.style.color = 'rgba(255,255,255,0.6)';
-    }
+    const responseId = params.get('responseId');
     params.delete('registered');
+    params.delete('responseId');
     const cleanUrl = location.pathname + (params.toString() ? '?' + params.toString() : '');
     history.replaceState(null, '', cleanUrl);
-  })();
+
+    const modal = document.getElementById('resultModal');
+    const badge = document.getElementById('resultModalBadge');
+    const title = document.getElementById('resultModalTitle');
+    const body = document.getElementById('resultModalBody');
+    const subBody = document.getElementById('resultModalSubBody');
+    const btn = document.getElementById('resultModalBtn');
+    const whenText = instance?.schedule_day ? `${instance.schedule_day}${instance.schedule_time ? ', ' + instance.schedule_time : ''}` : (instance?.start_date ? fmtDate(instance.start_date) : '');
+
+    if (registered === '1') {
+      modal.classList.remove('is-error');
+      badge.textContent = 'Payment successful';
+      title.textContent = 'You\'re registered';
+      body.textContent = `Your place in ${instance?.title || 'the course'}${whenText ? ' — ' + whenText : ''} is confirmed.`;
+      subBody.style.display = '';
+      subBody.textContent = 'A confirmation email is on its way too, in case you need it later.';
+      btn.textContent = 'Continue';
+      document.getElementById('resultModalOverlay').classList.add('open');
+
+      if (responseId) {
+        const formId = instance?.registration_form_id;
+        btn.disabled = true;
+        btn.textContent = 'Setting things up…';
+        const joinUrl = formId ? await pollRegistrationStatus(formId, responseId, 5) : null;
+        btn.disabled = false;
+        btn.textContent = 'Continue';
+        if (joinUrl) {
+          _pendingJoinUrl = joinUrl;
+          subBody.textContent = 'Closing this will take you straight to setting your password.';
+        } else {
+          subBody.textContent = 'Still finishing up on our end — the confirmation email has your password-setup link, in case you need it before this page refreshes.';
+        }
+      }
+    } else if (registered === '0') {
+      modal.classList.add('is-error');
+      badge.textContent = 'Not completed';
+      title.textContent = 'Checkout was cancelled';
+      body.textContent = 'No payment was taken. You can register again any time from this page.';
+      subBody.style.display = 'none';
+      btn.textContent = 'Continue';
+      document.getElementById('resultModalOverlay').classList.add('open');
+    }
+  }
   loadInstance();
 </script>
 

@@ -4027,7 +4027,7 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
       payment_method_types: ['card'],
       line_items: [await resolveCourseCheckoutLineItem(instance)],
       mode: 'payment',
-      success_url: `${APP_URL}/course-instance/${instance.id}?registered=1`,
+      success_url: `${APP_URL}/course-instance/${instance.id}?registered=1&responseId=${responseId}`,
       cancel_url: `${APP_URL}/course-instance/${instance.id}?registered=0`,
       metadata: { type: 'course_registration_form', form_response_id: responseId, course_instance_id: instance.id, consent_given: req.body?.consentGiven ? '1' : '0' },
     });
@@ -4035,6 +4035,34 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
   } catch(e) {
     console.error('[stripe form checkout]', e.message);
     res.status(500).json({ error: 'Could not start checkout. Please try again.' });
+  }
+});
+// Per's request — the course-instance page's return trip from Stripe
+// needs to know whether the checkout.session.completed webhook has
+// actually finished processing yet before it can send someone straight
+// to their password-setup link. Stripe's browser redirect to success_url
+// and its webhook delivery to our server happen independently and can
+// arrive in either order — landing back here doesn't by itself mean the
+// account exists yet. This lets the page poll briefly rather than either
+// racing ahead with a link that isn't ready, or making everyone wait a
+// fixed delay regardless of how fast the webhook actually was. Read-only,
+// unauthenticated by design (matches the checkout endpoint above) — the
+// responseId itself isn't a credential, and this only ever hands back a
+// join link for the specific account tied to that one response.
+app.get('/api/public/forms/:formId/responses/:responseId/registration-status', (req, res) => {
+  try {
+    const form = db.getForm(req.params.formId);
+    if (!form) return res.status(404).json({ ready: false });
+    const response = db.getFormResponse(req.params.responseId);
+    if (!response || response.form_id !== form.id) return res.status(404).json({ ready: false });
+    if (response.status !== 'complete' || !response.user_id) return res.json({ ready: false });
+    const user = db.getUser(response.user_id);
+    if (!user) return res.json({ ready: false });
+    const tokens = buildMessageTokens(user, { courseInstanceId: form.course_instance_id });
+    res.json({ ready: true, joinUrl: tokens.course_link || tokens.invite_link });
+  } catch (e) {
+    console.error('[registration-status]', e.message);
+    res.json({ ready: false });
   }
 });
 app.post('/api/client/enrol', auth.requireAuthApi(['client']), async (req, res) => {
