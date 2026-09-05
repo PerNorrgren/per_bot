@@ -3783,6 +3783,37 @@ function ensureEnrolmentForStaffPreview(userId, instanceId) {
 // the post-registration auto-enrol path in /api/register further down.
 // Pulled out into its own function so both call one real implementation
 // rather than risk two copies quietly drifting apart over time.
+// Per's report — a course instance's Stripe Price ID can end up pointing
+// at a genuinely unusable Price object for a one-time course charge: most
+// concretely, the New Instance form used to auto-fill this field from the
+// annual MEMBERSHIP plan's Price ID as a convenience default (fixed
+// separately in content.html so this can't happen again going forward),
+// but that Price is a recurring subscription — Stripe flatly rejects a
+// recurring Price inside a mode:'payment' (one-time) Checkout Session,
+// which used to surface only as a generic, undiagnosable "Could not start
+// checkout" error at the worst possible moment, mid-registration. This
+// resolves a safe line_item for either checkout path below: if a Stripe
+// Price ID is set, it's actually verified as a usable one-time price
+// first; any problem with it (wrong type, archived, doesn't exist, wrong
+// Stripe mode) falls back automatically to a plain price_data line item
+// built from instance.price_cents, which has no such failure mode, rather
+// than ever failing checkout outright over a bad stored reference.
+async function resolveCourseCheckoutLineItem(instance) {
+  const fallback = { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 };
+  if (!instance.stripe_price_id) return fallback;
+  try {
+    const price = await stripe.prices.retrieve(instance.stripe_price_id);
+    if (price.type !== 'one_time') {
+      console.error(`[course checkout] instance ${instance.id} has stripe_price_id ${instance.stripe_price_id} but it's a ${price.type} price, not one_time — falling back to price_data. This price ID should be corrected or cleared on the instance.`);
+      return fallback;
+    }
+    return { price: instance.stripe_price_id, quantity: 1 };
+  } catch (e) {
+    console.error(`[course checkout] instance ${instance.id}'s stripe_price_id ${instance.stripe_price_id} could not be retrieved (${e.message}) — falling back to price_data. This price ID should be corrected or cleared on the instance.`);
+    return fallback;
+  }
+}
+
 async function attemptEnrolUser(user, courseInstanceId) {
   const instance = db.getCourseInstance(courseInstanceId);
   if (!instance) return { error: 'Course instance not found.', status: 404 };
@@ -3820,10 +3851,7 @@ async function attemptEnrolUser(user, courseInstanceId) {
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         payment_method_types: ['card'],
-        line_items: [instance.stripe_price_id
-          ? { price: instance.stripe_price_id, quantity: 1 }
-          : { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 }
-        ],
+        line_items: [await resolveCourseCheckoutLineItem(instance)],
         mode: 'payment',
         success_url: `${APP_URL}/client/?enrolled=1`,
         cancel_url:  `${APP_URL}/client/?enrolled=0`,
@@ -3987,10 +4015,7 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       customer_email: email || undefined,
       payment_method_types: ['card'],
-      line_items: [instance.stripe_price_id
-        ? { price: instance.stripe_price_id, quantity: 1 }
-        : { price_data: { currency: (db.getAppConfig()?.currency || 'gbp'), product_data: { name: `${instance.title} — ${brand().name}` }, unit_amount: instance.price_cents }, quantity: 1 }
-      ],
+      line_items: [await resolveCourseCheckoutLineItem(instance)],
       mode: 'payment',
       success_url: `${APP_URL}/course-instance/${instance.id}?registered=1`,
       cancel_url: `${APP_URL}/course-instance/${instance.id}?registered=0`,

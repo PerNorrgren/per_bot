@@ -3936,7 +3936,20 @@ async function toggleInstanceModeFields(){
     const annualPlan = await getAnnualPlanDefault();
     if (annualPlan) {
       document.getElementById('instPrice').value = (annualPlan.price_pence / 100).toFixed(2);
-      if (annualPlan.stripe_price_id) document.getElementById('instStripePriceId').value = annualPlan.stripe_price_id;
+      // Deliberately NOT auto-filling instStripePriceId from
+      // annualPlan.stripe_price_id here. The annual plan is a recurring
+      // membership subscription -- its Stripe Price object is type
+      // "recurring" -- but a course instance's checkout always creates
+      // the session with mode:'payment' (one-time). Stripe rejects that
+      // combination outright, so a cohort created from this default used
+      // to silently inherit a Price ID that could never actually work
+      // for a one-time course charge, failing at checkout with a generic
+      // "Could not start checkout" error and no obvious cause. The price
+      // AMOUNT is still a perfectly safe, sensible default to carry over;
+      // only the Price object reference is unsafe to reuse this way.
+      // Leaving Stripe Price ID blank falls back to the endpoint's own
+      // price_data path, which builds a genuine one-time price inline
+      // and has no such failure mode.
       document.getElementById('instGrantsMembershipMonths').value = '12';
     }
   }
