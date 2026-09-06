@@ -2978,7 +2978,7 @@ async function getDb() {
   // Per's request — one starter template, editable/deletable/replaceable
   // like any other, so there's something to assign and see immediately
   // rather than every instance starting with nothing at all.
-  const defaultTemplateExists = queryOne(`SELECT id FROM certificate_templates LIMIT 1`);
+  const defaultTemplateExists = queryOne(`SELECT id FROM certificate_templates WHERE id='seed-cert-default'`);
   if (!defaultTemplateExists) {
     db.run(`INSERT INTO certificate_templates (id, name, content) VALUES (?,?,?)`, [
       'seed-cert-default',

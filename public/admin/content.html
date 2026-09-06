@@ -4344,6 +4344,10 @@ async function loadCertificateTemplatesTab(){
 // Certificate button with nothing assigned yet, so saving here also
 // assigns the (new or picked) template to that instance in one step.
 let _certPendingAssignInstanceId = null;
+// Tracks the instance a certificate-editor session was opened FROM,
+// specifically so a dangling/deleted-template reference can offer a
+// real way back to the picker rather than a dead end.
+let _certStaleAssignmentInstanceId = null;
 async function openCertificateTemplateEditor(templateId){
   closeModal('certPickerModal');
   document.getElementById('certEditorId').value = templateId || '';
@@ -4360,8 +4364,13 @@ async function openCertificateTemplateEditor(templateId){
     if (t.error) {
       // Per's report — a stale/missing template reference used to
       // silently render the literal text "undefined" into the name
-      // field. Now it says plainly what actually happened instead.
-      document.getElementById('certEditorErr').textContent = 'Could not load this certificate — it may have been deleted.';
+      // field, then (once that was fixed) became a dead end with no
+      // way back to the picker without leaving and reopening the
+      // instance. Now offers a real way out, when we know which
+      // instance this was reached from.
+      const errEl = document.getElementById('certEditorErr');
+      errEl.innerHTML = 'Could not load this certificate — it may have been deleted.'
+        + (_certStaleAssignmentInstanceId ? ' <button class="btn sm" onclick="clearStaleCertificateAssignment()" style="margin-left:8px">Clear this assignment &amp; choose again</button>' : '');
       document.getElementById('certEditorName').value = '';
       setRichEditorContent('certEditorContent', '');
       openModal('certEditorModal');
@@ -4421,10 +4430,17 @@ async function deleteCertificateTemplateFromEditor(){
 // Reached from an instance's own Certificate button.
 async function openInstanceCertificate(instanceId, currentTemplateId){
   if (currentTemplateId) {
+    // Per's report — a dangling reference (template deleted, or a seed
+    // that never actually got created) used to be a dead end: an error
+    // showed, but there was no way back to the picker without leaving
+    // the instance and reopening it. Tracked here now specifically so
+    // the error state below can offer a real way out.
+    _certStaleAssignmentInstanceId = instanceId;
     _certPendingAssignInstanceId = null; // already assigned — just editing it directly, no new assignment needed
     openCertificateTemplateEditor(currentTemplateId);
     return;
   }
+  _certStaleAssignmentInstanceId = null;
   // Nothing assigned yet — show the picker.
   document.getElementById('certPickerInstanceId').value = instanceId;
   const templates = await fetch('/api/admin/certificate-templates').then(r=>r.json());
@@ -4433,6 +4449,14 @@ async function openInstanceCertificate(instanceId, currentTemplateId){
     ? templates.map(t => `<div class="item-row" style="cursor:pointer;margin-bottom:6px" onclick="pickExistingCertificate('${t.id}','${instanceId}')"><div class="item-row-info"><div class="item-row-title">${escHtml(t.name)}</div></div></div>`).join('')
     : '<div class="modal-note">No existing templates yet — start a new one below.</div>';
   openModal('certPickerModal');
+}
+async function clearStaleCertificateAssignment(){
+  if (!_certStaleAssignmentInstanceId) return;
+  const instanceId = _certStaleAssignmentInstanceId;
+  await fetch(`/api/admin/course-instances/${instanceId}/certificate-template`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ templateId: null }) });
+  closeModal('certEditorModal');
+  loadAll(); // refreshes the instance's own Certificate button label
+  openInstanceCertificate(instanceId, ''); // reopens straight into the picker
 }
 function pickExistingCertificate(templateId, instanceId){
   _certPendingAssignInstanceId = instanceId;
