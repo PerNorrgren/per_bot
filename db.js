@@ -2974,6 +2974,16 @@ async function getDb() {
   // not per course, since a specific cohort run might reasonably want
   // different wording/branding than another run of the same course.
   try { db.run(`ALTER TABLE course_instances ADD COLUMN certificate_template_id TEXT`); } catch(e) {}
+  // Root cause of "Could not load this certificate," found properly
+  // this time: this column was only ever added to the CREATE TABLE
+  // IF NOT EXISTS statement for certificates itself -- but that table
+  // already existed on the live database from an earlier deploy, so
+  // that statement was a silent no-op and the column was never
+  // actually added. Every certificate lookup was then failing at the
+  // database level (querying a column that doesn't exist), regardless
+  // of which specific template was involved -- explaining why even a
+  // freshly created one still failed the exact same way.
+  try { db.run(`ALTER TABLE certificates ADD COLUMN certificate_template_id TEXT`); } catch(e) {}
 
   // Per's request — one starter template, editable/deletable/replaceable
   // like any other, so there's something to assign and see immediately
