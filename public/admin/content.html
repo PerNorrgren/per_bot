@@ -426,24 +426,25 @@
       </div>
 
     </div>
-  </div>
-</div>
 
-<!-- Per's request — full control over certificates: create, edit,
-     delete, assign to an instance, all through the standard rich
-     editor (same component used for newsletters/handouts). One row per
-     template; clicking it opens the same editor used from an
-     instance's own Certificate button. -->
-<div class="panel" id="panel-certificates" style="padding:28px">
-  <div class="section-label">Certificate Templates</div>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Templates</div>
-      <button class="btn primary sm" onclick="openCertificateTemplateEditor(null)">+ New template</button>
+    <!-- Per's request — full control over certificates: create, edit,
+         delete, assign to an instance, all through the standard rich
+         editor (same component used for newsletters/handouts). One row
+         per template; clicking it opens the same editor used from an
+         instance's own Certificate button. -->
+    <div class="panel" id="panel-certificates" style="padding:28px">
+      <div class="section-label">Certificate Templates</div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Templates</div>
+          <button class="btn primary sm" onclick="openCertificateTemplateEditor(null)">+ New template</button>
+        </div>
+        <div class="card-body" style="padding:0">
+          <div id="certTemplatesTable"><div class="loading">Loading…</div></div>
+        </div>
+      </div>
     </div>
-    <div class="card-body" style="padding:0">
-      <div id="certTemplatesTable"><div class="loading">Loading…</div></div>
-    </div>
+
   </div>
 </div>
 
@@ -4348,10 +4349,24 @@ async function openCertificateTemplateEditor(templateId){
   document.getElementById('certEditorId').value = templateId || '';
   document.getElementById('certEditorErr').textContent = '';
   document.getElementById('certEditorDeleteBtn').style.display = templateId ? '' : 'none';
-  mountRichEditor('certEditorContent', true);
+  // Per's request — full editor here, not the restricted 'simple'
+  // toolbar mountRichEditor() uses elsewhere in this file. Calling
+  // MessageEditor directly (bypassing that helper) gets the same
+  // default toolbar the newsletter editor uses, images included.
+  MessageEditor.mountOnTextarea('certEditorContent', { force: true });
   if (templateId) {
     document.getElementById('certEditorTitle').textContent = 'Edit certificate';
     const t = await fetch(`/api/admin/certificate-templates/${templateId}`).then(r=>r.json());
+    if (t.error) {
+      // Per's report — a stale/missing template reference used to
+      // silently render the literal text "undefined" into the name
+      // field. Now it says plainly what actually happened instead.
+      document.getElementById('certEditorErr').textContent = 'Could not load this certificate — it may have been deleted.';
+      document.getElementById('certEditorName').value = '';
+      setRichEditorContent('certEditorContent', '');
+      openModal('certEditorModal');
+      return;
+    }
     document.getElementById('certEditorName').value = t.name;
     setRichEditorContent('certEditorContent', t.content || '');
     if (t.recipients && t.recipients.length) {

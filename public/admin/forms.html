@@ -275,6 +275,7 @@
         </div>
         <div class="doc-consent">${f.response_count} response${f.response_count === 1 ? '' : 's'}</div>
         <div class="doc-actions">
+          <button class="btn sm" onclick="window.open('/forms/${f.id}?preview=1','_blank')" title="See exactly what a real visitor sees — nothing entered here is saved">View</button>
           <button class="btn sm" onclick="openEditFormModal('${f.id}')">Edit</button>
           <button class="btn sm" onclick="duplicateForm('${f.id}')">Duplicate</button>
           <button class="btn sm danger" onclick="deleteForm('${f.id}')">Delete</button>

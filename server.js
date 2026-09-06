@@ -3914,8 +3914,18 @@ async function attemptEnrolUser(user, courseInstanceId) {
     return { error: 'This course requires a higher membership tier.', status: 403 };
   }
   const isMember = (user.member_tier || 0) >= 1;
+  // Per's request — a trial gives full access to everything else in the
+  // app, but registering for a genuine live Zoom course specifically is
+  // carved out: only real paid membership skips payment there, not a
+  // temporary trial. trial_ends_at is explicitly cleared to null the
+  // moment someone genuinely pays (see setMemberTier) rather than
+  // preserved alongside a real subscription, so "still set and still in
+  // the future" reliably means "on an active trial, hasn't paid for
+  // real yet" — it's never true for a genuinely paying member.
+  const isOnActiveTrial = !!(user.trial_ends_at && new Date(user.trial_ends_at) > new Date());
+  const requiresRealPaidMembership = instance.mode === 'cohort' && isOnActiveTrial;
 
-  if (!isMember && instance.price_cents > 0) {
+  if ((!isMember || requiresRealPaidMembership) && instance.price_cents > 0) {
     if (!stripe) return { error: "Payment isn't set up yet — please check back soon.", status: 503 };
     try {
       let customerId = user.stripe_customer_id || null;
@@ -4053,6 +4063,30 @@ function resolveRegistrationContact(responseId) {
 // answersToComparableMap/isQuestionVisible helpers, same response
 // shape) so client-form.html can use either path depending on whether
 // the visitor happens to be logged in.
+// Per's request — a genuine preview, callable from the Forms admin
+// list. Returns the exact same shape the real form renderer expects,
+// but never creates a response row and works for ANY form (a survey,
+// an intake form, anything) — not just a paid registration form, which
+// is all the public endpoint below this one is built for.
+app.get('/api/admin/forms/:id/preview', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const form = db.getForm(req.params.id);
+    if (!form) return res.status(404).json({ error: 'Not found.' });
+    const questions = db.getFormQuestions(form.id);
+    const safeQuestions = questions.map(q => ({ ...q, options: q.options.map(o => ({ id: o.id, sort_order: o.sort_order, option_text: o.option_text })) }));
+    let requiresPayment = false, priceCents = 0;
+    if (form.course_instance_id) {
+      const instance = db.getCourseInstance(form.course_instance_id);
+      if (instance?.price_cents) { requiresPayment = true; priceCents = instance.price_cents; }
+    }
+    res.json({
+      id: form.id, title: form.title, kind: form.kind, introText: form.intro_text,
+      dataPolicyText: form.data_policy_text, requireConsent: !!form.require_consent,
+      questions: safeQuestions, responseId: null, existingAnswers: {},
+      requiresPayment, priceCents,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/public/forms/:id', (req, res) => {
   try {
     const form = db.getForm(req.params.id);

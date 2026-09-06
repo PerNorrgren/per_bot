@@ -49,6 +49,11 @@
   // always did, and this only ever kicks in for a form that's genuinely
   // meant to be filled out before an account exists.
   let usePublicApi = false;
+  // Per's request — a genuine "View" preview from the Forms admin list,
+  // with zero side effects: no response row created, submit disabled
+  // entirely rather than triggering a real completion or, worse, real
+  // Stripe checkout for a registration form.
+  const isPreviewMode = new URLSearchParams(location.search).get('preview') === '1';
 
   function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -67,14 +72,19 @@
 
   async function load() {
     try {
-      let res = await fetch(`/api/client/forms/${formId}`);
-      if (res.status === 401) {
-        // Not signed in — try the public/anonymous path instead. A
-        // ?response= already in the URL resumes a previous anonymous
-        // attempt (e.g. they came back after a cancelled payment).
-        usePublicApi = true;
-        const existing = new URLSearchParams(location.search).get('response');
-        res = await fetch(`/api/public/forms/${formId}${existing ? '?response=' + encodeURIComponent(existing) : ''}`);
+      let res;
+      if (isPreviewMode) {
+        res = await fetch(`/api/admin/forms/${formId}/preview`);
+      } else {
+        res = await fetch(`/api/client/forms/${formId}`);
+        if (res.status === 401) {
+          // Not signed in — try the public/anonymous path instead. A
+          // ?response= already in the URL resumes a previous anonymous
+          // attempt (e.g. they came back after a cancelled payment).
+          usePublicApi = true;
+          const existing = new URLSearchParams(location.search).get('response');
+          res = await fetch(`/api/public/forms/${formId}${existing ? '?response=' + encodeURIComponent(existing) : ''}`);
+        }
       }
       const data = await res.json();
       if (!res.ok) { document.getElementById('panel').innerHTML = `<div class="card"><p class="err">${escHtml(data.error || 'This form is not available right now.')}</p></div>`; return; }
@@ -99,6 +109,7 @@
     const visibleQuestions = formData.questions.filter(isVisible);
     document.getElementById('panel').innerHTML = `
       <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
+      ${isPreviewMode ? `<div class="intro" style="background:rgba(230,190,120,0.12);border:1px solid rgba(230,190,120,0.3);border-radius:8px;padding:10px 14px;color:rgba(230,190,120,0.9);font-size:13px">Preview mode — this is exactly what a real visitor sees. Nothing you enter here is saved, and Submit won't actually do anything.</div>` : ''}
       <div class="title">${escHtml(formData.title)}</div>
       ${formData.introText ? `<div class="intro">${escHtml(formData.introText)}</div>` : ''}
       ${formData.requiresPayment ? `<div class="intro" style="color:rgba(180,230,200,0.75)">Registration fee: £${(formData.priceCents / 100).toFixed(2)} — you'll pay on the next step, after submitting this form.</div>` : ''}
@@ -109,8 +120,8 @@
         <label class="consent-check"><input type="checkbox" id="consentCheck"/> I've read this and agree.</label>
       </div>` : ''}
       <div id="submitErr" class="err"></div>
-      <button class="submit-btn" id="submitBtn" onclick="submitForm()">${formData.requiresPayment ? 'Continue to Payment' : 'Submit'}</button>
-      ${!usePublicApi ? `<div class="skip-link" onclick="location.href='/client/'">I'll finish this later</div>` : ''}
+      <button class="submit-btn" id="submitBtn" onclick="submitForm()">${isPreviewMode ? 'Submit (disabled in preview)' : (formData.requiresPayment ? 'Continue to Payment' : 'Submit')}</button>
+      ${!usePublicApi && !isPreviewMode ? `<div class="skip-link" onclick="location.href='/client/'">I'll finish this later</div>` : ''}
     `;
   }
 
@@ -155,6 +166,7 @@
     saveTimers[qid] = setTimeout(() => saveAnswer(qid, optionIds, textValue), 500);
   }
   async function saveAnswer(qid, optionIds, textValue) {
+    if (isPreviewMode) return; // no real response exists to save against
     try {
       const base = usePublicApi ? '/api/public/forms' : '/api/client/forms';
       await fetch(`${base}/${formId}/responses/${formData.responseId}/answers`, {
@@ -165,6 +177,10 @@
   }
 
   async function submitForm() {
+    if (isPreviewMode) {
+      alert("This is a preview — nothing was submitted, and no payment was started.");
+      return;
+    }
     const btn = document.getElementById('submitBtn');
     const errEl = document.getElementById('submitErr');
     errEl.textContent = '';
