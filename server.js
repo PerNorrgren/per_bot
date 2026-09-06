@@ -13854,6 +13854,14 @@ app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFi
 
 // ── Legal document public pages ──
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
+// Per's request — a short, memorable link for social media bios
+// (Facebook/Instagram/LinkedIn all reject or truncate the full
+// course-instance URL). Settable from Settings, so repointing it at a
+// future course is just an admin edit, never a code change or deploy.
+app.get('/join', (req, res) => {
+  const config = db.getAppConfig();
+  res.redirect(302, config?.join_link_url || '/courses');
+});
 app.get('/legal/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/legal/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 
@@ -14106,7 +14114,7 @@ app.patch('/api/admin/settings', auth.requireAuthApi(['admin']), (req, res) => {
 
 app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName, useCalmLanding, talkPersonaName, allowCustomVoice } = req.body;
+    const { brandName, tagline, primaryColor, contactEmail, currency, legalEntityName, legalJurisdiction, paymentsEnabled, appName, useCalmLanding, talkPersonaName, allowCustomVoice, joinLinkUrl } = req.body;
     if (!brandName || !brandName.trim()) return res.status(400).json({ error: 'Organisation name is required.' });
     if (!legalEntityName || !legalEntityName.trim()) return res.status(400).json({ error: 'Legal entity name is required — it appears in your Privacy Policy and Terms.' });
     if (!contactEmail || !contactEmail.includes('@')) return res.status(400).json({ error: 'A valid contact email is required.' });
@@ -14124,6 +14132,7 @@ app.post('/api/setup', auth.requireAuthApi(['admin']), (req, res) => {
       use_calm_landing: useCalmLanding === undefined ? 1 : (useCalmLanding ? 1 : 0),
       talk_persona_name: (talkPersonaName || '').trim() || null,
       allow_custom_voice: allowCustomVoice === undefined ? 1 : (allowCustomVoice ? 1 : 0),
+      join_link_url: (joinLinkUrl || '').trim() || null,
       setup_completed: 1,
     });
 

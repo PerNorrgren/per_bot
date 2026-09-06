@@ -2143,6 +2143,12 @@ async function getDb() {
     // every time. Set once here, used as the fallback everywhere a
     // test-send has no explicit override typed into that particular field.
     "ALTER TABLE app_config ADD COLUMN test_email TEXT",
+    // Per's request — a short, memorable link on the site's own domain
+    // for social media bios (Facebook/Instagram/LinkedIn all reject or
+    // truncate the full course-instance URL). Redirects at GET /join —
+    // settable here so repointing it at a future course never needs a
+    // code change or deploy, just an admin edit.
+    "ALTER TABLE app_config ADD COLUMN join_link_url TEXT",
     "ALTER TABLE app_config ADD COLUMN test_phone TEXT",
     // Content type + external link (Per Bot 7) — the library previously only
     // distinguished files by file_type (audio/video/document) + category.
@@ -2908,6 +2914,15 @@ async function getDb() {
   try {
     db.run(`ALTER TABLE users ADD COLUMN explorer_course_promo_dismissed_at TEXT`);
   } catch(e) { /* column already exists — ignore */ }
+
+  // Per's request — starting value for the /join short link, only ever
+  // set here if it's still genuinely empty (never overwrites a value
+  // Per has since changed via Settings).
+  const currentJoinLink = queryOne(`SELECT join_link_url FROM app_config WHERE id='default'`);
+  if (currentJoinLink && !currentJoinLink.join_link_url) {
+    db.run(`UPDATE app_config SET join_link_url=? WHERE id='default'`,
+      ['https://www.deepermindfulness.org/course-instance/71849f95-fb41-40d6-89aa-0e1639badbac']);
+  }
 
   // Per's request — settable attendance threshold for issuing a
   // certificate (default 80%), and the survey form to send on course
@@ -9700,7 +9715,7 @@ function setUserSkin(userId, skinSlug) {
 }
 
 function updateAppConfig(fields) {
-  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id','carousel_speed_seconds'];
+  const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id','carousel_speed_seconds','join_link_url'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
   if (!sets.length) return;
   getDbSync().run(

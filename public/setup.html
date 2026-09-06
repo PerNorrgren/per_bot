@@ -179,6 +179,16 @@
         <input type="email" id="contactEmail" placeholder="contact@yourorganisation.example"/>
         <div class="field-note">Used as the sender identity for system emails, and shown in your legal documents as the contact address.</div>
       </div>
+      <!-- Per's request — a short, memorable link for social media bios,
+           since Facebook/Instagram/LinkedIn all reject or truncate the
+           full course-instance URL. Redirects at yourdomain.com/join —
+           repointing it at a different course any time is just editing
+           this field, no code change or deploy needed. -->
+      <div class="field">
+        <label>Join link (yourdomain.com/join)</label>
+        <input type="url" id="joinLinkUrl" placeholder="https://www.yourorganisation.example/course-instance/..."/>
+        <div class="field-note">Where /join redirects to — put this in your social media bios instead of the full course link, which most platforms reject as too long. Point it at whichever course you're actively promoting; change it any time.</div>
+      </div>
     </div>
   </div>
 
@@ -703,6 +713,7 @@
       if (cfg.legal_entity_name)  document.getElementById('legalEntityName').value = cfg.legal_entity_name;
       if (cfg.legal_jurisdiction) document.getElementById('legalJurisdiction').value = cfg.legal_jurisdiction;
       if (cfg.contact_email)      document.getElementById('contactEmail').value = cfg.contact_email;
+      if (cfg.join_link_url)      document.getElementById('joinLinkUrl').value = cfg.join_link_url;
       document.getElementById('paymentsEnabled').checked = !!cfg.payments_enabled;
       togglePaymentsNote();
     } catch(e) { /* fine — just start from blank defaults */ }
@@ -760,6 +771,7 @@
       legalEntityName: document.getElementById('legalEntityName').value.trim(),
       legalJurisdiction: document.getElementById('legalJurisdiction').value.trim(),
       contactEmail: document.getElementById('contactEmail').value.trim(),
+      joinLinkUrl: document.getElementById('joinLinkUrl').value.trim(),
       paymentsEnabled: document.getElementById('paymentsEnabled').checked,
       useCalmLanding: document.getElementById('useCalmLanding').checked,
       allowCustomVoice: document.getElementById('allowCustomVoice').checked,
