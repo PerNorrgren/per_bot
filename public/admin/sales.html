@@ -595,6 +595,27 @@
         <label>Name</label>
         <input type="text" id="campNewName" placeholder="e.g. Autumn grounding push"/>
       </div>
+      <!-- Per's request — "the main working engine for communication":
+           what this campaign is actually for, so it's visible at a
+           glance rather than buried in individual step content.
+           promotesLabel/Url are free text on purpose — a course lives
+           in this app's own database, but a book or podcast episode
+           doesn't, so a rigid link into any one specific table can't
+           cover all of them. -->
+      <div>
+        <label>Goal <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(what this campaign is actually trying to achieve)</span></label>
+        <input type="text" id="campNewGoal" placeholder="e.g. Fill the Finding Mindfulness cohort before it starts Tuesday"/>
+      </div>
+      <div class="modal-row">
+        <div>
+          <label>Promoting <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(the course, book, podcast, app feature — whatever this is for)</span></label>
+          <input type="text" id="campNewPromotesLabel" placeholder="e.g. Finding Mindfulness — Sept 15 cohort"/>
+        </div>
+        <div>
+          <label>Link <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional)</span></label>
+          <input type="url" id="campNewPromotesUrl" placeholder="https://..."/>
+        </div>
+      </div>
       <div>
         <label>Offer (optional — leave unset for a pure calming campaign)</label>
         <select id="campNewOffer"><option value="">No offer — calming steps only</option></select>
@@ -630,6 +651,47 @@
       </div>
       <div class="modal-err" id="campDetailErr"></div>
 
+      <!-- Per's request — goal/promotes shown as editable context at
+           the top of every campaign, not just set-once-at-creation. -->
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div class="config-label" style="margin-bottom:8px">Goal &amp; what this is for</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:220px">
+            <label style="font-size:11px">Goal</label>
+            <input type="text" id="campDetailGoal" style="width:100%"/>
+          </div>
+          <div style="flex:1;min-width:180px">
+            <label style="font-size:11px">Promoting</label>
+            <input type="text" id="campDetailPromotesLabel" style="width:100%"/>
+          </div>
+          <div style="flex:1;min-width:160px">
+            <label style="font-size:11px">Link</label>
+            <input type="url" id="campDetailPromotesUrl" style="width:100%"/>
+          </div>
+          <button class="btn sm" onclick="saveCampaignGoal()">Save</button>
+        </div>
+      </div>
+
+      <!-- Per's request — "a list of videos with the script": plan
+           every video up front, upload the file once it's actually
+           recorded, then pull any of them straight into a step below
+           without retyping anything. -->
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="config-label">Videos</div>
+          <button class="btn sm" onclick="showAddCampaignVideoForm()">+ Add video</button>
+        </div>
+        <div id="campVideoAddForm" style="display:none;margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px">
+          <input type="text" id="campVideoTitle" placeholder="Title (e.g. '3. What live actually means')" style="width:100%;margin-bottom:6px"/>
+          <textarea id="campVideoScript" placeholder="The script for this one" rows="3" style="width:100%;margin-bottom:6px"></textarea>
+          <div style="display:flex;gap:8px">
+            <button class="btn sm primary" onclick="saveNewCampaignVideo()">Save</button>
+            <button class="btn sm" onclick="document.getElementById('campVideoAddForm').style.display='none'">Cancel</button>
+          </div>
+        </div>
+        <div id="campVideosList" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+
       <div id="campAddStepWrap" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px">
         <div class="config-label" style="margin-bottom:8px">Add step</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -646,7 +708,7 @@
           </div>
           <div style="flex:0 0 140px">
             <label style="font-size:11px">Channel</label>
-            <select id="campStepChannel" style="width:100%">
+            <select id="campStepChannel" style="width:100%" onchange="onCampStepChannelChanged()">
               <option value="email">Email</option>
               <option value="facebook">Facebook</option>
               <option value="linkedin">LinkedIn</option>
@@ -654,7 +716,11 @@
               <option value="threads">Threads</option>
             </select>
           </div>
-          <div style="flex:1;min-width:180px">
+          <div id="campStepVideoWrap" style="flex:0 0 200px;display:none">
+            <label style="font-size:11px">Use planned video <span style="color:rgba(255,255,255,0.3)">(optional)</span></label>
+            <select id="campStepVideo" style="width:100%"><option value="">None — write from a brief instead</option></select>
+          </div>
+          <div style="flex:1;min-width:180px" id="campStepBriefWrap">
             <label style="font-size:11px">Brief (sales steps only, optional — defaults to the offer's own copy)</label>
             <input type="text" id="campStepBrief" style="width:100%" placeholder="What's this one about?"/>
           </div>
@@ -1570,6 +1636,9 @@
   async function openNewCampaignModal() {
     document.getElementById('campNewName').value = '';
     document.getElementById('campNewAudience').value = 'all';
+    document.getElementById('campNewGoal').value = '';
+    document.getElementById('campNewPromotesLabel').value = '';
+    document.getElementById('campNewPromotesUrl').value = '';
     document.getElementById('campNewErr').textContent = '';
     const sel = document.getElementById('campNewOffer');
     sel.innerHTML = '<option value="">No offer — calming steps only</option>'
@@ -1584,6 +1653,9 @@
       name,
       offerId: document.getElementById('campNewOffer').value || null,
       audience: document.getElementById('campNewAudience').value,
+      goal: document.getElementById('campNewGoal').value.trim() || null,
+      promotesLabel: document.getElementById('campNewPromotesLabel').value.trim() || null,
+      promotesUrl: document.getElementById('campNewPromotesUrl').value.trim() || null,
     };
     try {
       const res = await fetch('/api/admin/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -1606,9 +1678,13 @@
     const offer = offersData.find(o => o.id === data.offer_id);
     document.getElementById('campDetailMeta').textContent =
       `${data.status.toUpperCase()} · ${offer ? offer.name : 'no offer'} · audience: ${data.audience}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}`;
+    document.getElementById('campDetailGoal').value = data.goal || '';
+    document.getElementById('campDetailPromotesLabel').value = data.promotes_label || '';
+    document.getElementById('campDetailPromotesUrl').value = data.promotes_url || '';
 
     const isDraft = data.status === 'draft';
     document.getElementById('campAddStepWrap').style.display = isDraft ? '' : 'none';
+    await loadCampaignVideos();
 
     const list = document.getElementById('campStepsList');
     if (!data.steps.length) {
@@ -1618,6 +1694,9 @@
         const format = s.format || 'plain';
         const bodyId = `campStepContent_${s.id}`;
         const showRichToggle = isDraft && s.channel === 'email';
+        const mediaLine = s.media_url
+          ? `<div style="margin-bottom:6px;font-size:12px;color:rgba(180,230,200,0.75)">📎 ${s.media_type === 'video' ? 'Video' : 'Image'} attached${s.campaign_video_id ? ' (from planned video)' : ''}</div>`
+          : '';
         return `
         <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -1633,6 +1712,7 @@
               <button class="btn sm" onclick="deleteCampaignStep('${s.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
             </div>` : ''}
           </div>
+          ${mediaLine}
           ${s.channel==='email' ? `<div style="display:flex;gap:6px;margin-bottom:6px">
             <input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="flex:1" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>
             ${isDraft ? MessageEditor.tokenSelectHtml(`campStepSubject_${s.id}`, MessageEditor.standardTokens(), { onAfter: `saveCampaignStepEdit('${s.id}')` }) : ''}
@@ -1667,20 +1747,110 @@
     const err = document.getElementById('campDetailErr'); err.textContent = '';
     setBtnLoading(btn, true, 'Generating…');
     try {
+      const videoSel = document.getElementById('campStepVideo');
+      const campaignVideoId = (videoSel && videoSel.value) || undefined;
       const body = {
         offsetDays: parseInt(document.getElementById('campStepDay').value, 10) || 0,
         type: document.getElementById('campStepType').value,
         channel: document.getElementById('campStepChannel').value,
         brief: document.getElementById('campStepBrief').value.trim() || undefined,
+        campaignVideoId,
       };
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not add step.');
       document.getElementById('campStepBrief').value = '';
+      if (videoSel) videoSel.value = '';
       await refreshCampaignDetail();
       loadCampaigns();
     } catch(e) { err.textContent = e.message; }
     finally { setBtnLoading(btn, false); }
+  }
+  // Per's request — the video picker only makes sense for a social
+  // channel (an email step has no use for attached video/media here).
+  function onCampStepChannelChanged() {
+    const isSocial = document.getElementById('campStepChannel').value !== 'email';
+    document.getElementById('campStepVideoWrap').style.display = isSocial ? '' : 'none';
+  }
+
+  // ── Campaign videos (Per's request — "a list of videos with the
+  // script") ──
+  let _campVideosCache = [];
+  async function loadCampaignVideos() {
+    _campVideosCache = await fetch(`/api/admin/campaigns/${curCampaignId}/videos`).then(r=>r.json()).catch(()=>[]);
+    const list = document.getElementById('campVideosList');
+    list.innerHTML = _campVideosCache.length
+      ? _campVideosCache.map(v => `
+        <div style="border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <input class="inline-input" type="text" value="${escHtml(v.title)}" style="flex:1;font-weight:bold" onblur="editCampaignVideo('${v.id}', this.value, null)"/>
+            <div style="display:flex;gap:6px;align-items:center;margin-left:8px">
+              <span style="font-size:11px;color:${v.status==='recorded'?'rgba(180,230,200,0.85)':'rgba(255,255,255,0.35)'}">${v.status==='recorded' ? '✓ ' + v.media_type : 'not recorded yet'}</span>
+              <label class="btn sm" style="cursor:pointer;margin:0">Upload<input type="file" accept="video/*,image/*" style="display:none" onchange="uploadCampaignVideoFile('${v.id}', this)"/></label>
+              <button class="btn sm" onclick="deleteCampaignVideoRow('${v.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
+            </div>
+          </div>
+          <textarea class="inline-input" rows="2" style="width:100%;resize:vertical;font-size:12px" onblur="editCampaignVideo('${v.id}', null, this.value)">${escHtml(v.script||'')}</textarea>
+        </div>
+      `).join('')
+      : '<div class="empty" style="padding:10px;font-size:12px">No videos planned yet.</div>';
+
+    // Per's request — the "use planned video" picker on Add Step, kept
+    // in sync with whatever's actually been planned so far.
+    const stepVideoSel = document.getElementById('campStepVideo');
+    if (stepVideoSel) {
+      const current = stepVideoSel.value;
+      stepVideoSel.innerHTML = '<option value="">None — write from a brief instead</option>' +
+        _campVideosCache.map(v => `<option value="${v.id}">${escHtml(v.title)}${v.status==='recorded' ? ' ✓' : ' (not recorded yet)'}</option>`).join('');
+      stepVideoSel.value = current;
+    }
+  }
+  function showAddCampaignVideoForm() {
+    document.getElementById('campVideoTitle').value = '';
+    document.getElementById('campVideoScript').value = '';
+    document.getElementById('campVideoAddForm').style.display = '';
+  }
+  async function saveNewCampaignVideo() {
+    const title = document.getElementById('campVideoTitle').value.trim();
+    if (!title) return;
+    const script = document.getElementById('campVideoScript').value;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/videos`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ title, script }) });
+    document.getElementById('campVideoAddForm').style.display = 'none';
+    await loadCampaignVideos();
+  }
+  // title/script — pass null for whichever one didn't change, since
+  // this fires from two separate fields' onblur independently.
+  async function editCampaignVideo(id, title, script) {
+    const body = {};
+    if (title !== null) body.title = title;
+    if (script !== null) body.script = script;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/videos/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  }
+  async function deleteCampaignVideoRow(id) {
+    if (!(await appConfirm('Delete this planned video? Any step already using it keeps its own copy of the attached media — this only removes it from this list.'))) return;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/videos/${id}`, { method:'DELETE' });
+    await loadCampaignVideos();
+  }
+  async function uploadCampaignVideoFile(id, input) {
+    const file = input.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/videos/${id}/upload`, { method:'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not upload.');
+      await loadCampaignVideos();
+    } catch(e) { appAlert(e.message); }
+    finally { input.value = ''; }
+  }
+  async function saveCampaignGoal() {
+    const body = {
+      goal: document.getElementById('campDetailGoal').value.trim() || null,
+      promotesLabel: document.getElementById('campDetailPromotesLabel').value.trim() || null,
+      promotesUrl: document.getElementById('campDetailPromotesUrl').value.trim() || null,
+    };
+    await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   }
   // Per Bot 21 — this one had no loading feedback of any kind before —
   // a genuinely silent multi-second wait for an AI-generated rewrite,

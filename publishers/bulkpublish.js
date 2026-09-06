@@ -130,4 +130,4 @@ async function publish(platform, { content, mediaUrl } = {}) {
   };
 }
 
-module.exports = { configured, listChannels, publish, bulkPublishRequest };
+module.exports = { configured, listChannels, publish, bulkPublishRequest, uploadMediaFromUrl };

@@ -13620,8 +13620,8 @@ app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) =
 });
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { name, offerId, audience } = req.body;
-    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience });
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl } = req.body;
+    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -13639,26 +13639,95 @@ app.post('/api/admin/campaigns/:id/steps', auth.requireAuthApi(['admin']), async
     const campaign = db.getCampaign(req.params.id);
     if (!campaign) return res.status(404).json({ error: 'Campaign not found.' });
     if (campaign.status !== 'draft') return res.status(400).json({ error: 'Only draft campaigns can have steps added.' });
-    const { offsetDays, type, channel, brief } = req.body;
+    const { offsetDays, type, channel, brief, campaignVideoId } = req.body;
     if (!['calming', 'sales'].includes(type)) return res.status(400).json({ error: 'type must be calming or sales.' });
     if (!['email', 'facebook', 'linkedin', 'instagram', 'threads'].includes(channel)) return res.status(400).json({ error: 'Unknown channel.' });
     const id = uuidv4();
     const stub = { offset_days: Number.isFinite(offsetDays) ? offsetDays : 0, type, channel };
-    const generated = await generateCampaignStepContent(campaign, stub, brief);
+
+    // Per's request — a step linked to one of the campaign's own planned
+    // videos uses that video's script AS the post content directly,
+    // rather than re-generating/paraphrasing something Per already
+    // wrote deliberately. Media comes along with it automatically too.
+    let video = null;
+    if (campaignVideoId) {
+      video = db.getCampaignVideo(campaignVideoId);
+      if (!video || video.campaign_id !== campaign.id) return res.status(404).json({ error: 'That video was not found on this campaign.' });
+    }
+    const generated = video
+      ? { subject: video.title, content: video.script || '', lineId: null }
+      : await generateCampaignStepContent(campaign, stub, brief);
+
     db.addCampaignStep(id, campaign.id, stub.offset_days, type, channel, generated.subject, generated.content, generated.lineId);
+    if (video) {
+      db.updateCampaignStep(id, { campaign_video_id: video.id, media_url: video.media_url || null, media_type: video.media_type || null });
+    }
     res.json({ id, step: db.getCampaignStep(id) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { offsetDays, subject, content, format } = req.body;
-    db.updateCampaignStep(req.params.stepId, { offset_days: offsetDays, subject, content, format });
+    const { offsetDays, subject, content, format, mediaUrl, mediaType } = req.body;
+    db.updateCampaignStep(req.params.stepId, { offset_days: offsetDays, subject, content, format, media_url: mediaUrl, media_type: mediaType });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteCampaignStep(req.params.stepId); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Campaign videos (Per's request — "a list of videos with the
+// script") ── the planning layer: write the script here first, upload
+// the actual file once it's recorded, then reference it from a step
+// when it's time to actually schedule the post.
+app.get('/api/admin/campaigns/:id/videos', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getCampaignVideos(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/videos', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { title, script } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'A title is required.' });
+    const id = uuidv4();
+    db.createCampaignVideo(id, req.params.id, title.trim(), script || '');
+    res.json({ id, video: db.getCampaignVideo(id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/campaigns/:id/videos/:videoId', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { title, script } = req.body;
+    db.updateCampaignVideo(req.params.videoId, { title, script });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/campaigns/:id/videos/:videoId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteCampaignVideo(req.params.videoId); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Reuses the exact same upload endpoint/storage Message Builder's own
+// media attachment already goes through — no duplicated upload logic.
+app.post('/api/admin/campaigns/:id/videos/:videoId/upload', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('image/') && !req.file.mimetype.startsWith('video/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only image or video files are supported here.' });
+    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = req.file.mimetype.startsWith('video/') ? '.webm' : ((req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || ['.png'])[0]);
+    const key = `newsletter-images/campaign-video-${uuidv4()}${ext}`;
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+    const url = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
+    const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+    db.setCampaignVideoMedia(req.params.videoId, url, mediaType);
+    res.json({ ok: true, url, mediaType });
+  } catch (e) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload media: ' + e.message });
+  }
 });
 app.post('/api/admin/campaigns/:id/steps/:stepId/regenerate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
@@ -13705,7 +13774,7 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthA
     // others via BulkPublish). Only /activate below still needs
     // BulkPublish specifically, since that's the one place using its
     // native *scheduled* posting, which LinkedIn's own API doesn't offer.
-    const post = await publishers.publishToChannel(step.channel, { content: step.content });
+    const post = await publishers.publishToChannel(step.channel, { content: step.content, mediaUrl: step.media_url || undefined, mediaType: step.media_type || undefined });
     db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || null });
     res.json({ ok: true });
   } catch(e) {
@@ -13754,12 +13823,22 @@ app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), as
         if (!channel) throw new Error(`${step.channel} isn't connected in BulkPublish.`);
         const scheduledAt = new Date(startedAt.getTime() + step.offset_days * 24 * 60 * 60 * 1000);
         scheduledAt.setUTCHours(9, 0, 0, 0); // fixed default send time, 9am UTC
-        const post = await bulkPublishRequest('POST', '/posts', {
+        const publishBody = {
           content: step.content,
           channels: [{ channelId: channel.id, platform: channel.platform }],
           status: 'scheduled',
           scheduledAt: scheduledAt.toISOString(),
-        });
+        };
+        // Per's request — a step carrying a video (its own media_url,
+        // whether attached directly or inherited from a linked planned
+        // video) needs uploading to BulkPublish's own storage first,
+        // same two-step process the immediate-publish path already
+        // uses in publishers/bulkpublish.js's own publish() function.
+        if (step.media_url) {
+          const mediaFileId = await uploadMediaFromUrl(step.media_url);
+          publishBody.mediaFiles = [mediaFileId];
+        }
+        const post = await bulkPublishRequest('POST', '/posts', publishBody);
         db.setCampaignStepResult(step.id, 'scheduled', { externalPostId: post?.id || post?.post?.id || null });
         results.push({ stepId: step.id, ok: true });
       } catch (e) {
@@ -14521,7 +14600,7 @@ app.post('/api/admin/message-builder/generate', auth.requireAuthApi(['admin']), 
 // any of this. bulkPublishRequest is kept as a local reference for the
 // one remaining place that needs BulkPublish specifically (campaign
 // activation's native scheduling — see that route's own comment).
-const { bulkPublishRequest } = publishers.PROVIDERS.bulkpublish;
+const { bulkPublishRequest, uploadMediaFromUrl } = publishers.PROVIDERS.bulkpublish;
 
 // Lists every connected channel across every provider — the admin UI
 // uses this to show which platforms actually have a live connection

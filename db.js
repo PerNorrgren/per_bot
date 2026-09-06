@@ -1427,6 +1427,28 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_steps_campaign ON campaign_steps(campaign_id)`);
 
+  // ── Campaign videos (Per's request — "the main working engine for
+  // communication") ── a planned list of videos per campaign, each with
+  // its own script, independent of whether the actual file has been
+  // recorded/uploaded yet. status: 'planned' (script written, nothing
+  // filmed yet) -> 'recorded' (media_url set). A campaign_step can
+  // reference one of these (campaign_video_id) to attach its media and
+  // reuse its script as the post's starting content, rather than the
+  // script and the eventual post being two disconnected things.
+  db.run(`CREATE TABLE IF NOT EXISTS campaign_videos (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    script TEXT DEFAULT '',
+    media_url TEXT,
+    media_type TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_videos_campaign ON campaign_videos(campaign_id)`);
+
   // ── Message versions (Per Bot 54) — comms2 foundation ──
   // Shared history table for the "settings-style" message types that
   // used to be a single flat app_config row each (Reminder, Renewal,
@@ -2150,6 +2172,22 @@ async function getDb() {
     // code change or deploy, just an admin edit.
     "ALTER TABLE app_config ADD COLUMN join_link_url TEXT",
     "ALTER TABLE app_config ADD COLUMN test_phone TEXT",
+    // Per's request — a campaign now carries its own overall goal and
+    // what it's actually promoting (a course, a book, a podcast episode,
+    // an app feature — anything, hence free text rather than a rigid
+    // foreign key into any one of those very different tables).
+    "ALTER TABLE campaigns ADD COLUMN goal TEXT",
+    "ALTER TABLE campaigns ADD COLUMN promotes_label TEXT",
+    "ALTER TABLE campaigns ADD COLUMN promotes_url TEXT",
+    // A step can carry its own media directly (media_url/media_type,
+    // same field names social_publish_queue already uses, reusing the
+    // exact same upload endpoint and publishToChannel media support), or
+    // reference one of the campaign's own planned videos via
+    // campaign_video_id — picking one auto-fills both the media and a
+    // starting draft of the step's content from that video's script.
+    "ALTER TABLE campaign_steps ADD COLUMN media_url TEXT",
+    "ALTER TABLE campaign_steps ADD COLUMN media_type TEXT",
+    "ALTER TABLE campaign_steps ADD COLUMN campaign_video_id TEXT",
     // Content type + external link (Per Bot 7) — the library previously only
     // distinguished files by file_type (audio/video/document) + category.
     // That's fine for meditations, but doesn't tell "whitepaper" apart from
@@ -7433,7 +7471,7 @@ function createCampaign(id, name, offerId, audience) {
   return id;
 }
 function updateCampaign(id, fields) {
-  const allowed = ['name', 'offer_id', 'audience', 'source_tag'];
+  const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
@@ -7473,7 +7511,7 @@ function addCampaignStep(id, campaignId, offsetDays, type, channel, subject, con
   return id;
 }
 function updateCampaignStep(id, fields) {
-  const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id', 'format'];
+  const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id', 'format', 'media_url', 'media_type', 'campaign_video_id'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
@@ -7482,6 +7520,46 @@ function updateCampaignStep(id, fields) {
 }
 function deleteCampaignStep(id) {
   getDbSync().run('DELETE FROM campaign_steps WHERE id=?', [id]);
+  save();
+}
+
+// ── Campaign videos (Per's request) ──
+function getCampaignVideos(campaignId) {
+  return queryAll('SELECT * FROM campaign_videos WHERE campaign_id=? ORDER BY sort_order ASC, created_at ASC', [campaignId]);
+}
+function getCampaignVideo(id) { return queryOne('SELECT * FROM campaign_videos WHERE id=?', [id]); }
+function createCampaignVideo(id, campaignId, title, script) {
+  const order = queryOne('SELECT COALESCE(MAX(sort_order),0)+1 as n FROM campaign_videos WHERE campaign_id=?', [campaignId]).n;
+  getDbSync().run(
+    `INSERT INTO campaign_videos (id, campaign_id, title, script, sort_order) VALUES (?,?,?,?,?)`,
+    [id, campaignId, title, script || '', order]
+  );
+  save();
+  return id;
+}
+function updateCampaignVideo(id, fields) {
+  const allowed = ['title', 'script', 'sort_order'];
+  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  if (!keys.length) return;
+  const sets = keys.map(k => `${k}=?`).join(', ');
+  getDbSync().run(`UPDATE campaign_videos SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
+  save();
+}
+// Separate from updateCampaignVideo since this is the one thing that
+// also flips status — a video only ever becomes 'recorded' the moment
+// it genuinely has a file attached, never just from editing its title
+// or script.
+function setCampaignVideoMedia(id, mediaUrl, mediaType) {
+  getDbSync().run(`UPDATE campaign_videos SET media_url=?, media_type=?, status='recorded' WHERE id=?`, [mediaUrl, mediaType, id]);
+  save();
+}
+function deleteCampaignVideo(id) {
+  // Per's request — deleting a planned video doesn't touch any step
+  // that already used it; the step keeps its own copy of the media_url
+  // it was given at the time, it just loses the "linked back to this
+  // planned video" reference.
+  getDbSync().run(`UPDATE campaign_steps SET campaign_video_id=NULL WHERE campaign_video_id=?`, [id]);
+  getDbSync().run('DELETE FROM campaign_videos WHERE id=?', [id]);
   save();
 }
 function setCampaignStepResult(id, status, fields = {}) {
@@ -10168,6 +10246,7 @@ module.exports = {
   createOffer, updateOffer, deleteOffer, setSignupOfferId, setSignupSource,
   getAllCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, deleteCampaign,
   getCampaignSteps, getCampaignStep, addCampaignStep, updateCampaignStep, deleteCampaignStep,
+  getCampaignVideos, getCampaignVideo, createCampaignVideo, updateCampaignVideo, setCampaignVideoMedia, deleteCampaignVideo,
   setCampaignStepResult, getDueCampaignEmailSteps,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
