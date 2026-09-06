@@ -13604,10 +13604,19 @@ app.get('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
 });
 app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { name, offerId, audience } = req.body;
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
     const id = uuidv4();
     db.createCampaign(id, name.trim(), offerId || null, audience || 'all');
+    // Per's report — these three were being sent by the client already
+    // but silently dropped here, since this endpoint never read them at
+    // all. createCampaign's own signature is fixed/positional and used
+    // elsewhere, so this reuses the same extensible updateCampaign
+    // function the detail-view Save button already calls, rather than
+    // changing that signature.
+    if (goal || promotesLabel || promotesUrl) {
+      db.updateCampaign(id, { goal: goal || null, promotes_label: promotesLabel || null, promotes_url: promotesUrl || null });
+    }
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

@@ -3135,6 +3135,15 @@ async function getDb() {
   // the templates.
   const existingConfig = queryAll('SELECT id FROM app_config LIMIT 1');
   if (!existingConfig.length) seedAppConfig();
+  // Per's request — real, visible, editable default versions for the
+  // four course-related message types, rather than an invisible
+  // code-level fallback that only shows up by reading server.js. Runs
+  // unconditionally (not gated behind "brand new deployment" like
+  // seedAppConfig above) since Per's own live site needs this too —
+  // each check is per-type and only creates one if that type genuinely
+  // has zero versions yet, so this is safe to run on every boot and
+  // never overwrites anything Per's already written.
+  seedDefaultCourseMessageVersions();
   // Per's real incident — an already-live site (real legal documents,
   // real course/library data, all of it) got redirected to the first-run
   // setup wizard because its own app_config row had setup_completed=0.
@@ -9808,6 +9817,49 @@ function isSetupComplete() {
   return !!(config && config.setup_completed);
 }
 
+// Per's request — real, visible, editable default content for the four
+// course-related message types (previously relying on an invisible
+// code-level fallback nobody could see without reading server.js).
+// Written a little warmer than the bare mechanical fallback text —
+// short, since a reminder's whole job is brevity, but matching the
+// brand's own actual voice rather than being purely functional.
+function seedDefaultCourseMessageVersions() {
+  const defaults = {
+    enrolment_confirmed: {
+      label: 'Default',
+      subject: `You're confirmed — {{course_title}}`,
+      body: `You're all set for {{course_title}} — {{instance_title}}.
+
+We'll send a couple of reminders as your first session gets closer, so you don't need to keep the date in your head. In the meantime, everything's already waiting for you in the app whenever you want a look.`,
+    },
+    session_reminder_3day: {
+      label: 'Default',
+      subject: `{{course_title}} — starting in 3 days`,
+      body: `Just a heads up — {{session_title}} is coming up on {{session_date}}.
+
+Nothing to prepare. Just show up as you are.`,
+    },
+    session_reminder_1day: {
+      label: 'Default',
+      subject: `{{course_title}} — tomorrow`,
+      body: `{{session_title}} is tomorrow, {{session_date}}.
+
+See you there.`,
+    },
+    session_reminder_1hour: {
+      label: 'Default',
+      subject: `{{course_title}} — starting in about an hour`,
+      body: `{{session_title}} starts in about an hour, at {{session_date}}.
+
+Whenever you're ready.`,
+    },
+  };
+  Object.keys(defaults).forEach(type => {
+    const existing = queryAll('SELECT id FROM message_versions WHERE type=?', [type]);
+    if (existing.length) return; // never overwrite anything Per's already written
+    createMessageVersion(type, defaults[type], true);
+  });
+}
 function seedAppConfig() {
   // An existing deployment (Per's own live site, mid-migration into this
   // feature) already has published legal documents from before app_config

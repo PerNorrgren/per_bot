@@ -706,15 +706,15 @@
               <option value="sales">Sales</option>
             </select>
           </div>
-          <div style="flex:0 0 140px">
-            <label style="font-size:11px">Channel</label>
-            <select id="campStepChannel" style="width:100%" onchange="onCampStepChannelChanged()">
-              <option value="email">Email</option>
-              <option value="facebook">Facebook</option>
-              <option value="linkedin">LinkedIn</option>
-              <option value="instagram">Instagram</option>
-              <option value="threads">Threads</option>
-            </select>
+          <div style="flex:0 0 200px">
+            <label style="font-size:11px">Channel(s) <span style="color:rgba(255,255,255,0.3)">— tick more than one to post the same content everywhere at once</span></label>
+            <div style="display:flex;flex-wrap:wrap;gap:2px 12px;padding-top:4px">
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="email"/> Email</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="facebook" onchange="onCampStepChannelChanged()"/> Facebook</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="linkedin" onchange="onCampStepChannelChanged()"/> LinkedIn</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="instagram" onchange="onCampStepChannelChanged()"/> Instagram</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="threads" onchange="onCampStepChannelChanged()"/> Threads</label>
+            </div>
           </div>
           <div id="campStepVideoWrap" style="flex:0 0 200px;display:none">
             <label style="font-size:11px">Use planned video <span style="color:rgba(255,255,255,0.3)">(optional)</span></label>
@@ -1745,32 +1745,45 @@
   async function addCampaignStep() {
     const btn = document.getElementById('campAddStepBtn');
     const err = document.getElementById('campDetailErr'); err.textContent = '';
-    setBtnLoading(btn, true, 'Generating…');
+    const channels = [...document.querySelectorAll('.camp-step-channel-chk:checked')].map(c => c.value);
+    if (!channels.length) { err.textContent = 'Tick at least one channel.'; return; }
+    setBtnLoading(btn, true, channels.length > 1 ? 'Generating…' : 'Generating…');
     try {
       const videoSel = document.getElementById('campStepVideo');
       const campaignVideoId = (videoSel && videoSel.value) || undefined;
-      const body = {
-        offsetDays: parseInt(document.getElementById('campStepDay').value, 10) || 0,
-        type: document.getElementById('campStepType').value,
-        channel: document.getElementById('campStepChannel').value,
-        brief: document.getElementById('campStepBrief').value.trim() || undefined,
-        campaignVideoId,
-      };
-      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Could not add step.');
+      const offsetDays = parseInt(document.getElementById('campStepDay').value, 10) || 0;
+      const type = document.getElementById('campStepType').value;
+      const brief = document.getElementById('campStepBrief').value.trim() || undefined;
+      // Per's request — one click posts the same video/script to every
+      // ticked platform at once, rather than repeating this whole form
+      // once per platform. Each platform still gets its own step row
+      // underneath (so each can succeed/fail/be edited independently —
+      // e.g. if Facebook posts fine but Instagram needs a retry), this
+      // just creates all of them together instead of one at a time.
+      // Sequential rather than parallel so a shared video's script
+      // doesn't risk any race on the server reading it.
+      const failures = [];
+      for (const channel of channels) {
+        const body = { offsetDays, type, channel, brief, campaignVideoId };
+        const res = await fetch(`/api/admin/campaigns/${curCampaignId}/steps`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok || data.error) failures.push(`${channel}: ${data.error || 'failed'}`);
+      }
+      if (failures.length) err.textContent = failures.join(' · ');
+      document.querySelectorAll('.camp-step-channel-chk').forEach(c => c.checked = false);
       document.getElementById('campStepBrief').value = '';
       if (videoSel) videoSel.value = '';
+      onCampStepChannelChanged();
       await refreshCampaignDetail();
       loadCampaigns();
     } catch(e) { err.textContent = e.message; }
     finally { setBtnLoading(btn, false); }
   }
-  // Per's request — the video picker only makes sense for a social
-  // channel (an email step has no use for attached video/media here).
+  // Per's request — the video picker only makes sense once at least one
+  // SOCIAL channel is ticked (email has no use for attached video here).
   function onCampStepChannelChanged() {
-    const isSocial = document.getElementById('campStepChannel').value !== 'email';
-    document.getElementById('campStepVideoWrap').style.display = isSocial ? '' : 'none';
+    const anySocial = [...document.querySelectorAll('.camp-step-channel-chk:checked')].some(c => c.value !== 'email');
+    document.getElementById('campStepVideoWrap').style.display = anySocial ? '' : 'none';
   }
 
   // ── Campaign videos (Per's request — "a list of videos with the
