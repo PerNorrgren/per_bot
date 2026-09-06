@@ -112,7 +112,7 @@
       ${isPreviewMode ? `<div class="intro" style="background:rgba(230,190,120,0.12);border:1px solid rgba(230,190,120,0.3);border-radius:8px;padding:10px 14px;color:rgba(230,190,120,0.9);font-size:13px">Preview mode — this is exactly what a real visitor sees. Nothing you enter here is saved, and Submit won't actually do anything.</div>` : ''}
       <div class="title">${escHtml(formData.title)}</div>
       ${formData.introText ? `<div class="intro">${escHtml(formData.introText)}</div>` : ''}
-      ${formData.requiresPayment ? `<div class="intro" style="color:rgba(180,230,200,0.75)">Registration fee: £${(formData.priceCents / 100).toFixed(2)} — you'll pay on the next step, after submitting this form.</div>` : ''}
+      ${formData.requiresPayment ? `<div class="intro" style="color:rgba(180,230,200,0.75)">Registration fee: £${(formData.priceCents / 100).toFixed(2)} — you'll pay on the next step, after submitting this form. <a href="/legal/cancellation-policy" target="_blank" style="color:rgba(180,230,200,0.6)">Cancellation Policy</a></div>` : ''}
       <div id="questionsWrap">${visibleQuestions.map(renderQuestion).join('')}</div>
       ${formData.dataPolicyText ? `
       <div class="card consent-card">
@@ -201,7 +201,9 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Could not continue to payment.');
-        location.href = data.checkoutUrl;
+        // Per's request — an existing paying member gets registered
+        // directly here, never sent to Stripe at all.
+        location.href = data.freeRegistration ? data.redirectUrl : data.checkoutUrl;
       } catch (e) {
         errEl.textContent = e.message;
         btn.disabled = false; btn.textContent = 'Submit';

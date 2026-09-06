@@ -316,7 +316,8 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
                 <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
                 <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
                 <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
-                <p style="font-size:12px;color:#aaa">${b.tagline}</p>
+                <p style="font-size:12px;color:#999;line-height:1.6">Cancel within 14 days of registering and before the course starts for a full refund — that's your legal right, and we honour it properly. After that, or once the course has begun, we don't offer refunds, but we're always happy to move you to the next available cohort at no extra cost. <a href="${APP_URL}/legal/cancellation-policy" style="color:#888">Full Cancellation Policy</a></p>
+                <p style="font-size:12px;color:#aaa;margin-top:16px">${b.tagline}</p>
               </div>`
             );
           }
@@ -4163,7 +4164,31 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
     const answered = answersToComparableMap(db.getResponseAnswers(responseId), questions);
     const missing = questions.filter(q => q.required && isQuestionVisible(q, answered) && !(answered[q.id] && answered[q.id].length));
     if (missing.length) return res.status(400).json({ error: `Please answer: ${missing[0].question_text}` });
-    const { email } = resolveRegistrationContact(responseId);
+    const { email, name } = resolveRegistrationContact(responseId);
+
+    // Per's request — someone who's already a genuine paying member
+    // shouldn't get charged again just because they used Register
+    // instead of "Members — Log in to register." Same trial-vs-paid
+    // distinction as attemptEnrolUser: an active trial still pays here,
+    // only a genuinely paid membership skips it.
+    const existingUser = email ? db.getUserByEmail(email) : null;
+    if (existingUser) {
+      const isGenuineMember = (existingUser.member_tier || 0) >= 1;
+      const isOnActiveTrial = !!(existingUser.trial_ends_at && new Date(existingUser.trial_ends_at) > new Date());
+      if (isGenuineMember && !isOnActiveTrial) {
+        const alreadyEnrolled = db.getEnrolmentForUserAndInstance(existingUser.id, instance.id);
+        if (!alreadyEnrolled) {
+          const enrolId = uuidv4();
+          db.createEnrolment(enrolId, existingUser.id, instance.id, 'free', 0, null);
+        }
+        db.setFormResponseUserAndPayment(responseId, existingUser.id, null);
+        db.completeFormResponse(responseId, req.body?.consentGiven ? true : (response.consent_given ? true : false));
+        try { await emailEnrolmentConfirmed(existingUser, db.getCourse(instance.course_id)?.title, instance.title, instance.id); }
+        catch(e) { console.error('[member registration confirmation email]', e.message); }
+        return res.json({ ok: true, freeRegistration: true, redirectUrl: `${APP_URL}/course-instance/${instance.id}?registered=1&responseId=${responseId}` });
+      }
+    }
+
     const session = await stripe.checkout.sessions.create({
       customer_email: email || undefined,
       payment_method_types: ['card'],
