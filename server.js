@@ -13946,6 +13946,14 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 // (Facebook/Instagram/LinkedIn all reject or truncate the full
 // course-instance URL). Settable from Settings, so repointing it at a
 // future course is just an admin edit, never a code change or deploy.
+// Per's report — the certificate PDF/editor references these two
+// images by URL (/assets/certificate/logo.png and .../signature.png),
+// but this app has no express.static() mount anywhere (deliberate,
+// established pattern — every static file needs its own explicit
+// route). Placing the files on disk via deploy.sh was never enough on
+// its own; without these two routes, they were 404ing the whole time.
+app.get('/assets/certificate/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'logo.png')));
+app.get('/assets/certificate/signature.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'signature.png')));
 app.get('/join', (req, res) => {
   const config = db.getAppConfig();
   res.redirect(302, config?.join_link_url || '/courses');
