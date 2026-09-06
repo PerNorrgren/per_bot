@@ -2999,6 +2999,46 @@ async function getDb() {
     ]);
   }
 
+  // Per's report — the instance's certificate assignment kept pointing
+  // at a template that genuinely didn't exist in the database, and the
+  // picker path wasn't resolving it either even after two rounds of
+  // fixes to the seed check and the recovery UI. Rather than keep
+  // debugging why the earlier seed silently didn't take, this creates
+  // a fresh template under a brand-new id (avoiding any possible
+  // collision with whatever's already sitting — broken or otherwise —
+  // under 'seed-cert-default') and assigns it DIRECTLY to the actual
+  // Finding Mindfulness Sept 15 instance, bypassing the picker
+  // entirely. Guarded so it only ever runs once: skipped if that exact
+  // instance already has a genuinely valid (existing) template
+  // assigned, so this can't clobber anything Per's since fixed by hand.
+  const fmInstanceId = '71849f95-fb41-40d6-89aa-0e1639badbac';
+  const fmInstance = queryOne(`SELECT certificate_template_id FROM course_instances WHERE id=?`, [fmInstanceId]);
+  if (fmInstance) {
+    const currentlyValid = fmInstance.certificate_template_id
+      && queryOne(`SELECT id FROM certificate_templates WHERE id=?`, [fmInstance.certificate_template_id]);
+    if (!currentlyValid) {
+      const freshId = 'cert-finding-mindfulness-' + Date.now();
+      db.run(`INSERT INTO certificate_templates (id, name, content) VALUES (?,?,?)`, [
+        freshId,
+        'Certificate of Completion — Finding Mindfulness',
+        `<p style="text-align:center"><img src="/assets/certificate/logo.png" width="220"></p>
+         <p style="text-align:center"><br></p>
+         <p style="text-align:center">CERTIFICATE OF COMPLETION</p>
+         <p style="text-align:center"><br></p>
+         <p style="text-align:center">This certifies that</p>
+         <h1 style="text-align:center">{{name}}</h1>
+         <p style="text-align:center">has completed</p>
+         <h2 style="text-align:center">{{course_title}}</h2>
+         <p style="text-align:center"><br></p>
+         <p style="text-align:center">Awarded {{date}}</p>
+         <p style="text-align:center"><br></p>
+         <p style="text-align:center"><img src="/assets/certificate/signature.png" width="180"></p>
+         <p style="text-align:center">Per Norrgren, Deeper Mindfulness</p>`
+      ]);
+      db.run(`UPDATE course_instances SET certificate_template_id=? WHERE id=?`, [freshId, fmInstanceId]);
+    }
+  }
+
   // Per's request — seed the "meeting what was promised" survey
   // template once, on whichever boot first finds it missing. Deliberately
   // NOT linked to any specific course here — Per links it to the actual
