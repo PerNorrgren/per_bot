@@ -3830,6 +3830,12 @@ app.post('/api/client/explorer-course-promo/dismiss', auth.requireAuthApi(['clie
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — the persistent, undismissable "Live Course" card for
+// every member regardless of tier.
+app.get('/api/client/featured-live-course', auth.requireAuthApi(['client']), (req, res) => {
+  try { res.json(db.getFeaturedLiveCourse(req.user.id) || null); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // Per Bot 24 (activity/engagement, group 4) — the You page rebuild.
 app.get('/api/client/activity-home', auth.requireAuthApi(['client']), (req, res) => {
@@ -4185,7 +4191,7 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
         db.completeFormResponse(responseId, req.body?.consentGiven ? true : (response.consent_given ? true : false));
         try { await emailEnrolmentConfirmed(existingUser, db.getCourse(instance.course_id)?.title, instance.title, instance.id); }
         catch(e) { console.error('[member registration confirmation email]', e.message); }
-        return res.json({ ok: true, freeRegistration: true, redirectUrl: `${APP_URL}/course-instance/${instance.id}?registered=1&responseId=${responseId}` });
+        return res.json({ ok: true, freeRegistration: true, redirectUrl: `${APP_URL}/course-instance/${instance.id}?registered=1&responseId=${responseId}&free=1` });
       }
     }
 
@@ -15079,11 +15085,27 @@ app.get('/api/client/forms/:id', auth.requireAuthApi(['client']), (req, res) => 
       response = db.getFormResponse(id);
     }
     const existingAnswers = db.getResponseAnswers(response.id);
+    // Per's report — a logged-in member using this authenticated path
+    // for a course REGISTRATION form (as opposed to a survey/quiz) was
+    // never told requiresPayment at all, so the client fell through to
+    // the generic "mark this form complete" endpoint instead of the
+    // real checkout/enrolment flow — meaning they'd see "Thank you" and
+    // never actually get registered. Matches the exact same
+    // requiresPayment/priceCents logic the public/anonymous endpoint
+    // already uses, so the client's own existing requiresPayment branch
+    // (which already correctly skips payment for a genuine member and
+    // still charges someone on the trial) kicks in the same way here.
+    let requiresPayment = false, priceCents = 0;
+    if (form.course_instance_id) {
+      const instance = db.getCourseInstance(form.course_instance_id);
+      if (instance?.price_cents) { requiresPayment = true; priceCents = instance.price_cents; }
+    }
     res.json({
       id: form.id, title: form.title, kind: form.kind, introText: form.intro_text,
       dataPolicyText: form.data_policy_text, requireConsent: !!form.require_consent,
       questions: safeQuestions, responseId: response.id,
       existingAnswers: answersToComparableMap(existingAnswers, questions),
+      requiresPayment, priceCents,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

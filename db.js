@@ -5057,6 +5057,23 @@ function getExplorerCoursePromo(userId) {
     WHERE mode='cohort' AND status='open' AND start_date >= date('now')
     ORDER BY start_date ASC LIMIT 1`);
 }
+// Per's request — a persistent, always-visible "Live Course" card for
+// EVERY member regardless of tier, shown separately from (and above)
+// the self-paced resume card, since Per's own testing showed no way to
+// tell the two apart otherwise. Unlike getExplorerCoursePromo (tier-0
+// only, dismissible popup), this is deliberately unconditional and
+// undismissable — it's meant to be a standing discovery point for
+// whichever live course is currently open, not a one-time nudge.
+function getFeaturedLiveCourse(userId) {
+  const instance = queryOne(`
+    SELECT id, title, schedule_day, schedule_time, start_date, registration_form_id
+    FROM course_instances
+    WHERE mode='cohort' AND status='open' AND start_date >= date('now')
+    ORDER BY start_date ASC LIMIT 1`);
+  if (!instance) return null;
+  const enrolment = getEnrolmentForUserAndInstance(userId, instance.id);
+  return { ...instance, isEnrolled: !!enrolment };
+}
 function dismissExplorerCoursePromo(userId) {
   getDbSync().run(`UPDATE users SET explorer_course_promo_dismissed_at=datetime('now') WHERE id=?`, [userId]);
   save();
@@ -10340,7 +10357,7 @@ module.exports = {
   // Enrolments
   createEnrolment, getEnrolment, getEnrolmentForUserAndInstance, getEnrolmentsForUser, isStaffEmail,
   getPendingWelcomeEnrolment, markEnrolmentWelcomed, resetWelcomeFanfare,
-  getExplorerCoursePromo, dismissExplorerCoursePromo,
+  getExplorerCoursePromo, dismissExplorerCoursePromo, getFeaturedLiveCourse,
   getAttendanceForSession, markAttendance, getAttendancePct, isLastSessionOfInstance,
   getCertificateForEnrolment, getCertificate, getCertificatesForUser, issueCertificateIfEligible,
   getCertificateTemplates, getCertificateTemplate, createCertificateTemplate, updateCertificateTemplate,

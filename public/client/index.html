@@ -1251,12 +1251,27 @@
           <div class="resume-card-sub" id="upcomingSessionSub"></div>
         </div>
 
+        <!-- Per's request — a persistent, undismissable "Live Course"
+             discovery card for every member regardless of tier, shown
+             above the self-paced resume card so the two are never
+             mistaken for each other again. Not enrolled yet → takes
+             them to the registration form (which already correctly
+             skips payment for a genuine member and still charges
+             someone on the trial — see the public checkout endpoint).
+             Already enrolled → opens the course overview in-app, same
+             as any other course open. -->
+        <div class="resume-card" id="featuredLiveCourseCard" style="display:none" onclick="jumpToFeaturedLiveCourse()">
+          <div class="resume-card-label">Live course</div>
+          <div class="resume-card-title" id="featuredLiveCourseTitle"></div>
+          <div class="resume-card-sub" id="featuredLiveCourseSub"></div>
+        </div>
+
         <!-- Per Bot 21 — moved here from the Talk page per Per's request;
              loadResumeCard() already runs on general app boot regardless
              of which tab is open, so nothing about the loading logic
              needed to change, only where the markup lives. -->
         <div class="resume-card" id="resumeCard" style="display:none" onclick="jumpToResume()">
-          <div class="resume-card-label">Continue</div>
+          <div class="resume-card-label" id="resumeCardLabel">Continue</div>
           <div class="resume-card-title" id="resumeCardTitle"></div>
           <div class="resume-card-sub" id="resumeCardSub"></div>
         </div>
@@ -8075,6 +8090,39 @@
     switchTab('courses');
     openCourseDetail(instanceId);
   }
+  // Per's request — persistent "Live Course" discovery card, every
+  // member regardless of tier. Not enrolled → routes to the real
+  // registration form (a normal page navigation, same as the public
+  // Register button — the form itself already correctly skips payment
+  // for a genuine member and still charges someone on the trial).
+  // Already enrolled → opens the course overview in-app.
+  async function loadFeaturedLiveCourse() {
+    try {
+      const course = await (await fetch('/api/client/featured-live-course')).json();
+      if (!course) { document.getElementById('featuredLiveCourseCard').style.display = 'none'; return; }
+      const whenText = course.schedule_day ? `${course.schedule_day}${course.schedule_time ? ', ' + course.schedule_time : ''}` : '';
+      document.getElementById('featuredLiveCourseTitle').textContent = course.title;
+      document.getElementById('featuredLiveCourseSub').textContent = course.isEnrolled
+        ? (whenText ? `Registered — meets ${whenText}` : 'Registered — view sessions')
+        : (whenText ? `Meets ${whenText} — tap to register` : 'Tap to register');
+      document.getElementById('featuredLiveCourseCard').dataset.instanceId = course.id;
+      document.getElementById('featuredLiveCourseCard').dataset.enrolled = course.isEnrolled ? '1' : '';
+      document.getElementById('featuredLiveCourseCard').dataset.formId = course.registration_form_id || '';
+      document.getElementById('featuredLiveCourseCard').style.display = 'block';
+    } catch (e) { document.getElementById('featuredLiveCourseCard').style.display = 'none'; }
+  }
+  function jumpToFeaturedLiveCourse() {
+    const el = document.getElementById('featuredLiveCourseCard');
+    const instanceId = el.dataset.instanceId;
+    if (!instanceId) return;
+    if (el.dataset.enrolled === '1') {
+      switchTab('courses');
+      openCourseDetail(instanceId);
+      return;
+    }
+    if (el.dataset.formId) { location.href = `/forms/${el.dataset.formId}`; return; }
+    location.href = `/course-instance/${instanceId}`;
+  }
   async function loadResumeCard() {
     try {
       const res  = await fetch('/api/client/resume');
@@ -8086,6 +8134,10 @@
       // marks, not lesson progress the student tracks) — different
       // framing for that case, and see jumpToResume below for why this
       // card no longer jumps straight into lesson content for one.
+      // Per's further report — this card and the new live-course
+      // discovery card above it were getting mistaken for each other;
+      // explicitly labelled "Self-Paced" now for the non-cohort case.
+      document.getElementById('resumeCardLabel').textContent = card.mode === 'cohort' ? 'Continue' : 'Self-Paced';
       document.getElementById('resumeCardTitle').textContent = `${card.course_title} — ${card.lesson_title}`;
       document.getElementById('resumeCardSub').textContent = card.mode === 'cohort'
         ? 'Live course — view sessions'
@@ -9184,6 +9236,7 @@
   }
 
   loadResumeCard();
+  loadFeaturedLiveCourse();
   loadUpcomingSessionBanner();
   loadA11yPrefsFromServer();
   checkOnboarding();

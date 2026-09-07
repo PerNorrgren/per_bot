@@ -366,8 +366,14 @@
     const registered = params.get('registered');
     if (!registered) return;
     const responseId = params.get('responseId');
+    // Per's report — this used to say "Payment successful" and "setting
+    // your password" unconditionally, which is wrong for an existing
+    // member who registered free (no payment at all, and if they
+    // already have a password, there's nothing to "set").
+    const isFree = params.get('free') === '1';
     params.delete('registered');
     params.delete('responseId');
+    params.delete('free');
     const cleanUrl = location.pathname + (params.toString() ? '?' + params.toString() : '');
     history.replaceState(null, '', cleanUrl);
 
@@ -381,7 +387,7 @@
 
     if (registered === '1') {
       modal.classList.remove('is-error');
-      badge.textContent = 'Payment successful';
+      badge.textContent = isFree ? 'Registered' : 'Payment successful';
       title.textContent = 'You\'re registered';
       body.textContent = `Your place in ${instance?.title || 'the course'}${whenText ? ' — ' + whenText : ''} is confirmed.`;
       subBody.style.display = '';
@@ -398,9 +404,23 @@
         btn.textContent = 'Continue';
         if (joinUrl) {
           _pendingJoinUrl = joinUrl;
-          subBody.textContent = 'Closing this will take you straight to setting your password.';
+          // Per's report — an existing member already has a password;
+          // the join link for them is a genuine login link, not a
+          // password-setup one (buildMessageTokens already handles this
+          // correctly server-side — course_link vs invite_link — this
+          // just needs to describe whichever one actually came back
+          // rather than assuming). Verified against the actual
+          // construction: a login link contains /login, a password-setup
+          // link contains /join/{token} — checking for /login specifically
+          // rather than guessing at a setup-specific path.
+          const isLogin = joinUrl.includes('/login');
+          subBody.textContent = isLogin
+            ? 'Closing this will take you straight into the app.'
+            : 'Closing this will take you straight to setting your password.';
         } else {
-          subBody.textContent = 'Still finishing up on our end — the confirmation email has your password-setup link, in case you need it before this page refreshes.';
+          subBody.textContent = isFree
+            ? 'Still finishing up on our end — check the app directly if this page doesn\'t refresh in time.'
+            : 'Still finishing up on our end — the confirmation email has your password-setup link, in case you need it before this page refreshes.';
         }
       }
     } else if (registered === '0') {
