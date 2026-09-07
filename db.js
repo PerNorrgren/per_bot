@@ -2974,6 +2974,15 @@ async function getDb() {
   // not per course, since a specific cohort run might reasonably want
   // different wording/branding than another run of the same course.
   try { db.run(`ALTER TABLE course_instances ADD COLUMN certificate_template_id TEXT`); } catch(e) {}
+  // Per's request — make "which form is the registration form for this
+  // instance" an explicit, stored choice rather than something inferred
+  // at read time. The kind != 'survey' fix above protects against the
+  // specific mistake that already happened, but any inferred "guess the
+  // right form" query is structurally the same kind of trap — a form
+  // that's wrong for some OTHER reason could still slip through. An
+  // explicit field can't be silently outranked by whatever gets created
+  // next, survey or otherwise.
+  try { db.run(`ALTER TABLE course_instances ADD COLUMN registration_form_id TEXT`); } catch(e) {}
   // Root cause of "Could not load this certificate," found properly
   // this time: this column was only ever added to the CREATE TABLE
   // IF NOT EXISTS statement for certificates itself -- but that table
@@ -3234,6 +3243,17 @@ async function getDb() {
   // used for something it wasn't meant for — clearing it here too so
   // the data itself isn't left in a confusing state.
   db.run(`UPDATE forms SET course_instance_id=NULL WHERE kind='survey' AND course_instance_id IS NOT NULL`);
+
+  // Per's request — backfill the new explicit registration_form_id
+  // using the already-fixed (kind != 'survey') resolution logic, once,
+  // for every instance that doesn't have it explicitly set yet. Locks
+  // in today's correct answer permanently — from this point on, no
+  // newly created form of any kind can ever silently outrank it.
+  const instancesNeedingBackfill = queryAll(`SELECT id FROM course_instances WHERE registration_form_id IS NULL`);
+  instancesNeedingBackfill.forEach(inst => {
+    const correctForm = queryOne(`SELECT id FROM forms WHERE course_instance_id=? AND status='active' AND kind != 'survey' ORDER BY created_at DESC LIMIT 1`, [inst.id]);
+    if (correctForm) db.run(`UPDATE course_instances SET registration_form_id=? WHERE id=?`, [correctForm.id, inst.id]);
+  });
 
   // Per's real incident — an already-live site (real legal documents,
   // real course/library data, all of it) got redirected to the first-run
@@ -3838,6 +3858,16 @@ function getPublicInstanceOverview(id) {
     SELECT f.id, f.name, f.credentials, f.photo_filename FROM instance_facilitators inf
     JOIN facilitators f ON inf.facilitator_id = f.id
     WHERE inf.course_instance_id=? AND f.public_profile=1`, [id]);
+  // Per's request — the explicit, stored instance.registration_form_id
+  // (set once, either by the backfill migration or deliberately) is now
+  // the real source of truth, checked first. The kind-excluding query
+  // below only ever runs as a fallback for an instance that genuinely
+  // doesn't have one set yet (e.g. brand new, not yet backfilled) —
+  // once anything is explicitly stored, nothing created afterward, of
+  // any kind, can silently outrank it again.
+  if (instance.registration_form_id) {
+    return { ...instance, facilitators };
+  }
   // Per's request — when a paid instance has a custom registration Form
   // attached (forms.course_instance_id, status='active'), the public
   // Register button should go there instead of the generic account-
