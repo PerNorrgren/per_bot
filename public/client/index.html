@@ -1708,10 +1708,14 @@
     <!-- Courses -->
     <div class="courses-view" id="coursesView">
       <div class="courses-scroll" id="coursesListScroll">
-        <div class="courses-section-label">My Courses</div>
-        <div id="myCoursesList"><div class="no-content">Loading…</div></div>
-        <div class="courses-section-label" style="margin-top:22px">Available Courses</div>
+        <!-- Per's request — Available Courses (with live Zoom cohorts
+             sorted first, see renderBrowseCourses) above My Courses,
+             so whatever's being actively promoted is the first thing
+             visible, no scrolling needed. -->
+        <div class="courses-section-label">Available Courses</div>
         <div id="browseCoursesList"></div>
+        <div class="courses-section-label" style="margin-top:22px">My Courses</div>
+        <div id="myCoursesList"><div class="no-content">Loading…</div></div>
       </div>
       <div class="courses-scroll" id="courseDetailScroll" style="display:none">
         <button class="courses-back-btn" onclick="closeCourseDetail()">&larr; Back to courses</button>
@@ -8255,7 +8259,11 @@
     _browseCoursesData = list;
     const el = document.getElementById('browseCoursesList');
     if (!list.length) { el.innerHTML = '<div class="no-content">Nothing new to enrol in right now.</div>'; return; }
-    el.innerHTML = list.map(i => {
+    // Per's request — live Zoom (cohort) courses at the top, ahead of
+    // self-paced ones, since that's what's actively being promoted
+    // right now and shouldn't need scrolling past anything to find.
+    const sorted = [...list].sort((a, b) => (a.mode === 'cohort' ? 0 : 1) - (b.mode === 'cohort' ? 0 : 1));
+    el.innerHTML = sorted.map(i => {
       const clickAction = i.locked
         ? `showLockedNotice('This course is not currently available.')`
         : (i.price_cents && !isMember ? `openCoursePurchaseModal('${i.id}')` : `enrolInCourse('${i.id}')`);
