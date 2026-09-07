@@ -422,6 +422,11 @@
       // a live session — Continue just takes them home directly.
       if (isFree) {
         _pendingJoinUrl = '/client/';
+        // Per's request — "it should just say done and take me to
+        // splash," not require an extra click to read and dismiss.
+        // Continue button stays as a fallback in case this doesn't
+        // fire for some reason (tab backgrounded, etc.).
+        setTimeout(() => { if (_pendingJoinUrl) location.href = _pendingJoinUrl; }, 1800);
       } else if (responseId) {
         const formId = instance?.registration_form_id;
         btn.disabled = true;

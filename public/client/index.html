@@ -1051,7 +1051,7 @@
     .np-chapter-time { font-size:11px; color:rgba(255,255,255,0.35); flex-shrink:0; }
 
     /* Start screen — identical to Mare Bot */
-    #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:flex; align-items:center; justify-content:center; z-index:99; }
+    #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:none; align-items:center; justify-content:center; z-index:99; }
     #start-inner { text-align:center; max-width:320px; padding:32px; }
     #start-inner h1 { font-size:36px; color:rgba(255,255,255,0.85); margin-bottom:12px; font-weight:normal; font-style:italic; }
     #start-inner p { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.45); margin-bottom:36px; }
@@ -7752,6 +7752,19 @@
       document.getElementById('start').style.display = 'none';
       loadCalmLandingContent();
       loadFeaturedShelves();
+    } else {
+      // Per's report — #start used to default to visible in its own CSS
+      // and only ever got hidden here for the calm-landing case, never
+      // explicitly shown for this fallback case — it was relying
+      // entirely on that CSS default. Flipping the CSS default to
+      // hidden (to close a real race condition: #start was tappable for
+      // a brief moment on every load, before this async config check
+      // resolved and hid it — tapping during that window ran the old
+      // non-calm-landing conversation-start flow even for an app
+      // actually configured for calm landing, which is very likely
+      // what produced the blank screen Per saw) means this fallback
+      // path now needs to show it explicitly instead.
+      document.getElementById('start').style.display = 'flex';
     }
     try {
       const res = await fetch('/api/client/facilitators');
