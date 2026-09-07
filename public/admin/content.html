@@ -1284,6 +1284,7 @@
     <div class="modal-err" id="certEditorErr"></div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('certEditorModal')">Close</button>
+      <button class="btn sm" id="certEditorViewPdfBtn" onclick="viewCertificatePdfPreview()" style="display:none" title="Shows exactly what's currently saved — save first if you've just changed something. Print/download from the browser's own PDF viewer once it opens.">View PDF</button>
       <button class="btn sm danger" id="certEditorDeleteBtn" onclick="deleteCertificateTemplateFromEditor()" style="display:none">Delete</button>
       <button class="modal-ok" onclick="saveCertificateTemplateFromEditor()">Save</button>
     </div>
@@ -4353,6 +4354,7 @@ async function openCertificateTemplateEditor(templateId){
   document.getElementById('certEditorId').value = templateId || '';
   document.getElementById('certEditorErr').textContent = '';
   document.getElementById('certEditorDeleteBtn').style.display = templateId ? '' : 'none';
+  document.getElementById('certEditorViewPdfBtn').style.display = templateId ? '' : 'none';
   // Per's request — full editor here, not the restricted 'simple'
   // toolbar mountRichEditor() uses elsewhere in this file. Calling
   // MessageEditor directly (bypassing that helper) gets the same
@@ -4393,6 +4395,11 @@ async function openCertificateTemplateEditor(templateId){
     document.getElementById('certEditorRecipients').style.display = 'none';
   }
   openModal('certEditorModal');
+}
+function viewCertificatePdfPreview(){
+  const id = document.getElementById('certEditorId').value;
+  if (!id) return;
+  window.open(`/api/admin/certificate-templates/${id}/preview-pdf`, '_blank');
 }
 async function saveCertificateTemplateFromEditor(){
   const id = document.getElementById('certEditorId').value;

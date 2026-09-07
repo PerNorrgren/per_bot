@@ -10100,6 +10100,29 @@ app.get('/api/admin/certificate-templates/:id', auth.requireAuthApi(['admin']), 
     res.json({ ...t, recipients: db.getCertificateTemplateRecipients(req.params.id) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a way to see roughly how a template will actually
+// look while editing it, without needing a real issued certificate to
+// exist yet. Reuses buildCertificateDoc directly (same renderer real
+// certificates use) against a fake certificate object with sample
+// values standing in for the real tokens — this only ever reflects
+// whatever's currently SAVED, so hit Save first if you've just made a
+// change you want to see reflected here.
+app.get('/api/admin/certificate-templates/:id/preview-pdf', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const template = db.getCertificateTemplate(req.params.id);
+    if (!template) return res.status(404).json({ error: 'Not found.' });
+    const fakeCertificate = {
+      user_name: 'Jane Sample',
+      course_title: 'Sample Course Title',
+      issued_at: new Date().toISOString(),
+      attendance_pct: 100,
+      template_content: template.content,
+    };
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Certificate preview.pdf"`);
+    (await buildCertificateDoc(fakeCertificate)).pipe(res);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/admin/certificate-templates', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { name, content } = req.body;
