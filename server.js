@@ -3960,12 +3960,29 @@ async function attemptEnrolUser(user, courseInstanceId) {
 
   const id = uuidv4();
   db.createEnrolment(id, user.id, courseInstanceId, 'free', 0, null);
+  // Per's report, found while investigating a missing Zoom link — this
+  // branch never checked/granted grants_membership_months at all, unlike
+  // the paid Stripe path just above, which does this correctly. Doesn't
+  // matter for the common case reaching here (an already-genuine member
+  // skipping payment — they already have tier 1+), but matters for a
+  // genuinely free/comp'd instance an Explorer could enrol in directly,
+  // which would otherwise silently miss the membership grant entirely.
+  // Same "extend from current expiry, don't reset the clock" logic as
+  // the Stripe webhook's own version of this.
+  let grantedMembership = false;
+  if (instance.grants_membership_months) {
+    const base = user.member_expires_at && new Date(user.member_expires_at) > new Date()
+      ? new Date(user.member_expires_at) : new Date();
+    base.setMonth(base.getMonth() + parseInt(instance.grants_membership_months, 10));
+    db.setMemberTier(user.id, Math.max(user.member_tier || 0, 1), base.toISOString(), user.trial_ends_at, null, null);
+    grantedMembership = true;
+  }
   // Per's request — confirmation email, a real registered message type
   // (see MESSAGE_TYPE_REGISTRY's enrolment_confirmed), fired here so
   // every path into a free enrolment gets it identically.
   try { await emailEnrolmentConfirmed(user, course.title, instance.title, courseInstanceId); }
   catch(e) { console.error('[enrolment confirmation email]', e.message); }
-  return { ok: true, enrolmentId: id };
+  return { ok: true, enrolmentId: id, grantedMembership };
 }
 
 // Enrol — free immediately for Members regardless of instance price; for
