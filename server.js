@@ -15100,12 +15100,26 @@ app.get('/api/client/forms/:id', auth.requireAuthApi(['client']), (req, res) => 
       const instance = db.getCourseInstance(form.course_instance_id);
       if (instance?.price_cents) { requiresPayment = true; priceCents = instance.price_cents; }
     }
+    // Per's report — the button said "Continue to Payment" even for a
+    // logged-in member who won't actually be charged (the checkout
+    // endpoint already skips payment for a genuine paying member). For
+    // an authenticated submission we already know exactly who's filling
+    // this in, so this can be determined upfront rather than only
+    // discovered after they submit — same trial-vs-paid distinction
+    // used everywhere else this session.
+    let willSkipPayment = false;
+    if (requiresPayment) {
+      const submitter = db.getUser(req.user.id);
+      const isGenuineMember = (submitter?.member_tier || 0) >= 1;
+      const isOnActiveTrial = !!(submitter?.trial_ends_at && new Date(submitter.trial_ends_at) > new Date());
+      willSkipPayment = isGenuineMember && !isOnActiveTrial;
+    }
     res.json({
       id: form.id, title: form.title, kind: form.kind, introText: form.intro_text,
       dataPolicyText: form.data_policy_text, requireConsent: !!form.require_consent,
       questions: safeQuestions, responseId: response.id,
       existingAnswers: answersToComparableMap(existingAnswers, questions),
-      requiresPayment, priceCents,
+      requiresPayment, priceCents, willSkipPayment,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -8120,7 +8120,10 @@
       openCourseDetail(instanceId);
       return;
     }
-    if (el.dataset.formId) { location.href = `/forms/${el.dataset.formId}`; return; }
+    // Per's report — this used to jump straight into the registration
+    // form with no context at all. The instance page itself already has
+    // the course description, schedule, and its own Register button —
+    // that's the right place to land first, not the form directly.
     location.href = `/course-instance/${instanceId}`;
   }
   async function loadResumeCard() {
