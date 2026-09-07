@@ -236,7 +236,7 @@
           ${i.status === 'open' ? `
           <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <a class="cta-btn cta-register-btn" style="padding:11px 22px;font-size:12px" href="${joinHref}">${joinLabel}</a>
-            ${!isSelfPaced && i.price_cents ? `<span style="font-size:20px;font-weight:bold;color:rgba(180,230,200,0.95)">£${(i.price_cents/100).toFixed(2)}</span>` : ''}
+            ${!isSelfPaced && i.price_cents ? `<span id="priceDisplay" style="font-size:20px;font-weight:bold;color:rgba(180,230,200,0.95)">£${(i.price_cents/100).toFixed(2)}</span>` : ''}
           </div>
           <div id="signInHint" style="margin-top:10px;font-size:16px;font-weight:bold"><a href="/login?next=${encodeURIComponent('/course-instance/' + selectedInstanceId)}" style="color:rgba(180,230,200,0.95);text-decoration:underline">Members — Log in to register.</a></div>
           ` : ''}
@@ -299,6 +299,18 @@
     try {
       const res = await fetch('/api/account');
       if (!res.ok) return; // not logged in, or logged in as facilitator/admin — leave the Register buttons as-is
+      const account = await res.json();
+      // Per's request — a genuine paying member won't actually be
+      // charged (see /api/client/enrol below), so showing a price next
+      // to Enrol Now is misleading for them specifically. Same
+      // trial-vs-paid distinction used everywhere else this session —
+      // an active trial still sees the price, since they'll still pay.
+      const isGenuineMember = (account.member_tier || 0) >= 1;
+      const isOnActiveTrial = !!(account.trial_ends_at && new Date(account.trial_ends_at) > new Date());
+      if (isGenuineMember && !isOnActiveTrial) {
+        const priceEl = document.getElementById('priceDisplay');
+        if (priceEl) priceEl.style.display = 'none';
+      }
       // Per's request — the "Already a member? Sign in" hint only makes
       // sense for someone who ISN'T signed in yet; once we know they are,
       // hide it rather than leave a stale "sign in" prompt sitting above
@@ -321,13 +333,18 @@
             const r = await fetch('/api/client/enrol', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseInstanceId: selectedInstanceId }) });
             const data = await r.json();
             if (data.requiresPayment) { location.href = data.checkoutUrl; return; }
-            // Per's real bug, found and fixed while merging in the extra
-            // Register buttons — this referenced an undefined
-            // "instanceId" (this function's own parameter was removed
-            // when it switched to reading selectedInstanceId, but this
-            // one line was missed), which would have thrown the moment
-            // a logged-in member actually completed enrolment here.
-            if (data.ok) { location.href = `/client/?course=${selectedInstanceId}`; return; }
+            // Per's report — this used to redirect straight into the app
+            // with no confirmation shown at all. Reuses the exact same
+            // popup the form-based registration flow already shows, via
+            // the same query-param mechanism showRegistrationResultModal
+            // already reads on page load. Built from selectedInstanceId
+            // explicitly rather than the current location.pathname —
+            // the date picker on this page can switch which instance is
+            // selected without navigating anywhere, so the two aren't
+            // guaranteed to match. No responseId needed here since
+            // there's no form response involved in this direct-enrol
+            // path, and the isFree branch doesn't depend on one.
+            if (data.ok) { location.href = `/course-instance/${selectedInstanceId}?registered=1&free=1`; return; }
             if (text) text.textContent = data.error || 'Something went wrong — please try again.';
             document.querySelectorAll('.cta-register-btn').forEach(b => b.textContent = 'Enrol Now');
           } catch(e) {
@@ -389,13 +406,23 @@
       modal.classList.remove('is-error');
       badge.textContent = isFree ? 'Registered' : 'Payment successful';
       title.textContent = 'You\'re registered';
-      body.textContent = `Your place in ${instance?.title || 'the course'}${whenText ? ' — ' + whenText : ''} is confirmed.`;
-      subBody.style.display = '';
-      subBody.textContent = 'A confirmation email is on its way too, in case you need it later.';
+      // Per's request — exact wording, and simplified: "you'll find the
+      // course in My Courses" plus the first session date/time, nothing
+      // more elaborate than that.
+      body.textContent = `You're now registered — you'll find ${instance?.title || 'the course'} in My Courses.${whenText ? ' First session: ' + whenText + '.' : ''}`;
+      subBody.style.display = 'none';
       btn.textContent = 'Continue';
       document.getElementById('resultModalOverlay').classList.add('open');
 
-      if (responseId) {
+      // Per's request — an existing, already-logged-in member doesn't
+      // need any join/login token at all here; sending them through
+      // that flow (which exists for a brand-new account that still
+      // needs to log in or set a password) was landing them somewhere
+      // other than the app's normal home experience. They already have
+      // a live session — Continue just takes them home directly.
+      if (isFree) {
+        _pendingJoinUrl = '/client/';
+      } else if (responseId) {
         const formId = instance?.registration_form_id;
         btn.disabled = true;
         btn.textContent = 'Setting things up…';
@@ -414,13 +441,13 @@
           // link contains /join/{token} — checking for /login specifically
           // rather than guessing at a setup-specific path.
           const isLogin = joinUrl.includes('/login');
+          subBody.style.display = '';
           subBody.textContent = isLogin
             ? 'Closing this will take you straight into the app.'
             : 'Closing this will take you straight to setting your password.';
         } else {
-          subBody.textContent = isFree
-            ? 'Still finishing up on our end — check the app directly if this page doesn\'t refresh in time.'
-            : 'Still finishing up on our end — the confirmation email has your password-setup link, in case you need it before this page refreshes.';
+          subBody.style.display = '';
+          subBody.textContent = 'Still finishing up on our end — the confirmation email has your password-setup link, in case you need it before this page refreshes.';
         }
       }
     } else if (registered === '0') {
