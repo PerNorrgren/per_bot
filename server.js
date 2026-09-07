@@ -4396,6 +4396,13 @@ app.get('/api/client/lessons/:lessonId', auth.requireAuthApi(['client']), (req, 
       enrolment_id: enrolment.id,
       lessonLocked,
       fileProgress: db.getLessonFileProgress(req.user.id, req.params.lessonId),
+      // Per's report — the client's own suppression check for the
+      // completion prompt relied on a global variable that's only ever
+      // set by openCourseDetail running first, which turned out not to
+      // be a safe assumption for every path that can reach a lesson.
+      // Included directly here now so that check can be self-contained
+      // instead of trusting outer-scope state to already be correct.
+      instanceMode: instance.mode,
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });

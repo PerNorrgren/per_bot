@@ -8081,11 +8081,19 @@
       if (!res.ok) throw new Error('no resume');
       const card = await res.json();
       if (!card) throw new Error('no resume');
+      // Per's report — "X% complete" doesn't mean anything for a live
+      // cohort course (completion there is attendance the facilitator
+      // marks, not lesson progress the student tracks) — different
+      // framing for that case, and see jumpToResume below for why this
+      // card no longer jumps straight into lesson content for one.
       document.getElementById('resumeCardTitle').textContent = `${card.course_title} — ${card.lesson_title}`;
-      document.getElementById('resumeCardSub').textContent = `${card.percent_complete}% complete`;
+      document.getElementById('resumeCardSub').textContent = card.mode === 'cohort'
+        ? 'Live course — view sessions'
+        : `${card.percent_complete}% complete`;
       document.getElementById('resumeCard').style.display = 'block';
       document.getElementById('resumeCard').dataset.instanceId = card.course_instance_id;
       document.getElementById('resumeCard').dataset.lessonId = card.lesson_id;
+      document.getElementById('resumeCard').dataset.mode = card.mode || '';
       document.getElementById('nextActionCard').style.display = 'none';
     } catch(e) {
       // Per Bot 24 (activity/engagement, group 2) — only reached when
@@ -8121,11 +8129,20 @@
     if (f) { openContentFile(f); return; }
     switchTab('library');
   }
+  // Per's report — this used to open the course overview then
+  // immediately jump straight into the lesson's content, skipping the
+  // overview a member never actually got to see. Fine for a self-paced
+  // "continue where I left off," wrong for a live cohort course — the
+  // schedule, Zoom link, and session list ARE the point of that screen,
+  // especially the first time. Cohort now just opens the overview and
+  // stops there; self-paced keeps the original jump-straight-in behaviour.
   function jumpToResume() {
     const instanceId = document.getElementById('resumeCard').dataset.instanceId;
     const lessonId = document.getElementById('resumeCard').dataset.lessonId;
+    const mode = document.getElementById('resumeCard').dataset.mode;
     if (!instanceId) return;
     switchTab('courses');
+    if (mode === 'cohort') { openCourseDetail(instanceId); return; }
     openCourseDetail(instanceId).then(() => openLesson(lessonId));
   }
 
@@ -8432,7 +8449,12 @@
         // Per's request — a live cohort session isn't something you
         // "complete" the way a self-paced lesson is; opening its
         // materials shouldn't prompt anything afterward at all.
-        if (_currentInstanceMode === 'cohort') {
+        // Checks the mode straight from THIS lesson's own fetch
+        // response now, not the outer _currentInstanceMode global —
+        // that relied on openCourseDetail always running first and
+        // finishing before this point, which wasn't actually
+        // guaranteed for every path that can reach a lesson.
+        if (data.instanceMode === 'cohort' || _currentInstanceMode === 'cohort') {
           openCourseDetail(currentInstanceId);
           loadResumeCard();
           return;

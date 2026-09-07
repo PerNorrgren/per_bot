@@ -5271,7 +5271,7 @@ function getDashboardResumeCard(userId) {
         lesson_id: resume.id, lesson_title: resume.title, lesson_number: resume.lesson_number,
         last_position: resume.last_position, lesson_status: resume.status,
         enrolment_id: e.id, course_instance_id: e.course_instance_id, course_id: e.course_id,
-        course_title: e.course_title, instance_title: e.instance_title,
+        course_title: e.course_title, instance_title: e.instance_title, mode: e.mode,
         percent_complete: e.percent_complete, activityTime,
       };
     }
