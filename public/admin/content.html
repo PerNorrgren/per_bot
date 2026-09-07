@@ -4558,21 +4558,42 @@ async function deleteSession(id){
 }
 
 // ── Enrolments — read-only roster view ──
+// Per's request — "the admin needs to be able to remove a person if
+// they cancel" — testing right now, but a genuine cancellation action
+// too. Deliberately plain: removes the enrolment and its own records
+// only, doesn't touch Stripe or membership tier — that's the separate,
+// still-pending refund-triggered-downgrade feature.
+let _enrolModalInstanceId = null;
 async function openEnrolmentsModal(instanceId,instanceTitle){
+  _enrolModalInstanceId = instanceId;
   document.getElementById('enrolModalTitle').textContent='Enrolments — '+instanceTitle;
-  const list=await fetch(`/api/admin/course-instances/${instanceId}/enrolments`).then(r=>r.json());
+  await refreshEnrolmentsModal();
+  openModal('enrolmentsModal');
+}
+async function refreshEnrolmentsModal(){
+  const list=await fetch(`/api/admin/course-instances/${_enrolModalInstanceId}/enrolments`).then(r=>r.json());
   const el=document.getElementById('enrolBody');
-  if(!list.length){el.innerHTML='<div class="empty" style="padding:16px">No enrolments yet.</div>';openModal('enrolmentsModal');return;}
-  el.innerHTML=`<div class="file-list-header"><div class="flr-title">Name</div><div class="flr-meta" style="width:180px">Email</div><div class="flr-meta">Payment</div><div class="flr-meta">Status</div></div>`+
+  if(!list.length){el.innerHTML='<div class="empty" style="padding:16px">No enrolments yet.</div>';return;}
+  el.innerHTML=`<div class="file-list-header"><div class="flr-title">Name</div><div class="flr-meta" style="width:180px">Email</div><div class="flr-meta">Payment</div><div class="flr-meta">Status</div><div class="flr-meta"></div></div>`+
     list.map(e=>`
       <div class="file-list-row">
         <div class="flr-title">${e.user_name}</div>
         <div class="flr-meta" style="width:180px">${e.user_email}</div>
         <div class="flr-meta">${e.payment_status}${e.amount_paid_cents?' · '+fmtPrice(e.amount_paid_cents):''}</div>
         <div class="flr-meta">${e.status}</div>
+        <div class="flr-meta"><button class="btn sm danger" onclick="removeEnrolment('${e.id}','${escAttr(e.user_name)}')">Remove</button></div>
       </div>
     `).join('');
-  openModal('enrolmentsModal');
+}
+async function removeEnrolment(enrolmentId, userName){
+  if (!(await appConfirm(`Remove ${userName} from this instance? This deletes their enrolment, attendance record, and certificate (if any) for this specific instance — it doesn't affect payment, membership tier, or their account itself.`))) return;
+  try {
+    const res = await fetch(`/api/admin/enrolments/${enrolmentId}`, { method:'DELETE' });
+    const data = await res.json();
+    if (!res.ok || data.error) { appAlert(data.error || 'Could not remove — please try again.'); return; }
+    await refreshEnrolmentsModal();
+    loadAll();
+  } catch(e) { appAlert('Could not remove — please try again.'); }
 }
 
 // ── Instance facilitators (Per's request — n facilitators per instance,

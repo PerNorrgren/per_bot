@@ -5205,9 +5205,18 @@ function markEnrolmentCompleted(id) {
   getDbSync().run(`UPDATE enrolments SET status='completed', completed_at=datetime('now') WHERE id=?`, [id]);
   save();
 }
+// Per's request — admin needs to be able to remove someone from an
+// instance (testing, or a genuine cancellation). Cleans up everything
+// tied to this specific enrolment, including the two tables added this
+// session that didn't exist when this function was first written —
+// leaving those behind would be silent data garbage, and a stray
+// certificate row especially could get confusing if this person later
+// re-registers and earns a fresh one under a new enrolment id.
 function deleteEnrolment(id) {
   getDbSync().run('DELETE FROM lesson_progress WHERE enrolment_id=?', [id]);
   getDbSync().run('DELETE FROM quiz_attempts WHERE enrolment_id=?', [id]);
+  getDbSync().run('DELETE FROM session_attendance WHERE enrolment_id=?', [id]);
+  getDbSync().run('DELETE FROM certificates WHERE enrolment_id=?', [id]);
   getDbSync().run('DELETE FROM enrolments WHERE id=?', [id]);
   save();
 }

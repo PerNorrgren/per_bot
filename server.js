@@ -9806,6 +9806,19 @@ app.get('/api/admin/course-instances/:id/enrolments', auth.requireAuthApi(['admi
   try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — remove someone from an instance (testing, or a
+// genuine cancellation). Deliberately just the enrolment and its own
+// records (attendance, progress, certificate) — doesn't touch Stripe,
+// doesn't touch membership tier. A real cancellation involving a
+// refund is the separate, still-pending refund-triggered-downgrade
+// feature; this is the plain "they're no longer on this course" action.
+app.delete('/api/admin/enrolments/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (!db.getEnrolment(req.params.id)) return res.status(404).json({ error: 'Enrolment not found.' });
+    db.deleteEnrolment(req.params.id);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 // Per's request — n facilitators per instance, assignable from the admin
 // side (Per said he'll do this part himself). GET/POST/DELETE rather
 // than one PATCH with a full list, matching the pattern already used for
