@@ -5327,9 +5327,20 @@ function getActivityHome(userId) {
     return { enrolment: e, activityTime };
   }).filter(c => c.activityTime).sort((a,b) => new Date(b.activityTime) - new Date(a.activityTime));
   if (courseActivity.length) {
+    // Per's report — with two instances of the same course (self-paced
+    // and live cohort), both shared the exact same course_title with no
+    // way to tell them apart, and "X% complete" doesn't mean anything
+    // for a cohort course (completion there is attendance the
+    // facilitator marks, not lesson progress) — same issue already
+    // fixed on the resume card and Courses tab elsewhere this session,
+    // applied here too. instance_title is what actually differs
+    // between them ("Live Zoom Course - ..." vs "Self-Paced ...").
     const items = courseActivity.slice(0, 10).map(c => ({
       id: c.enrolment.course_instance_id, title: c.enrolment.course_title,
-      subtitle: `${c.enrolment.percent_complete}% complete`, activityTime: c.activityTime,
+      subtitle: c.enrolment.mode === 'cohort'
+        ? (c.enrolment.instance_title || 'Live Zoom course')
+        : `${c.enrolment.percent_complete}% complete`,
+      activityTime: c.activityTime,
     }));
     sections.push({ key: 'courses', label: 'Courses', items, lastActivity: courseActivity[0].activityTime });
   }
