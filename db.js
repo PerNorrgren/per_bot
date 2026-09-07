@@ -3194,6 +3194,34 @@ async function getDb() {
   // has zero versions yet, so this is safe to run on every boot and
   // never overwrites anything Per's already written.
   seedDefaultCourseMessageVersions();
+
+  // Per's report — the post-course survey's 5 questions somehow ended
+  // up attached to (at least) the registration form too, so someone
+  // registering saw the survey mixed into the payment flow. Not able
+  // to find how this happened in the code paths that touch either
+  // form, so rather than guess further, this directly removes any
+  // question matching the survey's own known text from any form that
+  // ISN'T the actual survey (kind != 'survey') — fixes the
+  // contamination wherever it's sitting without needing to know the
+  // cause, and can never touch the real survey form itself.
+  const surveyQuestionTexts = [
+    "The course said your nervous system would settle through the body, not through thinking your way there. Did that actually happen for you?",
+    "We said belonging would be built into the practices themselves, not left to chance. Did it feel that way?",
+    "Were you ever handed a technique and left to use it completely on your own, with no support?",
+    "Did the live sessions feel like a genuine part of the practice, not just an add-on to the material?",
+    "Was there a specific promise this course made that it didn't keep for you? If so, what?",
+  ];
+  surveyQuestionTexts.forEach(text => {
+    const stray = queryAll(`
+      SELECT fq.id FROM form_questions fq
+      JOIN forms f ON fq.form_id = f.id
+      WHERE fq.question_text = ? AND f.kind != 'survey'`, [text]);
+    stray.forEach(row => {
+      db.run(`DELETE FROM form_question_options WHERE question_id=?`, [row.id]);
+      db.run(`DELETE FROM form_questions WHERE id=?`, [row.id]);
+    });
+  });
+
   // Per's real incident — an already-live site (real legal documents,
   // real course/library data, all of it) got redirected to the first-run
   // setup wizard because its own app_config row had setup_completed=0.
