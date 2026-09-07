@@ -3222,6 +3222,19 @@ async function getDb() {
     });
   });
 
+  // Per's report, root cause — a survey form had its own
+  // course_instance_id set (from linking it to the Finding Mindfulness
+  // instance somewhere in the Forms editor), which is exactly what let
+  // it compete for, and win, the "registration form for this instance"
+  // slot (see getCourseInstance's own comment above — most recently
+  // created active form wins, and the survey was created later). The
+  // query fix above is the real, permanent protection regardless of
+  // this, but a survey form's course_instance_id being set at all
+  // reflects a mismatch in the Forms editor's own linking field being
+  // used for something it wasn't meant for — clearing it here too so
+  // the data itself isn't left in a confusing state.
+  db.run(`UPDATE forms SET course_instance_id=NULL WHERE kind='survey' AND course_instance_id IS NOT NULL`);
+
   // Per's real incident — an already-live site (real legal documents,
   // real course/library data, all of it) got redirected to the first-run
   // setup wizard because its own app_config row had setup_completed=0.
@@ -3829,10 +3842,20 @@ function getPublicInstanceOverview(id) {
   // attached (forms.course_instance_id, status='active'), the public
   // Register button should go there instead of the generic account-
   // creation page, since that's where email/contact fields get captured
-  // and payment actually happens. At most one active form per instance
-  // is the assumption; if somehow more than one exists, the most
-  // recently created wins rather than erroring the whole page over it.
-  const registrationForm = queryOne(`SELECT id FROM forms WHERE course_instance_id=? AND status='active' ORDER BY created_at DESC LIMIT 1`, [id]);
+  // and payment actually happens. At most one active REGISTRATION form
+  // per instance is the assumption; if somehow more than one exists,
+  // the most recently created wins rather than erroring the whole page
+  // over it.
+  //
+  // Per's report, traced to ground — a survey form also gets linked to
+  // an instance (that's how the whole certificate/survey system
+  // resolves things), and this query originally had no way to tell the
+  // two apart: it just picked "most recently created active form
+  // linked here," survey or not. Since the survey form was created
+  // after the real registration form, it was silently winning and
+  // being sent to as the Register link. kind != 'survey' is the fix —
+  // this must never resolve to anything but a genuine registration form.
+  const registrationForm = queryOne(`SELECT id FROM forms WHERE course_instance_id=? AND status='active' AND kind != 'survey' ORDER BY created_at DESC LIMIT 1`, [id]);
   return { ...instance, facilitators, registration_form_id: registrationForm?.id || null };
 }
 

@@ -130,7 +130,7 @@
       <div class="field-row"><label class="field-label">Title</label><input class="inline-input" id="efTitle"/></div>
       <div style="display:flex;gap:12px">
         <div class="field-row" style="flex:1"><label class="field-label">Kind</label>
-          <select class="inline-input" id="efKind"><option value="form">Form</option><option value="quiz">Quiz</option><option value="survey">Survey</option></select>
+          <select class="inline-input" id="efKind" onchange="toggleEfInstanceFieldForKind()"><option value="form">Form</option><option value="quiz">Quiz</option><option value="survey">Survey</option></select>
         </div>
         <div class="field-row" style="flex:1"><label class="field-label">Status</label>
           <select class="inline-input" id="efStatus"><option value="draft">Draft</option><option value="active">Active</option><option value="archived">Archived</option></select>
@@ -142,9 +142,18 @@
            course-instance.html). Backend already supported this
            (updateForm's courseInstanceId field); this was the missing
            piece — nowhere in the admin UI could it actually be set. -->
-      <div class="field-row"><label class="field-label">Linked course instance <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — required for this form to handle a course's paid registration + payment)</span></label>
+      <!-- Per's report, root cause found — this field's own label
+           explicitly says "required for paid registration + payment,"
+           which is genuinely misleading shown on a survey form. Linking
+           a survey here let it silently compete for (and win) an
+           instance's actual registration-form slot. Hidden entirely for
+           survey-kind forms now — the real, correct way to connect a
+           survey to a course is the Post-course survey picker on the
+           course edit screen (courses.survey_form_id), not this field. -->
+      <div class="field-row" id="efInstanceRow"><label class="field-label">Linked course instance <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(optional — required for this form to handle a course's paid registration + payment)</span></label>
         <select class="inline-input" id="efInstance"><option value="">None — a standalone form, not tied to a course</option></select>
       </div>
+      <div class="field-row" id="efSurveyNote" style="display:none;font-size:12px;color:rgba(255,255,255,0.4)">Survey forms connect to a course from the course's own edit screen (Content → Courses → Edit → Post-course survey) — not here.</div>
       <div class="field-row"><label class="field-label">Intro text (shown before the questions)</label><textarea class="inline-input" id="efIntro" rows="2"></textarea></div>
 
       <div class="field-row"><label class="field-label">Data policy — what happens to their answers (shown to the respondent, with a required tick to agree)</label><textarea class="inline-input" id="efPolicy" rows="2"></textarea></div>
@@ -326,6 +335,7 @@
     document.getElementById('efRetention').value = form.retention_mode;
     document.getElementById('efRequireConsent').checked = !!form.require_consent;
     await populateInstancePicker(form.course_instance_id);
+    toggleEfInstanceFieldForKind();
     renderQuestionsList();
     openModal('editFormModal');
   }
@@ -333,6 +343,17 @@
   // (not a cascading course-then-instance pair) since most courses only
   // ever have a handful of instances; simpler for the common case of
   // picking "that one specific cohort" directly.
+  // Per's report, root cause fix — a survey form's "Linked course
+  // instance" field getting set is exactly what let it silently
+  // compete for (and win) an instance's real registration-form slot.
+  // Hidden entirely for survey-kind forms; the correct way to connect
+  // a survey to a course is the course's own edit screen instead.
+  function toggleEfInstanceFieldForKind() {
+    const isSurvey = document.getElementById('efKind').value === 'survey';
+    document.getElementById('efInstanceRow').style.display = isSurvey ? 'none' : '';
+    document.getElementById('efSurveyNote').style.display = isSurvey ? '' : 'none';
+    if (isSurvey) document.getElementById('efInstance').value = '';
+  }
   async function populateInstancePicker(currentInstanceId) {
     const sel = document.getElementById('efInstance');
     try {
