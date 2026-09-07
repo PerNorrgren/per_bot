@@ -6528,9 +6528,40 @@
       return;
     }
     el.innerHTML = _activityHomeData.map(section => {
+      // Per's request — Courses already has its own dedicated, better
+      // tab (sorted, distinguishes live vs self-paced, shows what's
+      // available to enrol in too) — showing an inline accordion list
+      // here as well would just be a second, more limited copy of the
+      // same information that could quietly drift out of sync with it.
+      // This section alone just opens that real tab directly instead of
+      // expanding its own list. The other sections (Read & Watch,
+      // Meditations, Practices) don't have an equivalent dedicated tab,
+      // so they keep the normal expand-in-place accordion behaviour.
+      if (section.key === 'courses') {
+        const top = section.items[0];
+        return `
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;cursor:pointer" onclick="switchTab('courses')">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px">
+            <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">${escHtmlJournal(section.label)}</span>
+            <span style="font-size:12px;color:rgba(255,255,255,0.3)">→</span>
+          </div>
+          <div style="padding:0 14px 12px">
+            <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtmlJournal(top.title || '(untitled)')}</div>
+          </div>
+        </div>`;
+      }
       const expanded = _activityHomeExpanded.has(section.key);
       const top = section.items[0];
       const rest = section.items.slice(1);
+      // Per's report — the expanded list used to have its own nested
+      // scroll container (max-height:280px;overflow-y:auto) sitting
+      // inside the page's own outer scrollable area. Nested scroll
+      // containers like that commonly trap scroll gestures once the
+      // cursor/touch is over the inner one, making the outer page feel
+      // stuck even though its own overflow-y:auto is set correctly —
+      // matches Per's own read that something below was "locked."
+      // Removed the inner one entirely; the whole accordion now lives
+      // in a single scrollable area with no competing containers.
       return `
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer" onclick="toggleActivityHomeSection('${section.key}')">
@@ -6541,7 +6572,7 @@
           <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtmlJournal(top.title || '(untitled)')}</div>
         </div>
         ${expanded && rest.length ? `
-        <div style="border-top:1px solid rgba(255,255,255,0.06);max-height:280px;overflow-y:auto">
+        <div style="border-top:1px solid rgba(255,255,255,0.06)">
           ${rest.map(item => `
             <div style="padding:10px 14px;font-size:13px;color:rgba(255,255,255,0.65);cursor:pointer;border-top:1px solid rgba(255,255,255,0.04)" onclick="openActivityHomeItem('${section.key}','${item.id}')">
               ${escHtmlJournal(item.title || '(untitled)')}
