@@ -89,7 +89,7 @@
     </div>
 
     <div class="cta-wrap">
-      <a class="cta-btn" href="/" id="findOutMoreBtn">Find out more</a>
+      <a class="cta-btn" href="/register" id="findOutMoreBtn">Find out more</a>
     </div>
   </div>
 
@@ -155,13 +155,24 @@
       const original = btn.textContent;
       btn.textContent = '…';
       try {
+        // Per's report — an <a download> only reliably forces a real
+        // download for a same-origin URL; R2's signed URLs are on a
+        // different domain entirely, so the browser was just ignoring
+        // the download attribute and navigating there instead, letting
+        // its own native player take over. Fetching the actual file
+        // data first and downloading THAT (a same-origin blob: URL)
+        // forces a genuine download regardless of where the original
+        // file lives.
         const url = await fetchSignedUrl(id);
+        const blob = await fetch(url).then(r => r.blob());
+        const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
+        a.href = blobUrl;
         a.download = title || 'download';
         document.body.appendChild(a);
         a.click();
         a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
       } catch (e) { alert(e.message); }
       btn.textContent = original;
     }
