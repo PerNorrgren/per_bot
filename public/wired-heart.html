@@ -21,7 +21,7 @@
     .veil { position:fixed; inset:0; z-index:1; background:linear-gradient(180deg, rgba(6,10,8,0.6) 0%, rgba(6,10,8,0.8) 60%, rgba(6,10,8,0.93) 100%); }
 
     .content { position:relative; z-index:2; }
-    section { padding:72px 24px; max-width:720px; margin:0 auto; }
+    section { padding:36px 24px; max-width:720px; margin:0 auto; }
 
     .hero { min-height:92vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 24px; }
     .wordmark { font-size:12px; letter-spacing:0.3em; text-transform:uppercase; color:rgba(255,255,255,0.55); margin-bottom:8px; }
@@ -30,6 +30,13 @@
     .book-tagline { font-size:18px; font-style:italic; color:rgba(255,255,255,0.68); margin-bottom:14px; }
     .hero-sub { font-size:16px; line-height:1.75; color:rgba(255,255,255,0.7); max-width:540px; margin-bottom:36px; }
     .by-line { font-size:13px; letter-spacing:0.05em; color:rgba(255,255,255,0.5); margin-bottom:36px; }
+    .scroll-hint-link {
+      font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(180,230,200,0.75);
+      background:none; border:none; cursor:pointer; font-family:'Georgia',serif;
+      display:flex; align-items:center; gap:6px; padding:8px;
+    }
+    .scroll-hint-link .arrow { animation:bounce 2s ease-in-out infinite; }
+    @keyframes bounce { 0%,100% { transform:translateY(0); } 50% { transform:translateY(4px); } }
 
     .cta-btn {
       display:inline-block; font-family:'Georgia',serif; font-size:14px; letter-spacing:0.12em; text-transform:uppercase;
@@ -46,7 +53,7 @@
 
     .quote {
       font-size:19px; line-height:1.7; font-style:italic; text-align:center; color:rgba(255,255,255,0.9);
-      max-width:560px; margin:44px auto; padding:0 16px;
+      max-width:560px; margin:24px auto; padding:0 16px;
     }
     .quote::before, .quote::after { content:'"'; color:rgba(180,230,200,0.5); }
 
@@ -62,7 +69,7 @@
     .who-item { font-size:15px; line-height:1.7; color:rgba(255,255,255,0.78); padding-left:24px; position:relative; text-align:left; }
     .who-item::before { content:'—'; position:absolute; left:0; color:rgba(180,230,200,0.7); }
 
-    .final-cta { text-align:center; padding:90px 24px 110px; }
+    .final-cta { text-align:center; padding:50px 24px 70px; }
     .final-cta .section-body { margin-bottom:30px; }
 
     @media (max-width: 600px) {
@@ -83,12 +90,17 @@
       <h1 class="book-title">The Wired Heart</h1>
       <div class="book-tagline">When love activates fear — and how the body heals it</div>
       <p class="hero-sub">Why the person you trust the most can be the one your nervous system treats as the greatest threat — and the specific, body-level practices that change it.</p>
+      <button class="scroll-hint-link" onclick="document.querySelector('.content section').scrollIntoView({behavior:'smooth'})">Scroll Down to Read More <span class="arrow">↓</span></button>
       <div class="by-line">Per Norrgren</div>
       <div class="cta-row">
         <a class="cta-btn" href="/register" id="buyBookBtn">Read Book In App</a>
         <a class="cta-btn secondary" href="#" id="buyKindleBtn">Buy Book</a>
       </div>
     </div>
+
+    <section style="padding-top:8px">
+      <div class="quote">Twenty minutes of ordinary silence still cost her a real stress response. That's what a bonded nervous system does.</div>
+    </section>
 
     <section>
       <div class="section-eyebrow">The paradox at the centre of it</div>
@@ -108,32 +120,20 @@
       <div class="section-title">From the problem named, to a complete daily practice.</div>
 
       <div class="movement">
-        <div class="movement-label">The problem named</div>
-        <div class="chapter-row"><div class="chapter-num">1</div><div class="chapter-title">The Paradox That Breaks the Relationships That Should Last Forever</div></div>
-        <div class="chapter-row"><div class="chapter-num">2</div><div class="chapter-title">Why Every Long-Term Relationship Hits the Wall</div></div>
-      </div>
-      <div class="movement">
-        <div class="movement-label">The mechanism understood</div>
-        <div class="chapter-row"><div class="chapter-num">3</div><div class="chapter-title">Rewriting the Past</div></div>
-      </div>
-      <div class="movement">
-        <div class="movement-label">The relationship work</div>
-        <div class="chapter-row"><div class="chapter-num">4</div><div class="chapter-title">The Gesture That Rewires Fear</div></div>
-        <div class="chapter-row"><div class="chapter-num">5</div><div class="chapter-title">The Sparkle</div></div>
-      </div>
-      <div class="movement">
-        <div class="movement-label">The individual work</div>
-        <div class="chapter-row"><div class="chapter-num">6</div><div class="chapter-title">The Automatic Body</div></div>
-        <div class="chapter-row"><div class="chapter-num">7</div><div class="chapter-title">Rubber Bullets</div></div>
-      </div>
-      <div class="movement">
-        <div class="movement-label">The deepest layer</div>
-        <div class="chapter-row"><div class="chapter-num">8</div><div class="chapter-title">The Oldest Prior</div></div>
-        <div class="chapter-row"><div class="chapter-num">9</div><div class="chapter-title">The Lab Rat and the Lab Assistant</div></div>
-      </div>
-      <div class="movement">
-        <div class="movement-label">The integration</div>
-        <div class="chapter-row"><div class="chapter-num">10</div><div class="chapter-title">The Complete Practice</div></div>
+        <div class="chapter-row"><div class="chapter-num">1</div><div class="chapter-title">The Architecture of Love</div></div>
+        <div class="chapter-row"><div class="chapter-num">2</div><div class="chapter-title">The Sparkle</div></div>
+        <div class="chapter-row"><div class="chapter-num">3</div><div class="chapter-title">Why So Many Long-Term Relationships Hit a Wall</div></div>
+        <div class="chapter-row"><div class="chapter-num">4</div><div class="chapter-title">When Quiet Isn't Enough</div></div>
+        <div class="chapter-row"><div class="chapter-num">5</div><div class="chapter-title">The Love You Cannot Have</div></div>
+        <div class="chapter-row"><div class="chapter-num">6</div><div class="chapter-title">The Paradox</div></div>
+        <div class="chapter-row"><div class="chapter-num">7</div><div class="chapter-title">The Automatic Body</div></div>
+        <div class="chapter-row"><div class="chapter-num">8</div><div class="chapter-title">Rewriting the Past</div></div>
+        <div class="chapter-row"><div class="chapter-num">9</div><div class="chapter-title">The Gesture That Rewires Fear</div></div>
+        <div class="chapter-row"><div class="chapter-num">10</div><div class="chapter-title">Rubber Bullets</div></div>
+        <div class="chapter-row"><div class="chapter-num">11</div><div class="chapter-title">The Oldest Prior</div></div>
+        <div class="chapter-row"><div class="chapter-num">12</div><div class="chapter-title">When Love Becomes the Threat</div></div>
+        <div class="chapter-row"><div class="chapter-num">13</div><div class="chapter-title">The Lab Rat and the Lab Assistant</div></div>
+        <div class="chapter-row"><div class="chapter-num">14</div><div class="chapter-title">The Complete Practice</div></div>
       </div>
     </section>
 
@@ -193,11 +193,22 @@
 
     // Per's request — two buttons: Read Book In App (already links to
     // /register above, since reading happens in-app once registered)
-    // and Buy Book (the external Kindle/KDP link, still a placeholder
-    // until Per has it). No admin panel for this — set it directly
-    // here, or ask Claude to do it in one message.
+    // and Buy Book (the external Kindle/KDP link). Uncomment and fill in
+    // the real URL below once Per has it, or ask Claude to do it in one
+    // message — the hiding logic just after this checks for a real href
+    // automatically, so setting these two lines is the only step needed
+    // to make the button appear.
     // document.getElementById('buyKindleBtn').href = 'https://amazon.co.uk/...';
     // document.getElementById('buyKindleBtn2').href = 'https://amazon.co.uk/...';
+
+    // Per's request — Buy Book stays hidden entirely until a real URL
+    // is actually set above (checking for the literal '#' placeholder
+    // rather than a real link), so nobody can click a dead button
+    // before the Kindle link exists.
+    ['buyKindleBtn', 'buyKindleBtn2'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn && (btn.getAttribute('href') === '#' || !btn.getAttribute('href'))) btn.style.display = 'none';
+    });
   </script>
 </body>
 </html>
