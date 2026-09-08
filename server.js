@@ -13783,6 +13783,46 @@ app.post('/api/admin/campaigns/:id/videos', auth.requireAuthApi(['admin']), (req
     res.json({ id, video: db.getCampaignVideo(id) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a generator: describe what's being sold, optionally
+// paste in seed material (a book excerpt, a blog post, a course
+// description — anything), say how many video slots are wanted, and
+// this produces that many titled scripts in one pass, already sitting
+// in the Videos section ready to record against. Reuses anthropicFetch
+// (the same helper every other AI feature in this app already goes
+// through) with thinking disabled, since this needs to reliably
+// produce parseable JSON and nothing else.
+app.post('/api/admin/campaigns/:id/generate-video-scripts', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { selling, link, seedText, count } = req.body;
+    if (!selling || !selling.trim()) return res.status(400).json({ error: 'What are we selling? is required.' });
+    const n = Math.max(1, Math.min(20, parseInt(count, 10) || 10));
+    const systemPrompt = `You write short-form video scripts (Reels/TikTok/Shorts style, spoken aloud, roughly 15-25 seconds each) selling Deeper Mindfulness products — courses, books, the app itself.
+
+VOICE: Plain, warm, direct. Short sentences. No hype words ("amazing," "incredible," "game-changing"), no exclamation marks, no corporate marketing language. Sounds like a real person talking, not an ad.
+
+TWO ESTABLISHED THEMES to draw on wherever genuinely relevant (don't force both into every script):
+1. Nervous-system regulation through the body, not just the mind — "your nervous system doesn't calm down because you decided to think differently, it calms down through the body." This is framed as where wellness is genuinely heading right now, not a fringe idea.
+2. Belonging and never being left alone with a technique — loneliness is treated as something the work addresses directly, not an afterthought. Practices are never "handed to you and left to use alone."
+
+VARIETY IS ESSENTIAL: across the ${n} scripts, take genuinely different angles — a hook/pattern-interrupt, the mechanism/why-it-works, a specific feature or moment, belonging/social proof, addressing who this is for, urgency/last-call, a myth being corrected, a specific relatable scene. Do not write ${n} versions of the same pitch.
+
+If seed material is provided (book excerpts, blog copy, course descriptions), draw themes, ideas, and specific concrete details from it — but paraphrase and write fresh sentences. Never reproduce sentences verbatim from the seed material.
+
+Respond with ONLY a JSON array, no other text, no markdown fences: [{"title": "short internal label, a few words", "script": "the spoken script, 15-25 seconds worth"}, ...] — exactly ${n} items.`;
+    const userMessage = `What we're selling: ${selling.trim()}${link ? `\nLink/CTA destination: ${link.trim()}` : ''}\n\nSeed material (optional, may be empty):\n${(seedText || '').trim() || '(none provided — work from the product description above and the established themes.)'}\n\nGenerate exactly ${n} scripts now.`;
+    const raw = await anthropicFetch(systemPrompt, [{ role: 'user', content: userMessage }], 4000, 45000, true);
+    let scripts;
+    try { scripts = JSON.parse(raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '')); }
+    catch(e) { return res.status(500).json({ error: 'Could not parse the generated scripts — please try again.' }); }
+    if (!Array.isArray(scripts) || !scripts.length) return res.status(500).json({ error: 'No scripts were generated — please try again.' });
+    const created = scripts.map(s => {
+      const id = uuidv4();
+      db.createCampaignVideo(id, req.params.id, (s.title || 'Untitled').trim(), (s.script || '').trim());
+      return db.getCampaignVideo(id);
+    });
+    res.json({ ok: true, count: created.length, videos: created });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.patch('/api/admin/campaigns/:id/videos/:videoId', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { title, script } = req.body;

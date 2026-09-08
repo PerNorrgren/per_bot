@@ -679,7 +679,32 @@
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div class="config-label">Videos</div>
-          <button class="btn sm" onclick="showAddCampaignVideoForm()">+ Add video</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn sm primary" onclick="showGenerateVideosForm()">✨ Generate scripts</button>
+            <button class="btn sm" onclick="showAddCampaignVideoForm()">+ Add video</button>
+          </div>
+        </div>
+        <!-- Per's request — a generator: describe what's being sold,
+             optionally paste seed material (a book excerpt, a blog
+             post, anything), say how many slots are wanted, and this
+             fills in that many titled scripts in one pass, ready to
+             record against. -->
+        <div id="campVideoGenForm" style="display:none;margin-bottom:10px;padding:12px;background:rgba(180,230,200,0.05);border:1px solid rgba(180,230,200,0.15);border-radius:8px">
+          <label style="font-size:11px;color:rgba(255,255,255,0.5);display:block;margin-bottom:3px">What are we selling?</label>
+          <input type="text" id="campVideoGenSelling" placeholder="e.g. The Wired Heart, or Finding Mindfulness live course" style="width:100%;margin-bottom:8px"/>
+          <label style="font-size:11px;color:rgba(255,255,255,0.5);display:block;margin-bottom:3px">Seed material (optional) — paste a book excerpt, blog post, course description, anything to draw from</label>
+          <textarea id="campVideoGenSeed" placeholder="Optional — leave blank to generate from the product name alone" rows="5" style="width:100%;margin-bottom:8px;font-size:12px"></textarea>
+          <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:8px">
+            <div>
+              <label style="font-size:11px;color:rgba(255,255,255,0.5);display:block;margin-bottom:3px">How many videos?</label>
+              <input type="number" id="campVideoGenCount" value="10" min="1" max="20" style="width:80px"/>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn sm primary" id="campVideoGenBtn" onclick="runGenerateVideos()">Generate</button>
+            <button class="btn sm" onclick="document.getElementById('campVideoGenForm').style.display='none'">Cancel</button>
+          </div>
+          <div id="campVideoGenStatus" style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:8px"></div>
         </div>
         <div id="campVideoAddForm" style="display:none;margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px">
           <input type="text" id="campVideoTitle" placeholder="Title (e.g. '3. What live actually means')" style="width:100%;margin-bottom:6px"/>
@@ -1818,7 +1843,53 @@
       stepVideoSel.value = current;
     }
   }
+  // Per's request — the generator: fills the Videos section with N
+  // titled scripts in one pass from a product description and optional
+  // seed material, instead of typing each one by hand.
+  function showGenerateVideosForm() {
+    document.getElementById('campVideoAddForm').style.display = 'none';
+    document.getElementById('campVideoGenStatus').textContent = '';
+    // Small convenience — if the campaign's own Promoting field is
+    // already filled in, use it as a starting point rather than making
+    // Per retype the same thing.
+    const promotesLabel = (document.getElementById('campDetailPromotesLabel') || {}).value;
+    if (promotesLabel && !document.getElementById('campVideoGenSelling').value) {
+      document.getElementById('campVideoGenSelling').value = promotesLabel;
+    }
+    document.getElementById('campVideoGenForm').style.display = '';
+  }
+  async function runGenerateVideos() {
+    const selling = document.getElementById('campVideoGenSelling').value.trim();
+    if (!selling) { document.getElementById('campVideoGenStatus').textContent = 'What are we selling? is required.'; return; }
+    const seedText = document.getElementById('campVideoGenSeed').value;
+    const count = document.getElementById('campVideoGenCount').value;
+    const btn = document.getElementById('campVideoGenBtn');
+    const status = document.getElementById('campVideoGenStatus');
+    btn.disabled = true;
+    status.style.color = 'rgba(255,255,255,0.5)';
+    status.textContent = 'Generating — this can take a moment for a full batch…';
+    try {
+      // Link pre-fills from the campaign's own Promoting/Link fields,
+      // already set at the top of this campaign, if present.
+      const link = (document.getElementById('campDetailPromotesUrl') || {}).value || '';
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/generate-video-scripts`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ selling, seedText, count, link })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) { status.style.color = 'rgba(255,140,120,0.85)'; status.textContent = data.error || 'Could not generate — please try again.'; btn.disabled = false; return; }
+      status.style.color = 'rgba(180,230,200,0.9)';
+      status.textContent = `Added ${data.count} video${data.count===1?'':'s'} below — review, tweak if needed, then record and upload against each one.`;
+      document.getElementById('campVideoGenForm').style.display = 'none';
+      await loadCampaignVideos();
+    } catch(e) {
+      status.style.color = 'rgba(255,140,120,0.85)';
+      status.textContent = 'Could not generate — please try again.';
+    }
+    btn.disabled = false;
+  }
   function showAddCampaignVideoForm() {
+    document.getElementById('campVideoGenForm').style.display = 'none';
     document.getElementById('campVideoTitle').value = '';
     document.getElementById('campVideoScript').value = '';
     document.getElementById('campVideoAddForm').style.display = '';
