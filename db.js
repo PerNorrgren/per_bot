@@ -6813,24 +6813,6 @@ function getFilesByTag(tag) {
     ORDER BY lf.title ASC`, [tag]);
 }
 
-// Per's request — the ten-virtue /samurai page. Same shape as
-// getFilesByTag above, but takes a list of tags in one query (one call
-// per page load instead of eleven) and returns the matched tag on each
-// row so the front end can bucket each file into its own virtue
-// section. A file can legitimately carry more than one of these tags
-// (e.g. also kept in 'modern samurai') and will appear once per match,
-// which is correct — each section is its own bucket.
-function getFilesBySamuraiTags(tags) {
-  if (!tags || !tags.length) return [];
-  const placeholders = tags.map(() => 'LOWER(?)').join(',');
-  return queryAll(`
-    SELECT lf.id, lf.title, lf.content_type, lf.file_type, lf.description, LOWER(t.tag) as tag
-    FROM library_files lf
-    JOIN library_file_tags t ON t.file_id = lf.id
-    WHERE LOWER(t.tag) IN (${placeholders}) AND lf.archived = 0
-    ORDER BY lf.title ASC`, tags.map(t => t.toLowerCase()));
-}
-
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   // Per Bot 25 — category_name/subcategory_name added via the same JOIN
@@ -7724,8 +7706,20 @@ function updateCampaign(id, fields) {
   const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url'];
   const keys = Object.keys(fields).filter(k => allowed.includes(k));
   if (!keys.length) return;
+  // Per's real incident — Goal/Promoting/Link silently failed to save
+  // the whole time the campaign was active, with no error shown at
+  // all, because this WHERE clause quietly no-ops for anything past
+  // draft. That's the right protection for name/offer_id/audience
+  // (genuinely risky to change campaign logic mid-flight), but goal,
+  // promotes_label, and promotes_url are safe descriptive metadata —
+  // there's no reason they shouldn't stay editable after go-live, and
+  // in this exact case Link is the actual registration URL the whole
+  // campaign depends on.
+  const draftOnlyFields = ['name', 'offer_id', 'audience', 'source_tag'];
+  const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
-  getDbSync().run(`UPDATE campaigns SET ${sets} WHERE id=? AND status='draft'`, [...keys.map(k => fields[k]), id]);
+  const where = hasDraftOnlyField ? `WHERE id=? AND status='draft'` : `WHERE id=?`;
+  getDbSync().run(`UPDATE campaigns SET ${sets} ${where}`, [...keys.map(k => fields[k]), id]);
   save();
 }
 // Draft -> active is one-way through this function; going live records
@@ -10418,7 +10412,7 @@ module.exports = {
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,
-  addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag, getFilesBySamuraiTags,
+  addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,
   getTtsCacheEntry, setTtsCacheEntry,

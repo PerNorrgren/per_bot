@@ -670,6 +670,7 @@
           </div>
           <button class="btn sm" onclick="saveCampaignGoal()">Save</button>
         </div>
+        <div id="campGoalSaveStatus" style="font-size:12px;margin-top:6px"></div>
       </div>
 
       <!-- Per's request — "a list of videos with the script": plan
@@ -1722,6 +1723,13 @@
         const mediaLine = s.media_url
           ? `<div style="margin-bottom:6px;font-size:12px;color:rgba(180,230,200,0.75)">📎 ${s.media_type === 'video' ? 'Video' : 'Image'} attached${s.campaign_video_id ? ' (from planned video)' : ''}</div>`
           : '';
+        // Per's report — a failed step only ever showed the word
+        // "failed," never the actual reason, even though the real
+        // error message was already being captured and stored server-
+        // side the whole time. Just never rendered anywhere.
+        const errorLine = (s.status === 'failed' && s.error)
+          ? `<div style="margin-bottom:6px;font-size:12px;color:rgba(255,140,120,0.85)">⚠ ${escHtml(s.error)}</div>`
+          : '';
         return `
         <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -1737,6 +1745,7 @@
               <button class="btn sm" onclick="deleteCampaignStep('${s.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
             </div>` : ''}
           </div>
+          ${errorLine}
           ${mediaLine}
           ${s.channel==='email' ? `<div style="display:flex;gap:6px;margin-bottom:6px">
             <input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="flex:1" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>
@@ -1929,12 +1938,29 @@
     finally { input.value = ''; }
   }
   async function saveCampaignGoal() {
+    const status = document.getElementById('campGoalSaveStatus');
+    status.style.color = 'rgba(255,255,255,0.5)';
+    status.textContent = 'Saving…';
     const body = {
       goal: document.getElementById('campDetailGoal').value.trim() || null,
       promotesLabel: document.getElementById('campDetailPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campDetailPromotesUrl').value.trim() || null,
     };
-    await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        status.style.color = 'rgba(255,140,120,0.85)';
+        status.textContent = data.error || 'Could not save — please try again.';
+        return;
+      }
+      status.style.color = 'rgba(180,230,200,0.9)';
+      status.textContent = 'Saved.';
+      setTimeout(() => { if (status.textContent === 'Saved.') status.textContent = ''; }, 3000);
+    } catch(e) {
+      status.style.color = 'rgba(255,140,120,0.85)';
+      status.textContent = 'Could not save — please try again.';
+    }
   }
   // Per Bot 21 — this one had no loading feedback of any kind before —
   // a genuinely silent multi-second wait for an AI-generated rewrite,
