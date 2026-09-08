@@ -14119,20 +14119,13 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 app.get('/assets/certificate/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'logo.png')));
 app.get('/assets/certificate/signature.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'signature.png')));
 // Per's request — "The Modern Samurai" public landing page (/samurai),
-// no login required. Ten virtue sections plus the original general
-// bucket ('modern samurai' — the "Facing Yourself First" intro
-// practice predates the virtue sections and doesn't belong to any one
-// virtue, so it keeps its own tag rather than being force-fit into
-// samurai1). One list endpoint returns every matching file across all
-// eleven tags in a single call, each row carrying which tag matched so
-// the front end can bucket it into the right section. A separate
-// on-demand signed-URL endpoint (not embedded in the list response)
-// since R2 signed URLs expire in 10 minutes — someone browsing the
-// page for a while before clicking Listen would otherwise hit a dead
-// link.
-const SAMURAI_TAGS = ['modern samurai', 'samurai1', 'samurai2', 'samurai3', 'samurai4', 'samurai5', 'samurai6', 'samurai7', 'samurai8', 'samurai9', 'samurai10'];
+// no login required. Two endpoints: a plain list of what's tagged, and
+// a separate on-demand signed-URL endpoint (not embedded in the list
+// response) since R2 signed URLs expire in 10 minutes — someone
+// browsing the page for a while before clicking Listen would otherwise
+// hit a dead link.
 app.get('/api/public/samurai-content', (req, res) => {
-  try { res.json(db.getFilesBySamuraiTags(SAMURAI_TAGS)); }
+  try { res.json(db.getFilesByTag('modern samurai')); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/public/samurai-content/:id/url', async (req, res) => {
@@ -14144,8 +14137,7 @@ app.get('/api/public/samurai-content/:id/url', async (req, res) => {
     // signed URL for any file id" endpoint just because it has no login
     // requirement.
     const tags = db.getFileTags(file.id).map(t => t.toLowerCase());
-    const allowed = SAMURAI_TAGS.some(t => tags.includes(t));
-    if (!allowed || file.archived) return res.status(403).json({ error: 'Not available.' });
+    if (!tags.includes('modern samurai') || file.archived) return res.status(403).json({ error: 'Not available.' });
     if (file.storage_type === 'r2') {
       const isTextHtml = file.file_type === 'text/html';
       const url = await media.getPlaybackUrl(file.filename, { noCache: isTextHtml, forceUtf8: isTextHtml });
