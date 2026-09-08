@@ -7704,17 +7704,18 @@ function createCampaign(id, name, offerId, audience) {
 }
 function updateCampaign(id, fields) {
   const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url'];
-  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  // Per's real incident — Object.keys(fields) includes a key even when
+  // its value is undefined (e.g. {name: undefined} still has a "name"
+  // key) — so the caller in server.js, which always destructures all
+  // six fields from req.body regardless of what was actually sent,
+  // was making every single save look like it touched name/offer_id/
+  // audience even when it only ever touched goal/promotes_label/
+  // promotes_url. That's what made the draft-only WHERE clause fire
+  // incorrectly for every single Goal/Promoting/Link save, active
+  // campaign or not. Filtering on a real value fixes it at the root
+  // rather than requiring every caller to remember to omit unused keys.
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
-  // Per's real incident — Goal/Promoting/Link silently failed to save
-  // the whole time the campaign was active, with no error shown at
-  // all, because this WHERE clause quietly no-ops for anything past
-  // draft. That's the right protection for name/offer_id/audience
-  // (genuinely risky to change campaign logic mid-flight), but goal,
-  // promotes_label, and promotes_url are safe descriptive metadata —
-  // there's no reason they shouldn't stay editable after go-live, and
-  // in this exact case Link is the actual registration URL the whole
-  // campaign depends on.
   const draftOnlyFields = ['name', 'offer_id', 'audience', 'source_tag'];
   const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
