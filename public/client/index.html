@@ -6736,6 +6736,7 @@
       Array.isArray(data.recentPosts) ? data.recentPosts : [],
       Array.isArray(data.recentBooks) ? data.recentBooks : [],
       Array.isArray(data.liveMeetings) ? data.liveMeetings : [],
+      Array.isArray(data.popularPractices) ? data.popularPractices : [],
       data.shelfCounts || {}
     );
   }
@@ -6751,7 +6752,7 @@
   // these two.
   let _shelvesData = [];
   let _liveMeetingsById = {};
-  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks, liveMeetings, shelfCounts) {
+  function renderFeaturedShelves(courses, content, recentPoems, recentPosts, recentBooks, liveMeetings, popularPractices, shelfCounts) {
     shelfCounts = shelfCounts || {};
     _featuredContentData = content.concat(recentPoems, recentPosts, recentBooks);
     const el = document.getElementById('featuredShelves');
@@ -6801,6 +6802,28 @@
         <div class="shelf-card-meta">${f.category_name || ''}</div>
       </div>
     `;
+
+    // Per's request — "Popular Practices," ranked by real plays with
+    // admin-pinned ones taking priority (see getPopularPractices).
+    // Cross-referenced against `content` (already has accurate
+    // per-user tier access computed server-side) rather than
+    // duplicating that logic — a locked practice shows the same
+    // lock/upgrade treatment as everywhere else instead of just
+    // vanishing from the list.
+    if (popularPractices.length) {
+      const contentById = {};
+      content.forEach(f => { contentById[f.id] = f; });
+      const popularCard = (p) => {
+        const full = contentById[p.id] || p;
+        return `
+          <div class="shelf-card ${full.accessible === false ? 'locked' : ''}" onclick="openFeaturedContentById('${p.id}')">
+            <div class="shelf-card-title">${full.accessible === false ? '🔒 ' : ''}${p.title}</div>
+            <div class="shelf-card-meta">${p.play_count} play${p.play_count === 1 ? '' : 's'}</div>
+          </div>
+        `;
+      };
+      shelves.push({ label: 'Popular Practices', count: popularPractices.length, rows: popularPractices, cardHtml: popularCard });
+    }
 
     if (recentPoems.length) {
       shelves.push({ label: 'Poems', count: shelfCounts.poems, rows: recentPoems, cardHtml: miniCard });

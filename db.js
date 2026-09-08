@@ -2171,6 +2171,13 @@ async function getDb() {
     // settable here so repointing it at a future course never needs a
     // code change or deploy, just an admin edit.
     "ALTER TABLE app_config ADD COLUMN join_link_url TEXT",
+    // Per's request — "Popular Practices" box: admin can tick a practice
+    // to pin it, overriding the automatic play-count ranking. A plain
+    // boolean rather than a full manual-order field — pinned items still
+    // sort among themselves by play count too, keeping this simple
+    // rather than building a whole drag-reorder UI for something Per
+    // only asked to be able to tick on/off.
+    "ALTER TABLE library_files ADD COLUMN popular_pinned INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE app_config ADD COLUMN test_phone TEXT",
     // Per's request — a campaign now carries its own overall goal and
     // what it's actually promoting (a course, a book, a podcast episode,
@@ -6758,6 +6765,40 @@ function getLibraryFilesForUser(userFlags) {
 // once. Doesn't touch /api/content/library (the admin management list),
 // which is a completely separate query — admin still needs to see and
 // manage every file regardless of what it's attached to.
+// ── Popular Practices (Per's request) ── ranked by real play events
+// already logged in content_history (no new tracking needed), with
+// admin-pinned practices always included and taking priority — pinned
+// items still sort among themselves by play count too, rather than
+// needing a separate manual order.
+function getPopularPractices(limit) {
+  const playCounts = queryAll(`
+    SELECT content_id, COUNT(*) as play_count FROM content_history
+    WHERE content_type IN ('meditation','practice') GROUP BY content_id`);
+  const countMap = {};
+  playCounts.forEach(r => { countMap[r.content_id] = r.play_count; });
+  const files = queryAll(`SELECT id, title, content_type, category_id, popular_pinned FROM library_files WHERE archived=0 AND content_type IN ('meditation','practice')`);
+  const withCounts = files.map(f => ({ ...f, play_count: countMap[f.id] || 0 }));
+  const pinned = withCounts.filter(f => f.popular_pinned).sort((a, b) => b.play_count - a.play_count);
+  const unpinned = withCounts.filter(f => !f.popular_pinned).sort((a, b) => b.play_count - a.play_count);
+  return [...pinned, ...unpinned].slice(0, limit || 5);
+}
+// Admin management view — every practice, with its real play count and
+// pinned state, so Per can browse and tick freely rather than needing
+// to already know which ones are popular.
+function getAllPracticesWithPlayCounts() {
+  const playCounts = queryAll(`
+    SELECT content_id, COUNT(*) as play_count FROM content_history
+    WHERE content_type IN ('meditation','practice') GROUP BY content_id`);
+  const countMap = {};
+  playCounts.forEach(r => { countMap[r.content_id] = r.play_count; });
+  const files = queryAll(`SELECT id, title, content_type, popular_pinned FROM library_files WHERE archived=0 AND content_type IN ('meditation','practice') ORDER BY title ASC`);
+  return files.map(f => ({ ...f, play_count: countMap[f.id] || 0 }));
+}
+function setPracticePinned(fileId, pinned) {
+  getDbSync().run(`UPDATE library_files SET popular_pinned=? WHERE id=?`, [pinned ? 1 : 0, fileId]);
+  save();
+}
+
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   // Per Bot 25 — category_name/subcategory_name added via the same JOIN
@@ -10344,6 +10385,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
+  getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,

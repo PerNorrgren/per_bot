@@ -290,6 +290,7 @@
             <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
           <button class="btn" onclick="openContentSettings()" title="Default visibility for newly-created lessons, and other content-wide settings">⚙ Settings</button>
+          <button class="btn" onclick="openPopularPracticesModal()" title="See real play counts for every practice, and pin any of them to override the automatic popularity ranking">⭐ Popular Practices</button>
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
           <button class="btn" onclick="openDuplicatesScan()">Scan for duplicate files</button>
           <button class="btn" onclick="openDomainRefsScan()">Scan for old domain links</button>
@@ -1287,6 +1288,19 @@
       <button class="btn sm" id="certEditorViewPdfBtn" onclick="viewCertificatePdfPreview()" style="display:none" title="Shows exactly what's currently saved — save first if you've just changed something. Print/download from the browser's own PDF viewer once it opens.">View PDF</button>
       <button class="btn sm danger" id="certEditorDeleteBtn" onclick="deleteCertificateTemplateFromEditor()" style="display:none">Delete</button>
       <button class="modal-ok" onclick="saveCertificateTemplateFromEditor()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — "Popular Practices" management: real play counts,
+     and a tick per row to pin/unpin, overriding the automatic ranking. -->
+<div class="modal-overlay" id="popularPracticesModal">
+  <div class="modal wide" style="max-width:640px">
+    <h3>Popular Practices</h3>
+    <div class="modal-note">The client home screen shows the top 5 by real plays. Tick "Pin" on any practice to guarantee it's included, regardless of its play count — pinned ones still sort by plays among themselves.</div>
+    <div id="popularPracticesBody" style="overflow-y:auto;max-height:55vh;margin-top:10px"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('popularPracticesModal')">Close</button>
     </div>
   </div>
 </div>
@@ -4564,6 +4578,36 @@ async function deleteSession(id){
 // only, doesn't touch Stripe or membership tier — that's the separate,
 // still-pending refund-triggered-downgrade feature.
 let _enrolModalInstanceId = null;
+// Per's request — "Popular Practices" admin management: real play
+// counts, and a tick per row to pin/unpin, overriding the automatic
+// ranking.
+async function openPopularPracticesModal(){
+  await refreshPopularPracticesModal();
+  openModal('popularPracticesModal');
+}
+async function refreshPopularPracticesModal(){
+  const list = await fetch('/api/admin/popular-practices').then(r=>r.json());
+  const el = document.getElementById('popularPracticesBody');
+  if (!list.length) { el.innerHTML = '<div class="empty" style="padding:16px">No practice files yet.</div>'; return; }
+  // Highest play count first, so the ones actually worth considering
+  // pinning are the easiest to find — pinned ones aren't pulled to the
+  // top here, this is a browsing/management view, not a preview of the
+  // client's own ranking.
+  const sorted = [...list].sort((a,b) => b.play_count - a.play_count);
+  el.innerHTML = `<div class="file-list-header"><div class="flr-title">Title</div><div class="flr-meta">Plays</div><div class="flr-meta">Pin</div></div>` +
+    sorted.map(f => `
+      <div class="file-list-row">
+        <div class="flr-title">${f.title}</div>
+        <div class="flr-meta">${f.play_count}</div>
+        <div class="flr-meta"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${f.popular_pinned ? 'checked' : ''} onchange="togglePracticePinned('${f.id}', this.checked)"/> Pin</label></div>
+      </div>
+    `).join('');
+}
+async function togglePracticePinned(fileId, pinned){
+  try {
+    await fetch(`/api/admin/library/${fileId}/pin-popular`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pinned }) });
+  } catch(e) { appAlert('Could not save — please try again.'); refreshPopularPracticesModal(); }
+}
 async function openEnrolmentsModal(instanceId,instanceTitle){
   _enrolModalInstanceId = instanceId;
   document.getElementById('enrolModalTitle').textContent='Enrolments — '+instanceTitle;

@@ -3665,6 +3665,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentBooks: db.getRecentStandaloneFiles('book', null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       liveMeetings: db.getLiveMeetings(true), // Per Bot 38 — its own shelf, Books then Live Meetings
+      popularPractices: db.getPopularPractices(5), // Per's request
       shelfCounts: db.getShelfCounts(), // Per Bot 44 — Explorer+Member totals shown in each shelf heading
       carouselSpeedSeconds: db.getAppConfig()?.carousel_speed_seconds ?? 3.5, // Per Bot 48
     });
@@ -3689,6 +3690,19 @@ app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res)
 // (Zoom etc.) shown as their own carousel under Books on the splash
 // screen. Simple list — no separate detail page, matching how small the
 // feature actually is right now (one meeting, maybe a few more later).
+// Per's request — admin management for the "Popular Practices" box:
+// every practice with its real play count, and a tick to pin any of
+// them, overriding the automatic ranking.
+app.get('/api/admin/popular-practices', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getAllPracticesWithPlayCounts()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/library/:id/pin-popular', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    db.setPracticePinned(req.params.id, !!req.body.pinned);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/admin/live-meetings', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
   try { res.json(db.getLiveMeetings(false)); } catch(e) { res.status(500).json({ error: e.message }); }
 });
