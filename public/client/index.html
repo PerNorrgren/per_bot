@@ -6880,7 +6880,7 @@
   // a fallback for the brief moment before that fetch resolves, or if
   // it ever fails — not the source of truth once the real value's in.
   let SHELF_AUTOPLAY_MS = 3500;
-  const SHELF_RESUME_AFTER_MS = 6000;
+  const SHELF_RESUME_AFTER_MS = 4000;
   const AUTOPLAY_SHELF_LABEL = 'Practices';
   function initShelfCarousels() {
     _shelfCarouselCleanups.forEach(fn => fn());
@@ -6928,7 +6928,15 @@
         const cardWidth = cards[0].getBoundingClientRect().width;
         const gap = 12;
         const atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - cardWidth / 2;
-        if (atEnd) row.scrollTo({ left: 0, behavior: 'smooth' });
+        // Per's report — this used to smooth-scroll all the way back to
+        // the start, which is a highly visible full-width slide
+        // backwards rather than anything resembling a continuous loop.
+        // An instant (non-animated) jump reads as a quick, near-invisible
+        // reset instead — genuine seamless infinite scroll would need
+        // duplicate DOM cards appended past the real end, which is a much
+        // bigger change; this gets the actual complaint (visible
+        // rewinding) fixed without that.
+        if (atEnd) row.scrollLeft = 0;
         else row.scrollBy({ left: cardWidth + gap, behavior: 'smooth' });
       };
       const startTimer = () => { if (!timer) timer = setInterval(step, SHELF_AUTOPLAY_MS); };
@@ -6947,11 +6955,42 @@
       row.addEventListener('pointerdown', pauseThenResume);
       row.addEventListener('touchstart', pauseThenResume, { passive: true });
 
+      // Per's report — "not possible to scroll with your mouse." Touch
+      // swiping already works natively on an overflow-x:auto row, but
+      // browsers deliberately don't turn a mouse click-drag into a
+      // scroll gesture the same way — that has to be built by hand:
+      // track the pointer's horizontal movement while the primary
+      // button is held and apply it directly to scrollLeft. Restricted
+      // to mouse pointers specifically (pointerType 'mouse') so it
+      // doesn't fight the browser's own, already-working touch/pen
+      // scrolling with a second, competing drag handler.
+      let dragging = false, dragStartX = 0, dragStartScroll = 0;
+      const onPointerDown = (e) => {
+        if (e.pointerType !== 'mouse') return;
+        dragging = true;
+        dragStartX = e.clientX;
+        dragStartScroll = row.scrollLeft;
+        row.style.cursor = 'grabbing';
+      };
+      const onPointerMove = (e) => {
+        if (!dragging) return;
+        row.scrollLeft = dragStartScroll - (e.clientX - dragStartX);
+      };
+      const endDrag = () => { dragging = false; row.style.cursor = ''; };
+      row.addEventListener('pointerdown', onPointerDown);
+      row.addEventListener('pointermove', onPointerMove);
+      row.addEventListener('pointerup', endDrag);
+      row.addEventListener('pointerleave', endDrag);
+
       cleanupFns.push(() => {
         stopTimer();
         clearTimeout(resumeTimer);
         row.removeEventListener('pointerdown', pauseThenResume);
         row.removeEventListener('touchstart', pauseThenResume);
+        row.removeEventListener('pointerdown', onPointerDown);
+        row.removeEventListener('pointermove', onPointerMove);
+        row.removeEventListener('pointerup', endDrag);
+        row.removeEventListener('pointerleave', endDrag);
       });
 
       _practicesCarouselControl = { start: startTimer, stop: stopTimer };
