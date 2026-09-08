@@ -83,8 +83,8 @@
       <p class="hero-sub">You've tried therapy. Medication. Mindfulness. The right breathing, the right books, the right positive thoughts. And something in you still won't settle. This book explains exactly why — and what actually reaches it.</p>
       <div class="by-line">Per Norrgren</div>
       <div class="cta-row">
-        <a class="cta-btn" href="#" id="buyBookBtn">Get the book</a>
-        <a class="cta-btn secondary" href="#" id="buyAudioBtn">Listen to the audiobook</a>
+        <a class="cta-btn" href="/register" id="buyBookBtn">Read Book In App</a>
+        <a class="cta-btn secondary" href="#" id="buyKindleBtn">Buy Book</a>
       </div>
     </div>
 
@@ -141,8 +141,8 @@
       <div class="section-title">Your body already knows how to settle.<br/>It just needs the right conversation.</div>
       <div class="section-body">The floor is there. Press your heels in. See what the body says back.</div>
       <div class="cta-row">
-        <a class="cta-btn" href="#" id="buyBookBtn2">Get the book</a>
-        <a class="cta-btn secondary" href="#" id="buyAudioBtn2">Listen to the audiobook</a>
+        <a class="cta-btn" href="/register" id="buyBookBtn2">Read Book In App</a>
+        <a class="cta-btn secondary" href="#" id="buyKindleBtn2">Buy Book</a>
       </div>
     </div>
   </div>
@@ -175,11 +175,13 @@
       setInterval(showNext, 15500);
     });
 
-    // Per's request — no admin panel, one-off page. Set the real KDP and
-    // Author's Republic URLs directly here (or ask Claude to do it in
-    // one message) once they're ready — same pattern as wired-heart.html.
-    // document.getElementById('buyBookBtn').href = 'https://amazon.co.uk/...';
-    // document.getElementById('buyAudioBtn').href = 'https://...';
+    // Per's request — two buttons: Read Book In App (already links to
+    // /register above, since reading happens in-app once registered)
+    // and Buy Book (the external Kindle/KDP link, still a placeholder
+    // until Per has it). No admin panel for this — set it directly
+    // here, or ask Claude to do it in one message.
+    // document.getElementById('buyKindleBtn').href = 'https://amazon.co.uk/...';
+    // document.getElementById('buyKindleBtn2').href = 'https://amazon.co.uk/...';
   </script>
 </body>
 </html>
