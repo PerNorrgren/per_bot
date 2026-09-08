@@ -6799,6 +6799,20 @@ function setPracticePinned(fileId, pinned) {
   save();
 }
 
+// Per's request — "The Modern Samurai" public landing page. Case-
+// insensitive match since tags are stored as-typed (this codebase has
+// a known history of case-duplicate tags), and archived files are
+// correctly excluded — a public marketing page should never surface
+// something pulled from the library.
+function getFilesByTag(tag) {
+  return queryAll(`
+    SELECT lf.id, lf.title, lf.content_type, lf.file_type, lf.description
+    FROM library_files lf
+    JOIN library_file_tags t ON t.file_id = lf.id
+    WHERE LOWER(t.tag) = LOWER(?) AND lf.archived = 0
+    ORDER BY lf.title ASC`, [tag]);
+}
+
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   // Per Bot 25 — category_name/subcategory_name added via the same JOIN
@@ -10385,7 +10399,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
-  getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned,
+  getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,
