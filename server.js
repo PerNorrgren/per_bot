@@ -13966,9 +13966,21 @@ app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), as
 // go-live) and the daily cron below (steps becoming due on later
 // days) — one place that actually calls publishToChannel and records
 // the result, so both paths behave identically.
+// Per's request — the campaign's own saved Link now gets appended to
+// every step's content automatically at publish time, rather than
+// requiring each of the 10 already-written scripts to be hand-edited.
+// Looked up fresh here (not passed in by the caller) so every firing
+// path — /activate's immediate-fire, /resume's immediate-fire, and the
+// daily cron — gets this identically without needing three separate
+// query changes, and so it works for every future campaign too, not
+// just this one.
 async function fireCampaignSocialStep(step) {
   try {
-    const postData = { content: step.content };
+    const campaign = db.getCampaign(step.campaign_id);
+    const content = (campaign?.promotes_url && !step.content.includes(campaign.promotes_url))
+      ? `${step.content}\n\n${campaign.promotes_url}`
+      : step.content;
+    const postData = { content };
     if (step.media_url) { postData.mediaUrl = step.media_url; postData.mediaType = step.media_type || 'image'; }
     const post = await publishers.publishToChannel(step.channel, postData);
     db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || post?.post?.id || null });
