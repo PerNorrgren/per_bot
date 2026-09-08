@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Deeper Mindfulness — Your nervous system doesn't calm down because you decided to think differently</title>
+  <link rel="icon" href="/favicon-dynamic"/>
+  <link rel="apple-touch-icon" href="/favicon-dynamic"/>
+  <link rel="manifest" href="/site.webmanifest"/>
+  <script src="/brand-inject.js"></script>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { font-family:'Georgia',serif; background:#0a0f0d; color:rgba(255,255,255,0.92); overflow-x:hidden; }
+
+    /* ── Moving backdrop — Per's request: "big images that move,
+         inducing calm and happiness." A slow Ken Burns zoom/pan per
+         image rather than actual video: lighter weight, no buffering,
+         and it reuses the exact same curated Unsplash set already
+         established on register.html/samurai.html, so the whole site
+         still feels like one place. ── */
+    .kb-wrap { position:fixed; inset:0; z-index:0; overflow:hidden; }
+    .kb-slide {
+      position:absolute; inset:-5%; background-size:cover; background-position:center;
+      opacity:0; animation-fill-mode:forwards;
+    }
+    .kb-slide.active { animation: kbMove 16s ease-in-out forwards, kbFade 16s ease-in-out forwards; }
+    @keyframes kbMove { from { transform:scale(1.0) translate(0,0); } to { transform:scale(1.12) translate(-1.5%,-1.5%); } }
+    @keyframes kbFade { 0% {opacity:0;} 12% {opacity:1;} 88% {opacity:1;} 100% {opacity:0;} }
+    .veil { position:fixed; inset:0; z-index:1; background:linear-gradient(180deg, rgba(6,10,8,0.55) 0%, rgba(6,10,8,0.75) 60%, rgba(6,10,8,0.92) 100%); }
+
+    .content { position:relative; z-index:2; }
+    section { padding:80px 24px; max-width:760px; margin:0 auto; }
+
+    /* Hero */
+    .hero { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 24px; }
+    .wordmark { font-size:12px; letter-spacing:0.3em; text-transform:uppercase; color:rgba(255,255,255,0.6); margin-bottom:28px; }
+    .hero-headline { font-size:42px; line-height:1.25; font-weight:normal; max-width:680px; margin-bottom:22px; }
+    .hero-headline em { color:rgba(180,230,200,0.95); font-style:normal; }
+    .hero-sub { font-size:17px; line-height:1.7; color:rgba(255,255,255,0.72); max-width:520px; margin-bottom:38px; }
+
+    .cta-btn {
+      display:inline-block; font-family:'Georgia',serif; font-size:14px; letter-spacing:0.12em; text-transform:uppercase;
+      padding:16px 44px; border-radius:12px; border:1px solid rgba(180,230,200,0.45);
+      background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.98); text-decoration:none;
+      transition:background 0.2s;
+    }
+    .cta-btn:hover { background:rgba(180,230,200,0.24); }
+    .cta-note { font-size:12px; color:rgba(255,255,255,0.45); margin-top:14px; }
+
+    .scroll-hint { position:absolute; bottom:36px; font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
+
+    /* Sections */
+    .section-eyebrow { font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color:rgba(180,230,200,0.7); margin-bottom:16px; text-align:center; }
+    .section-title { font-size:28px; line-height:1.4; font-weight:normal; text-align:center; margin-bottom:20px; }
+    .section-body { font-size:16px; line-height:1.85; color:rgba(255,255,255,0.78); text-align:center; max-width:620px; margin:0 auto; }
+
+    .pillars { display:flex; flex-direction:column; gap:28px; margin-top:44px; }
+    .pillar { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:26px 28px; }
+    .pillar-title { font-size:18px; margin-bottom:8px; color:rgba(255,255,255,0.92); }
+    .pillar-body { font-size:15px; line-height:1.75; color:rgba(255,255,255,0.68); }
+
+    .feeling-list { display:flex; flex-direction:column; gap:18px; margin-top:36px; max-width:520px; margin-left:auto; margin-right:auto; }
+    .feeling-item { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.82); padding-left:26px; position:relative; text-align:left; }
+    .feeling-item::before { content:'—'; position:absolute; left:0; color:rgba(180,230,200,0.7); }
+
+    .final-cta { text-align:center; padding:100px 24px 120px; }
+    .final-cta .section-title { margin-bottom:16px; }
+    .final-cta .section-body { margin-bottom:36px; }
+
+    @media (max-width: 600px) {
+      .hero-headline { font-size:32px; }
+      .section-title { font-size:24px; }
+      section { padding:64px 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="kb-wrap" id="kbWrap"></div>
+  <div class="veil"></div>
+
+  <div class="content">
+    <div class="hero">
+      <div class="wordmark" data-brand="name">Deeper Mindfulness</div>
+      <h1 class="hero-headline">Your nervous system doesn't calm down<br/>because you decided to think differently.<br/><em>It calms down through the body.</em></h1>
+      <p class="hero-sub">That's not a guess — it's where wellness is actually heading right now. Deeper Mindfulness is built entirely on it: short, guided practices that speak to the part of you that reacts before you've had a single thought about it.</p>
+      <a class="cta-btn" href="/register">Try Now</a>
+      <div class="cta-note">Free to explore. No card needed.</div>
+      <div class="scroll-hint">↓ keep going</div>
+    </div>
+
+    <section>
+      <div class="section-eyebrow">You're not doing this alone</div>
+      <div class="section-title">Loneliness isn't a side effect of stress.<br/>It's something we work on directly.</div>
+      <div class="section-body">Not by telling you to "connect more." By building belonging into the practice itself — daily check-ins, live group sessions, a companion that actually notices how you're doing. You're never just handed a technique and left to use it alone.</div>
+    </section>
+
+    <section>
+      <div class="section-eyebrow">What's actually here</div>
+      <div class="pillars">
+        <div class="pillar">
+          <div class="pillar-title">Practices that meet you where you are</div>
+          <div class="pillar-body">Grounding, breath, gentle touch, movement — a few minutes at a time, whenever your day actually allows for it. Nothing to force, nothing to get right.</div>
+        </div>
+        <div class="pillar">
+          <div class="pillar-title">A companion, not a checklist</div>
+          <div class="pillar-body">Talk it through, out loud or typed, whenever something's sitting heavy. It remembers what matters to you — you're never starting the conversation from zero.</div>
+        </div>
+        <div class="pillar">
+          <div class="pillar-title">Real people, live, when you want them</div>
+          <div class="pillar-body">Join a group session on Zoom, same time each week, real faces. Or work through everything entirely in your own time — either way genuinely works.</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-eyebrow">How this actually feels</div>
+      <div class="section-title">Not fixed. Not performing wellness.<br/>Just steadier than you were.</div>
+      <div class="feeling-list">
+        <div class="feeling-item">The specific relief of a body that's stopped bracing, even for a minute.</div>
+        <div class="feeling-item">Being met exactly where you are, not where a program assumes you should be by now.</div>
+        <div class="feeling-item">Someone — or something — genuinely noticing when you haven't checked in in a while.</div>
+        <div class="feeling-item">The quiet confidence of a practice you'll actually still be doing in six months.</div>
+        <div class="feeling-item">Belonging to something, even in the moments you're on your own.</div>
+      </div>
+    </section>
+
+    <div class="final-cta">
+      <div class="section-title">Nothing here needs to be fast.<br/>The steady thing is doing its work.</div>
+      <div class="section-body">Begin whenever you're ready — your practice space, your pace.</div>
+      <a class="cta-btn" href="/register">Try Now</a>
+    </div>
+  </div>
+
+  <script>
+    // Same curated set already established on register.html/samurai.html
+    // — kept identical on purpose so the whole site reads as one place,
+    // not a patchwork of different stock photography per page.
+    const defaultSlides = [
+      'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1920&q=80',
+      'https://images.unsplash.com/photo-1433086966358-54859d0ed716?w=1920&q=80',
+      'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1920&q=80',
+      'https://images.unsplash.com/photo-1448375240586-882707db888b?w=1920&q=80',
+      'https://images.unsplash.com/photo-1470770841072-f978cf4d019e?w=1920&q=80',
+    ];
+    window.brandReady.then(() => {
+      const slides = (window.__skinBackgroundImages && window.__skinBackgroundImages.length) ? window.__skinBackgroundImages : defaultSlides;
+      const wrap = document.getElementById('kbWrap');
+      const els = slides.map(url => {
+        const d = document.createElement('div');
+        d.className = 'kb-slide';
+        d.style.backgroundImage = `url('${url}')`;
+        wrap.appendChild(d);
+        return d;
+      });
+      let cur = 0;
+      const showNext = () => {
+        els.forEach(e => e.classList.remove('active'));
+        // Restarting the CSS animation on a class re-add needs a reflow
+        // in between, or the browser just no-ops the second time —
+        // same WebKit-safe trick used for the audio-unlock element
+        // elsewhere in this app.
+        void els[cur].offsetWidth;
+        els[cur].classList.add('active');
+        cur = (cur + 1) % els.length;
+      };
+      showNext();
+      setInterval(showNext, 15500);
+    });
+  </script>
+</body>
+</html>
