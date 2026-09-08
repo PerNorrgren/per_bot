@@ -13708,11 +13708,16 @@ app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) =
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {
     const { name, offerId, audience, goal, promotesLabel, promotesUrl } = req.body;
     db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl });
+    console.log('[campaign save] succeeded for', req.params.id);
     res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error('[campaign save] FAILED for', req.params.id, '—', e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
 });
 app.delete('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
