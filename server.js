@@ -14063,6 +14063,8 @@ app.get('/api/public/samurai-content/:id/url', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/assets/samurai/hero.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'samurai', 'hero.png')));
+app.get('/alarm', (req, res) => res.sendFile(path.join(__dirname, 'public', 'alarm.html')));
+app.get('/wired-heart', (req, res) => res.sendFile(path.join(__dirname, 'public', 'wired-heart.html')));
 app.get('/welcome', (req, res) => res.sendFile(path.join(__dirname, 'public', 'welcome.html')));
 app.get('/samurai', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai.html')));
 app.get('/join', (req, res) => {
