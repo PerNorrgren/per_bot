@@ -39,6 +39,20 @@
     }
     .content-label { font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.45); margin-bottom:18px; }
 
+    /* Per's request — the discipline line, sitting above every
+       section: one virtue practiced daily, the same way a cut is
+       practiced ten thousand times. */
+    .discipline-line { text-align:center; font-style:italic; font-size:14px; line-height:1.7; color:rgba(255,255,255,0.75); max-width:480px; margin:0 auto 36px; }
+
+    /* Ten virtue sections. Each is its own glass block so a section
+       with nothing uploaded yet reads as "not filled in", not broken. */
+    .virtue-block { margin-bottom:22px; }
+    .virtue-header { display:flex; align-items:baseline; gap:14px; margin-bottom:16px; }
+    .virtue-kanji { font-size:30px; line-height:1; color:rgba(180,230,200,0.9); flex-shrink:0; }
+    .virtue-names { display:flex; flex-direction:column; }
+    .virtue-romaji { font-size:17px; color:rgba(255,255,255,0.92); }
+    .virtue-english { font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+
     .item { padding:16px 0; border-top:1px solid rgba(255,255,255,0.08); }
     .item:first-child { border-top:none; padding-top:0; }
     .item-title { font-size:16px; color:rgba(255,255,255,0.9); margin-bottom:4px; }
@@ -83,10 +97,14 @@
 
     <img class="hero-image" src="/assets/samurai/hero.png" alt="A seated samurai in sumi-e ink wash style"/>
 
-    <div class="glass">
-      <div class="content-label">Practices &amp; Reading</div>
-      <div id="itemsList"><div class="empty-note">Loading…</div></div>
+    <div class="glass" style="margin-bottom:28px;">
+      <div class="content-label">Begin Here</div>
+      <div id="introList"><div class="empty-note">Loading…</div></div>
     </div>
+
+    <div class="discipline-line">Like the cut of the sword is practiced ten thousand times, so is the practice of the mind — for perfection.</div>
+
+    <div id="virtueSections"></div>
 
     <div class="cta-wrap">
       <a class="cta-btn" href="/welcome" id="findOutMoreBtn">Find out more</a>
@@ -120,6 +138,23 @@
 
     function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     const audioTypes = ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
+
+    // Per's request — the ten virtues, in the order recordings are
+    // tagged samurai1..samurai10. Jisei opens the list on purpose: the
+    // whole page's premise is "face yourself first", so self-mastery
+    // comes before the virtues it makes room for.
+    const VIRTUES = [
+      { tag: 'samurai1',  kanji: '自制', romaji: 'Jisei',   english: 'Self-Mastery' },
+      { tag: 'samurai2',  kanji: '義',   romaji: 'Gi',      english: 'Rectitude' },
+      { tag: 'samurai3',  kanji: '勇',   romaji: 'Yu',      english: 'Courage' },
+      { tag: 'samurai4',  kanji: '仁',   romaji: 'Jin',     english: 'Benevolence' },
+      { tag: 'samurai5',  kanji: '礼',   romaji: 'Rei',     english: 'Respect' },
+      { tag: 'samurai6',  kanji: '誠',   romaji: 'Makoto',  english: 'Sincerity' },
+      { tag: 'samurai7',  kanji: '名誉', romaji: 'Meiyo',   english: 'Honor' },
+      { tag: 'samurai8',  kanji: '忠義', romaji: 'Chugi',   english: 'Loyalty' },
+      { tag: 'samurai9',  kanji: '智',   romaji: 'Chi',     english: 'Wisdom' },
+      { tag: 'samurai10', kanji: '孝',   romaji: 'Ko',      english: 'Duty' },
+    ];
 
     async function fetchSignedUrl(id) {
       const res = await fetch(`/api/public/samurai-content/${id}/url`);
@@ -177,26 +212,66 @@
       btn.textContent = original;
     }
 
+    function renderItems(items) {
+      if (!items.length) return '<div class="empty-note">New practice coming soon.</div>';
+      return items.map(f => {
+        const isAudio = audioTypes.includes(f.file_type) || f.content_type === 'meditation' || f.content_type === 'practice';
+        return `
+        <div class="item">
+          <div class="item-title">${escHtml(f.title)}</div>
+          ${f.description ? `<div class="item-desc">${escHtml(f.description)}</div>` : ''}
+          <div class="item-actions">
+            <button class="item-btn" onclick="listenOrRead('${f.id}', ${isAudio}, this)">${isAudio ? 'Listen' : 'Read'}</button>
+            <button class="item-btn secondary" onclick="downloadItem('${f.id}', '${escHtml(f.title).replace(/'/g,"\\'")}', this)">Download</button>
+          </div>
+          ${isAudio ? `<audio class="item-audio" id="audio-${f.id}" controls></audio>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    // Build the ten section shells immediately (kanji + name show right
+    // away), then fill each one in once the single grouped fetch below
+    // returns — a section with nothing tagged to it yet still reads as
+    // a real part of the page, not a gap.
+    function buildVirtueShells() {
+      const wrap = document.getElementById('virtueSections');
+      wrap.innerHTML = VIRTUES.map(v => `
+        <div class="virtue-block">
+          <div class="virtue-header">
+            <span class="virtue-kanji">${v.kanji}</span>
+            <div class="virtue-names">
+              <span class="virtue-romaji">${v.romaji}</span>
+              <span class="virtue-english">${v.english}</span>
+            </div>
+          </div>
+          <div class="glass">
+            <div id="items-${v.tag}"><div class="empty-note">Loading…</div></div>
+          </div>
+        </div>`).join('');
+    }
+
+    // Per's request — ten virtue sections plus the original "Facing
+    // Yourself First" intro practice, which predates the virtues and
+    // keeps its own tag ('modern samurai') rather than being folded
+    // into one of the ten. One fetch returns everything at once; each
+    // row carries the tag that matched so it can be bucketed here.
     async function loadContent() {
-      const el = document.getElementById('itemsList');
+      buildVirtueShells();
+      const introEl = document.getElementById('introList');
       try {
         const items = await fetch('/api/public/samurai-content').then(r => r.json());
-        if (!items.length) { el.innerHTML = '<div class="empty-note">Nothing here yet — check back soon.</div>'; return; }
-        el.innerHTML = items.map(f => {
-          const isAudio = audioTypes.includes(f.file_type) || f.content_type === 'meditation' || f.content_type === 'practice';
-          return `
-          <div class="item">
-            <div class="item-title">${escHtml(f.title)}</div>
-            ${f.description ? `<div class="item-desc">${escHtml(f.description)}</div>` : ''}
-            <div class="item-actions">
-              <button class="item-btn" onclick="listenOrRead('${f.id}', ${isAudio}, this)">${isAudio ? 'Listen' : 'Read'}</button>
-              <button class="item-btn secondary" onclick="downloadItem('${f.id}', '${escHtml(f.title).replace(/'/g,"\\'")}', this)">Download</button>
-            </div>
-            ${isAudio ? `<audio class="item-audio" id="audio-${f.id}" controls></audio>` : ''}
-          </div>`;
-        }).join('');
+        const byTag = {};
+        items.forEach(f => { (byTag[f.tag] = byTag[f.tag] || []).push(f); });
+
+        introEl.innerHTML = renderItems(byTag['modern samurai'] || []);
+        VIRTUES.forEach(v => {
+          document.getElementById('items-' + v.tag).innerHTML = renderItems(byTag[v.tag] || []);
+        });
       } catch (e) {
-        el.innerHTML = '<div class="empty-note">Could not load right now — please try again shortly.</div>';
+        introEl.innerHTML = '<div class="empty-note">Could not load right now — please try again shortly.</div>';
+        VIRTUES.forEach(v => {
+          document.getElementById('items-' + v.tag).innerHTML = '<div class="empty-note">Could not load right now — please try again shortly.</div>';
+        });
       }
     }
     loadContent();

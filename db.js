@@ -6813,6 +6813,24 @@ function getFilesByTag(tag) {
     ORDER BY lf.title ASC`, [tag]);
 }
 
+// Per's request — the ten-virtue /samurai page. Same shape as
+// getFilesByTag above, but takes a list of tags in one query (one call
+// per page load instead of eleven) and returns the matched tag on each
+// row so the front end can bucket each file into its own virtue
+// section. A file can legitimately carry more than one of these tags
+// (e.g. also kept in 'modern samurai') and will appear once per match,
+// which is correct — each section is its own bucket.
+function getFilesBySamuraiTags(tags) {
+  if (!tags || !tags.length) return [];
+  const placeholders = tags.map(() => 'LOWER(?)').join(',');
+  return queryAll(`
+    SELECT lf.id, lf.title, lf.content_type, lf.file_type, lf.description, LOWER(t.tag) as tag
+    FROM library_files lf
+    JOIN library_file_tags t ON t.file_id = lf.id
+    WHERE LOWER(t.tag) IN (${placeholders}) AND lf.archived = 0
+    ORDER BY lf.title ASC`, tags.map(t => t.toLowerCase()));
+}
+
 function getAllLibraryFilesWithAccess(userFlags, userId) {
   const level = userMaxLevel(userFlags);
   // Per Bot 25 — category_name/subcategory_name added via the same JOIN
@@ -10400,7 +10418,7 @@ module.exports = {
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,
-  addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag,
+  addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag, getFilesBySamuraiTags,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,
   clearUploadQueue, markUploadQueueItemFailed, markUploadQueueItemPending,
   getTtsCacheEntry, setTtsCacheEntry,
