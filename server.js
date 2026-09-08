@@ -14062,6 +14062,7 @@ app.get('/api/public/samurai-content/:id/url', async (req, res) => {
     res.json({ url: `/uploads/${file.filename}` });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/assets/samurai/hero.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'samurai', 'hero.png')));
 app.get('/samurai', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai.html')));
 app.get('/join', (req, res) => {
   const config = db.getAppConfig();
