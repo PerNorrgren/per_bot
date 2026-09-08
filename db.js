@@ -7729,10 +7729,29 @@ function updateCampaign(id, fields) {
 // be cancelled on BulkPublish's side, a genuine limitation worth knowing.
 function setCampaignStatus(id, status) {
   if (status === 'active') {
+    // Per's real incident — this only ever matched status='draft',
+    // meaning resuming a paused campaign back to active silently did
+    // nothing at all, the exact same bug shape as the Goal/Promoting/
+    // Link save issue found the same day. started_at is only set the
+    // first time (going live from draft) — resuming from paused must
+    // never reset it, since every step's offset_days counts from the
+    // original go-live moment, not from whenever it happened to be
+    // paused and resumed.
     getDbSync().run("UPDATE campaigns SET status='active', started_at=datetime('now') WHERE id=? AND status='draft'", [id]);
+    getDbSync().run("UPDATE campaigns SET status='active' WHERE id=? AND status='paused'", [id]);
   } else {
     getDbSync().run('UPDATE campaigns SET status=? WHERE id=?', [status, id]);
   }
+  save();
+}
+// Per's real incident — the steps that failed on BulkPublish's
+// scheduled-post quota are stuck in 'failed' status, which the new
+// pending-only cron/activate logic will never pick up on its own.
+// Resets them back to pending so the very next cron run (or immediate
+// fire, for anything already due) picks them up properly instead of
+// leaving them stuck forever.
+function resetFailedCampaignSteps(campaignId) {
+  getDbSync().run("UPDATE campaign_steps SET status='pending', error=NULL WHERE campaign_id=? AND status='failed'", [campaignId]);
   save();
 }
 function deleteCampaign(id) {
@@ -7826,6 +7845,19 @@ function getDueCampaignEmailSteps() {
     SELECT s.*, c.audience, c.started_at, c.offer_id, c.source_tag
     FROM campaign_steps s JOIN campaigns c ON s.campaign_id=c.id
     WHERE c.status='active' AND s.channel='email' AND s.status='pending'
+      AND s.offset_days <= CAST(julianday('now') - julianday(c.started_at) AS INTEGER)
+  `);
+}
+// Per's real incident — mirrors getDueCampaignEmailSteps exactly, for
+// every non-email channel. Built alongside the fix for BulkPublish's
+// Free-plan 10-scheduled-post cap: social steps now stay pending at
+// go-live and get picked up here, day by day, instead of all being
+// pre-scheduled with BulkPublish at once.
+function getDueCampaignSocialSteps() {
+  return queryAll(`
+    SELECT s.*, c.audience, c.started_at, c.offer_id, c.source_tag
+    FROM campaign_steps s JOIN campaigns c ON s.campaign_id=c.id
+    WHERE c.status='active' AND s.channel!='email' AND s.status='pending'
       AND s.offset_days <= CAST(julianday('now') - julianday(c.started_at) AS INTEGER)
   `);
 }
@@ -10535,7 +10567,7 @@ module.exports = {
   getAllCampaigns, getCampaign, createCampaign, updateCampaign, setCampaignStatus, deleteCampaign,
   getCampaignSteps, getCampaignStep, addCampaignStep, updateCampaignStep, deleteCampaignStep,
   getCampaignVideos, getCampaignVideo, createCampaignVideo, updateCampaignVideo, setCampaignVideoMedia, deleteCampaignVideo,
-  setCampaignStepResult, getDueCampaignEmailSteps,
+  setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)

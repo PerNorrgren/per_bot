@@ -1771,6 +1771,13 @@
     } else if (data.status === 'active') {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
         <button class="btn sm" onclick="pauseCampaign()" style="color:rgba(230,175,90,0.9)">Pause campaign</button>`;
+    } else if (data.status === 'paused') {
+      // Per's report — this used to fall into the generic else branch
+      // below, leaving a paused campaign with nothing but Close and no
+      // way back at all.
+      const failedCount = (data.steps || []).filter(s => s.status === 'failed').length;
+      actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
+        <button class="btn sm primary" onclick="resumeCampaign()">Resume campaign${failedCount ? ` (retries ${failedCount} failed step${failedCount===1?'':'s'})` : ''}</button>`;
     } else {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>`;
     }
@@ -2049,8 +2056,16 @@
     } catch(e) { err.textContent = e.message; }
   }
   async function pauseCampaign() {
-    if (!confirm('Pause this campaign? Remaining email steps stop; anything already scheduled with BulkPublish needs cancelling there directly.')) return;
+    if (!confirm('Pause this campaign? All remaining steps stop, email and social alike.')) return;
     await fetch(`/api/admin/campaigns/${curCampaignId}/pause`, { method:'POST' });
+    await refreshCampaignDetail();
+    loadCampaigns();
+  }
+  async function resumeCampaign() {
+    if (!confirm('Resume this campaign? Any steps that failed earlier will be reset and retried on their scheduled day.')) return;
+    const res = await fetch(`/api/admin/campaigns/${curCampaignId}/resume`, { method:'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) { alert(data.error || 'Could not resume — please try again.'); return; }
     await refreshCampaignDetail();
     loadCampaigns();
   }

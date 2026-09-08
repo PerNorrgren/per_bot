@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -328,6 +328,25 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
+  // Per's real incident — mirrors the email steps cron above exactly.
+  // Fires whichever social steps are due today, immediately, via
+  // publishToChannel — replaces the old approach of pre-scheduling the
+  // whole campaign's worth of posts with BulkPublish at go-live, which
+  // silently hit its Free-plan 10-scheduled-post cap on anything past
+  // a small campaign.
+  cron.schedule('55 7 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const count = await sendDueCampaignSocialSteps();
+      const detail = `${count} step(s) due`;
+      console.log(`[cron] campaign social steps: ${detail}`);
+      record('campaign_social_steps', 'ok', detail, null, t0);
+    } catch (e) {
+      console.error('[cron] campaign social steps failed:', e.message);
+      record('campaign_social_steps', 'failed', null, e.message, t0);
+    }
+  });
+
   // ── Savers Protocol — 08:00 UTC ──
   cron.schedule('0 8 * * *', async () => {
     const t0 = Date.now();
@@ -392,7 +411,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), trending context refresh (05:05 UTC), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), trending context refresh (05:05 UTC), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), campaign social steps (07:55 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };

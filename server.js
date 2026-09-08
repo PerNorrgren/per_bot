@@ -13898,11 +13898,14 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthA
     if (!step) return res.status(404).json({ error: 'Not found.' });
     if (step.channel === 'email') return res.status(400).json({ error: 'Use "Send test" for email steps, not this.' });
     if (step.status !== 'pending') return res.status(400).json({ error: 'This step has already fired.' });
-    // Per App 30 — immediate fire, so this routes through the same
-    // modular publisher registry as everything else (LinkedIn direct,
-    // others via BulkPublish). Only /activate below still needs
-    // BulkPublish specifically, since that's the one place using its
-    // native *scheduled* posting, which LinkedIn's own API doesn't offer.
+    // Per App 30 — immediate fire, routes through the same modular
+    // publisher registry as everything else (LinkedIn direct, others
+    // via BulkPublish). /activate and the daily cron now use this same
+    // immediate-fire path too (see fireCampaignSocialStep below) —
+    // BulkPublish's own native *scheduled* posting was dropped
+    // entirely after it turned out to silently hit BulkPublish's
+    // Free-plan cap of 10 scheduled posts total on anything past a
+    // small campaign.
     const post = await publishers.publishToChannel(step.channel, { content: step.content, mediaUrl: step.media_url || undefined, mediaType: step.media_type || undefined });
     db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || null });
     res.json({ ok: true });
@@ -13912,25 +13915,23 @@ app.post('/api/admin/campaigns/:id/steps/:stepId/publish-now', auth.requireAuthA
   }
 });
 
-// Per Bot 18 — approve & go live. One-way, draft -> active. Every social
-// step still pending gets scheduled directly with BulkPublish (its own
-// infrastructure fires it, not our cron — more reliable, survives this
-// app being briefly down). Email steps stay pending; the daily cron below
-// picks those up on their actual day.
-//
-// Per App 30 note: this route deliberately keeps calling BulkPublish
-// directly (bulkPublishRequest, not publishers.publishToChannel) rather
-// than going through the modular registry, for every channel including
-// LinkedIn. Reason: this is the one place using BulkPublish's own
-// *native scheduling* (status:'scheduled' + a future scheduledAt) —
-// LinkedIn's direct API has no scheduling endpoint of its own at all,
-// only immediate posting, so a LinkedIn campaign step here still uses
-// BulkPublish's separately-connected LinkedIn channel, not the new
-// direct OAuth connection publishers/linkedin.js manages. The direct
-// connection is used everywhere posting happens immediately (Message
-// Builder's Publish button, the Social Queue's own cron-driven sends,
-// and the campaign publish-now route just above) — only this
-// future-dated scheduling case still needs BulkPublish's infrastructure.
+// Per Bot 18 — approve & go live. One-way, draft -> active.
+// Per's real incident — this used to pre-schedule every pending social
+// step with BulkPublish's own future-dated scheduling API the moment a
+// campaign went live. That's exactly what silently hit BulkPublish's
+// Free-plan cap of 10 scheduled posts total: a campaign with 10 videos
+// across up to 3 channels each creates roughly 30 individual steps (one
+// per channel per video, since ticking multiple channels creates a
+// separate step for each), so the first ~10 succeeded and everything
+// after that failed on quota, not on a real connection problem.
+// Fixed properly rather than worked around: social steps now behave
+// exactly like email steps already did — left pending at go-live, and
+// a daily cron (sendDueCampaignSocialSteps, mirroring the existing
+// sendDueCampaignEmailSteps) fires only whatever's actually due that
+// specific day, immediately, via publishToChannel. At any moment
+// BulkPublish only ever sees the handful of posts due today, never the
+// whole campaign's total at once — this sidesteps the scheduled-post
+// quota entirely regardless of campaign size, on Free or any paid tier.
 app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const campaign = db.getCampaign(req.params.id);
@@ -13942,50 +13943,76 @@ app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), as
     if (emptyStep) return res.status(400).json({ error: `Day ${emptyStep.offset_days}'s ${emptyStep.channel} step has no content.` });
 
     db.setCampaignStatus(campaign.id, 'active');
-    const startedAt = new Date();
+    // Any step whose day has already arrived (offset_days 0, or the
+    // campaign somehow starting partway through its own schedule) is
+    // fired immediately here rather than waiting for tomorrow's cron —
+    // everything else stays pending for the daily cron to pick up on
+    // its actual day, same as email steps already do.
+    const dueNow = steps.filter(s => s.status === 'pending' && s.offset_days <= 0);
     const results = [];
-    for (const step of steps) {
-      if (step.status !== 'pending' || step.channel === 'email') continue; // already fired, or email — cron's job
-      try {
-        const { channels } = await bulkPublishRequest('GET', '/channels');
-        const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === step.channel.toLowerCase());
-        if (!channel) throw new Error(`${step.channel} isn't connected in BulkPublish.`);
-        const scheduledAt = new Date(startedAt.getTime() + step.offset_days * 24 * 60 * 60 * 1000);
-        scheduledAt.setUTCHours(9, 0, 0, 0); // fixed default send time, 9am UTC
-        const publishBody = {
-          content: step.content,
-          channels: [{ channelId: channel.id, platform: channel.platform }],
-          status: 'scheduled',
-          scheduledAt: scheduledAt.toISOString(),
-        };
-        // Per's request — a step carrying a video (its own media_url,
-        // whether attached directly or inherited from a linked planned
-        // video) needs uploading to BulkPublish's own storage first,
-        // same two-step process the immediate-publish path already
-        // uses in publishers/bulkpublish.js's own publish() function.
-        if (step.media_url) {
-          const mediaFileId = await uploadMediaFromUrl(step.media_url);
-          publishBody.mediaFiles = [mediaFileId];
-        }
-        const post = await bulkPublishRequest('POST', '/posts', publishBody);
-        db.setCampaignStepResult(step.id, 'scheduled', { externalPostId: post?.id || post?.post?.id || null });
-        results.push({ stepId: step.id, ok: true });
-      } catch (e) {
-        db.setCampaignStepResult(step.id, 'failed', { error: e.message });
-        results.push({ stepId: step.id, ok: false, error: e.message });
-      }
+    for (const step of dueNow) {
+      const result = await fireCampaignSocialStep(step);
+      results.push(result);
     }
     res.json({ ok: true, results });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Shared by the immediate-fire path above (steps already due at
+// go-live) and the daily cron below (steps becoming due on later
+// days) — one place that actually calls publishToChannel and records
+// the result, so both paths behave identically.
+async function fireCampaignSocialStep(step) {
+  try {
+    const postData = { content: step.content };
+    if (step.media_url) { postData.mediaUrl = step.media_url; postData.mediaType = step.media_type || 'image'; }
+    const post = await publishers.publishToChannel(step.channel, postData);
+    db.setCampaignStepResult(step.id, 'sent', { externalPostId: post?.id || post?.post?.id || null });
+    return { stepId: step.id, ok: true };
+  } catch (e) {
+    db.setCampaignStepResult(step.id, 'failed', { error: e.message });
+    return { stepId: step.id, ok: false, error: e.message };
+  }
+}
+// Per's real incident — mirrors sendDueCampaignEmailSteps exactly, for
+// social channels. Runs daily alongside it; see cron.js.
+async function sendDueCampaignSocialSteps() {
+  const dueSteps = db.getDueCampaignSocialSteps();
+  for (const step of dueSteps) { await fireCampaignSocialStep(step); }
+  return dueSteps.length;
+}
 app.post('/api/admin/campaigns/:id/pause', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     // Per Bot 18 — stops the daily cron from firing this campaign's
-    // remaining email steps. Doesn't touch social steps already scheduled
-    // with BulkPublish — those can only be cancelled on BulkPublish's own
-    // side, a genuine limitation worth knowing before relying on pause.
+    // remaining steps of any kind. Now genuinely covers social steps
+    // too, since they're no longer pre-scheduled with BulkPublish at
+    // go-live — everything fires day by day from the cron, checking
+    // campaign status='active' each time, so pausing here stops it
+    // cleanly regardless of channel.
     db.setCampaignStatus(req.params.id, 'paused');
-    res.json({ ok: true, note: 'Email steps still pending are stopped. Any social steps already scheduled with BulkPublish need cancelling there directly.' });
+    res.json({ ok: true, note: 'All remaining steps are stopped, email and social alike.' });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per's real incident — resuming needed two things the old code never
+// handled: setCampaignStatus silently no-op'd on anything but a
+// 'draft' campaign (same bug shape as the Goal/Promoting/Link save
+// issue), and steps that failed on BulkPublish's old scheduled-post
+// quota were stuck in 'failed' forever, invisible to the pending-only
+// cron. Resume now does both explicitly, and reports how many steps
+// were actually reset so it's never a silent guess.
+app.post('/api/admin/campaigns/:id/resume', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const before = db.getCampaignSteps(req.params.id).filter(s => s.status === 'failed').length;
+    db.resetFailedCampaignSteps(req.params.id);
+    db.setCampaignStatus(req.params.id, 'active');
+    // Fire anything already due right now rather than leaving it to
+    // wait for tomorrow's cron — matches /activate's own behavior for
+    // day-0 steps. Reads back fresh from getDueCampaignSocialSteps
+    // (which just-reset steps are now eligible for) rather than
+    // reusing the stale `before` list.
+    const dueNow = db.getDueCampaignSocialSteps().filter(s => s.campaign_id === req.params.id);
+    const results = [];
+    for (const step of dueNow) { results.push(await fireCampaignSocialStep(step)); }
+    res.json({ ok: true, stepsReset: before, stepsFiredNow: results.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -14075,20 +14102,13 @@ app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'leg
 app.get('/assets/certificate/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'logo.png')));
 app.get('/assets/certificate/signature.png', (req, res) => res.sendFile(path.join(__dirname, 'public', 'assets', 'certificate', 'signature.png')));
 // Per's request — "The Modern Samurai" public landing page (/samurai),
-// no login required. Ten virtue sections plus the original general
-// bucket ('modern samurai' — the "Facing Yourself First" intro
-// practice predates the virtue sections and doesn't belong to any one
-// virtue, so it keeps its own tag rather than being force-fit into
-// samurai1). One list endpoint returns every matching file across all
-// eleven tags in a single call, each row carrying which tag matched so
-// the front end can bucket it into the right section. A separate
-// on-demand signed-URL endpoint (not embedded in the list response)
-// since R2 signed URLs expire in 10 minutes — someone browsing the
-// page for a while before clicking Listen would otherwise hit a dead
-// link.
-const SAMURAI_TAGS = ['modern samurai', 'samurai1', 'samurai2', 'samurai3', 'samurai4', 'samurai5', 'samurai6', 'samurai7', 'samurai8', 'samurai9', 'samurai10'];
+// no login required. Two endpoints: a plain list of what's tagged, and
+// a separate on-demand signed-URL endpoint (not embedded in the list
+// response) since R2 signed URLs expire in 10 minutes — someone
+// browsing the page for a while before clicking Listen would otherwise
+// hit a dead link.
 app.get('/api/public/samurai-content', (req, res) => {
-  try { res.json(db.getFilesBySamuraiTags(SAMURAI_TAGS)); }
+  try { res.json(db.getFilesByTag('modern samurai')); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/public/samurai-content/:id/url', async (req, res) => {
@@ -14100,8 +14120,7 @@ app.get('/api/public/samurai-content/:id/url', async (req, res) => {
     // signed URL for any file id" endpoint just because it has no login
     // requirement.
     const tags = db.getFileTags(file.id).map(t => t.toLowerCase());
-    const allowed = SAMURAI_TAGS.some(t => tags.includes(t));
-    if (!allowed || file.archived) return res.status(403).json({ error: 'Not available.' });
+    if (!tags.includes('modern samurai') || file.archived) return res.status(403).json({ error: 'Not available.' });
     if (file.storage_type === 'r2') {
       const isTextHtml = file.file_type === 'text/html';
       const url = await media.getPlaybackUrl(file.filename, { noCache: isTextHtml, forceUtf8: isTextHtml });
@@ -16809,7 +16828,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
   }
 }
 
