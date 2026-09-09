@@ -14379,6 +14379,15 @@ app.get('/api/public/samurai-content', (req, res) => {
   try { res.json(db.getFilesBySamuraiTags(SAMURAI_TAGS)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — "Samurai Flute": every track tagged 'music' within
+// the samurai tag set, across every virtue, as one playable list — the
+// same underlying files the virtue modals auto-play individually, just
+// gathered onto their own page. Reuses getFilesBySamuraiTags rather
+// than a new query, then filters to is_music here.
+app.get('/api/public/samurai-music', (req, res) => {
+  try { res.json(db.getFilesBySamuraiTags(SAMURAI_TAGS).filter(f => f.is_music)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/public/samurai-content/:id/url', async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
@@ -14403,6 +14412,7 @@ app.get('/alarm', (req, res) => res.sendFile(path.join(__dirname, 'public', 'ala
 app.get('/wired-heart', (req, res) => res.sendFile(path.join(__dirname, 'public', 'wired-heart.html')));
 app.get('/welcome', (req, res) => res.sendFile(path.join(__dirname, 'public', 'welcome.html')));
 app.get('/samurai', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai.html')));
+app.get('/samurai-flute', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai-flute.html')));
 app.get('/join', (req, res) => {
   const config = db.getAppConfig();
   res.redirect(302, config?.join_link_url || '/courses');

@@ -45,13 +45,21 @@
     .discipline-line { text-align:center; font-style:italic; font-size:14px; line-height:1.7; color:rgba(255,255,255,0.75); max-width:480px; margin:0 auto 36px; }
 
     /* Ten virtue sections. Each is its own glass block so a section
-       with nothing uploaded yet reads as "not filled in", not broken. */
-    .virtue-block { margin-bottom:22px; }
-    .virtue-header { display:flex; align-items:baseline; gap:14px; margin-bottom:16px; }
+       with nothing uploaded yet reads as "not filled in", not broken.
+       Per's request — pulled closer together than the original 22px. */
+    .virtue-block { margin-bottom:10px; }
+    .virtue-header { display:flex; align-items:baseline; gap:14px; margin-bottom:14px; }
     .virtue-kanji { font-size:30px; line-height:1; color:rgba(180,230,200,0.9); flex-shrink:0; }
     .virtue-names { display:flex; flex-direction:column; }
     .virtue-romaji { font-size:17px; color:rgba(255,255,255,0.92); }
     .virtue-english { font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+
+    /* Per's request — a short teaser line above each virtue's practice
+       list, with a link into the fuller explanation + music modal. */
+    .virtue-teaser { font-size:13.5px; font-style:italic; line-height:1.6; color:rgba(255,255,255,0.68); margin-bottom:8px; }
+    .virtue-more-link { font-size:12px; letter-spacing:0.03em; color:rgba(180,230,200,0.85); text-decoration:none; cursor:pointer; border-bottom:1px solid rgba(180,230,200,0.35); padding-bottom:1px; }
+    .virtue-more-link:hover { color:rgba(180,230,200,1); }
+    .virtue-more-wrap { margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.08); }
 
     .item { padding:16px 0; border-top:1px solid rgba(255,255,255,0.08); }
     .item:first-child { border-top:none; padding-top:0; }
@@ -70,12 +78,43 @@
 
     .empty-note { text-align:center; font-size:14px; color:rgba(255,255,255,0.5); padding:20px 0; }
 
+    /* Per's request — "Click for more" modal: fuller explanation +
+       history, with that virtue's music (if uploaded) auto-playing
+       underneath while it's read. */
+    .virtue-modal-overlay {
+      display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,0.72);
+      align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;
+    }
+    .virtue-modal-overlay.open { display:flex; }
+    .virtue-modal {
+      background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:20px;
+      max-width:560px; width:100%; padding:32px 28px; position:relative;
+    }
+    .virtue-modal-close {
+      position:absolute; top:18px; right:18px; width:32px; height:32px; border-radius:50%;
+      border:1px solid rgba(255,255,255,0.15); background:none; color:rgba(255,255,255,0.6);
+      font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    }
+    .virtue-modal-close:hover { background:rgba(255,255,255,0.08); }
+    .virtue-modal-header { display:flex; align-items:baseline; gap:16px; margin-bottom:20px; }
+    .virtue-modal-kanji { font-size:40px; line-height:1; color:rgba(180,230,200,0.9); }
+    .virtue-modal-romaji { font-size:22px; color:rgba(255,255,255,0.95); }
+    .virtue-modal-english { font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+    .virtue-modal-body { font-size:14.5px; line-height:1.85; color:rgba(255,255,255,0.78); }
+    .virtue-modal-body p { margin-bottom:14px; }
+    .virtue-modal-body p:last-child { margin-bottom:0; }
+    .virtue-modal-music { margin-top:24px; padding-top:18px; border-top:1px solid rgba(255,255,255,0.1); }
+    .virtue-modal-music-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:8px; }
+    .virtue-modal-music audio { width:100%; }
+    .virtue-modal-music-controls { display:flex; gap:8px; margin-top:8px; }
+
     .cta-wrap { text-align:center; margin-top:36px; }
     .cta-btn {
       display:inline-block; font-family:'Georgia',serif; font-size:13px; letter-spacing:0.1em; text-transform:uppercase;
       padding:14px 36px; border-radius:10px; border:1px solid rgba(180,230,200,0.4);
       background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.95); text-decoration:none;
     }
+    .cta-btn.secondary { border-color:rgba(255,255,255,0.2); background:none; color:rgba(255,255,255,0.75); margin-left:12px; }
 
     @media (max-width: 500px) {
       .page { padding:24px 16px 48px; }
@@ -108,6 +147,31 @@
 
     <div class="cta-wrap">
       <a class="cta-btn" href="/welcome" id="findOutMoreBtn">Find out more</a>
+      <a class="cta-btn secondary" href="/samurai-flute">Samurai Flute</a>
+    </div>
+  </div>
+
+  <!-- Per's request — one reusable modal, populated per virtue on
+       "Click for more" rather than ten separate modals in the DOM. -->
+  <div class="virtue-modal-overlay" id="virtueModalOverlay" onclick="if(event.target===this) closeVirtueModal()">
+    <div class="virtue-modal">
+      <button class="virtue-modal-close" onclick="closeVirtueModal()">✕</button>
+      <div class="virtue-modal-header">
+        <span class="virtue-modal-kanji" id="vmKanji"></span>
+        <div>
+          <div class="virtue-modal-romaji" id="vmRomaji"></div>
+          <div class="virtue-modal-english" id="vmEnglish"></div>
+        </div>
+      </div>
+      <div class="virtue-modal-body" id="vmBody"></div>
+      <div class="virtue-modal-music" id="vmMusicWrap" style="display:none">
+        <div class="virtue-modal-music-label">While you read</div>
+        <audio id="vmAudio" controls loop></audio>
+        <div class="virtue-modal-music-controls">
+          <button class="item-btn secondary" onclick="document.getElementById('vmAudio').currentTime = 0; document.getElementById('vmAudio').play();">Play again</button>
+          <button class="item-btn secondary" id="vmRepeatBtn" onclick="toggleVmRepeat()">Repeat: On</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -143,17 +207,54 @@
     // tagged samurai1..samurai10. Jisei opens the list on purpose: the
     // whole page's premise is "face yourself first", so self-mastery
     // comes before the virtues it makes room for.
+    // Per's request — the ten virtues, in the order recordings are
+    // tagged samurai1..samurai10. Jisei opens the list on purpose: the
+    // whole page's premise is "face yourself first", so self-mastery
+    // comes before the virtues it makes room for. teaser is the one
+    // line shown above the practice list; full is the two-paragraph
+    // explanation (plain HTML, kept short) shown in the "Click for
+    // more" modal alongside that virtue's music, if any is uploaded.
     const VIRTUES = [
-      { tag: 'samurai1',  kanji: '自制', romaji: 'Jisei',   english: 'Self-Mastery' },
-      { tag: 'samurai2',  kanji: '義',   romaji: 'Gi',      english: 'Rectitude' },
-      { tag: 'samurai3',  kanji: '勇',   romaji: 'Yu',      english: 'Courage' },
-      { tag: 'samurai4',  kanji: '仁',   romaji: 'Jin',     english: 'Benevolence' },
-      { tag: 'samurai5',  kanji: '礼',   romaji: 'Rei',     english: 'Respect' },
-      { tag: 'samurai6',  kanji: '誠',   romaji: 'Makoto',  english: 'Sincerity' },
-      { tag: 'samurai7',  kanji: '名誉', romaji: 'Meiyo',   english: 'Honor' },
-      { tag: 'samurai8',  kanji: '忠義', romaji: 'Chugi',   english: 'Loyalty' },
-      { tag: 'samurai9',  kanji: '智',   romaji: 'Chi',     english: 'Wisdom' },
-      { tag: 'samurai10', kanji: '孝',   romaji: 'Ko',      english: 'Duty' },
+      { tag: 'samurai1',  kanji: '自制', romaji: 'Jisei',   english: 'Self-Mastery',
+        teaser: 'Before a samurai could master anything else, he first had to master himself.',
+        full: `<p>Self-mastery came before every other virtue, because none of the others could be trusted without it. A warrior who could not govern his own temper, fear, or appetite was a danger to everyone around him, sword or no sword. The discipline wasn't about suppressing feeling — it was about not being ruled by it. A calm mind, trained daily like a muscle, was what let a samurai act with clarity in the one moment that mattered, instead of being swept along by it.</p>
+              <p>Miyamoto Musashi, still remembered as Japan's most formidable swordsman, spent his later years not fighting but writing. Having survived over sixty duels without defeat, he retreated to a cave to compose <em>The Book of Five Rings</em> — not a manual of technique, but of mind. His real teaching was that the sword only ever follows where the self has already been mastered.</p>` },
+      { tag: 'samurai2',  kanji: '義',   romaji: 'Gi',      english: 'Rectitude',
+        teaser: 'Doing the right thing, especially when it costs you something.',
+        full: `<p>Gi meant choosing the right action over the easy one, without needing anyone to witness it. It wasn't a rule imposed from outside — it was a decision a samurai made about who he wanted to be, moment by moment, whether or not it was ever noticed.</p>
+              <p>The most famous test of gi in Japanese history is the story of the Forty-Seven Rōnin. When their lord was forced to take his own life over a slight he didn't deserve, his samurai were left masterless, with the men who had wronged him untouched. For nearly two years they waited, patient and unseen, before finally acting on what they believed was right, whatever it would cost them. Their story is still told every December in Japan — remembered not for what they fought for, but for the discipline it took to wait, and then to act.</p>` },
+      { tag: 'samurai3',  kanji: '勇',   romaji: 'Yu',      english: 'Courage',
+        teaser: 'Courage was never the absence of fear. It was moving anyway.',
+        full: `<p>A samurai wasn't expected to feel nothing. Fear was human, and pretending otherwise was its own kind of dishonesty. Courage meant recognising the fear and acting rightly regardless — the trembling hand that still draws the sword when it must.</p>
+              <p>At the Battle of Minatogawa in 1336, the general Kusunoki Masashige knew he was outnumbered and almost certainly beaten before the fighting even began. He chose to stand anyway, for a cause he believed was right, rather than retreat to fight another day on easier terms. He's remembered today less for the battle he lost than for the courage it took to enter it at all — proof that yu was never about the odds, only about the choice.</p>` },
+      { tag: 'samurai4',  kanji: '仁',   romaji: 'Jin',     english: 'Benevolence',
+        teaser: 'True strength protects. It doesn\u2019t need to dominate.',
+        full: `<p>A samurai's power was only meaningful if it was used to shelter the weak, not to grind them down. Benevolence wasn't softness — it was strength held on a short leash, ready but never eager.</p>
+              <p>During the Sengoku period, the warlord Takeda Shingen found his salt supplies deliberately cut off by a rival coalition, a move meant to starve his people as much as his army. His fiercest rival, Uesugi Kenshin, refused to profit from another man's cruelty and sent his own salt across enemy lines instead — "I do not fight with salt," he is said to have written, "I fight with the sword." The two remained rivals on the battlefield for years afterward, but Kenshin's gesture is still remembered today, in a saying used whenever someone helps a rival in their moment of need.</p>` },
+      { tag: 'samurai5',  kanji: '礼',   romaji: 'Rei',     english: 'Respect',
+        teaser: 'Courtesy that costs nothing to give, and means everything to receive.',
+        full: `<p>Rei was respect extended without conditions — to a stranger, a servant, even an enemy about to be faced in battle. It wasn't performance for people who mattered. It was a standard held for everyone, precisely because it was easy to abandon when it was inconvenient.</p>
+              <p>The tea ceremony, <em>chanoyu</em>, grew into an entire discipline built around this idea — a warrior and his guest, however unequal their rank outside that room, met as equals inside it, each movement slow and deliberate as a mark of regard for the other. Sen no Rikyū, the tea master who shaped the ceremony into its modern form, taught that true hospitality began the moment you noticed someone was there at all.</p>` },
+      { tag: 'samurai6',  kanji: '誠',   romaji: 'Makoto',  english: 'Sincerity',
+        teaser: 'A word given once was meant to be enough.',
+        full: `<p>A samurai's word was expected to require no oath. To promise something twice was to admit the first promise couldn't be trusted — so sincerity meant meaning what you said the very first time, and living up to it whether or not anyone was checking.</p>
+              <p>This is part of why written contracts were sometimes seen among samurai as faintly insulting between people of honour — the assumption that a spoken word needed paper behind it. Sincerity was a currency that had to be spent carefully and rebuilt slowly, because once someone learned your word could bend, no ceremony could fully restore it.</p>` },
+      { tag: 'samurai7',  kanji: '名誉', romaji: 'Meiyo',   english: 'Honor',
+        teaser: 'The quiet kind of honor — the kind no one has to see.',
+        full: `<p>Honor wasn't a reputation to defend in public. It was closer to a private ledger, one a samurai kept with himself, that outsiders never fully saw. What mattered was whether he could live with his own actions, not whether anyone applauded them.</p>
+              <p>This inward measure is part of why bushido placed such enormous weight on how a samurai handled failure or shame — not by hiding from it, but by facing it directly, on his own terms. Honor, in this tradition, was less about winning and more about never quietly betraying your own standards, even when losing was the only outcome left.</p>` },
+      { tag: 'samurai8',  kanji: '忠義', romaji: 'Chugi',   english: 'Loyalty',
+        teaser: 'Loyalty chosen freely is worth more than loyalty demanded.',
+        full: `<p>A samurai's loyalty to his lord wasn't blind obedience — it was a bond he renewed through his own choices, again and again, often at real personal cost. The relationship went both ways: a lord who betrayed his side of it could lose the loyalty he assumed was owed to him.</p>
+              <p>When Yamanouchi Kazutoyo was a struggling, low-ranking samurai, his wife Chiyo secretly gave him her entire dowry to buy a magnificent horse — a quiet act of faith that helped launch his rise to becoming a daimyō, a feudal lord in his own right. Their story became a model in Japan not of loyalty owed by rank, but loyalty given by choice, from someone who believed in who he could become.</p>` },
+      { tag: 'samurai9',  kanji: '智',   romaji: 'Chi',     english: 'Wisdom',
+        teaser: 'The wisest sword is often the one that\u2019s never drawn.',
+        full: `<p>Wisdom meant knowing which battles were worth fighting, and which weren't — patience as a form of strength, not its absence. A wise samurai understood that timing mattered as much as skill, and that waiting was sometimes the harder discipline.</p>
+              <p>A well-known verse imagines how three of Japan's great unifiers might have responded to a caged bird that wouldn't sing. Oda Nobunaga, it says, would kill it. Toyotomi Hideyoshi would coax it. But Tokugawa Ieyasu, the most patient of the three, would simply wait — certain that given enough time, the bird would sing on its own. Ieyasu outlasted both of his rivals and founded a dynasty that governed Japan for over two hundred and fifty years, largely on the strength of exactly this kind of patience.</p>` },
+      { tag: 'samurai10', kanji: '孝',   romaji: 'Ko',      english: 'Duty',
+        teaser: 'Honoring where you came from, even as you become something new.',
+        full: `<p>Duty to family and to the generations before you sat underneath everything else in bushido — a reminder that no one becomes who they are alone. A samurai's actions reflected not just on himself, but on everyone who raised him and everyone who would come after.</p>
+              <p>This is part of why ancestor reverence ran so deep in samurai households — not nostalgia, but responsibility. Every decision carried the weight of a name that existed before you and would continue after you, which is perhaps the oldest form of accountability there is: acting well not because someone is watching, but because someone always was, and someone always will be.</p>` },
     ];
 
     async function fetchSignedUrl(id) {
@@ -245,9 +346,63 @@
             </div>
           </div>
           <div class="glass">
+            <div class="virtue-more-wrap">
+              <div class="virtue-teaser">${escHtml(v.teaser)}</div>
+              <a class="virtue-more-link" onclick="openVirtueModal('${v.tag}')">Click for more →</a>
+            </div>
             <div id="items-${v.tag}"><div class="empty-note">Loading…</div></div>
           </div>
         </div>`).join('');
+    }
+
+    // Per's request — the modal's music: a virtue's uploaded track,
+    // looked up by tag and auto-played the moment the modal opens.
+    // Populated once loadContent's single fetch returns (see below),
+    // not fetched again per click.
+    let musicByTag = {};
+    let vmCurrentUrl = null;
+
+    function toggleVmRepeat() {
+      const audio = document.getElementById('vmAudio');
+      audio.loop = !audio.loop;
+      document.getElementById('vmRepeatBtn').textContent = 'Repeat: ' + (audio.loop ? 'On' : 'Off');
+    }
+
+    async function openVirtueModal(tag) {
+      const v = VIRTUES.find(v => v.tag === tag);
+      if (!v) return;
+      document.getElementById('vmKanji').textContent = v.kanji;
+      document.getElementById('vmRomaji').textContent = v.romaji;
+      document.getElementById('vmEnglish').textContent = v.english;
+      document.getElementById('vmBody').innerHTML = v.full;
+      document.getElementById('virtueModalOverlay').classList.add('open');
+      document.body.style.overflow = 'hidden';
+
+      const audio = document.getElementById('vmAudio');
+      audio.pause();
+      const music = musicByTag[tag];
+      const musicWrap = document.getElementById('vmMusicWrap');
+      if (music) {
+        musicWrap.style.display = '';
+        audio.loop = true;
+        document.getElementById('vmRepeatBtn').textContent = 'Repeat: On';
+        try {
+          const url = await fetchSignedUrl(music.id);
+          vmCurrentUrl = url;
+          audio.src = url;
+          audio.play().catch(() => {}); // autoplay can be blocked until a real click has happened — the "Click for more" click itself counts as one in every browser tested
+        } catch (e) { musicWrap.style.display = 'none'; }
+      } else {
+        musicWrap.style.display = 'none';
+        audio.removeAttribute('src');
+      }
+    }
+    function closeVirtueModal() {
+      document.getElementById('virtueModalOverlay').classList.remove('open');
+      document.body.style.overflow = '';
+      const audio = document.getElementById('vmAudio');
+      audio.pause();
+      audio.removeAttribute('src');
     }
 
     // Per's request — ten virtue sections plus the original "Facing
@@ -261,7 +416,14 @@
       try {
         const items = await fetch('/api/public/samurai-content').then(r => r.json());
         const byTag = {};
-        items.forEach(f => { (byTag[f.tag] = byTag[f.tag] || []).push(f); });
+        items.forEach(f => {
+          // Per's request — a file tagged both with a virtue and with
+          // 'music' is background music for that virtue's modal, not a
+          // regular listed practice — kept out of the practice list so
+          // it doesn't show up twice in two different forms.
+          if (f.is_music) { musicByTag[f.tag] = f; return; }
+          (byTag[f.tag] = byTag[f.tag] || []).push(f);
+        });
 
         introEl.innerHTML = renderItems(byTag['modern samurai'] || []);
         VIRTUES.forEach(v => {

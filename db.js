@@ -6968,8 +6968,17 @@ function getFilesByTag(tag) {
 function getFilesBySamuraiTags(tags) {
   if (!tags || !tags.length) return [];
   const placeholders = tags.map(() => 'LOWER(?)').join(',');
+  // Per's request — a virtue can now carry two different kinds of
+  // audio: the spoken practice (unchanged, however it's tagged today)
+  // and a piece of background music meant to auto-play in the "Click
+  // for more" modal while someone reads. Both live in the same Library,
+  // tagged with the same samurai virtue tag — music is distinguished
+  // purely by ALSO carrying the 'music' tag, checked here via EXISTS
+  // rather than a second query, so the one existing samurai-content
+  // fetch can bucket practice vs. music itself.
   return queryAll(`
-    SELECT lf.id, lf.title, lf.content_type, lf.file_type, lf.description, LOWER(t.tag) as tag
+    SELECT lf.id, lf.title, lf.content_type, lf.file_type, lf.description, LOWER(t.tag) as tag,
+      EXISTS(SELECT 1 FROM library_file_tags mt WHERE mt.file_id = lf.id AND LOWER(mt.tag) = 'music') as is_music
     FROM library_files lf
     JOIN library_file_tags t ON t.file_id = lf.id
     WHERE LOWER(t.tag) IN (${placeholders}) AND lf.archived = 0
