@@ -2098,6 +2098,13 @@ async function loadUpTagsDropdown() {
   } catch(e) { _upTagsAll = []; }
   renderUpTagsCheckboxList();
   syncUpTagsHiddenInput();
+  // Per's request — per-file tags in the upload queue reuse the same
+  // efTagSuggestions datalist the single-file Edit panel uses, but that
+  // one is only ever populated when Edit opens. Filling it here too
+  // (from the fetch this modal already makes) means the per-row tag
+  // inputs below have real suggestions from the first file added,
+  // without a second network call.
+  document.getElementById('efTagSuggestions').innerHTML = _upTagsAll.map(t => `<option value="${escHtml(t.tag)}">`).join('');
 }
 function renderUpTagsCheckboxList() {
   const el = document.getElementById('upTagsCheckboxList');
@@ -2765,7 +2772,7 @@ function addToQ(files){
         categoryId: inferred.catId, subcategoryId: inferred.subId, visibility: vis,
         contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: headerTags });
     }
-    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient, tags: headerTags, queueId});
+    upQueue.push({file:f, vis, catId:inferred.catId, subId:inferred.subId, inferred: !facResourceMode && !headerVis, contentKind: headerKind || '', assignedClientId: headerAssignedClient, tagsArr: headerTags ? headerTags.split(',').map(t=>t.trim()).filter(Boolean) : [], queueId});
   });
   renderQ();
   renderPersistedQueue();
@@ -2863,6 +2870,17 @@ async function clearPersistedQueueAll() {
 }
 function getCatName(id){return allCats.find(c=>c.id===id)?.name||'';}
 
+function addQueueTag(i, value) {
+  const tag = (value || '').trim().toLowerCase();
+  if (!tag) return;
+  upQueue[i].tagsArr = upQueue[i].tagsArr || [];
+  if (!upQueue[i].tagsArr.includes(tag)) upQueue[i].tagsArr.push(tag);
+  renderQ();
+}
+function removeQueueTag(i, tag) {
+  upQueue[i].tagsArr = (upQueue[i].tagsArr || []).filter(t => t !== tag);
+  renderQ();
+}
 function renderQ(){
   // Per Bot 24 — visibility tier is completely ignored for one-to-one
   // files (see canSeeFile in db.js — assigned_client_id overrides the
@@ -2900,6 +2918,11 @@ function renderQ(){
       ${visControl}
       <select class="vis-sel" onchange="upQueue[${i}].contentKind=this.value;autofillAppFilesIfTimerKind(this.value,'upCat','upSub')">${contentKindOptions(it.contentKind||'')}</select>
       <button onclick="upQueue.splice(${i},1);renderQ()" style="background:none;border:none;color:rgba(255,100,80,0.5);cursor:pointer;font-size:18px">×</button>
+      <div style="flex-basis:100%;display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px">
+        ${(it.tagsArr||[]).map(t => `<span class="tag" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.85);display:inline-flex;align-items:center;gap:4px">${escHtml(t)}<span onclick="removeQueueTag(${i},'${t.replace(/'/g,"\\'")}')" style="cursor:pointer;opacity:0.6" title="Remove">✕</span></span>`).join('')}
+        <input type="text" list="efTagSuggestions" placeholder="+ tag" style="width:90px;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.7);font-size:11px;font-family:Georgia,serif;outline:none;padding:2px 0"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();addQueueTag(${i}, this.value); this.value='';}"/>
+      </div>
     </div>`;
   }).join('');
 }
@@ -2926,7 +2949,7 @@ async function uploadOneFile(it, cat, sub) {
     fd.append('visibility',    it.vis);
     fd.append('contentKind',   it.contentKind || '');
     fd.append('assignedClientId', it.assignedClientId || '');
-    fd.append('tags', it.tags || '');
+    fd.append('tags', (it.tagsArr||[]).join(','));
     fd.append('facilitatorResource', facResource);
     const res = await fetch('/api/content/library', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({})))?.error || 'Upload failed.');
@@ -2968,7 +2991,7 @@ async function uploadOneFile(it, cat, sub) {
   fd.append('originalName',  it.file.name);
   fd.append('contentType',   it.file.type || 'application/octet-stream');
   fd.append('fileSize',      it.file.size);
-  fd.append('tags',          it.tags || '');
+  fd.append('tags',          (it.tagsArr||[]).join(','));
   fd.append('facilitatorResource', facResource);
   const confirmRes = await fetch('/api/content/library', { method: 'POST', body: fd });
   if (!confirmRes.ok) throw new Error((await confirmRes.json().catch(()=>({})))?.error || 'Could not save file metadata.');
