@@ -13757,19 +13757,34 @@ app.post('/api/admin/campaigns/:id/postings', auth.requireAuthApi(['admin']), (r
 // campaign's own link automatically at publish time. Every created
 // posting stays a normal posting afterward — editable, deletable,
 // nothing about this locks it in.
+//
+// Per's real incident — ten sequential AI calls easily runs past
+// Railway/Cloudflare's proxy timeout inside a single request, which
+// doesn't come back as a clean error; it comes back as an HTML gateway
+// page that breaks res.json() client-side ("Unexpected token '<'").
+// Same background-job pattern as the audiobook combiner above: respond
+// immediately with a job id, do the real work after the response has
+// already gone out, poll for progress separately.
+const postingAutoGenJobs = new Map();
 app.post('/api/admin/campaigns/:id/postings/auto-generate-from-videos', auth.requireAuthApi(['admin']), async (req, res) => {
-  try {
-    const campaign = db.getCampaign(req.params.id);
-    if (!campaign) return res.status(404).json({ error: 'Not found.' });
-    const channels = Array.isArray(req.body?.channels) && req.body.channels.length ? req.body.channels : ['facebook', 'linkedin', 'instagram'];
-    const videos = db.getCampaignVideos(campaign.id).filter(v => v.script && v.script.trim());
-    if (!videos.length) return res.status(400).json({ error: 'No planned videos have a script yet — write or generate scripts first.' });
+  const campaign = db.getCampaign(req.params.id);
+  if (!campaign) return res.status(404).json({ error: 'Not found.' });
+  const channels = Array.isArray(req.body?.channels) && req.body.channels.length ? req.body.channels : ['facebook', 'linkedin', 'instagram'];
+  const videos = db.getCampaignVideos(campaign.id).filter(v => v.script && v.script.trim());
+  if (!videos.length) return res.status(400).json({ error: 'No planned videos have a script yet — write or generate scripts first.' });
 
+  const jobId = uuidv4();
+  postingAutoGenJobs.set(jobId, { status: 'processing', stage: `0 of ${videos.length} videos`, created: 0, errors: [] });
+  res.json({ ok: true, jobId }); // respond immediately — the real work happens after this, never inside the request Railway/Cloudflare are timing
+
+  (async () => {
     const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', prompts.COURSE_SIGNUP_CTA_INSTRUCTIONS);
     const context = [campaign.goal, campaign.promotes_label].filter(Boolean).join(' — ');
     const created = [];
     const errors = [];
-    for (const video of videos) {
+    for (let i = 0; i < videos.length; i++) {
+      const video = videos[i];
+      postingAutoGenJobs.set(jobId, { status: 'processing', stage: `${i} of ${videos.length} videos — writing "${video.title}"`, created: created.length, errors });
       try {
         const userMessage = `WHAT THIS IS PROMOTING: ${context || campaign.name}\n\nSOURCE SCRIPT (from the video "${video.title}"):\n${video.script}\n\nPLATFORMS TO PRODUCE: ${channels.join(', ')}\n\nRespond with only the JSON object, nothing else.` + getCurrentTrendBlock();
         const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1200);
@@ -13792,8 +13807,18 @@ app.post('/api/admin/campaigns/:id/postings/auto-generate-from-videos', auth.req
         errors.push(`${video.title}: ${e.message}`);
       }
     }
-    res.json({ created: created.length, errors });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    postingAutoGenJobs.set(jobId, { status: 'done', created: created.length, errors });
+    // Same cleanup window as the audiobook job above — long enough for
+    // any reasonable polling delay, not kept forever.
+    setTimeout(() => postingAutoGenJobs.delete(jobId), 30 * 60 * 1000);
+  })().catch(e => {
+    postingAutoGenJobs.set(jobId, { status: 'error', error: e.message });
+  });
+});
+app.get('/api/admin/campaigns/:id/postings/auto-generate-from-videos/status/:jobId', auth.requireAuthApi(['admin']), (req, res) => {
+  const job = postingAutoGenJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found — it may have finished a while ago, or the server restarted since it started.' });
+  res.json(job);
 });
 app.patch('/api/admin/campaigns/:id/postings/:postingId', auth.requireAuthApi(['admin']), (req, res) => {
   try {

@@ -1923,7 +1923,7 @@
     const status = document.getElementById('campAutoGenStatus');
     const channels = [...document.querySelectorAll('.autogen-channel-chk:checked')].map(c => c.value);
     if (!channels.length) { status.style.color = 'rgba(255,140,120,0.85)'; status.textContent = 'Tick at least one channel.'; return; }
-    setBtnLoading(btn, true, 'Generating… (can take a minute or two for all videos)');
+    setBtnLoading(btn, true, 'Starting…');
     status.style.color = 'rgba(255,255,255,0.5)';
     status.textContent = '';
     try {
@@ -1931,9 +1931,9 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels }),
       });
       const data = await res.json();
-      if (!res.ok || (data.error && !data.created)) throw new Error(data.error || 'Could not generate postings.');
-      status.style.color = 'rgba(180,230,200,0.9)';
-      status.textContent = `Created ${data.created} posting${data.created===1?'':'s'}.` + (data.errors && data.errors.length ? ` ${data.errors.length} skipped — ${data.errors.join(' ')}` : '');
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not start generation.');
+      btn.textContent = 'Generating…';
+      await pollAutoGenJob(data.jobId, status);
       await refreshCampaignDetail();
       loadCampaigns();
     } catch(e) {
@@ -1941,6 +1941,35 @@
       status.textContent = e.message;
       appAlert(e.message);
     } finally { setBtnLoading(btn, false); }
+  }
+  // Per's real incident — ten sequential AI calls in one request ran
+  // past Railway/Cloudflare's proxy timeout and came back as an HTML
+  // error page, which broke res.json() client-side ("Unexpected token
+  // '<'"). The endpoint now starts a background job and returns
+  // immediately; this polls its status every 2 seconds instead of
+  // waiting on one long-lived request, same pattern the audiobook
+  // combiner already uses elsewhere in this app.
+  function pollAutoGenJob(jobId, status) {
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        try {
+          const res = await fetch(`/api/admin/campaigns/${curCampaignId}/postings/auto-generate-from-videos/status/${jobId}`);
+          const job = await res.json();
+          if (!res.ok || job.error) throw new Error(job.error || 'Something went wrong while generating.');
+          if (job.status === 'processing') {
+            status.textContent = job.stage || 'Working…';
+            setTimeout(tick, 2000);
+          } else if (job.status === 'done') {
+            status.style.color = 'rgba(180,230,200,0.9)';
+            status.textContent = `Created ${job.created} posting${job.created===1?'':'s'}.` + (job.errors && job.errors.length ? ` ${job.errors.length} skipped — ${job.errors.join(' ')}` : '');
+            resolve();
+          } else {
+            throw new Error(job.error || 'Generation failed.');
+          }
+        } catch (e) { reject(e); }
+      };
+      tick();
+    });
   }
   function showAddPostingForm() {
     document.getElementById('campAddPostingForm').style.display = '';
