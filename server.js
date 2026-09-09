@@ -13835,6 +13835,24 @@ app.delete('/api/admin/campaigns/:id/steps/:stepId', auth.requireAuthApi(['admin
 // script") ── the planning layer: write the script here first, upload
 // the actual file once it's recorded, then reference it from a step
 // when it's time to actually schedule the post.
+// Per's request — a posting in ANY campaign can attach a video/image
+// already sitting in the Marketing library, not just one planned inside
+// that specific campaign. Scoped deliberately to category='cat-marketing'
+// only: those are guaranteed to live at the public, non-expiring
+// newsletter-images/ R2 prefix (every campaign-video upload and the
+// backfill above both write there), so the URL built here stays valid
+// for as long as a posting keeps getting refired. General private
+// member-library content is NOT offered here on purpose — attaching it
+// would need a signed URL regenerated at every publish, not built.
+app.get('/api/admin/library-files/marketing-media', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const files = db.getLibraryFilesByCategory('cat-marketing').filter(f => f.file_type && (f.file_type.startsWith('video/') || f.file_type.startsWith('image/')));
+    res.json(files.map(f => ({
+      id: f.id, title: f.title, mediaType: f.file_type.startsWith('video/') ? 'video' : 'image',
+      url: `${APP_URL}/newsletter-images/${encodeURIComponent(String(f.filename).replace('newsletter-images/', ''))}`,
+    })));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/admin/campaigns/:id/videos', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getCampaignVideos(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
@@ -13916,8 +13934,23 @@ app.post('/api/admin/campaigns/:id/videos/:videoId/upload', auth.requireAuthApi(
     fs.unlink(req.file.path, () => {});
     const url = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
     const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
-    db.setCampaignVideoMedia(req.params.videoId, url, mediaType);
-    res.json({ ok: true, url, mediaType });
+    // Per's report — these were invisible outside their own campaign,
+    // since only campaign_videos.media_url pointed at the raw R2 key.
+    // Registering a real library_files row (admin-only visibility, so it
+    // never shows up in a member's own content list) alongside it makes
+    // the file discoverable and reusable from Content > Library, from
+    // any campaign — without touching where the actual bytes live, so
+    // postings that already reference the old media_url keep working
+    // exactly as before.
+    const video = db.getCampaignVideo(req.params.videoId);
+    const libraryFileId = uuidv4();
+    db.addLibraryFile(
+      libraryFileId, video?.title || 'Campaign video', 'Uploaded from a campaign\u2019s Videos section (Per App 33).',
+      key, req.file.originalname, req.file.mimetype, buffer.length,
+      'cat-marketing', null, 'admin', 'r2', false, null, null, null
+    );
+    db.setCampaignVideoMedia(req.params.videoId, url, mediaType, libraryFileId);
+    res.json({ ok: true, url, mediaType, libraryFileId });
   } catch (e) {
     if (req.file) fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: 'Could not upload media: ' + e.message });

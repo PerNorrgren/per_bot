@@ -634,15 +634,14 @@
         <select id="campNewOffer"><option value="">No offer — calming steps only</option></select>
       </div>
       <div>
-        <label>Audience for email steps</label>
-        <select id="campNewAudience">
-          <option value="all">Everyone opted in</option>
-          <option value="newsletter_only">Newsletter-only (not yet registered)</option>
-          <option value="explorer">Explorer</option>
-          <option value="member1">Member 1</option>
-          <option value="member2">Member 2</option>
-          <option value="member3">Member 3</option>
-        </select>
+        <label>Audience for email postings <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(tick any mix — leave all unticked for everyone opted in)</span></label>
+        <div style="display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:4px" id="campNewAudiencePicker">
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-audience-chk" value="newsletter_only"/> Newsletter-only (not yet registered)</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-audience-chk" value="explorer"/> Explorer</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-audience-chk" value="member1"/> Member 1</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-audience-chk" value="member2"/> Member 2</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-audience-chk" value="member3"/> Member 3</label>
+        </div>
       </div>
       <div class="modal-err" id="campNewErr"></div>
       <div class="modal-btns">
@@ -693,6 +692,16 @@
             <input type="url" id="campDetailPromotesUrl" style="width:100%"/>
           </div>
           <button class="btn sm" onclick="saveCampaignGoal()">Save</button>
+        </div>
+        <div style="margin-top:10px">
+          <label style="font-size:11px">Audience for email postings <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(tick any mix — leave all unticked for everyone opted in)</span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:4px" id="campDetailAudiencePicker">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="newsletter_only" onchange="saveCampaignGoal()"/> Newsletter-only</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="explorer" onchange="saveCampaignGoal()"/> Explorer</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member1" onchange="saveCampaignGoal()"/> Member 1</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member2" onchange="saveCampaignGoal()"/> Member 2</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member3" onchange="saveCampaignGoal()"/> Member 3</label>
+          </div>
         </div>
         <div id="campGoalSaveStatus" style="font-size:12px;margin-top:6px"></div>
       </div>
@@ -780,6 +789,10 @@
             <div style="flex:0 0 220px" id="postNewVideoWrap">
               <label style="font-size:11px">Use planned video <span style="color:rgba(255,255,255,0.3)">(optional, social only)</span></label>
               <select id="postNewVideo" style="width:100%" onchange="onPostNewVideoChanged()"><option value="">None — write from scratch</option></select>
+            </div>
+            <div style="flex:0 0 220px" id="postNewLibraryWrap">
+              <label style="font-size:11px">Or attach from Marketing library <span style="color:rgba(255,255,255,0.3)">(any campaign's uploads)</span></label>
+              <select id="postNewLibraryMedia" style="width:100%" onchange="onPostNewLibraryMediaChanged()"><option value="">None</option></select>
             </div>
           </div>
           <div id="postNewSubjectWrap" style="margin-bottom:8px">
@@ -1692,6 +1705,11 @@
 
   // ── Campaigns (Per Bot 18) ──
   const CAMP_CHANNEL_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  const AUDIENCE_LABELS = { newsletter_only: 'Newsletter-only', explorer: 'Explorer', member1: 'Member 1', member2: 'Member 2', member3: 'Member 3' };
+  function formatAudience(audience) {
+    if (!audience || audience === 'all') return 'everyone opted in';
+    return audience.split(',').map(s => AUDIENCE_LABELS[s.trim()] || s.trim()).join(', ');
+  }
   let curCampaignId = null;
 
   async function loadCampaigns() {
@@ -1721,7 +1739,7 @@
   }
   async function openNewCampaignModal() {
     document.getElementById('campNewName').value = '';
-    document.getElementById('campNewAudience').value = 'all';
+    document.querySelectorAll('.camp-new-audience-chk').forEach(c => c.checked = false);
     document.getElementById('campNewGoal').value = '';
     document.getElementById('campNewPromotesLabel').value = '';
     document.getElementById('campNewPromotesUrl').value = '';
@@ -1741,7 +1759,10 @@
     const body = {
       name,
       offerId: document.getElementById('campNewOffer').value || null,
-      audience: document.getElementById('campNewAudience').value,
+      audience: (() => {
+        const segs = [...document.querySelectorAll('.camp-new-audience-chk:checked')].map(c => c.value);
+        return segs.length ? segs.join(',') : 'all';
+      })(),
       goal: document.getElementById('campNewGoal').value.trim() || null,
       promotesLabel: document.getElementById('campNewPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campNewPromotesUrl').value.trim() || null,
@@ -1769,13 +1790,15 @@
     document.getElementById('campDetailName').textContent = data.name;
     const offer = offersData.find(o => o.id === data.offer_id);
     document.getElementById('campDetailMeta').textContent =
-      `${data.status.toUpperCase()} · ${data.type === 'time_boxed' ? 'time-boxed' : 'general'} · ${offer ? offer.name : 'no offer'} · audience: ${data.audience}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}${data.end_date ? ' · ends ' + data.end_date : ''}`;
+      `${data.status.toUpperCase()} · ${data.type === 'time_boxed' ? 'time-boxed' : 'general'} · ${offer ? offer.name : 'no offer'} · audience: ${formatAudience(data.audience)}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}${data.end_date ? ' · ends ' + data.end_date : ''}`;
     document.getElementById('campDetailGoal').value = data.goal || '';
     document.getElementById('campDetailPromotesLabel').value = data.promotes_label || '';
     document.getElementById('campDetailPromotesUrl').value = data.promotes_url || '';
     document.getElementById('campDetailType').value = data.type || 'general';
     document.getElementById('campDetailEndDate').value = data.end_date || '';
     onCampDetailTypeChanged();
+    const audSegs = (!data.audience || data.audience === 'all') ? [] : data.audience.split(',').map(s => s.trim());
+    document.querySelectorAll('.camp-detail-audience-chk').forEach(c => c.checked = audSegs.includes(c.value));
 
     const isDraft = data.status === 'draft';
     document.getElementById('campAddStepWrap').style.display = 'none'; // old step-based UI retired Per App 33
@@ -1843,17 +1866,25 @@
       </div>`;
     }).join('');
   }
+  let _marketingMediaCache = [];
   function showAddPostingForm() {
     document.getElementById('campAddPostingForm').style.display = '';
     const sel = document.getElementById('postNewVideo');
     sel.innerHTML = '<option value="">None — write from scratch</option>'
       + (_campVideosCache||[]).map(v => `<option value="${v.id}">${escHtml(v.title)}</option>`).join('');
+    fetch('/api/admin/library-files/marketing-media').then(r=>r.json()).then(list => {
+      _marketingMediaCache = Array.isArray(list) ? list : [];
+      const libSel = document.getElementById('postNewLibraryMedia');
+      libSel.innerHTML = '<option value="">None</option>'
+        + _marketingMediaCache.map(m => `<option value="${m.id}">${escHtml(m.title)} (${m.mediaType})</option>`).join('');
+    }).catch(() => {});
     onPostNewChannelChanged();
   }
   function onPostNewChannelChanged() {
     const channel = document.getElementById('postNewChannel').value;
     document.getElementById('postNewSubjectWrap').style.display = channel === 'email' ? '' : 'none';
     document.getElementById('postNewVideoWrap').style.display = channel === 'email' ? 'none' : '';
+    document.getElementById('postNewLibraryWrap').style.display = channel === 'email' ? 'none' : '';
   }
   // Per's request, carried over from the old step form — picking a
   // planned video auto-fills the posting's content from its script (and
@@ -1862,10 +1893,15 @@
   function onPostNewVideoChanged() {
     const id = document.getElementById('postNewVideo').value;
     if (!id) return;
+    document.getElementById('postNewLibraryMedia').value = ''; // mutually exclusive with a library attachment
     const v = (_campVideosCache||[]).find(v => v.id === id);
     if (!v) return;
     const contentEl = document.getElementById('postNewContent');
     if (!contentEl.value.trim()) contentEl.value = v.script || '';
+  }
+  function onPostNewLibraryMediaChanged() {
+    const id = document.getElementById('postNewLibraryMedia').value;
+    if (id) document.getElementById('postNewVideo').value = ''; // mutually exclusive with a planned video
   }
   async function addPosting() {
     const btn = document.getElementById('campAddPostingBtn');
@@ -1878,6 +1914,8 @@
     const preferredDays = [...document.querySelectorAll('.post-new-day-chk:checked')].map(c => Number(c.value));
     const videoId = channel !== 'email' ? (document.getElementById('postNewVideo').value || undefined) : undefined;
     const video = videoId ? (_campVideosCache||[]).find(v => v.id === videoId) : null;
+    const libMediaId = channel !== 'email' ? (document.getElementById('postNewLibraryMedia').value || undefined) : undefined;
+    const libMedia = libMediaId ? (_marketingMediaCache||[]).find(m => m.id === libMediaId) : null;
     setBtnLoading(btn, true, 'Adding…');
     try {
       const body = {
@@ -1886,8 +1924,8 @@
         content, expiryDate: document.getElementById('postNewExpiry').value || undefined,
         preferredDays: preferredDays.length ? preferredDays : undefined,
         campaignVideoId: videoId,
-        mediaUrl: video && video.status === 'recorded' ? video.media_url : undefined,
-        mediaType: video && video.status === 'recorded' ? video.media_type : undefined,
+        mediaUrl: libMedia ? libMedia.url : (video && video.status === 'recorded' ? video.media_url : undefined),
+        mediaType: libMedia ? libMedia.mediaType : (video && video.status === 'recorded' ? video.media_type : undefined),
       };
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}/postings`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
@@ -1896,6 +1934,7 @@
       document.getElementById('postNewSubject').value = '';
       document.getElementById('postNewExpiry').value = '';
       document.getElementById('postNewVideo').value = '';
+      document.getElementById('postNewLibraryMedia').value = '';
       document.querySelectorAll('.post-new-day-chk').forEach(c => c.checked = false);
       await refreshCampaignDetail();
       loadCampaigns();
@@ -2099,12 +2138,14 @@
     const status = document.getElementById('campGoalSaveStatus');
     status.style.color = 'rgba(255,255,255,0.5)';
     status.textContent = 'Saving…';
+    const audSegs = [...document.querySelectorAll('.camp-detail-audience-chk:checked')].map(c => c.value);
     const body = {
       goal: document.getElementById('campDetailGoal').value.trim() || null,
       promotesLabel: document.getElementById('campDetailPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campDetailPromotesUrl').value.trim() || null,
       type: document.getElementById('campDetailType').value,
       endDate: document.getElementById('campDetailType').value === 'time_boxed' ? (document.getElementById('campDetailEndDate').value || null) : null,
+      audience: audSegs.length ? audSegs.join(',') : 'all',
     };
     try {
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });

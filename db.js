@@ -1448,6 +1448,48 @@ async function getDb() {
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_videos_campaign ON campaign_videos(campaign_id)`);
+  // Per's report — uploaded campaign videos were invisible outside their
+  // own campaign, since media_url just pointed at a raw R2 key with no
+  // library_files row backing it. library_file_id (nullable — older
+  // uploads made before this existed won't have one) links to a real
+  // Library entry created alongside the upload, so the file shows up in
+  // Content > Library and can be found/reused from any campaign, not
+  // just the one it was originally uploaded for. Deliberately NOT a
+  // replacement for media_url: the actual bytes stay at their existing
+  // public, non-expiring R2 key (newsletter-images/campaign-video-*) so
+  // a posting's stored media_url keeps working correctly no matter how
+  // many times it's refired over the following weeks — the Library
+  // entry is a second, admin-facing pointer at the same object, not a
+  // move to the Library's normal private/signed-URL storage path (which
+  // would break exactly that repeat-firing use case).
+  try { db.run(`ALTER TABLE campaign_videos ADD COLUMN library_file_id TEXT`); } catch(e) {}
+  // One-time backfill (idempotent via the library_file_id IS NULL check,
+  // safe to run on every boot) — gives every campaign video uploaded
+  // BEFORE library_file_id existed the same real Library entry a fresh
+  // upload now gets, so Per's already-uploaded videos become findable
+  // too, not just new ones going forward. Only backfills videos whose
+  // media_url is a recognisable newsletter-images URL (the only key
+  // pattern campaign video uploads have ever used) — anything else is
+  // left alone rather than guessed at.
+  try {
+    const unlinked = queryAll(`SELECT * FROM campaign_videos WHERE media_url IS NOT NULL AND library_file_id IS NULL`);
+    for (const v of unlinked) {
+      const marker = '/newsletter-images/';
+      const idx = v.media_url.indexOf(marker);
+      if (idx === -1) continue;
+      const key = `newsletter-images/${decodeURIComponent(v.media_url.slice(idx + marker.length))}`;
+      const mimetype = v.media_type === 'video' ? 'video/webm' : 'image/png';
+      const libraryFileId = crypto.randomUUID();
+      getDbSync().run(
+        `INSERT INTO library_files (id,title,description,filename,original_name,file_type,file_size,category_id,subcategory_id,visibility,storage_type,facilitator_resource,content_type,external_link,assigned_client_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [libraryFileId, v.title || 'Campaign video', "Backfilled from an earlier campaign upload (Per App 33).",
+         key, v.title || key, mimetype, 0, 'cat-marketing', null, 'admin', 'r2', 0, null, null, null]
+      );
+      getDbSync().run(`UPDATE campaign_videos SET library_file_id=? WHERE id=?`, [libraryFileId, v.id]);
+    }
+    if (unlinked.length) save();
+  } catch(e) { console.error('[campaign video library backfill] failed:', e.message); }
 
   // ── Postings & the unified schedule engine (Per App 33 — replaces the
   // old one-shot campaign_steps/topUpSocialQueue split entirely) ──
@@ -4024,6 +4066,9 @@ function addLibraryFile(id, title, description, filename, originalName, fileType
   save();
 }
 function getLibraryFile(id) { return queryOne('SELECT * FROM library_files WHERE id=?', [id]); }
+function getLibraryFilesByCategory(categoryId) {
+  return queryAll('SELECT * FROM library_files WHERE category_id=? ORDER BY created_at DESC', [categoryId]);
+}
 // Per's request — records which original PDF a converted EPUB came
 // from. Called once, right after a successful conversion, rather than
 // added as a 16th positional argument to addLibraryFile above — that
@@ -7825,7 +7870,13 @@ function updateCampaign(id, fields) {
   // rather than requiring every caller to remember to omit unused keys.
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
-  const draftOnlyFields = ['name', 'offer_id', 'audience', 'source_tag', 'type'];
+  // Per's request — audience needs to be changeable on a live campaign
+  // too (widen/narrow reach mid-run), not locked in at creation like
+  // name/offer/type genuinely should be. Same real-incident pattern as
+  // goal/promotes_label/promotes_url earlier — anything in this list
+  // silently fails to save once a campaign is active, so audience must
+  // NOT be here.
+  const draftOnlyFields = ['name', 'offer_id', 'source_tag', 'type'];
   const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
   const where = hasDraftOnlyField ? `WHERE id=? AND status='draft'` : `WHERE id=?`;
@@ -8009,8 +8060,8 @@ function updateCampaignVideo(id, fields) {
 // also flips status — a video only ever becomes 'recorded' the moment
 // it genuinely has a file attached, never just from editing its title
 // or script.
-function setCampaignVideoMedia(id, mediaUrl, mediaType) {
-  getDbSync().run(`UPDATE campaign_videos SET media_url=?, media_type=?, status='recorded' WHERE id=?`, [mediaUrl, mediaType, id]);
+function setCampaignVideoMedia(id, mediaUrl, mediaType, libraryFileId) {
+  getDbSync().run(`UPDATE campaign_videos SET media_url=?, media_type=?, status='recorded', library_file_id=? WHERE id=?`, [mediaUrl, mediaType, libraryFileId || null, id]);
   save();
 }
 function deleteCampaignVideo(id) {
@@ -10637,7 +10688,7 @@ module.exports = {
   createCategory, renameCategory, deleteCategory,
   getAllContentKinds, createContentKind, renameContentKind, deleteContentKind,
   // Library
-  addLibraryFile, getLibraryFile, setLibraryFileOriginalPdf, replaceLibraryFileSlides, getLibraryFileSlides, deleteLibraryFileSlides, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
+  addLibraryFile, getLibraryFile, getLibraryFilesByCategory, setLibraryFileOriginalPdf, replaceLibraryFileSlides, getLibraryFileSlides, deleteLibraryFileSlides, getLibraryFiles, updateLibraryFile, getAllTextHtmlFiles, findDuplicateLibraryFiles, scanDescriptionsForDomainRefs,
   setPoemAudio, getPoemsForAdmin,
   renameLibraryFile, markLibraryFileConverted, getConvertedPdfLibraryFiles, replaceLibraryFileContent, deleteLibraryFile, archiveLibraryFile, getFileUsage,
   getLiveMeetings, createLiveMeeting, updateLiveMeeting, deleteLiveMeeting,
