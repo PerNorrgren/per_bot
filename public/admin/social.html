@@ -111,11 +111,22 @@
     </div>
 
     <div>
-      <div class="section-label">Queue Auto-Prepare</div>
-      <div class="section-note">Runs automatically once a day (05:15 UTC), checking each platform against its schedule above and generating whatever's missing to keep a rolling week's worth queued. This button runs the exact same check right now instead of waiting for the next cron tick. Generates text and a still image/infographic per post — video still needs a manual pass in Message Builder afterward, since video rendering happens in the browser and can't run from here.</div>
+      <div class="section-label">Postings Engine</div>
+      <div class="section-note">Per App 33 — replaces the old daily MOTD auto-prepare below. Runs automatically every 5 minutes: for every channel's schedule above, at each slot that's due today, it picks whichever eligible posting (from any active campaign, in Sales &amp; Campaigns) was sent longest ago and fires it. This button runs that same check right now instead of waiting for the next tick — useful for confirming a new posting or schedule change actually gets picked up before trusting it to run unattended.</div>
       <div class="card">
         <div style="padding:20px">
-          <button class="btn sm primary" onclick="prepareQueueNow()" id="prepareBtn">Prepare now</button>
+          <button class="btn sm primary" onclick="runPostingsEngineNow()" id="runEngineBtn">Run now</button>
+          <div id="runEngineReport" style="margin-top:14px;font-size:12.5px;line-height:1.8;color:rgba(255,255,255,0.5)"></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Queue Auto-Prepare <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(retired Per App 33)</span></div>
+      <div class="section-note">No longer runs automatically — it filled the exact same schedule slots the Postings Engine above now fills directly, and leaving both running would double-post. Left here only in case a genuine ad-hoc queue-topping-up need comes up; the button below still works if clicked, but nothing calls it on its own anymore.</div>
+      <div class="card">
+        <div style="padding:20px">
+          <button class="btn sm" onclick="prepareQueueNow()" id="prepareBtn">Prepare now (manual only)</button>
           <div id="prepareReport" style="margin-top:14px;font-size:12.5px;line-height:1.8;color:rgba(255,255,255,0.5)"></div>
         </div>
       </div>
@@ -179,13 +190,14 @@
   // there's no single "Save all" button, since editing one platform's
   // schedule has nothing to do with another's.
   const PLATFORMS = [
+    { key: 'email',     label: 'Email' },
     { key: 'facebook',  label: 'Facebook' },
     { key: 'linkedin',  label: 'LinkedIn' },
     { key: 'instagram', label: 'Instagram' },
     { key: 'threads',   label: 'Threads' },
   ];
   const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  let scheduleState = {}; // platform -> { days:Set, times:[] }
+  let scheduleState = {}; // platform -> { days:Set, times:[], cooldownDays }
 
   async function loadSchedule() {
     let config = [];
@@ -198,6 +210,7 @@
       scheduleState[p.key] = {
         days: new Set(existing ? existing.days : []),
         times: existing ? [...existing.times] : [],
+        cooldownDays: existing && existing.cooldown_days != null ? existing.cooldown_days : 3,
       };
     });
     renderSchedule();
@@ -223,6 +236,10 @@
           <div class="times-list" id="scheduleTimes_${p.key}">
             ${s.times.map(t => `<span class="time-chip">${t} <button onclick="removeTime('${p.key}','${t}')" title="Remove">×</button></span>`).join('') || '<span style="font-size:11px;color:rgba(255,255,255,0.25)">No times set — add at least one before saving.</span>'}
           </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+            <label style="font-size:11px;color:rgba(255,255,255,0.5)">Min. days before the same posting repeats here:</label>
+            <input class="inline-input" type="number" min="0" id="scheduleCooldown_${p.key}" value="${s.cooldownDays}" style="width:60px" onchange="scheduleState['${p.key}'].cooldownDays = parseInt(this.value,10)||0"/>
+          </div>
           <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
             <button class="btn sm primary" onclick="saveSchedule('${p.key}')">Save ${p.label}</button>
             <div class="feedback" id="scheduleFeedback_${p.key}"></div>
@@ -239,7 +256,7 @@
     if (!el) return;
     if (!s.days.size || !s.times.length) { el.textContent = 'Not fully configured yet.'; return; }
     const days = [...s.days].sort((a, b) => a - b).map(i => DAY_LABELS[i]).join('/');
-    el.textContent = `${days} · ${[...s.times].sort().join(', ')} UTC`;
+    el.textContent = `${days} · ${[...s.times].sort().join(', ')} UTC · ${s.cooldownDays}-day min. repeat gap`;
   }
 
   function toggleDay(platform, dayIndex) {
@@ -269,7 +286,7 @@
     try {
       const res = await fetch(`/api/admin/social-schedule/${platform}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days, times })
+        body: JSON.stringify({ days, times, cooldownDays: s.cooldownDays })
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save.');
       showFeedback(`scheduleFeedback_${platform}`, 'Saved.', 'ok');
@@ -278,7 +295,31 @@
     }
   }
 
-  const PLATFORM_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  const PLATFORM_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  async function runPostingsEngineNow() {
+    const btn = document.getElementById('runEngineBtn');
+    const out = document.getElementById('runEngineReport');
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = 'Running…';
+    out.textContent = '';
+    try {
+      const res = await fetch('/api/admin/social-schedule/run-now', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not run the engine.');
+      const lines = [];
+      (data.fired || []).forEach(f => lines.push(`<span style="color:rgba(180,230,200,0.85)">✓ ${PLATFORM_LABELS[f.channel]||f.channel}</span> — fired at ${f.slot}`));
+      (data.gaps || []).forEach(g => lines.push(`<span style="color:rgba(230,175,90,0.85)">— ${PLATFORM_LABELS[g.channel]||g.channel}</span> — slot ${g.slot} due, nothing eligible in the pool`));
+      (data.failed || []).forEach(f => lines.push(`<span style="color:rgba(255,120,100,0.85)">✗ ${PLATFORM_LABELS[f.channel]||f.channel}</span> — ${f.slot}: ${f.error}`));
+      out.innerHTML = lines.join('<br/>') || 'No slots due right now — nothing to fire.';
+    } catch (e) {
+      out.innerHTML = `<span style="color:rgba(255,120,100,0.85)">${e.message}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+
   async function prepareQueueNow() {
     const btn = document.getElementById('prepareBtn');
     const out = document.getElementById('prepareReport');

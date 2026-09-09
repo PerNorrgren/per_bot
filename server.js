@@ -13684,8 +13684,9 @@ app.get('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
 });
 app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { name, offerId, audience, goal, promotesLabel, promotesUrl } = req.body;
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (type === 'time_boxed' && !endDate) return res.status(400).json({ error: 'A time-boxed campaign needs an end date.' });
     const id = uuidv4();
     db.createCampaign(id, name.trim(), offerId || null, audience || 'all');
     // Per's report — these three were being sent by the client already
@@ -13694,8 +13695,12 @@ app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
     // elsewhere, so this reuses the same extensible updateCampaign
     // function the detail-view Save button already calls, rather than
     // changing that signature.
-    if (goal || promotesLabel || promotesUrl) {
-      db.updateCampaign(id, { goal: goal || null, promotes_label: promotesLabel || null, promotes_url: promotesUrl || null });
+    // Per App 33 — type/endDate are new the same way; 'general' campaigns
+    // (no end_date) run indefinitely as an evergreen pool, 'time_boxed'
+    // ones (Finding Mindfulness-style) stop supplying postings once
+    // end_date passes, checked live at pick-time in getEligiblePostingForSlot.
+    if (goal || promotesLabel || promotesUrl || type || endDate) {
+      db.updateCampaign(id, { goal: goal || null, promotes_label: promotesLabel || null, promotes_url: promotesUrl || null, type: type || 'general', end_date: endDate || null });
     }
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -13704,20 +13709,75 @@ app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) =
   try {
     const campaign = db.getCampaign(req.params.id);
     if (!campaign) return res.status(404).json({ error: 'Not found.' });
-    res.json({ ...campaign, steps: db.getCampaignSteps(req.params.id) });
+    res.json({ ...campaign, steps: db.getCampaignSteps(req.params.id), postings: db.getPostingsForCampaign(req.params.id).map(p => ({ ...p, preferred_days: p.preferred_days ? JSON.parse(p.preferred_days) : null })) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {
-    const { name, offerId, audience, goal, promotesLabel, promotesUrl } = req.body;
-    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl });
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate } = req.body;
+    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl, type, end_date: endDate });
     console.log('[campaign save] succeeded for', req.params.id);
     res.json({ ok: true });
   } catch(e) {
     console.error('[campaign save] FAILED for', req.params.id, '—', e.message, e.stack);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Postings (Per App 33 — replaces campaign_steps for new campaigns) ──
+app.get('/api/admin/campaigns/:id/postings', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getPostingsForCampaign(req.params.id).map(p => ({ ...p, preferred_days: p.preferred_days ? JSON.parse(p.preferred_days) : null }))); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/postings', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { channel, type, subject, content, mediaUrl, mediaType, campaignVideoId, expiryDate, preferredDays } = req.body;
+    if (!channel) return res.status(400).json({ error: 'Channel is required.' });
+    if (channel === 'email' && (!subject || !subject.trim())) return res.status(400).json({ error: 'Email postings need a subject.' });
+    if (!content || !content.trim()) return res.status(400).json({ error: 'Content is required.' });
+    const id = uuidv4();
+    db.createPosting(id, { campaignId: req.params.id, channel, type, subject, content, mediaUrl, mediaType, campaignVideoId, expiryDate, preferredDays });
+    res.json({ id });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/campaigns/:id/postings/:postingId', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { channel, type, subject, content, mediaUrl, mediaType, campaignVideoId, expiryDate, preferredDays, status } = req.body;
+    db.updatePosting(req.params.postingId, {
+      channel, type, subject, content, media_url: mediaUrl, media_type: mediaType,
+      campaign_video_id: campaignVideoId, expiry_date: expiryDate, preferred_days: preferredDays, status,
+    });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/campaigns/:id/postings/:postingId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deletePosting(req.params.postingId); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Manual immediate fire for testing one posting right now, same spirit
+// as the old "Publish now (live)" step button — genuinely live, not a
+// safe test, records a real posting_sends row exactly like the engine
+// would. Deliberately named to make that unambiguous in the UI.
+app.post('/api/admin/campaigns/:id/postings/:postingId/publish-now', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const posting = db.getPosting(req.params.postingId);
+    if (!posting) return res.status(404).json({ error: 'Not found.' });
+    const slotTime = `${new Date().toISOString().slice(0,16).replace('T',' ')} (manual)`;
+    const result = posting.channel === 'email' ? await firePostingEmail(posting, slotTime) : await firePostingSocial(posting, slotTime);
+    res.json({ ok: true, result });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Channel schedule (Per App 33) — GET/PATCH per-channel config now
+// lives on the existing /api/admin/social-schedule routes above (extended
+// to include 'email' and cooldownDays) rather than a second parallel set.
+// Manual "run the engine now" — same role as topUpSocialQueue's old
+// "Prepare now" button, for checking the whole thing works without
+// waiting for the next 5-minute cron tick.
+app.post('/api/admin/social-schedule/run-now', auth.requireAuthApi(['admin']), async (req, res) => {
+  try { res.json(await fireDuePostings()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   try {
@@ -13942,17 +14002,25 @@ app.post('/api/admin/campaigns/:id/activate', auth.requireAuthApi(['admin']), as
     const campaign = db.getCampaign(req.params.id);
     if (!campaign) return res.status(404).json({ error: 'Not found.' });
     if (campaign.status !== 'draft') return res.status(400).json({ error: 'Only a draft campaign can be activated.' });
+    const postings = db.getPostingsForCampaign(campaign.id);
+    // Per App 33 — the new postings model. Nothing fires immediately on
+    // activation the way old campaign_steps did; a fresh campaign just
+    // joins the pool and gets picked at its channels' next matching
+    // schedule slot, same as any other eligible posting. This is a
+    // deliberate behavior change from the old model, not an oversight.
+    if (postings.length) {
+      const emptyPosting = postings.find(p => (p.channel === 'email' ? (!p.subject || !p.content) : !p.content) || (p.content && !p.content.trim()));
+      if (emptyPosting) return res.status(400).json({ error: `A ${emptyPosting.channel} posting is missing content.` });
+      db.setCampaignStatus(campaign.id, 'active');
+      return res.json({ ok: true, postingCount: postings.length });
+    }
+    // Legacy path — old one-shot day-offset campaigns (campaign_steps),
+    // kept working for anything still built that way.
     const steps = db.getCampaignSteps(campaign.id);
-    if (!steps.length) return res.status(400).json({ error: 'Add at least one step first.' });
+    if (!steps.length) return res.status(400).json({ error: 'Add at least one posting first.' });
     const emptyStep = steps.find(s => !s.content || !s.content.trim());
     if (emptyStep) return res.status(400).json({ error: `Day ${emptyStep.offset_days}'s ${emptyStep.channel} step has no content.` });
-
     db.setCampaignStatus(campaign.id, 'active');
-    // Any step whose day has already arrived (offset_days 0, or the
-    // campaign somehow starting partway through its own schedule) is
-    // fired immediately here rather than waiting for tomorrow's cron —
-    // everything else stays pending for the daily cron to pick up on
-    // its actual day, same as email steps already do.
     const dueNow = steps.filter(s => s.status === 'pending' && s.offset_days <= 0);
     const results = [];
     for (const step of dueNow) {
@@ -13997,6 +14065,118 @@ async function sendDueCampaignSocialSteps() {
   for (const step of dueSteps) { await fireCampaignSocialStep(step); }
   return dueSteps.length;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// UNIFIED POSTINGS ENGINE (Per App 33) — replaces the old day-offset
+// campaign_steps firing AND the old MOTD-only topUpSocialQueue/
+// sendDueQueuedPublishes auto-fill, both of which are now retired from
+// the cron (see cron.js) so nothing competes for the same channel slots.
+// Per's model: every channel (email + each social platform) has its own
+// recurring schedule (social_schedule_config, now including 'email' as
+// just another row). At each configured slot, whichever posting from
+// any active campaign — general or time-boxed, no priority between them
+// — is eligible and was sent longest ago (or never) fills that slot.
+// A posting isn't consumed by firing; it goes back in the pool and can
+// be picked again once its channel's cooldown_days has passed, which is
+// exactly what keeps a small pool of evergreen content rotating
+// indefinitely without hand-scheduling each individual send.
+// ─────────────────────────────────────────────────────────────────────
+
+// Same campaign's own Link auto-append as fireCampaignSocialStep already
+// does — kept identical so a posting behaves exactly like a step did for
+// this piece, not a second slightly-different implementation of it.
+async function firePostingSocial(posting, slotTime) {
+  const campaign = db.getCampaign(posting.campaign_id);
+  const content = (campaign?.promotes_url && posting.content && !posting.content.includes(campaign.promotes_url))
+    ? `${posting.content}\n\n${campaign.promotes_url}`
+    : (posting.content || '');
+  const postData = { content };
+  if (posting.media_url) { postData.mediaUrl = posting.media_url; postData.mediaType = posting.media_type || 'image'; }
+  try {
+    const post = await publishers.publishToChannel(posting.channel, postData);
+    db.recordPostingSend(uuidv4(), posting.id, posting.channel, slotTime, 'sent', { externalPostId: post?.id || post?.post?.id || null });
+    return { ok: true };
+  } catch (e) {
+    db.recordPostingSend(uuidv4(), posting.id, posting.channel, slotTime, 'failed', { error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
+// Email postings broadcast to the campaign's audience segment every time
+// they're picked — same recipient logic and email-building pipeline as
+// a manual newsletter send (buildMessageTokens/fillTemplate/
+// buildNewsletterHtml), just triggered by the schedule engine instead of
+// an admin clicking Send. Per-recipient success/failure is already
+// captured by sendEmail's own self-logging (no logId passed in) — the
+// one posting_sends row here is a same-slot summary, not the per-person
+// record.
+async function firePostingEmail(posting, slotTime) {
+  const campaign = db.getCampaign(posting.campaign_id);
+  const recipients = db.getNewsletterRecipients(campaign?.audience || 'all', null);
+  const b = brand();
+  const cfg = db.getAppConfig() || {};
+  let sentCount = 0, failedCount = 0;
+  for (const user of recipients) {
+    try {
+      const tokens = buildMessageTokens(user, { offerId: campaign?.offer_id, sourceTag: campaign?.source_tag });
+      const subject = fillTemplate(posting.subject || campaign?.name || b.name, tokens);
+      const body = fillTemplate(posting.content || '', tokens);
+      const unsubscribeUrl = `${APP_URL}/unsubscribe/${db.ensureUnsubscribeToken(user.id)}`;
+      const footerHtml = buildNewsletterFooterHtml(cfg.newsletter_footer, b, unsubscribeUrl);
+      const html = buildNewsletterHtml(subject, body, b, 'plain', footerHtml);
+      const result = await sendEmailWithBackoff(user.email, subject, html, { kind: 'posting', userId: user.id });
+      if (result.ok) sentCount++; else failedCount++;
+    } catch (e) { failedCount++; }
+  }
+  const status = failedCount === 0 ? 'sent' : (sentCount === 0 ? 'failed' : 'sent');
+  db.recordPostingSend(uuidv4(), posting.id, 'email', slotTime, status,
+    { error: failedCount ? `${failedCount} of ${recipients.length} recipients failed` : null });
+  return { sentCount, failedCount, total: recipients.length };
+}
+
+// The tick itself — runs every 5 minutes (cron.js), same granularity
+// social_publish_queue already established for "post at a specific
+// minute, not just somewhere within the hour." For every channel's
+// configured (day, time) slots that are due today and haven't already
+// fired (hasFiredSlotToday, keyed on the exact 'YYYY-MM-DD HH:MM' slot
+// string so a re-tick within the same slot is a safe no-op), picks one
+// eligible posting and fires it. A slot with nothing eligible is left
+// unfired and reported back — a visible gap rather than a silent skip —
+// so a thin content pool shows up immediately rather than being
+// discovered days later.
+async function fireDuePostings() {
+  if (IS_STAGING) return { skipped: 'staging' };
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const weekday = now.getUTCDay();
+  const currentMinuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const schedules = db.getAllChannelSchedules();
+  const fired = [], gaps = [], failed = [];
+  for (const sched of schedules) {
+    let days, times;
+    try { days = JSON.parse(sched.days); times = JSON.parse(sched.times); } catch (e) { continue; }
+    if (!days.includes(weekday)) continue;
+    for (const t of times) {
+      const [hh, mm] = t.split(':').map(Number);
+      const targetMinute = hh * 60 + mm;
+      if (currentMinuteOfDay < targetMinute) continue;
+      const slotTime = `${todayStr} ${t}`;
+      if (db.hasFiredSlotToday(sched.platform, slotTime)) continue;
+      const posting = db.getEligiblePostingForSlot(sched.platform, todayStr, weekday, sched.cooldown_days);
+      if (!posting) { gaps.push({ channel: sched.platform, slot: slotTime }); continue; }
+      try {
+        const result = sched.platform === 'email' ? await firePostingEmail(posting, slotTime) : await firePostingSocial(posting, slotTime);
+        if (result.ok === false) failed.push({ channel: sched.platform, slot: slotTime, postingId: posting.id, error: result.error });
+        else fired.push({ channel: sched.platform, slot: slotTime, postingId: posting.id });
+      } catch (e) {
+        db.recordPostingSend(uuidv4(), posting.id, sched.platform, slotTime, 'failed', { error: e.message });
+        failed.push({ channel: sched.platform, slot: slotTime, postingId: posting.id, error: e.message });
+      }
+    }
+  }
+  return { fired, gaps, failed };
+}
+
 app.post('/api/admin/campaigns/:id/pause', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     // Per Bot 18 — stops the daily cron from firing this campaign's
@@ -14018,14 +14198,21 @@ app.post('/api/admin/campaigns/:id/pause', auth.requireAuthApi(['admin']), (req,
 // were actually reset so it's never a silent guess.
 app.post('/api/admin/campaigns/:id/resume', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
+    const postings = db.getPostingsForCampaign(req.params.id);
+    // Per App 33 — a posting doesn't get stuck "failed" the way an old
+    // step could; a failed send is just a log row, and the posting is
+    // eligible again at its channel's very next matching slot once
+    // cooldown_days has passed (or immediately, if it never actually
+    // sent). Nothing to reset, no immediate-fire on resume — resuming
+    // just re-opens the pool to the schedule engine.
+    if (postings.length) {
+      db.setCampaignStatus(req.params.id, 'active');
+      return res.json({ ok: true, postingCount: postings.length });
+    }
+    // Legacy path — old campaign_steps model.
     const before = db.getCampaignSteps(req.params.id).filter(s => s.status === 'failed').length;
     db.resetFailedCampaignSteps(req.params.id);
     db.setCampaignStatus(req.params.id, 'active');
-    // Fire anything already due right now rather than leaving it to
-    // wait for tomorrow's cron — matches /activate's own behavior for
-    // day-0 steps. Reads back fresh from getDueCampaignSocialSteps
-    // (which just-reset steps are now eligible for) rather than
-    // reusing the stale `before` list.
     const dueNow = db.getDueCampaignSocialSteps().filter(s => s.campaign_id === req.params.id);
     const results = [];
     for (const step of dueNow) { results.push(await fireCampaignSocialStep(step)); }
@@ -15047,7 +15234,7 @@ app.post('/api/admin/social-posts/:id/media', auth.requireAuthApi(['admin']), (r
 // tab. This is deliberately just the config store for now — the
 // automation that actually reads it to auto-schedule posts ("B") is the
 // next piece to build on top of this.
-const SOCIAL_SCHEDULE_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads'];
+const SOCIAL_SCHEDULE_PLATFORMS = ['email', 'facebook', 'linkedin', 'instagram', 'threads'];
 const SOCIAL_SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 app.get('/api/admin/social-schedule', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getSocialScheduleConfig()); }
@@ -15061,7 +15248,12 @@ app.post('/api/admin/social-schedule/:platform', auth.requireAuthApi(['admin']),
     const times = Array.isArray(req.body.times) ? req.body.times.filter(t => SOCIAL_SCHEDULE_TIME_RE.test(t)) : [];
     if (!days.length) return res.status(400).json({ error: 'Pick at least one day.' });
     if (!times.length) return res.status(400).json({ error: 'Add at least one time (HH:MM, 24-hour, UTC).' });
-    db.updateSocialScheduleConfig(platform, [...new Set(days)].sort((a, b) => a - b), [...new Set(times)].sort());
+    // Per App 33 — cooldownDays: how many days must pass before the same
+    // posting can be picked again for this channel. Optional here so the
+    // existing per-platform Social tab UI keeps working unchanged; the
+    // channel-schedule admin section always sends it explicitly.
+    const cooldownDays = req.body.cooldownDays != null ? Math.max(0, parseInt(req.body.cooldownDays, 10) || 0) : undefined;
+    db.updateSocialScheduleConfig(platform, [...new Set(days)].sort((a, b) => a - b), [...new Set(times)].sort(), cooldownDays);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -16853,7 +17045,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
   }
 }
 

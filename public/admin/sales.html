@@ -616,6 +616,19 @@
           <input type="url" id="campNewPromotesUrl" placeholder="https://..."/>
         </div>
       </div>
+      <div class="modal-row">
+        <div>
+          <label>Type</label>
+          <select id="campNewType" onchange="onCampNewTypeChanged()">
+            <option value="general">General — ongoing, no end date (e.g. Message-of-the-day style filler)</option>
+            <option value="time_boxed">Time-boxed — runs until a set end date (e.g. a course launch push)</option>
+          </select>
+        </div>
+        <div id="campNewEndDateWrap" style="display:none">
+          <label>End date</label>
+          <input type="date" id="campNewEndDate"/>
+        </div>
+      </div>
       <div>
         <label>Offer (optional — leave unset for a pure calming campaign)</label>
         <select id="campNewOffer"><option value="">No offer — calming steps only</option></select>
@@ -656,6 +669,17 @@
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
         <div class="config-label" style="margin-bottom:8px">Goal &amp; what this is for</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:0 0 160px">
+            <label style="font-size:11px">Type</label>
+            <select id="campDetailType" style="width:100%" onchange="onCampDetailTypeChanged()">
+              <option value="general">General</option>
+              <option value="time_boxed">Time-boxed</option>
+            </select>
+          </div>
+          <div style="flex:0 0 150px" id="campDetailEndDateWrap">
+            <label style="font-size:11px">End date</label>
+            <input type="date" id="campDetailEndDate" style="width:100%"/>
+          </div>
           <div style="flex:1;min-width:220px">
             <label style="font-size:11px">Goal</label>
             <input type="text" id="campDetailGoal" style="width:100%"/>
@@ -718,43 +742,73 @@
         <div id="campVideosList" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
 
-      <div id="campAddStepWrap" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px">
-        <div class="config-label" style="margin-bottom:8px">Add step</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:0 0 90px">
-            <label style="font-size:11px">Day</label>
-            <input type="number" id="campStepDay" min="0" value="0" style="width:100%"/>
-          </div>
-          <div style="flex:0 0 130px">
-            <label style="font-size:11px">Type</label>
-            <select id="campStepType" style="width:100%">
-              <option value="calming">Calming</option>
-              <option value="sales">Sales</option>
-            </select>
-          </div>
-          <div style="flex:0 0 200px">
-            <label style="font-size:11px">Channel(s) <span style="color:rgba(255,255,255,0.3)">— tick more than one to post the same content everywhere at once</span></label>
-            <div style="display:flex;flex-wrap:wrap;gap:2px 12px;padding-top:4px">
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="email"/> Email</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="facebook" onchange="onCampStepChannelChanged()"/> Facebook</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="linkedin" onchange="onCampStepChannelChanged()"/> LinkedIn</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="instagram" onchange="onCampStepChannelChanged()"/> Instagram</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-step-channel-chk" value="threads" onchange="onCampStepChannelChanged()"/> Threads</label>
-            </div>
-          </div>
-          <div id="campStepVideoWrap" style="flex:0 0 200px;display:none">
-            <label style="font-size:11px">Use planned video <span style="color:rgba(255,255,255,0.3)">(optional)</span></label>
-            <select id="campStepVideo" style="width:100%"><option value="">None — write from a brief instead</option></select>
-          </div>
-          <div style="flex:1;min-width:180px" id="campStepBriefWrap">
-            <label style="font-size:11px">Brief (sales steps only, optional — defaults to the offer's own copy)</label>
-            <input type="text" id="campStepBrief" style="width:100%" placeholder="What's this one about?"/>
-          </div>
-          <button class="btn sm primary" onclick="addCampaignStep()" id="campAddStepBtn">+ Add &amp; generate</button>
-        </div>
+      <div id="campAddStepWrap" style="display:none">
+        <!-- Per App 33 — old step-based add form, retired. Left in the
+             DOM (hidden) rather than deleted, since addCampaignStep() and
+             its legacy /steps endpoint still exist server-side for any
+             old-style campaign that might still reference them. -->
       </div>
 
-      <div id="campStepsList" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="config-label">Postings <span style="font-weight:normal;color:rgba(255,255,255,0.35)">— the content pool this campaign feeds into its assigned channels</span></div>
+          <button class="btn sm primary" onclick="showAddPostingForm()">+ Add posting</button>
+        </div>
+        <div id="campAddPostingForm" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+            <div style="flex:0 0 140px">
+              <label style="font-size:11px">Channel</label>
+              <select id="postNewChannel" style="width:100%" onchange="onPostNewChannelChanged()">
+                <option value="email">Email</option>
+                <option value="facebook">Facebook</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="instagram">Instagram</option>
+                <option value="threads">Threads</option>
+              </select>
+            </div>
+            <div style="flex:0 0 130px">
+              <label style="font-size:11px">Type</label>
+              <select id="postNewType" style="width:100%">
+                <option value="calming">Calming</option>
+                <option value="sales">Sales</option>
+              </select>
+            </div>
+            <div style="flex:0 0 150px">
+              <label style="font-size:11px">Expiry <span style="color:rgba(255,255,255,0.3)">(optional)</span></label>
+              <input type="date" id="postNewExpiry" style="width:100%"/>
+            </div>
+            <div style="flex:0 0 220px" id="postNewVideoWrap">
+              <label style="font-size:11px">Use planned video <span style="color:rgba(255,255,255,0.3)">(optional, social only)</span></label>
+              <select id="postNewVideo" style="width:100%" onchange="onPostNewVideoChanged()"><option value="">None — write from scratch</option></select>
+            </div>
+          </div>
+          <div id="postNewSubjectWrap" style="margin-bottom:8px">
+            <label style="font-size:11px">Subject</label>
+            <input type="text" id="postNewSubject" style="width:100%" placeholder="Email subject line"/>
+          </div>
+          <div style="margin-bottom:8px">
+            <label style="font-size:11px">Content</label>
+            <textarea id="postNewContent" rows="4" style="width:100%"></textarea>
+          </div>
+          <div style="margin-bottom:8px">
+            <label style="font-size:11px;color:rgba(255,255,255,0.5);display:block">Only post on <span style="color:rgba(255,255,255,0.3)">(leave all unticked to float to any slot this channel offers)</span></label>
+            <div style="display:flex;gap:10px">
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="0"/>Sun</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="1"/>Mon</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="2"/>Tue</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="3"/>Wed</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="4"/>Thu</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="5"/>Fri</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" class="post-new-day-chk" value="6"/>Sat</label>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn sm primary" id="campAddPostingBtn" onclick="addPosting()">Save posting</button>
+            <button class="btn sm" onclick="document.getElementById('campAddPostingForm').style.display='none'">Cancel</button>
+          </div>
+        </div>
+        <div id="campPostingsList" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div>
 
       <div class="modal-btns" id="campDetailActions"></div>
     </div>
@@ -1651,20 +1705,29 @@
     el.innerHTML = list.map(c => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:8px;cursor:pointer" onclick="openCampaignDetail('${c.id}')">
         <div>
-          <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtml(c.name)}</div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.4)">${c.step_count} step${c.step_count===1?'':'s'}${c.offer_name ? ' · ' + escHtml(c.offer_name) : ' · no offer'}</div>
+          <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtml(c.name)} <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:rgba(255,255,255,0.3)">${c.type === 'time_boxed' ? 'time-boxed' : 'general'}</span></div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4)">${c.posting_count} posting${c.posting_count===1?'':'s'}${c.end_date ? ' · ends ' + c.end_date : ''}${c.offer_name ? ' · ' + escHtml(c.offer_name) : ' · no offer'}</div>
         </div>
         <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:${statusColor(c.status)}">${c.status}</div>
       </div>
     `).join('');
   }
 
+  function onCampNewTypeChanged() {
+    document.getElementById('campNewEndDateWrap').style.display = document.getElementById('campNewType').value === 'time_boxed' ? '' : 'none';
+  }
+  function onCampDetailTypeChanged() {
+    document.getElementById('campDetailEndDateWrap').style.display = document.getElementById('campDetailType').value === 'time_boxed' ? '' : 'none';
+  }
   async function openNewCampaignModal() {
     document.getElementById('campNewName').value = '';
     document.getElementById('campNewAudience').value = 'all';
     document.getElementById('campNewGoal').value = '';
     document.getElementById('campNewPromotesLabel').value = '';
     document.getElementById('campNewPromotesUrl').value = '';
+    document.getElementById('campNewType').value = 'general';
+    document.getElementById('campNewEndDate').value = '';
+    onCampNewTypeChanged();
     document.getElementById('campNewErr').textContent = '';
     const sel = document.getElementById('campNewOffer');
     sel.innerHTML = '<option value="">No offer — calming steps only</option>'
@@ -1682,7 +1745,10 @@
       goal: document.getElementById('campNewGoal').value.trim() || null,
       promotesLabel: document.getElementById('campNewPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campNewPromotesUrl').value.trim() || null,
+      type: document.getElementById('campNewType').value,
+      endDate: document.getElementById('campNewType').value === 'time_boxed' ? (document.getElementById('campNewEndDate').value || null) : null,
     };
+    if (body.type === 'time_boxed' && !body.endDate) { err.textContent = 'A time-boxed campaign needs an end date.'; return; }
     try {
       const res = await fetch('/api/admin/campaigns', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
@@ -1703,66 +1769,18 @@
     document.getElementById('campDetailName').textContent = data.name;
     const offer = offersData.find(o => o.id === data.offer_id);
     document.getElementById('campDetailMeta').textContent =
-      `${data.status.toUpperCase()} · ${offer ? offer.name : 'no offer'} · audience: ${data.audience}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}`;
+      `${data.status.toUpperCase()} · ${data.type === 'time_boxed' ? 'time-boxed' : 'general'} · ${offer ? offer.name : 'no offer'} · audience: ${data.audience}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}${data.end_date ? ' · ends ' + data.end_date : ''}`;
     document.getElementById('campDetailGoal').value = data.goal || '';
     document.getElementById('campDetailPromotesLabel').value = data.promotes_label || '';
     document.getElementById('campDetailPromotesUrl').value = data.promotes_url || '';
+    document.getElementById('campDetailType').value = data.type || 'general';
+    document.getElementById('campDetailEndDate').value = data.end_date || '';
+    onCampDetailTypeChanged();
 
     const isDraft = data.status === 'draft';
-    document.getElementById('campAddStepWrap').style.display = isDraft ? '' : 'none';
+    document.getElementById('campAddStepWrap').style.display = 'none'; // old step-based UI retired Per App 33
     await loadCampaignVideos();
-
-    const list = document.getElementById('campStepsList');
-    if (!data.steps.length) {
-      list.innerHTML = '<div class="empty" style="padding:12px">No steps yet — add one above.</div>';
-    } else {
-      list.innerHTML = data.steps.map(s => {
-        const format = s.format || 'plain';
-        const bodyId = `campStepContent_${s.id}`;
-        const showRichToggle = isDraft && s.channel === 'email';
-        const mediaLine = s.media_url
-          ? `<div style="margin-bottom:6px;font-size:12px;color:rgba(180,230,200,0.75)">📎 ${s.media_type === 'video' ? 'Video' : 'Image'} attached${s.campaign_video_id ? ' (from planned video)' : ''}</div>`
-          : '';
-        // Per's report — a failed step only ever showed the word
-        // "failed," never the actual reason, even though the real
-        // error message was already being captured and stored server-
-        // side the whole time. Just never rendered anywhere.
-        const errorLine = (s.status === 'failed' && s.error)
-          ? `<div style="margin-bottom:6px;font-size:12px;color:rgba(255,140,120,0.85)">⚠ ${escHtml(s.error)}</div>`
-          : '';
-        return `
-        <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:12px;color:rgba(255,255,255,0.5)">
-              Day ${s.offset_days} · <span style="color:${s.type==='sales'?'rgba(230,175,90,0.9)':'rgba(180,230,200,0.85)'}">${s.type}</span> · ${CAMP_CHANNEL_LABELS[s.channel]||s.channel}
-              · <span style="color:${s.status==='pending'?'rgba(255,255,255,0.4)':s.status==='failed'?'rgba(255,140,120,0.9)':'rgba(180,230,200,0.85)'}">${s.status}</span>
-            </div>
-            ${isDraft ? `<div style="display:flex;gap:6px">
-              <button class="btn sm" onclick="regenerateCampaignStep('${s.id}', this)">↻ Regenerate</button>
-              ${s.channel==='email'
-                ? `<button class="btn sm" onclick="testCampaignStepEmail('${s.id}')">Send test</button>`
-                : `<button class="btn sm" onclick="publishCampaignStepNow('${s.id}')">Publish now (live)</button>`}
-              <button class="btn sm" onclick="deleteCampaignStep('${s.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
-            </div>` : ''}
-          </div>
-          ${errorLine}
-          ${mediaLine}
-          ${s.channel==='email' ? `<div style="display:flex;gap:6px;margin-bottom:6px">
-            <input class="inline-input" type="text" id="campStepSubject_${s.id}" value="${escHtml(s.subject||'')}" ${isDraft?'':'disabled'} style="flex:1" placeholder="Subject" onblur="saveCampaignStepEdit('${s.id}')"/>
-            ${isDraft ? MessageEditor.tokenSelectHtml(`campStepSubject_${s.id}`, MessageEditor.standardTokens(), { onAfter: `saveCampaignStepEdit('${s.id}')` }) : ''}
-          </div>` : ''}
-          ${showRichToggle ? MessageEditor.formatToggleHtml(bodyId, format, 'setCampaignStepFormat') : ''}
-          <textarea class="inline-input" id="${bodyId}_plain" rows="4" ${isDraft?'':'disabled'} style="width:100%;resize:vertical;${(showRichToggle && format==='rich')?'display:none':''}" onblur="saveCampaignStepEdit('${s.id}')">${escHtml(s.content||'')}</textarea>
-          ${showRichToggle ? `<div id="${bodyId}_rich" style="${format==='rich'?'':'display:none'}"></div>` : ''}
-          ${(isDraft && s.channel==='email') ? `<div style="margin-top:4px" id="campStepBodyTokenWrap_${s.id}">${MessageEditor.tokenSelectHtml((showRichToggle && format==='rich') ? bodyId+'_rich' : bodyId+'_plain', MessageEditor.standardTokens(), { placeholder: 'Insert field into body…', rich: showRichToggle && format==='rich', onAfter: `saveCampaignStepEdit('${s.id}')` })}</div>` : ''}
-        </div>
-      `; }).join('');
-      data.steps.forEach(s => {
-        if (isDraft && s.channel === 'email' && (s.format||'plain') === 'rich') {
-          MessageEditor.mountRich(`campStepContent_${s.id}_rich`, s.content || '');
-        }
-      });
-    }
+    await renderPostings(data.postings || []);
 
     const actions = document.getElementById('campDetailActions');
     if (data.status === 'draft') {
@@ -1772,15 +1790,148 @@
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
         <button class="btn sm" onclick="pauseCampaign()" style="color:rgba(230,175,90,0.9)">Pause campaign</button>`;
     } else if (data.status === 'paused') {
-      // Per's report — this used to fall into the generic else branch
-      // below, leaving a paused campaign with nothing but Close and no
-      // way back at all.
-      const failedCount = (data.steps || []).filter(s => s.status === 'failed').length;
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
-        <button class="btn sm primary" onclick="resumeCampaign()">Resume campaign${failedCount ? ` (retries ${failedCount} failed step${failedCount===1?'':'s'})` : ''}</button>`;
+        <button class="btn sm primary" onclick="resumeCampaign()">Resume campaign</button>`;
     } else {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>`;
     }
+  }
+
+  // ── Postings (Per App 33 — replaces the old draft-only step list;
+  // postings can be added/edited/archived at any campaign status, since
+  // the pool is meant to be topped up on an ongoing basis, not written
+  // once before go-live) ──
+  const POSTING_WEEKDAYS = [['0','Sun'],['1','Mon'],['2','Tue'],['3','Wed'],['4','Thu'],['5','Fri'],['6','Sat']];
+  async function renderPostings(postings) {
+    const list = document.getElementById('campPostingsList');
+    if (!postings.length) {
+      list.innerHTML = '<div class="empty" style="padding:12px">No postings yet — add one below.</div>';
+      return;
+    }
+    list.innerHTML = postings.map(p => {
+      const daysLabel = p.preferred_days && p.preferred_days.length
+        ? p.preferred_days.map(d => POSTING_WEEKDAYS[d][1]).join('/') : 'any day';
+      const statusColor = p.status === 'archived' ? 'rgba(255,255,255,0.35)' : 'rgba(180,230,200,0.85)';
+      return `
+      <div style="border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.5)">
+            <span style="color:${p.type==='sales'?'rgba(230,175,90,0.9)':'rgba(180,230,200,0.85)'}">${p.type}</span>
+            · ${CAMP_CHANNEL_LABELS[p.channel]||p.channel} · slot: ${daysLabel}${p.expiry_date ? ' · expires ' + p.expiry_date : ''}
+            · <span style="color:${statusColor}">${p.status}</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn sm" onclick="publishPostingNow('${p.id}')">Publish now (live)</button>
+            <button class="btn sm" onclick="archivePosting('${p.id}', ${p.status==='active'})">${p.status==='active'?'Archive':'Reactivate'}</button>
+            <button class="btn sm" onclick="deletePosting('${p.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
+          </div>
+        </div>
+        ${p.channel==='email' ? `<input class="inline-input" type="text" id="postSubject_${p.id}" value="${escHtml(p.subject||'')}" style="width:100%;margin-bottom:6px" placeholder="Subject" onblur="savePostingEdit('${p.id}')"/>` : ''}
+        <textarea class="inline-input" id="postContent_${p.id}" rows="3" style="width:100%;resize:vertical" onblur="savePostingEdit('${p.id}')">${escHtml(p.content||'')}</textarea>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px">
+          <div>
+            <label style="font-size:10px;color:rgba(255,255,255,0.4)">Expiry</label><br/>
+            <input type="date" id="postExpiry_${p.id}" value="${p.expiry_date||''}" onchange="savePostingEdit('${p.id}')" style="font-size:12px"/>
+          </div>
+          <div>
+            <label style="font-size:10px;color:rgba(255,255,255,0.4);display:block">Only on</label>
+            <div style="display:flex;gap:6px">
+              ${POSTING_WEEKDAYS.map(([v,l]) => `<label style="font-size:11px;display:flex;align-items:center;gap:2px;cursor:pointer"><input type="checkbox" class="post-day-chk_${p.id}" value="${v}" ${p.preferred_days && p.preferred_days.includes(Number(v)) ? 'checked' : ''} onchange="savePostingEdit('${p.id}')"/>${l}</label>`).join('')}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  function showAddPostingForm() {
+    document.getElementById('campAddPostingForm').style.display = '';
+    const sel = document.getElementById('postNewVideo');
+    sel.innerHTML = '<option value="">None — write from scratch</option>'
+      + (_campVideosCache||[]).map(v => `<option value="${v.id}">${escHtml(v.title)}</option>`).join('');
+    onPostNewChannelChanged();
+  }
+  function onPostNewChannelChanged() {
+    const channel = document.getElementById('postNewChannel').value;
+    document.getElementById('postNewSubjectWrap').style.display = channel === 'email' ? '' : 'none';
+    document.getElementById('postNewVideoWrap').style.display = channel === 'email' ? 'none' : '';
+  }
+  // Per's request, carried over from the old step form — picking a
+  // planned video auto-fills the posting's content from its script (and
+  // its media once recorded), rather than retyping what's already
+  // written. Doesn't overwrite content that's already been typed.
+  function onPostNewVideoChanged() {
+    const id = document.getElementById('postNewVideo').value;
+    if (!id) return;
+    const v = (_campVideosCache||[]).find(v => v.id === id);
+    if (!v) return;
+    const contentEl = document.getElementById('postNewContent');
+    if (!contentEl.value.trim()) contentEl.value = v.script || '';
+  }
+  async function addPosting() {
+    const btn = document.getElementById('campAddPostingBtn');
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    const channel = document.getElementById('postNewChannel').value;
+    const content = document.getElementById('postNewContent').value.trim();
+    const subject = document.getElementById('postNewSubject').value.trim();
+    if (!content) { err.textContent = 'Content is required.'; return; }
+    if (channel === 'email' && !subject) { err.textContent = 'Email postings need a subject.'; return; }
+    const preferredDays = [...document.querySelectorAll('.post-new-day-chk:checked')].map(c => Number(c.value));
+    const videoId = channel !== 'email' ? (document.getElementById('postNewVideo').value || undefined) : undefined;
+    const video = videoId ? (_campVideosCache||[]).find(v => v.id === videoId) : null;
+    setBtnLoading(btn, true, 'Adding…');
+    try {
+      const body = {
+        channel, type: document.getElementById('postNewType').value,
+        subject: channel === 'email' ? subject : undefined,
+        content, expiryDate: document.getElementById('postNewExpiry').value || undefined,
+        preferredDays: preferredDays.length ? preferredDays : undefined,
+        campaignVideoId: videoId,
+        mediaUrl: video && video.status === 'recorded' ? video.media_url : undefined,
+        mediaType: video && video.status === 'recorded' ? video.media_type : undefined,
+      };
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/postings`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not add posting.');
+      document.getElementById('postNewContent').value = '';
+      document.getElementById('postNewSubject').value = '';
+      document.getElementById('postNewExpiry').value = '';
+      document.getElementById('postNewVideo').value = '';
+      document.querySelectorAll('.post-new-day-chk').forEach(c => c.checked = false);
+      await refreshCampaignDetail();
+      loadCampaigns();
+    } catch(e) { err.textContent = e.message; }
+    finally { setBtnLoading(btn, false); }
+  }
+  async function savePostingEdit(id) {
+    const preferredDays = [...document.querySelectorAll(`.post-day-chk_${id}:checked`)].map(c => Number(c.value));
+    const body = {
+      content: document.getElementById(`postContent_${id}`).value,
+      expiryDate: document.getElementById(`postExpiry_${id}`).value || null,
+      preferredDays: preferredDays.length ? preferredDays : null,
+    };
+    const subjectEl = document.getElementById(`postSubject_${id}`);
+    if (subjectEl) body.subject = subjectEl.value;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/postings/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  }
+  async function archivePosting(id, currentlyActive) {
+    await fetch(`/api/admin/campaigns/${curCampaignId}/postings/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ status: currentlyActive ? 'archived' : 'active' }) });
+    await refreshCampaignDetail();
+  }
+  async function deletePosting(id) {
+    if (!confirm('Delete this posting? This cannot be undone.')) return;
+    await fetch(`/api/admin/campaigns/${curCampaignId}/postings/${id}`, { method:'DELETE' });
+    await refreshCampaignDetail();
+    loadCampaigns();
+  }
+  async function publishPostingNow(id) {
+    if (!confirm('This publishes live right now — not a test. Continue?')) return;
+    const err = document.getElementById('campDetailErr'); err.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/postings/${id}/publish-now`, { method:'POST' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Publish failed.');
+      appAlert('Published.');
+    } catch(e) { err.textContent = e.message; }
   }
 
   async function addCampaignStep() {
@@ -1952,6 +2103,8 @@
       goal: document.getElementById('campDetailGoal').value.trim() || null,
       promotesLabel: document.getElementById('campDetailPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campDetailPromotesUrl').value.trim() || null,
+      type: document.getElementById('campDetailType').value,
+      endDate: document.getElementById('campDetailType').value === 'time_boxed' ? (document.getElementById('campDetailEndDate').value || null) : null,
     };
     try {
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -2043,29 +2196,29 @@
     } catch(e) { err.textContent = e.message; }
   }
   async function activateCampaign() {
-    if (!confirm('Approve this campaign to go live? Social steps get scheduled with BulkPublish immediately; email steps fire on their own day. This can\'t be undone step by step.')) return;
+    if (!confirm('Approve this campaign to go live? Its postings join the pool immediately and will be picked at each assigned channel\'s next matching schedule slot \u2014 nothing fires the instant you approve.')) return;
     const err = document.getElementById('campDetailErr'); err.textContent = '';
     try {
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}/activate`, { method:'POST' });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Could not activate.');
       const failed = (data.results||[]).filter(r=>!r.ok);
-      if (failed.length) err.textContent = `Live, but ${failed.length} step(s) failed to schedule — check them below.`;
+      if (failed.length) err.textContent = `Live, but ${failed.length} step(s) failed to schedule \u2014 check them below.`;
       await refreshCampaignDetail();
       loadCampaigns();
     } catch(e) { err.textContent = e.message; }
   }
   async function pauseCampaign() {
-    if (!confirm('Pause this campaign? All remaining steps stop, email and social alike.')) return;
+    if (!confirm('Pause this campaign? Its postings stop being eligible for any channel\'s schedule until resumed.')) return;
     await fetch(`/api/admin/campaigns/${curCampaignId}/pause`, { method:'POST' });
     await refreshCampaignDetail();
     loadCampaigns();
   }
   async function resumeCampaign() {
-    if (!confirm('Resume this campaign? Any steps that failed earlier will be reset and retried on their scheduled day.')) return;
+    if (!confirm('Resume this campaign? Its postings become eligible again at each channel\'s next matching schedule slot.')) return;
     const res = await fetch(`/api/admin/campaigns/${curCampaignId}/resume`, { method:'POST' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) { alert(data.error || 'Could not resume — please try again.'); return; }
+    if (!res.ok || data.error) { alert(data.error || 'Could not resume \u2014 please try again.'); return; }
     await refreshCampaignDetail();
     loadCampaigns();
   }

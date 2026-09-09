@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -113,28 +113,15 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  // ── Social queue auto-prepare (Per App 31 — "B" of the social
-  // streamlining plan) — once daily, 05:15 UTC. Checks each platform's
-  // queue against its own schedule config (social_schedule_config, "A")
-  // and generates whatever's missing to keep a rolling week's worth
-  // queued per channel — text via Message Builder's own generator, a
-  // still image/infographic via GPT Image, scheduled straight into the
-  // gap it's filling. Same function a manual "Prepare now" admin button
-  // calls (POST /api/admin/social-queue/prepare) — see topUpSocialQueue
-  // in server.js for the actual logic and its own staging guard.
-  // Staggered 15 minutes after the 05:00 cron log prune, well before the
-  // 06:50 membership sweep — nothing else runs in this window.
-  cron.schedule('15 5 * * *', async () => {
-    const t0 = Date.now();
-    try {
-      const result = await topUpSocialQueue();
-      console.log('[cron] social queue auto-prepare:', JSON.stringify(result));
-      record('social_queue_autoprepare', 'ok', JSON.stringify(result), null, t0);
-    } catch (e) {
-      console.error('[cron] social queue auto-prepare failed:', e.message);
-      record('social_queue_autoprepare', 'failed', null, e.message, t0);
-    }
-  });
+  // ── Social queue auto-prepare (Per App 31) — RETIRED Per App 33.
+  // topUpSocialQueue filled social_publish_queue from social_schedule_config
+  // at the exact same (day, time) slots the new unified postings engine
+  // below now fills directly — leaving both running would double-post
+  // every slot. The MOTD-style "always something in rotation" role this
+  // played is now just a 'general' campaign's postings with no
+  // preferred_days, sitting in the very same pool as everything else.
+  // topUpSocialQueue itself is untouched in server.js in case it's ever
+  // wanted again, just no longer scheduled.
 
   // ── Forms module GDPR cleanup (Per App 31) — once daily, 05:20 UTC ──
   // Clears the actual answers for any form whose stated retention policy
@@ -314,36 +301,32 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  // ── Campaign email steps — 07:50 UTC ──
-  cron.schedule('50 7 * * *', async () => {
-    const t0 = Date.now();
-    try {
-      const count = await sendDueCampaignEmailSteps();
-      const detail = `${count} step(s) due`;
-      console.log(`[cron] campaign email steps: ${detail}`);
-      record('campaign_email_steps', 'ok', detail, null, t0);
-    } catch (e) {
-      console.error('[cron] campaign email steps failed:', e.message);
-      record('campaign_email_steps', 'failed', null, e.message, t0);
-    }
-  });
+  // ── Campaign email/social steps (Per Bot 18 / Per's real incident) —
+  // RETIRED Per App 33, replaced by the unified postings engine below.
+  // sendDueCampaignEmailSteps/sendDueCampaignSocialSteps and their
+  // underlying campaign_steps table are left in server.js/db.js
+  // untouched (nothing currently depends on removing them), just no
+  // longer scheduled — every campaign going forward uses postings.
 
-  // Per's real incident — mirrors the email steps cron above exactly.
-  // Fires whichever social steps are due today, immediately, via
-  // publishToChannel — replaces the old approach of pre-scheduling the
-  // whole campaign's worth of posts with BulkPublish at go-live, which
-  // silently hit its Free-plan 10-scheduled-post cap on anything past
-  // a small campaign.
-  cron.schedule('55 7 * * *', async () => {
+  // ── Unified postings engine (Per App 33) — every 5 minutes, same
+  // granularity as the BulkPublish queue tick above and for the same
+  // reason: a slot configured for "07:00" should fire within 5 minutes
+  // of 07:00, not somewhere in a whole hour. One tick checks every
+  // channel's schedule (social_schedule_config, now including 'email')
+  // for any (day, time) slot that's due today and hasn't already fired,
+  // and fills it from whichever active campaign's postings are eligible
+  // — see fireDuePostings in server.js for the actual pick/fire/record
+  // logic and db.getEligiblePostingForSlot for the rotation rule.
+  cron.schedule('*/5 * * * *', async () => {
     const t0 = Date.now();
     try {
-      const count = await sendDueCampaignSocialSteps();
-      const detail = `${count} step(s) due`;
-      console.log(`[cron] campaign social steps: ${detail}`);
-      record('campaign_social_steps', 'ok', detail, null, t0);
+      const result = await fireDuePostings();
+      const detail = `${result.fired.length} fired, ${result.gaps.length} gap(s), ${result.failed.length} failed`;
+      if (result.fired.length || result.gaps.length || result.failed.length) console.log('[cron] postings engine:', detail);
+      record('postings_engine', result.failed.length ? 'partial' : 'ok', detail, result.failed.length ? JSON.stringify(result.failed) : null, t0);
     } catch (e) {
-      console.error('[cron] campaign social steps failed:', e.message);
-      record('campaign_social_steps', 'failed', null, e.message, t0);
+      console.error('[cron] postings engine failed:', e.message);
+      record('postings_engine', 'failed', null, e.message, t0);
     }
   });
 
@@ -411,7 +394,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (hourly, 25 past), trending context refresh (05:05 UTC), social queue auto-prepare (05:15 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), campaign email steps (07:50 UTC), campaign social steps (07:55 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
 }
 
 module.exports = { startCronJobs };

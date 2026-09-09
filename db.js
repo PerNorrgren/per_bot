@@ -1449,6 +1449,96 @@ async function getDb() {
   )`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_campaign_videos_campaign ON campaign_videos(campaign_id)`);
 
+  // ── Postings & the unified schedule engine (Per App 33 — replaces the
+  // old one-shot campaign_steps/topUpSocialQueue split entirely) ──
+  // Per's own model: every social/email send is a "posting" belonging to
+  // a campaign. A campaign is either 'general' (no end_date — ongoing
+  // filler, e.g. Message-of-the-Day style content) or 'time_boxed' (has
+  // an end_date — e.g. the Finding Mindfulness launch push). Both kinds
+  // can be active and supplying postings to the same channel at once —
+  // there's no "sales campaign wins the slot" priority, they compete as
+  // equals in the same pool.
+  // type/end_date added to the existing campaigns table rather than a
+  // new one — a campaign is still one thing, just with two more fields.
+  // Default 'general' (not 'time_boxed') — a campaign created through any
+  // path that doesn't explicitly set type (there's exactly one today: the
+  // admin UI, which always sends it) should default to the safe,
+  // unbounded behavior. A 'time_boxed' campaign with no end_date would
+  // otherwise behave identically to general anyway, just with a
+  // misleading label.
+  try { db.run(`ALTER TABLE campaigns ADD COLUMN type TEXT NOT NULL DEFAULT 'general'`); } catch(e) {}
+  try { db.run(`ALTER TABLE campaigns ADD COLUMN end_date TEXT`); } catch(e) {}
+
+  // A posting is content assigned to exactly one channel (email or a
+  // BulkPublish/direct platform key) within a campaign. Unlike the old
+  // campaign_steps, a posting isn't "fired once" — it stays in the pool
+  // and can be picked again by the schedule engine as many times as it
+  // remains eligible (see getEligiblePostingForSlot below), governed by:
+  //   - expiry_date: this posting's own cutoff (nullable — most postings
+  //     don't have one; a time-boxed campaign's own end_date governs
+  //     instead, checked separately at pick-time, not copied down here).
+  //   - preferred_days: optional JSON array of weekdays (0=Sun..6=Sat).
+  //     NULL means "eligible for any slot this channel offers" (plain
+  //     rotating filler, e.g. general MOTD-style content). Set means
+  //     "only ever pick this for a slot on one of these days" — this is
+  //     what lets a specific Thursday practice reminder or a Monday
+  //     newsletter live in the same pool as floating content without
+  //     drifting onto the wrong day.
+  //   - status: 'active' (eligible) | 'archived' (kept for history, never
+  //     picked again).
+  // campaign_video_id mirrors the same optional link campaign_steps had,
+  // for social postings built from a planned/recorded video.
+  db.run(`CREATE TABLE IF NOT EXISTS postings (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'calming',
+    subject TEXT,
+    content TEXT,
+    media_url TEXT,
+    media_type TEXT,
+    campaign_video_id TEXT,
+    expiry_date TEXT,
+    preferred_days TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_postings_campaign ON postings(campaign_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_postings_channel ON postings(channel, status)`);
+
+  // Every actual send of a posting — a posting can have many rows here
+  // over its lifetime, which is exactly what makes "sent longest ago (or
+  // never)" a well-defined rotation rule, and what the cooldown check
+  // (channel_schedule.cooldown_days) reads from directly.
+  db.run(`CREATE TABLE IF NOT EXISTS posting_sends (
+    id TEXT PRIMARY KEY,
+    posting_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    slot_time TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    external_post_id TEXT,
+    error TEXT,
+    sent_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (posting_id) REFERENCES postings(id)
+  )`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_posting_sends_posting ON posting_sends(posting_id, sent_at)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_posting_sends_slot ON posting_sends(channel, slot_time)`);
+
+  // channel_schedule extends the existing social_schedule_config table
+  // (same table, same platform-keyed shape everyone already knows from
+  // the Social admin tab) rather than a parallel one — email now sits in
+  // it as just another channel. cooldown_days is per channel, per Per's
+  // answer — a minimum gap before the same posting can be picked again
+  // for that channel specifically.
+  try { db.run(`ALTER TABLE social_schedule_config ADD COLUMN cooldown_days INTEGER NOT NULL DEFAULT 3`); } catch(e) {}
+  // Seed: email gets Monday (newsletter slot) and Thursday (practice
+  // reminder slot) at 07:00 UTC by default — editable from admin like
+  // every other channel. A posting with no preferred_days floats to
+  // whichever of these comes up next; one with preferred_days:[1] or
+  // [4] only ever lands on its own day.
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times,cooldown_days) VALUES ('email', '[1,4]', '["07:00"]', 3)`);
+
   // ── Message versions (Per Bot 54) — comms2 foundation ──
   // Shared history table for the "settings-style" message types that
   // used to be a single flat app_config row each (Reminder, Renewal,
@@ -7699,7 +7789,8 @@ function deleteOffer(id) {
 // ── Campaigns (Per Bot 18) ──
 function getAllCampaigns() {
   return queryAll(`SELECT c.*, o.name as offer_name,
-    (SELECT COUNT(*) FROM campaign_steps WHERE campaign_id=c.id) as step_count
+    (SELECT COUNT(*) FROM campaign_steps WHERE campaign_id=c.id) as step_count,
+    (SELECT COUNT(*) FROM postings WHERE campaign_id=c.id AND status='active') as posting_count
     FROM campaigns c LEFT JOIN offers o ON c.offer_id=o.id
     ORDER BY c.created_at DESC`);
 }
@@ -7721,7 +7812,7 @@ function createCampaign(id, name, offerId, audience) {
   return id;
 }
 function updateCampaign(id, fields) {
-  const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url'];
+  const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url', 'type', 'end_date'];
   // Per's real incident — Object.keys(fields) includes a key even when
   // its value is undefined (e.g. {name: undefined} still has a "name"
   // key) — so the caller in server.js, which always destructures all
@@ -7734,7 +7825,7 @@ function updateCampaign(id, fields) {
   // rather than requiring every caller to remember to omit unused keys.
   const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
-  const draftOnlyFields = ['name', 'offer_id', 'audience', 'source_tag'];
+  const draftOnlyFields = ['name', 'offer_id', 'audience', 'source_tag', 'type'];
   const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
   const where = hasDraftOnlyField ? `WHERE id=? AND status='draft'` : `WHERE id=?`;
@@ -7803,6 +7894,93 @@ function updateCampaignStep(id, fields) {
 function deleteCampaignStep(id) {
   getDbSync().run('DELETE FROM campaign_steps WHERE id=?', [id]);
   save();
+}
+
+// ── Postings & the unified schedule engine (Per App 33) ──
+function createPosting(id, fields) {
+  getDbSync().run(
+    `INSERT INTO postings (id, campaign_id, channel, type, subject, content, media_url, media_type, campaign_video_id, expiry_date, preferred_days)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, fields.campaignId, fields.channel, fields.type || 'calming', fields.subject || null, fields.content || null,
+     fields.mediaUrl || null, fields.mediaType || null, fields.campaignVideoId || null, fields.expiryDate || null,
+     fields.preferredDays ? JSON.stringify(fields.preferredDays) : null]
+  );
+  save();
+}
+function getPosting(id) { return queryOne('SELECT * FROM postings WHERE id=?', [id]); }
+function getPostingsForCampaign(campaignId) {
+  return queryAll('SELECT * FROM postings WHERE campaign_id=? ORDER BY created_at ASC', [campaignId]);
+}
+// Only fields actually present (and not undefined) are updated — same
+// fix as updateCampaign's own real incident earlier this session, applied
+// here from the start rather than repeating that bug in new code.
+function updatePosting(id, fields) {
+  const allowed = ['channel','type','subject','content','media_url','media_type','campaign_video_id','expiry_date','preferred_days','status'];
+  const sets = [], vals = [];
+  for (const k of allowed) {
+    if (fields[k] !== undefined) { sets.push(`${k}=?`); vals.push(k === 'preferred_days' && fields[k] !== null ? JSON.stringify(fields[k]) : fields[k]); }
+  }
+  if (!sets.length) return;
+  vals.push(id);
+  getDbSync().run(`UPDATE postings SET ${sets.join(', ')} WHERE id=?`, vals);
+  save();
+}
+function deletePosting(id) {
+  getDbSync().run('DELETE FROM posting_sends WHERE posting_id=?', [id]);
+  getDbSync().run('DELETE FROM postings WHERE id=?', [id]);
+  save();
+}
+function recordPostingSend(id, postingId, channel, slotTime, status, fields = {}) {
+  getDbSync().run(
+    `INSERT INTO posting_sends (id, posting_id, channel, slot_time, status, external_post_id, error) VALUES (?,?,?,?,?,?,?)`,
+    [id, postingId, channel, slotTime, status, fields.externalPostId || null, fields.error || null]
+  );
+  save();
+}
+// The core rotation pick for one channel slot firing right now. Eligible
+// means: posting active, its campaign active, neither the posting's own
+// expiry_date nor its campaign's end_date has passed, preferred_days
+// either unset or includes today's weekday, and it either has never been
+// sent on this channel or was last sent at least cooldown_days ago.
+// Among everything eligible, picks whichever was sent longest ago (NULL
+// last-sent — never sent — sorts first via the CASE, so brand-new
+// postings get first priority over ones already in rotation). Returns
+// at most one row — one posting fills one slot.
+function getEligiblePostingForSlot(channel, todayStr, weekday, cooldownDays) {
+  return queryOne(`
+    SELECT p.*, MAX(ps.sent_at) as last_sent
+    FROM postings p
+    JOIN campaigns c ON p.campaign_id = c.id
+    LEFT JOIN posting_sends ps ON ps.posting_id = p.id AND ps.channel = p.channel AND ps.status = 'sent'
+    WHERE p.channel = ? AND p.status = 'active' AND c.status = 'active'
+      AND (p.expiry_date IS NULL OR p.expiry_date >= ?)
+      AND (c.end_date IS NULL OR c.end_date >= ?)
+      AND (p.preferred_days IS NULL OR p.preferred_days LIKE '%' || ? || '%')
+    GROUP BY p.id
+    HAVING last_sent IS NULL OR julianday(?) - julianday(last_sent) >= ?
+    ORDER BY CASE WHEN last_sent IS NULL THEN 0 ELSE 1 END, last_sent ASC
+    LIMIT 1
+  `, [channel, todayStr, todayStr, String(weekday), todayStr, cooldownDays]);
+}
+function getChannelSchedule(channel) {
+  return queryOne('SELECT * FROM social_schedule_config WHERE platform=?', [channel]);
+}
+function getAllChannelSchedules() {
+  return queryAll('SELECT * FROM social_schedule_config ORDER BY platform ASC');
+}
+function setChannelSchedule(channel, days, times, cooldownDays) {
+  getDbSync().run(
+    `INSERT INTO social_schedule_config (platform, days, times, cooldown_days, updated_at) VALUES (?,?,?,?,datetime('now'))
+     ON CONFLICT(platform) DO UPDATE SET days=excluded.days, times=excluded.times, cooldown_days=excluded.cooldown_days, updated_at=datetime('now')`,
+    [channel, JSON.stringify(days), JSON.stringify(times), cooldownDays]
+  );
+  save();
+}
+// Has this channel already fired for the given exact slot (day+time)
+// today? Guards the engine against firing the same slot twice if the
+// cron ticks more than once within that minute window.
+function hasFiredSlotToday(channel, slotTime) {
+  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? AND status='sent' LIMIT 1`, [channel, slotTime]);
 }
 
 // ── Campaign videos (Per's request) ──
@@ -8168,15 +8346,19 @@ function updateSocialPostMedia(id, platform, media) {
 // independently rather than the whole table at once.
 function getSocialScheduleConfig() {
   return queryAll('SELECT * FROM social_schedule_config ORDER BY platform ASC')
-    .map(r => ({ platform: r.platform, days: JSON.parse(r.days), times: JSON.parse(r.times), updated_at: r.updated_at }));
+    .map(r => ({ platform: r.platform, days: JSON.parse(r.days), times: JSON.parse(r.times), cooldown_days: r.cooldown_days, updated_at: r.updated_at }));
 }
-function updateSocialScheduleConfig(platform, days, times) {
-  getDbSync().run(
-    `INSERT INTO social_schedule_config (platform,days,times,updated_at) VALUES (?,?,?,datetime('now'))
-     ON CONFLICT(platform) DO UPDATE SET days=excluded.days, times=excluded.times, updated_at=excluded.updated_at`,
-    [platform, JSON.stringify(days), JSON.stringify(times)]
-  );
-  save();
+// Per App 33 — now a thin wrapper over setChannelSchedule so there's one
+// real implementation of "save a channel's days/times/cooldown," not two
+// that could drift apart. cooldownDays defaults to whatever's already
+// stored (falls back to 3) when a caller — like the existing per-platform
+// Social tab, which doesn't have a cooldown field in its UI yet — omits it.
+function updateSocialScheduleConfig(platform, days, times, cooldownDays) {
+  if (cooldownDays == null) {
+    const existing = queryOne('SELECT cooldown_days FROM social_schedule_config WHERE platform=?', [platform]);
+    cooldownDays = existing ? existing.cooldown_days : 3;
+  }
+  setChannelSchedule(platform, days, times, cooldownDays);
 }
 
 // Per App 31 — "B" of the streamlining plan: which Message of the Day
@@ -10587,6 +10769,8 @@ module.exports = {
   getCampaignSteps, getCampaignStep, addCampaignStep, updateCampaignStep, deleteCampaignStep,
   getCampaignVideos, getCampaignVideo, createCampaignVideo, updateCampaignVideo, setCampaignVideoMedia, deleteCampaignVideo,
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
+  createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
+  getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
