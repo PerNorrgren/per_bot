@@ -262,41 +262,6 @@
 
 <div class="page">
 
-  <!-- Membership plans -->
-  <div>
-    <div class="section-label">Membership plans</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Active plans</div>
-        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Edit price, trial days, and the Stripe Price ID directly — this is what /membership actually reads from now</div>
-      </div>
-      <div id="planList"><div class="loading">Loading...</div></div>
-    </div>
-  </div>
-
-  <!-- Offers (Per Bot 17) -->
-  <div>
-    <div class="section-label">Promotions &amp; upgrade page</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Offers</div>
-        <button class="btn sm primary" onclick="openOfferModal()">+ New offer</button>
-      </div>
-      <div id="offerList"><div class="loading">Loading...</div></div>
-    </div>
-    <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
-      Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration and lands on the public /promotions page, with that offer's own headline and showcase clip.
-    </div>
-    <div class="card" style="margin-top:12px">
-      <div class="card-header"><div class="card-title" style="font-size:13px">Default showcase clip</div></div>
-      <div style="padding:0 20px 16px">
-        <div class="modal-note" style="margin-bottom:8px">Plays on /promotions when the offer that brought someone there doesn't have its own showcase file set. Also used for anyone landing on /promotions directly, with no promo code at all.</div>
-        <select id="defaultShowcaseFile" onchange="saveDefaultShowcaseFile()"><option value="">No default set</option></select>
-        <div class="feedback" id="defaultShowcaseFeedback" style="margin-top:6px"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- Per Bot 24 — "What's New" home promo, rebuilt as a rotating set of
        any number of items (item 11, then again per Per's follow-up
        request) rather than a single flat value — that field had a real
@@ -316,6 +281,53 @@
         <div class="feedback" id="whatsNewSecondsFeedback"></div>
       </div>
       <div id="whatsNewItemsList" style="padding:0 0 4px"><div class="modal-note" style="padding:14px 20px">Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- Funnel report (Per Bot 18) -->
+  <div>
+    <div class="section-label">Funnel</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Clicks → registrations → paid</div>
+        <div style="display:flex;gap:14px;align-items:center;font-size:12px;color:rgba(255,255,255,0.5)">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySource" onchange="loadFunnel()"/> by source</label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySkin" onchange="loadFunnel()"/> by skin</label>
+          <button class="btn sm" onclick="loadFunnel()">Refresh</button>
+        </div>
+      </div>
+      <div style="padding:8px 20px 4px" class="modal-note">Registrations and paid conversions are counted live from current account state, not logged separately — a lapsed trial or membership is always reflected here, never stuck showing a stale "converted" count.</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px" id="funnelTable">
+          <thead>
+            <tr style="text-align:left;color:rgba(255,255,255,0.4);font-size:11px;letter-spacing:0.05em;text-transform:uppercase">
+              <th style="padding:8px 10px">Offer</th>
+              <th style="padding:8px 10px;display:none" id="funnelSourceHdr">Source</th>
+              <th style="padding:8px 10px;display:none" id="funnelSkinHdr">Skin</th>
+              <th style="padding:8px 10px">Hits</th>
+              <th style="padding:8px 10px">Registered</th>
+              <th style="padding:8px 10px">Click→Reg</th>
+              <th style="padding:8px 10px">Trial active</th>
+              <th style="padding:8px 10px">Paid</th>
+              <th style="padding:8px 10px">Reg→Paid</th>
+            </tr>
+          </thead>
+          <tbody id="funnelBody"><tr><td colspan="8" class="loading" style="padding:16px">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Campaigns (Per Bot 18) -->
+  <div>
+    <div class="section-label">Campaigns</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Calming + sales sequences</div>
+        <button class="btn sm primary" onclick="openNewCampaignModal()">+ New campaign</button>
+      </div>
+      <div style="padding:8px 20px 4px" class="modal-note">A campaign mixes calming lines (no CTA) and sales posts (offer-linked, tracked) across email and social, on a schedule. Draft, add steps, test each one, then approve the whole thing to go live — nothing sends before that.</div>
+      <div id="campaignList" style="padding:8px 20px 18px"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -393,87 +405,26 @@
     </div>
   </div>
 
-  <!-- Trial sequence (Per Bot 18) -->
+  <!-- Offers (Per Bot 17) -->
   <div>
-    <div class="section-label">Trial sequence</div>
-    <div style="padding:0 0 4px" class="modal-note">Sent automatically at each day mark, once per trial member. Follows the same selling-copy rules as Offers and course descriptions — no urgency or scarcity language, no hype words.</div>
-    <div id="sec_trial_day3" style="margin-top:12px"></div>
-    <div id="sec_trial_day7" style="margin-top:12px"></div>
-    <div id="sec_trial_day10" style="margin-top:12px"></div>
-    <div id="sec_trial_day14" style="margin-top:12px"></div>
-  </div>
-
-  <!-- Savers Protocol (Per Bot 18, tables moved onto message_versions Per Bot 54) -->
-  <div>
-    <div class="section-label">Savers Protocol</div>
-    <div style="padding:0 0 4px" class="modal-note">Cancellation win-back: Day 0 fires the moment someone schedules a cancellation — an acknowledgment only, their paid time is untouched. Grace start/mid/final cover a bonus 14 days once their real term actually ends. Payment-failure win-back: Day 0 fires immediately on a genuine payment failure (not one already mid-cancellation), independent of Stripe's own retry schedule. Different voice on purpose between the two — this was a decision, not a mistake.</div>
-    <div id="sec_savers_cancel_day0" style="margin-top:12px"></div>
-    <div id="sec_savers_cancel_grace0" style="margin-top:12px"></div>
-    <div id="sec_savers_cancel_mid" style="margin-top:12px"></div>
-    <div id="sec_savers_cancel_final" style="margin-top:12px"></div>
-    <div id="sec_savers_failure_day0" style="margin-top:12px"></div>
-    <div id="sec_savers_failure_mid" style="margin-top:12px"></div>
-    <div id="sec_savers_failure_final" style="margin-top:12px"></div>
-  </div>
-
-  <!-- Course messages (Per's request) — confirmation fires the moment a
-       free enrolment succeeds (see attemptEnrolUser in server.js); the
-       three reminders fire on a 15-minute cron check as each session
-       gets close (see sendDueSessionReminders), each one only once per
-       person per session, however many times the check re-runs. -->
-  <div>
-    <div class="section-label">Course Messages</div>
-    <div style="padding:0 0 4px" class="modal-note">Enrolment confirmation fires immediately on a successful free enrolment. The three reminders fire automatically as each cohort session's own scheduled date/time (set by the facilitator, in the course's Sessions tab) gets close — 3 days before, 1 day before, and 1 hour before. {{course_link}} in any of these opens the app straight to that course, signing in first if needed.</div>
-    <div id="sec_enrolment_confirmed" style="margin-top:12px"></div>
-    <div id="sec_session_reminder_3day" style="margin-top:12px"></div>
-    <div id="sec_session_reminder_1day" style="margin-top:12px"></div>
-    <div id="sec_session_reminder_1hour" style="margin-top:12px"></div>
-  </div>
-
-  <!-- Funnel report (Per Bot 18) -->
-  <div>
-    <div class="section-label">Funnel</div>
+    <div class="section-label">Promotions &amp; upgrade page</div>
     <div class="card">
       <div class="card-header">
-        <div class="card-title">Clicks → registrations → paid</div>
-        <div style="display:flex;gap:14px;align-items:center;font-size:12px;color:rgba(255,255,255,0.5)">
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySource" onchange="loadFunnel()"/> by source</label>
-          <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="funnelBySkin" onchange="loadFunnel()"/> by skin</label>
-          <button class="btn sm" onclick="loadFunnel()">Refresh</button>
-        </div>
+        <div class="card-title">Offers</div>
+        <button class="btn sm primary" onclick="openOfferModal()">+ New offer</button>
       </div>
-      <div style="padding:8px 20px 4px" class="modal-note">Registrations and paid conversions are counted live from current account state, not logged separately — a lapsed trial or membership is always reflected here, never stuck showing a stale "converted" count.</div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px" id="funnelTable">
-          <thead>
-            <tr style="text-align:left;color:rgba(255,255,255,0.4);font-size:11px;letter-spacing:0.05em;text-transform:uppercase">
-              <th style="padding:8px 10px">Offer</th>
-              <th style="padding:8px 10px;display:none" id="funnelSourceHdr">Source</th>
-              <th style="padding:8px 10px;display:none" id="funnelSkinHdr">Skin</th>
-              <th style="padding:8px 10px">Hits</th>
-              <th style="padding:8px 10px">Registered</th>
-              <th style="padding:8px 10px">Click→Reg</th>
-              <th style="padding:8px 10px">Trial active</th>
-              <th style="padding:8px 10px">Paid</th>
-              <th style="padding:8px 10px">Reg→Paid</th>
-            </tr>
-          </thead>
-          <tbody id="funnelBody"><tr><td colspan="8" class="loading" style="padding:16px">Loading…</td></tr></tbody>
-        </table>
-      </div>
+      <div id="offerList"><div class="loading">Loading...</div></div>
     </div>
-  </div>
-
-  <!-- Campaigns (Per Bot 18) -->
-  <div>
-    <div class="section-label">Campaigns</div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title">Calming + sales sequences</div>
-        <button class="btn sm primary" onclick="openNewCampaignModal()">+ New campaign</button>
+    <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
+      Each offer has its own link — <code style="color:rgba(180,230,200,0.5)">/promo/&lt;code&gt;</code> — that carries its trial length through to registration and lands on the public /promotions page, with that offer's own headline and showcase clip.
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-header"><div class="card-title" style="font-size:13px">Default showcase clip</div></div>
+      <div style="padding:0 20px 16px">
+        <div class="modal-note" style="margin-bottom:8px">Plays on /promotions when the offer that brought someone there doesn't have its own showcase file set. Also used for anyone landing on /promotions directly, with no promo code at all.</div>
+        <select id="defaultShowcaseFile" onchange="saveDefaultShowcaseFile()"><option value="">No default set</option></select>
+        <div class="feedback" id="defaultShowcaseFeedback" style="margin-top:6px"></div>
       </div>
-      <div style="padding:8px 20px 4px" class="modal-note">A campaign mixes calming lines (no CTA) and sales posts (offer-linked, tracked) across email and social, on a schedule. Draft, add steps, test each one, then approve the whole thing to go live — nothing sends before that.</div>
-      <div id="campaignList" style="padding:8px 20px 18px"><div class="loading">Loading…</div></div>
     </div>
   </div>
 
@@ -499,6 +450,55 @@
     </div>
     <div style="font-size:11px;color:rgba(255,255,255,0.25);margin-top:8px;line-height:1.6">
       Active lines rotate into /promotions and are available to the message builder. "Re-check current trends" runs a live web search for what's genuinely weighing on people right now and drafts new lines from it — everything it finds lands as a draft for review here first, nothing goes live automatically.
+    </div>
+  </div>
+
+  <!-- Course messages (Per's request) — confirmation fires the moment a
+       free enrolment succeeds (see attemptEnrolUser in server.js); the
+       three reminders fire on a 15-minute cron check as each session
+       gets close (see sendDueSessionReminders), each one only once per
+       person per session, however many times the check re-runs. -->
+  <div>
+    <div class="section-label">Course Messages</div>
+    <div style="padding:0 0 4px" class="modal-note">Enrolment confirmation fires immediately on a successful free enrolment. The three reminders fire automatically as each cohort session's own scheduled date/time (set by the facilitator, in the course's Sessions tab) gets close — 3 days before, 1 day before, and 1 hour before. {{course_link}} in any of these opens the app straight to that course, signing in first if needed.</div>
+    <div id="sec_enrolment_confirmed" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_3day" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_1day" style="margin-top:12px"></div>
+    <div id="sec_session_reminder_1hour" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Trial sequence (Per Bot 18) -->
+  <div>
+    <div class="section-label">Trial sequence</div>
+    <div style="padding:0 0 4px" class="modal-note">Sent automatically at each day mark, once per trial member. Follows the same selling-copy rules as Offers and course descriptions — no urgency or scarcity language, no hype words.</div>
+    <div id="sec_trial_day3" style="margin-top:12px"></div>
+    <div id="sec_trial_day7" style="margin-top:12px"></div>
+    <div id="sec_trial_day10" style="margin-top:12px"></div>
+    <div id="sec_trial_day14" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Savers Protocol (Per Bot 18, tables moved onto message_versions Per Bot 54) -->
+  <div>
+    <div class="section-label">Savers Protocol</div>
+    <div style="padding:0 0 4px" class="modal-note">Cancellation win-back: Day 0 fires the moment someone schedules a cancellation — an acknowledgment only, their paid time is untouched. Grace start/mid/final cover a bonus 14 days once their real term actually ends. Payment-failure win-back: Day 0 fires immediately on a genuine payment failure (not one already mid-cancellation), independent of Stripe's own retry schedule. Different voice on purpose between the two — this was a decision, not a mistake.</div>
+    <div id="sec_savers_cancel_day0" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_grace0" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_mid" style="margin-top:12px"></div>
+    <div id="sec_savers_cancel_final" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_day0" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_mid" style="margin-top:12px"></div>
+    <div id="sec_savers_failure_final" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Membership plans -->
+  <div>
+    <div class="section-label">Membership plans</div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Active plans</div>
+        <div class="card-title" style="font-size:12px;color:rgba(255,255,255,0.28)">Edit price, trial days, and the Stripe Price ID directly — this is what /membership actually reads from now</div>
+      </div>
+      <div id="planList"><div class="loading">Loading...</div></div>
     </div>
   </div>
 
