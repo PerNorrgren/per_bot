@@ -19,11 +19,11 @@
 
   var STYLE = `
     .app-dialog-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100000; display:flex; align-items:center; justify-content:center; padding:20px; }
-    .app-dialog { background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; max-width:420px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,0.5); font-family:Georgia,serif; overflow:hidden; }
-    .app-dialog-title { padding:16px 20px 2px; font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.4); text-transform:uppercase; }
-    .app-dialog-body { padding:8px 20px 18px; color:rgba(255,255,255,0.85); font-size:14.5px; line-height:1.5; white-space:pre-wrap; }
-    .app-dialog-input { margin:0 20px 18px; display:block; width:calc(100% - 40px); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:14px; outline:none; box-sizing:border-box; }
-    .app-dialog-btns { display:flex; justify-content:flex-end; gap:10px; padding:14px 20px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); }
+    .app-dialog { background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:14px; max-width:420px; width:100%; max-height:calc(100vh - 40px); box-shadow:0 20px 60px rgba(0,0,0,0.5); font-family:Georgia,serif; display:flex; flex-direction:column; overflow:hidden; }
+    .app-dialog-title { padding:16px 20px 2px; font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.4); text-transform:uppercase; flex-shrink:0; }
+    .app-dialog-body { padding:8px 20px 18px; color:rgba(255,255,255,0.85); font-size:14.5px; line-height:1.5; white-space:pre-wrap; overflow-y:auto; flex:1 1 auto; min-height:0; }
+    .app-dialog-input { margin:0 20px 18px; display:block; width:calc(100% - 40px); background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:14px; outline:none; box-sizing:border-box; flex-shrink:0; }
+    .app-dialog-btns { display:flex; justify-content:flex-end; gap:10px; padding:14px 20px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); flex-shrink:0; }
     .app-dialog-btns button { padding:9px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; cursor:pointer; }
     .app-dialog-btns button.primary { background:rgba(180,230,200,0.18); border-color:rgba(180,230,200,0.45); color:rgba(210,240,222,0.95); }
     .app-dialog-btns button:hover { filter:brightness(1.15); }

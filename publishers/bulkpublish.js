@@ -107,7 +107,24 @@ async function uploadMediaFromUrl(mediaUrl) {
 // own scheduling engine firing it almost immediately, same mechanism the
 // campaign /activate route already relies on for its own future-dated
 // posts, just with a near-zero delay here.
-async function publish(platform, { content, mediaUrl } = {}) {
+// Per's real incident — Instagram rejected every video post with
+// "instagram allows max 0 videos for feed_photo (got 1)". Root cause:
+// this function never told BulkPublish what KIND of post it was
+// creating — no postFormat, no postTypeOverrides — so it silently
+// defaulted to Instagram's photo-feed container type regardless of
+// whether a video was actually attached, and that container type
+// can't hold a video at all. Confirmed against BulkPublish's own
+// published CreatePostParams type (postTypeOverrides, a per-platform
+// object): valid Instagram values are feed_photo/feed_video/reel/
+// story/carousel; valid Threads values are text/image/video/carousel.
+// Only set for platforms whose docs show format actually matters —
+// Facebook's plain 'post' format already accepts either media type
+// without an override, per the same type definitions.
+const PLATFORM_MEDIA_POST_TYPES = {
+  instagram: { image: 'feed_photo', video: 'feed_video' },
+  threads:   { image: 'image', video: 'video' },
+};
+async function publish(platform, { content, mediaUrl, mediaType } = {}) {
   const { channels } = await bulkPublishRequest('GET', '/channels');
   const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
   if (!channel) throw new Error(`${platform} isn't connected in BulkPublish yet — connect it in the Channels page first.`);
@@ -120,6 +137,9 @@ async function publish(platform, { content, mediaUrl } = {}) {
   if (mediaUrl) {
     const mediaFileId = await uploadMediaFromUrl(mediaUrl);
     publishBody.mediaFiles = [mediaFileId];
+    const typeMap = PLATFORM_MEDIA_POST_TYPES[platform.toLowerCase()];
+    const overrideType = typeMap && typeMap[mediaType === 'video' ? 'video' : 'image'];
+    if (overrideType) publishBody.postTypeOverrides = { [platform.toLowerCase()]: overrideType };
   }
   const result = await bulkPublishRequest('POST', '/posts', publishBody);
   return {

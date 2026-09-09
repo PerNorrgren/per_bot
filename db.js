@@ -8064,8 +8064,16 @@ function setChannelSchedule(channel, days, times, cooldownDays) {
 // Has this channel already fired for the given exact slot (day+time)
 // today? Guards the engine against firing the same slot twice if the
 // cron ticks more than once within that minute window.
+// Per's real incident — this only counted status='sent' as "handled,"
+// so a posting that failed never got marked done for the slot: every
+// 5-minute tick saw the same slot as still unfired and retried it
+// again, hammering the channel's API every 5 minutes indefinitely
+// rather than trying once and waiting for the next scheduled slot.
+// Any attempt today — sent or failed — now closes out the slot; a
+// failure becomes one visible failure for that slot, not an endless
+// retry loop.
 function hasFiredSlotToday(channel, slotTime) {
-  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? AND status='sent' LIMIT 1`, [channel, slotTime]);
+  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? LIMIT 1`, [channel, slotTime]);
 }
 
 // Per's request — a real progress view for a live campaign: how many
