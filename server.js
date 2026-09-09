@@ -13716,6 +13716,43 @@ app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) =
     res.json({ ...campaign, channels: campaign.channels ? JSON.parse(campaign.channels) : null, steps: db.getCampaignSteps(req.params.id), postings: db.getPostingsForCampaign(req.params.id).map(p => ({ ...p, preferred_days: p.preferred_days ? JSON.parse(p.preferred_days) : null })) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — right after going live, show when this campaign's
+// content will actually start posting, one row per assigned channel.
+// Reuses computeUpcomingUtcSlots (already used for the Social queue
+// auto-prepare horizon) rather than duplicating the slot-math — this
+// just asks it for the single nearest slot per channel instead of a
+// week's worth. Unrestricted campaigns (no channels ticked) show every
+// channel that has a schedule configured at all, since any of them
+// could pick this campaign's postings up.
+app.get('/api/admin/campaigns/:id/next-slots', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Not found.' });
+    const restrictedTo = campaign.channels ? JSON.parse(campaign.channels) : null;
+    const allSchedules = db.getAllChannelSchedules();
+    const channels = restrictedTo && restrictedTo.length ? restrictedTo : allSchedules.map(s => s.platform);
+    const byPlatform = Object.fromEntries(allSchedules.map(s => [s.platform, s]));
+    const now = new Date();
+    const result = channels.map(channel => {
+      const cfg = byPlatform[channel];
+      if (!cfg) return { channel, nextSlot: null, reason: 'No schedule configured for this channel yet.' };
+      let days, times;
+      try { days = JSON.parse(cfg.days); times = JSON.parse(cfg.times); } catch (e) { return { channel, nextSlot: null, reason: 'Schedule is misconfigured.' }; }
+      if (!days.length || !times.length) return { channel, nextSlot: null, reason: 'No days/times set for this channel yet.' };
+      const upcoming = computeUpcomingUtcSlots(days, times, 14, now);
+      if (!upcoming.length) return { channel, nextSlot: null, reason: 'Nothing in the next two weeks — check the channel\'s schedule.' };
+      return { channel, nextSlot: upcoming[0].toISOString(), reason: null };
+    });
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/campaigns/:id/progress', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...db.getCampaignProgress(req.params.id), startedAt: campaign.started_at });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {

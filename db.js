@@ -8060,6 +8060,34 @@ function hasFiredSlotToday(channel, slotTime) {
   return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? AND status='sent' LIMIT 1`, [channel, slotTime]);
 }
 
+// Per's request — a real progress view for a live campaign: how many
+// sends have actually gone out since it went live, per channel, plus
+// how many postings are currently in the pool feeding it. Reads
+// straight from posting_sends (the real history log every fire writes
+// to) rather than anything derived — this is the same data the engine
+// itself used to decide eligibility, not a separate counter that could
+// drift from reality.
+function getCampaignProgress(campaignId) {
+  const totals = queryOne(`
+    SELECT COUNT(*) as total_sends,
+      SUM(CASE WHEN ps.status='sent' THEN 1 ELSE 0 END) as sent_count,
+      SUM(CASE WHEN ps.status='failed' THEN 1 ELSE 0 END) as failed_count,
+      MIN(ps.sent_at) as first_sent, MAX(ps.sent_at) as last_sent
+    FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
+    WHERE p.campaign_id = ?`, [campaignId]);
+  const byChannel = queryAll(`
+    SELECT ps.channel,
+      SUM(CASE WHEN ps.status='sent' THEN 1 ELSE 0 END) as sent_count,
+      SUM(CASE WHEN ps.status='failed' THEN 1 ELSE 0 END) as failed_count
+    FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
+    WHERE p.campaign_id = ?
+    GROUP BY ps.channel ORDER BY ps.channel ASC`, [campaignId]);
+  const postingCounts = queryOne(`
+    SELECT COUNT(*) as total, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) as active_count
+    FROM postings WHERE campaign_id=?`, [campaignId]);
+  return { totals, byChannel, postingCounts };
+}
+
 // ── Campaign videos (Per's request) ──
 function getCampaignVideos(campaignId) {
   return queryAll('SELECT * FROM campaign_videos WHERE campaign_id=? ORDER BY sort_order ASC, created_at ASC', [campaignId]);
@@ -10847,7 +10875,7 @@ module.exports = {
   getCampaignVideos, getCampaignVideo, createCampaignVideo, updateCampaignVideo, setCampaignVideoMedia, deleteCampaignVideo,
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
-  getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday,
+  getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)

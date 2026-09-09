@@ -1857,6 +1857,8 @@
         <button class="modal-ok" onclick="activateCampaign()">Approve &amp; go live</button>`;
     } else if (data.status === 'active') {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
+        <button class="btn sm" onclick="showCampaignProgress()">Progress</button>
+        <button class="btn sm" onclick="showNextSlots()">Next posting times</button>
         <button class="btn sm" onclick="pauseCampaign()" style="color:rgba(230,175,90,0.9)">Pause campaign</button>`;
     } else if (data.status === 'paused') {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
@@ -2367,6 +2369,58 @@
       await refreshCampaignDetail();
     } catch(e) { err.textContent = e.message; }
   }
+  const CHANNEL_DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  function formatNextSlot(iso) {
+    const d = new Date(iso);
+    const day = CHANNEL_DAY_NAMES[d.getUTCDay()];
+    const date = String(d.getUTCDate()).padStart(2,'0') + '/' + String(d.getUTCMonth()+1).padStart(2,'0');
+    const time = String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
+    return `${day} ${date}, ${time} UTC`;
+  }
+  async function fetchNextSlotsText(campaignId) {
+    const rows = await fetch(`/api/admin/campaigns/${campaignId}/next-slots`).then(r=>r.json()).catch(() => null);
+    if (!Array.isArray(rows) || !rows.length) return 'No channels are set up to check yet.';
+    return rows.map(r => {
+      const label = CAMP_CHANNEL_LABELS[r.channel] || r.channel;
+      return r.nextSlot ? `${label} \u2014 ${formatNextSlot(r.nextSlot)}` : `${label} \u2014 ${r.reason || 'not scheduled yet'}`;
+    }).join('\n');
+  }
+  async function showNextSlots() {
+    const text = await fetchNextSlotsText(curCampaignId);
+    appAlert('Next posting time per channel:\n\n' + text, 'Upcoming');
+  }
+  function formatSentAt(iso) {
+    if (!iso) return 'never';
+    const d = new Date(iso.replace(' ', 'T') + (iso.includes('Z') ? '' : 'Z'));
+    return d.toLocaleString(undefined, { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+  }
+  async function showCampaignProgress() {
+    try {
+      const data = await fetch(`/api/admin/campaigns/${curCampaignId}/progress`).then(r=>r.json());
+      if (data.error) throw new Error(data.error);
+      const t = data.totals || {};
+      const pc = data.postingCounts || {};
+      const lines = [];
+      lines.push(`Live since: ${data.startedAt ? data.startedAt.slice(0,10) : 'unknown'}`);
+      lines.push(`Active postings in the pool: ${pc.active_count || 0} of ${pc.total || 0}`);
+      lines.push('');
+      lines.push(`Total sent: ${t.sent_count || 0}${t.failed_count ? ` (${t.failed_count} failed)` : ''}`);
+      if (t.first_sent) lines.push(`First send: ${formatSentAt(t.first_sent)}`);
+      if (t.last_sent) lines.push(`Most recent: ${formatSentAt(t.last_sent)}`);
+      if (data.byChannel && data.byChannel.length) {
+        lines.push('');
+        lines.push('By channel:');
+        data.byChannel.forEach(c => {
+          const label = CAMP_CHANNEL_LABELS[c.channel] || c.channel;
+          lines.push(`${label} \u2014 ${c.sent_count || 0} sent${c.failed_count ? `, ${c.failed_count} failed` : ''}`);
+        });
+      } else {
+        lines.push('');
+        lines.push('Nothing has fired yet \u2014 check back once the schedule catches up, or see Next posting times.');
+      }
+      appAlert(lines.join('\n'), 'Progress');
+    } catch(e) { appAlert(e.message); }
+  }
   async function activateCampaign() {
     if (!confirm('Approve this campaign to go live? Its postings join the pool immediately and will be picked at each assigned channel\'s next matching schedule slot \u2014 nothing fires the instant you approve.')) return;
     const err = document.getElementById('campDetailErr'); err.textContent = '';
@@ -2378,6 +2432,8 @@
       if (failed.length) err.textContent = `Live, but ${failed.length} step(s) failed to schedule \u2014 check them below.`;
       await refreshCampaignDetail();
       loadCampaigns();
+      const slotsText = await fetchNextSlotsText(curCampaignId);
+      await appAlert('\u2705 Live \u2014 now in the queue.\n\nNext posting time per channel:\n\n' + slotsText, 'Approved');
     } catch(e) { err.textContent = e.message; appAlert(e.message); }
   }
   async function pauseCampaign() {
