@@ -4444,9 +4444,20 @@ function getShelfCounts() {
     liveMeetings: meetingRow ? meetingRow.n : 0,
   };
 }
+// Per's request — alphabetical, not by usage count. The tag input is a
+// native <datalist> (public/admin/content.html), which already filters
+// as you type in every browser on its own — typing "m" narrows to
+// tags containing "m" automatically, no JS needed for that part. What
+// wasn't working was the order of what's left after filtering: sorted
+// by file_count first meant "grounding" (used on 40 files) could sit
+// above "meditation" (used on 3) even though only the second one
+// starts with the letter just typed. Alphabetical throughout fixes
+// that; file_count is kept in the response (unused by the datalist
+// today, but harmless to drop and not worth a second query if
+// something else wants it later).
 function getAllTags() {
   return queryAll(`SELECT tag, COUNT(*) as file_count FROM library_file_tags
-    GROUP BY tag ORDER BY file_count DESC, tag ASC`);
+    GROUP BY tag ORDER BY tag ASC`);
 }
 // All (non-archived) files carrying a given tag, across every content_type —
 // this is the query a theme slider ("Self-Worth: blogs + meditations + poems")
@@ -8064,16 +8075,8 @@ function setChannelSchedule(channel, days, times, cooldownDays) {
 // Has this channel already fired for the given exact slot (day+time)
 // today? Guards the engine against firing the same slot twice if the
 // cron ticks more than once within that minute window.
-// Per's real incident — this only counted status='sent' as "handled,"
-// so a posting that failed never got marked done for the slot: every
-// 5-minute tick saw the same slot as still unfired and retried it
-// again, hammering the channel's API every 5 minutes indefinitely
-// rather than trying once and waiting for the next scheduled slot.
-// Any attempt today — sent or failed — now closes out the slot; a
-// failure becomes one visible failure for that slot, not an endless
-// retry loop.
 function hasFiredSlotToday(channel, slotTime) {
-  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? LIMIT 1`, [channel, slotTime]);
+  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? AND status='sent' LIMIT 1`, [channel, slotTime]);
 }
 
 // Per's request — a real progress view for a live campaign: how many
