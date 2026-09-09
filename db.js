@@ -1510,6 +1510,16 @@ async function getDb() {
   // misleading label.
   try { db.run(`ALTER TABLE campaigns ADD COLUMN type TEXT NOT NULL DEFAULT 'general'`); } catch(e) {}
   try { db.run(`ALTER TABLE campaigns ADD COLUMN end_date TEXT`); } catch(e) {}
+  // Per's request — a campaign-level "which channels does this run on"
+  // setting, sitting above the per-posting channel choice that already
+  // existed. JSON array of channel keys (e.g. '["email","facebook"]');
+  // NULL/empty means unrestricted — every existing campaign before this
+  // column existed behaves exactly as before, no migration needed.
+  // Deliberately UI-level only for now (filters/defaults the Add
+  // Posting channel picker) — NOT enforced in getEligiblePostingForSlot,
+  // so editing a campaign's channels after postings already exist can
+  // never silently stop something that was already firing correctly.
+  try { db.run(`ALTER TABLE campaigns ADD COLUMN channels TEXT`); } catch(e) {}
 
   // A posting is content assigned to exactly one channel (email or a
   // BulkPublish/direct platform key) within a campaign. Unlike the old
@@ -7857,7 +7867,7 @@ function createCampaign(id, name, offerId, audience) {
   return id;
 }
 function updateCampaign(id, fields) {
-  const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url', 'type', 'end_date'];
+  const allowed = ['name', 'offer_id', 'audience', 'source_tag', 'goal', 'promotes_label', 'promotes_url', 'type', 'end_date', 'channels'];
   // Per's real incident — Object.keys(fields) includes a key even when
   // its value is undefined (e.g. {name: undefined} still has a "name"
   // key) — so the caller in server.js, which always destructures all
@@ -7876,11 +7886,18 @@ function updateCampaign(id, fields) {
   // goal/promotes_label/promotes_url earlier — anything in this list
   // silently fails to save once a campaign is active, so audience must
   // NOT be here.
-  const draftOnlyFields = ['name', 'offer_id', 'source_tag', 'type'];
+  // Per's request — name is now editable at any status too (it's a
+  // display label, low risk, same reasoning as opening up audience
+  // earlier). offer_id/source_tag/type stay draft-only — those genuinely
+  // change what a live campaign means, not just what it's called.
+  const draftOnlyFields = ['offer_id', 'source_tag', 'type'];
   const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
   const where = hasDraftOnlyField ? `WHERE id=? AND status='draft'` : `WHERE id=?`;
-  getDbSync().run(`UPDATE campaigns SET ${sets} ${where}`, [...keys.map(k => fields[k]), id]);
+  // channels is stored as JSON; every other allowed field is a plain
+  // string/null already, same reasoning as postings.preferred_days.
+  const vals = keys.map(k => k === 'channels' && fields[k] != null ? JSON.stringify(fields[k]) : fields[k]);
+  getDbSync().run(`UPDATE campaigns SET ${sets} ${where}`, [...vals, id]);
   save();
 }
 // Draft -> active is one-way through this function; going live records

@@ -630,6 +630,16 @@
         </div>
       </div>
       <div>
+        <label>Channels this campaign runs on <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(tick any mix — leave all unticked to allow any channel when adding postings)</span></label>
+        <div style="display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:4px" id="campNewChannelsPicker">
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="email"/> Email</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="facebook"/> Facebook</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="linkedin"/> LinkedIn</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="instagram"/> Instagram</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="threads"/> Threads</label>
+        </div>
+      </div>
+      <div>
         <label>Offer (optional — leave unset for a pure calming campaign)</label>
         <select id="campNewOffer"><option value="">No offer — calming steps only</option></select>
       </div>
@@ -655,8 +665,8 @@
   <div class="modal-overlay" id="campaignDetailModalOverlay">
     <div class="modal" style="max-width:820px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <h3 id="campDetailName" style="margin-bottom:4px">Campaign</h3>
+        <div style="flex:1">
+          <input type="text" id="campDetailName" class="inline-input" style="font-family:Georgia,serif;font-size:22px;font-weight:bold;background:transparent;border:1px solid transparent;padding:2px 4px;margin:-2px 0 4px -4px;width:100%" onblur="this.style.borderColor='transparent'; saveCampaignGoal();" onfocus="this.style.borderColor='rgba(255,255,255,0.15)'"/>
           <div style="font-size:12px;color:rgba(255,255,255,0.4)" id="campDetailMeta"></div>
         </div>
         <button class="btn sm" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
@@ -702,6 +712,16 @@
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member1" onchange="saveCampaignGoal()"/> Member 1</label>
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member2" onchange="saveCampaignGoal()"/> Member 2</label>
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-audience-chk" value="member3" onchange="saveCampaignGoal()"/> Member 3</label>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label style="font-size:11px">Channels this campaign runs on <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(tick any mix — leave all unticked to allow any channel below)</span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:4px" id="campDetailChannelsPicker">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="email" onchange="saveCampaignGoal()"/> Email</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="facebook" onchange="saveCampaignGoal()"/> Facebook</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="linkedin" onchange="saveCampaignGoal()"/> LinkedIn</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="instagram" onchange="saveCampaignGoal()"/> Instagram</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="threads" onchange="saveCampaignGoal()"/> Threads</label>
           </div>
         </div>
         <div id="campGoalSaveStatus" style="font-size:12px;margin-top:6px"></div>
@@ -1712,6 +1732,7 @@
     return audience.split(',').map(s => AUDIENCE_LABELS[s.trim()] || s.trim()).join(', ');
   }
   let curCampaignId = null;
+  let _curCampaignChannels = []; // this campaign's channel restriction, if any — filters the Add Posting channel picker
 
   async function loadCampaigns() {
     const el = document.getElementById('campaignList');
@@ -1741,6 +1762,7 @@
   async function openNewCampaignModal() {
     document.getElementById('campNewName').value = '';
     document.querySelectorAll('.camp-new-audience-chk').forEach(c => c.checked = false);
+    document.querySelectorAll('.camp-new-channel-chk').forEach(c => c.checked = false);
     document.getElementById('campNewGoal').value = '';
     document.getElementById('campNewPromotesLabel').value = '';
     document.getElementById('campNewPromotesUrl').value = '';
@@ -1769,6 +1791,7 @@
       promotesUrl: document.getElementById('campNewPromotesUrl').value.trim() || null,
       type: document.getElementById('campNewType').value,
       endDate: document.getElementById('campNewType').value === 'time_boxed' ? (document.getElementById('campNewEndDate').value || null) : null,
+      channels: [...document.querySelectorAll('.camp-new-channel-chk:checked')].map(c => c.value),
     };
     if (body.type === 'time_boxed' && !body.endDate) { err.textContent = 'A time-boxed campaign needs an end date.'; return; }
     try {
@@ -1788,7 +1811,7 @@
   }
   async function refreshCampaignDetail() {
     const data = await fetch(`/api/admin/campaigns/${curCampaignId}`).then(r=>r.json());
-    document.getElementById('campDetailName').textContent = data.name;
+    document.getElementById('campDetailName').value = data.name;
     const offer = offersData.find(o => o.id === data.offer_id);
     document.getElementById('campDetailMeta').textContent =
       `${data.status.toUpperCase()} · ${data.type === 'time_boxed' ? 'time-boxed' : 'general'} · ${offer ? offer.name : 'no offer'} · audience: ${formatAudience(data.audience)}${data.started_at ? ' · started ' + data.started_at.slice(0,10) : ''}${data.end_date ? ' · ends ' + data.end_date : ''}`;
@@ -1800,6 +1823,8 @@
     onCampDetailTypeChanged();
     const audSegs = (!data.audience || data.audience === 'all') ? [] : data.audience.split(',').map(s => s.trim());
     document.querySelectorAll('.camp-detail-audience-chk').forEach(c => c.checked = audSegs.includes(c.value));
+    _curCampaignChannels = Array.isArray(data.channels) ? data.channels : [];
+    document.querySelectorAll('.camp-detail-channel-chk').forEach(c => c.checked = _curCampaignChannels.includes(c.value));
 
     const isDraft = data.status === 'draft';
     document.getElementById('campAddStepWrap').style.display = 'none'; // old step-based UI retired Per App 33
@@ -1870,6 +1895,12 @@
   let _marketingMediaCache = [];
   function showAddPostingForm() {
     document.getElementById('campAddPostingForm').style.display = '';
+    // Per's request — if this campaign has channels assigned, only offer
+    // those here rather than all five; an unrestricted campaign (no
+    // channels ticked) still offers everything, unchanged from before.
+    const chSel = document.getElementById('postNewChannel');
+    const allowedChannels = (_curCampaignChannels && _curCampaignChannels.length) ? _curCampaignChannels : Object.keys(CAMP_CHANNEL_LABELS);
+    chSel.innerHTML = allowedChannels.map(c => `<option value="${c}">${CAMP_CHANNEL_LABELS[c] || c}</option>`).join('');
     const sel = document.getElementById('postNewVideo');
     sel.innerHTML = '<option value="">None — write from scratch</option>'
       + (_campVideosCache||[]).map(v => `<option value="${v.id}">${escHtml(v.title)}</option>`).join('');
@@ -2154,14 +2185,19 @@
     status.style.color = 'rgba(255,255,255,0.5)';
     status.textContent = 'Saving…';
     const audSegs = [...document.querySelectorAll('.camp-detail-audience-chk:checked')].map(c => c.value);
+    const name = document.getElementById('campDetailName').value.trim();
+    if (!name) { status.style.color = 'rgba(255,140,120,0.85)'; status.textContent = 'Name can\'t be empty.'; return; }
     const body = {
+      name,
       goal: document.getElementById('campDetailGoal').value.trim() || null,
       promotesLabel: document.getElementById('campDetailPromotesLabel').value.trim() || null,
       promotesUrl: document.getElementById('campDetailPromotesUrl').value.trim() || null,
       type: document.getElementById('campDetailType').value,
       endDate: document.getElementById('campDetailType').value === 'time_boxed' ? (document.getElementById('campDetailEndDate').value || null) : null,
       audience: audSegs.length ? audSegs.join(',') : 'all',
+      channels: [...document.querySelectorAll('.camp-detail-channel-chk:checked')].map(c => c.value),
     };
+    _curCampaignChannels = body.channels; // keep the Add Posting filter in sync immediately, don't wait on the network round-trip
     try {
       const res = await fetch(`/api/admin/campaigns/${curCampaignId}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
@@ -2172,6 +2208,7 @@
       }
       status.style.color = 'rgba(180,230,200,0.9)';
       status.textContent = 'Saved.';
+      loadCampaigns();
       setTimeout(() => { if (status.textContent === 'Saved.') status.textContent = ''; }, 3000);
     } catch(e) {
       status.style.color = 'rgba(255,140,120,0.85)';

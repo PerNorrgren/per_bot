@@ -13684,7 +13684,7 @@ app.get('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
 });
 app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate } = req.body;
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate, channels } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
     if (type === 'time_boxed' && !endDate) return res.status(400).json({ error: 'A time-boxed campaign needs an end date.' });
     const id = uuidv4();
@@ -13699,8 +13699,12 @@ app.post('/api/admin/campaigns', auth.requireAuthApi(['admin']), (req, res) => {
     // (no end_date) run indefinitely as an evergreen pool, 'time_boxed'
     // ones (Finding Mindfulness-style) stop supplying postings once
     // end_date passes, checked live at pick-time in getEligiblePostingForSlot.
-    if (goal || promotesLabel || promotesUrl || type || endDate) {
-      db.updateCampaign(id, { goal: goal || null, promotes_label: promotesLabel || null, promotes_url: promotesUrl || null, type: type || 'general', end_date: endDate || null });
+    // channels — campaign-level "which channels this runs on," sitting
+    // above the per-posting channel choice. UI-level only (filters/
+    // defaults the Add Posting picker); an empty/omitted list means
+    // unrestricted, same as every campaign before this existed.
+    if (goal || promotesLabel || promotesUrl || type || endDate || (channels && channels.length)) {
+      db.updateCampaign(id, { goal: goal || null, promotes_label: promotesLabel || null, promotes_url: promotesUrl || null, type: type || 'general', end_date: endDate || null, channels: (channels && channels.length) ? channels : null });
     }
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -13709,14 +13713,14 @@ app.get('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) =
   try {
     const campaign = db.getCampaign(req.params.id);
     if (!campaign) return res.status(404).json({ error: 'Not found.' });
-    res.json({ ...campaign, steps: db.getCampaignSteps(req.params.id), postings: db.getPostingsForCampaign(req.params.id).map(p => ({ ...p, preferred_days: p.preferred_days ? JSON.parse(p.preferred_days) : null })) });
+    res.json({ ...campaign, channels: campaign.channels ? JSON.parse(campaign.channels) : null, steps: db.getCampaignSteps(req.params.id), postings: db.getPostingsForCampaign(req.params.id).map(p => ({ ...p, preferred_days: p.preferred_days ? JSON.parse(p.preferred_days) : null })) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {
-    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate } = req.body;
-    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl, type, end_date: endDate });
+    const { name, offerId, audience, goal, promotesLabel, promotesUrl, type, endDate, channels } = req.body;
+    db.updateCampaign(req.params.id, { name, offer_id: offerId, audience, goal, promotes_label: promotesLabel, promotes_url: promotesUrl, type, end_date: endDate, channels: channels !== undefined ? ((channels && channels.length) ? channels : null) : undefined });
     console.log('[campaign save] succeeded for', req.params.id);
     res.json({ ok: true });
   } catch(e) {
