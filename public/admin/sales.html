@@ -2299,7 +2299,7 @@
       if (failed.length) err.textContent = `Live, but ${failed.length} step(s) failed to schedule \u2014 check them below.`;
       await refreshCampaignDetail();
       loadCampaigns();
-    } catch(e) { err.textContent = e.message; }
+    } catch(e) { err.textContent = e.message; appAlert(e.message); }
   }
   async function pauseCampaign() {
     if (!confirm('Pause this campaign? Its postings stop being eligible for any channel\'s schedule until resumed.')) return;
