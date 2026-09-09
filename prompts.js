@@ -1115,6 +1115,22 @@ const MESSAGE_BUILDER_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a clo
 - CLOSING INVITATION: after the reformatted message, add a short closing line that invites the reader to try Deeper Mindfulness — mention {{TRIAL_DAYS}} days full access, no card needed, framed as an invitation to explore rather than a hard sell, then the literal token {{SIGNUP_LINK}} on its own (this will be replaced with the real link before anything is shown — write it exactly as {{SIGNUP_LINK}}, do not invent a URL or describe one).
 - On Instagram/Threads, the hashtags still come after the closing invitation and its link token, not before.`;
 
+// Per App 33 — postings auto-generated from a campaign's planned videos
+// (Sales & Marketing > a campaign's Postings > "Auto-create from videos").
+// Distinct from MESSAGE_BUILDER_CTA_INSTRUCTIONS above: that one is built
+// around a trial-based Offer (trial days, a {{SIGNUP_LINK}} token). A
+// campaign like this doesn't have an Offer at all — just its own
+// promotes_label/goal and a plain link (a live course's Zoom URL,
+// Per's real example) — so there's no trial length to mention and no
+// link token to write, since the campaign's own link is appended
+// automatically to the finished posting at publish time, not written
+// into the text here.
+const COURSE_SIGNUP_CTA_INSTRUCTIONS = `EVERY post also needs a hook and a close, on top of the platform-specific shape above:
+- OPENING HOOK: the very first line should be a short, catchy line that stops a scroll — pulled from or inspired by the source script itself, not a generic greeting.
+- BODY: use the source script as the real substance of the post — its actual message, reworked into the platform's shape, not just summarized in the abstract.
+- CLOSING INVITATION: after the reformatted message, add a short, warm closing that makes a genuine case for actually signing up — what it will feel like to actually be there, actually practicing, actually supported, not a vague "check it out". Real sales language: specific, inviting, a little bit urgent given the start date if one is provided, but never hypey or pushy. Do NOT write a URL, a link token, or "link in bio" — nothing about where to click. The real link is added automatically after this text is generated; your job ends at making someone want to click it.
+- On Instagram, the hashtags still come after the closing invitation, not before.`;
+
 // Per App 31 — Video Generator's "Generate script" button. Writes pure
 // spoken narration text, not a scene-directed video script — this goes
 // straight into the same vgSource textarea Video Generator narrates
@@ -1278,6 +1294,7 @@ module.exports = {
   SOCIAL_INFOGRAPHIC_PROMPT_WRITING_PROMPT,
   MESSAGE_BUILDER_PROMPT,
   MESSAGE_BUILDER_CTA_INSTRUCTIONS,
+  COURSE_SIGNUP_CTA_INSTRUCTIONS,
   MARKETING_SCRIPT_PROMPT,
   CAMPAIGN_SALES_EMAIL_PROMPT,
   SIGNAL_LINE_TREND_SCAN_PROMPT,

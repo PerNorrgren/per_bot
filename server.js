@@ -13745,6 +13745,56 @@ app.post('/api/admin/campaigns/:id/postings', auth.requireAuthApi(['admin']), (r
     res.json({ id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — one video's script currently has to be turned into a
+// posting one channel at a time by hand (pick channel, pick the video,
+// save, repeat). This does it for every planned video at once, across
+// whichever channels are asked for: one AI call per video (not per
+// channel — the same multi-platform-in-one-JSON-response shape
+// MESSAGE_BUILDER_PROMPT already uses), each producing real sales copy
+// built from that video's actual script rather than the script
+// verbatim, with a genuine closing invitation to sign up — never a
+// written-in link, since firePostingSocial already appends the
+// campaign's own link automatically at publish time. Every created
+// posting stays a normal posting afterward — editable, deletable,
+// nothing about this locks it in.
+app.post('/api/admin/campaigns/:id/postings/auto-generate-from-videos', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const campaign = db.getCampaign(req.params.id);
+    if (!campaign) return res.status(404).json({ error: 'Not found.' });
+    const channels = Array.isArray(req.body?.channels) && req.body.channels.length ? req.body.channels : ['facebook', 'linkedin', 'instagram'];
+    const videos = db.getCampaignVideos(campaign.id).filter(v => v.script && v.script.trim());
+    if (!videos.length) return res.status(400).json({ error: 'No planned videos have a script yet — write or generate scripts first.' });
+
+    const systemPrompt = prompts.MESSAGE_BUILDER_PROMPT.replace('{{CTA_INSTRUCTIONS}}', prompts.COURSE_SIGNUP_CTA_INSTRUCTIONS);
+    const context = [campaign.goal, campaign.promotes_label].filter(Boolean).join(' — ');
+    const created = [];
+    const errors = [];
+    for (const video of videos) {
+      try {
+        const userMessage = `WHAT THIS IS PROMOTING: ${context || campaign.name}\n\nSOURCE SCRIPT (from the video "${video.title}"):\n${video.script}\n\nPLATFORMS TO PRODUCE: ${channels.join(', ')}\n\nRespond with only the JSON object, nothing else.` + getCurrentTrendBlock();
+        const raw = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userMessage }], 1200);
+        let parsed;
+        try { parsed = JSON.parse(raw); }
+        catch { parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()); }
+        for (const channel of channels) {
+          const text = (parsed[channel] || '').trim();
+          if (!text) { errors.push(`${video.title} (${channel}): model returned no content.`); continue; }
+          const id = uuidv4();
+          db.createPosting(id, {
+            campaignId: campaign.id, channel, type: 'sales', content: text,
+            mediaUrl: video.status === 'recorded' ? video.media_url : undefined,
+            mediaType: video.status === 'recorded' ? video.media_type : undefined,
+            campaignVideoId: video.id,
+          });
+          created.push({ id, title: video.title, channel });
+        }
+      } catch (e) {
+        errors.push(`${video.title}: ${e.message}`);
+      }
+    }
+    res.json({ created: created.length, errors });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.patch('/api/admin/campaigns/:id/postings/:postingId', auth.requireAuthApi(['admin']), (req, res) => {
   try {
     const { channel, type, subject, content, mediaUrl, mediaType, campaignVideoId, expiryDate, preferredDays, status } = req.body;

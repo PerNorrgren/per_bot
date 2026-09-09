@@ -782,7 +782,10 @@
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <div class="config-label">Postings <span style="font-weight:normal;color:rgba(255,255,255,0.35)">— the content pool this campaign feeds into its assigned channels</span></div>
-          <button class="btn sm primary" onclick="showAddPostingForm()">+ Add posting</button>
+          <div style="display:flex;gap:6px">
+            <button class="btn sm" onclick="showAutoGenPostingsForm()">✨ Auto-create from videos</button>
+            <button class="btn sm primary" onclick="showAddPostingForm()">+ Add posting</button>
+          </div>
         </div>
         <div id="campAddPostingForm" style="display:none;margin-bottom:12px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px">
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
@@ -840,6 +843,23 @@
             <button class="btn sm primary" id="campAddPostingBtn" onclick="addPosting()">Save posting</button>
             <button class="btn sm" onclick="document.getElementById('campAddPostingForm').style.display='none'">Cancel</button>
           </div>
+        </div>
+        <div id="campAutoGenForm" style="display:none;margin-bottom:12px;padding:12px;background:rgba(180,230,200,0.05);border:1px solid rgba(180,230,200,0.15);border-radius:8px">
+          <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-bottom:8px">Creates one posting per channel for every planned video that has a script — real sales copy built from that script, with a genuine invitation to sign up. The actual link is added automatically when each one fires, so nothing needs typing in here. Every posting created is normal afterward: editable, deletable, nothing locked in.</div>
+          <div style="margin-bottom:8px">
+            <label style="font-size:11px;color:rgba(255,255,255,0.5);display:block;margin-bottom:3px">Channels</label>
+            <div style="display:flex;gap:14px">
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="facebook" checked/>Facebook</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="linkedin" checked/>LinkedIn</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="instagram" checked/>Instagram</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="threads"/>Threads</label>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn sm primary" id="campAutoGenBtn" onclick="runAutoGenPostings()">Generate</button>
+            <button class="btn sm" onclick="document.getElementById('campAutoGenForm').style.display='none'">Cancel</button>
+          </div>
+          <div id="campAutoGenStatus" style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:8px"></div>
         </div>
         <div id="campPostingsList" style="display:flex;flex-direction:column;gap:10px"></div>
       </div>
@@ -1893,8 +1913,38 @@
     }).join('');
   }
   let _marketingMediaCache = [];
+  function showAutoGenPostingsForm() {
+    document.getElementById('campAutoGenForm').style.display = '';
+    document.getElementById('campAddPostingForm').style.display = 'none';
+    document.getElementById('campAutoGenStatus').textContent = '';
+  }
+  async function runAutoGenPostings() {
+    const btn = document.getElementById('campAutoGenBtn');
+    const status = document.getElementById('campAutoGenStatus');
+    const channels = [...document.querySelectorAll('.autogen-channel-chk:checked')].map(c => c.value);
+    if (!channels.length) { status.style.color = 'rgba(255,140,120,0.85)'; status.textContent = 'Tick at least one channel.'; return; }
+    setBtnLoading(btn, true, 'Generating… (can take a minute or two for all videos)');
+    status.style.color = 'rgba(255,255,255,0.5)';
+    status.textContent = '';
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/postings/auto-generate-from-videos`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels }),
+      });
+      const data = await res.json();
+      if (!res.ok || (data.error && !data.created)) throw new Error(data.error || 'Could not generate postings.');
+      status.style.color = 'rgba(180,230,200,0.9)';
+      status.textContent = `Created ${data.created} posting${data.created===1?'':'s'}.` + (data.errors && data.errors.length ? ` ${data.errors.length} skipped — ${data.errors.join(' ')}` : '');
+      await refreshCampaignDetail();
+      loadCampaigns();
+    } catch(e) {
+      status.style.color = 'rgba(255,140,120,0.85)';
+      status.textContent = e.message;
+      appAlert(e.message);
+    } finally { setBtnLoading(btn, false); }
+  }
   function showAddPostingForm() {
     document.getElementById('campAddPostingForm').style.display = '';
+    document.getElementById('campAutoGenForm').style.display = 'none';
     // Per's request — if this campaign has channels assigned, only offer
     // those here rather than all five; an unrestricted campaign (no
     // channels ticked) still offers everything, unchanged from before.
