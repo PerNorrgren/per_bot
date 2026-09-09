@@ -13913,6 +13913,26 @@ app.patch('/api/admin/campaigns/:id/videos/:videoId', auth.requireAuthApi(['admi
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's report — Upload was the only way to give a planned video its
+// media; no way to point it at a file already sitting in the Marketing
+// library instead. Mirrors the same public-URL construction as
+// GET /api/admin/library-files/marketing-media — deliberately re-looks-up
+// the library file server-side rather than trusting a client-supplied
+// URL, so this can never become a way to attach an arbitrary string.
+app.post('/api/admin/campaigns/:id/videos/:videoId/attach-library', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { libraryFileId } = req.body;
+    const file = libraryFileId && db.getLibraryFile(libraryFileId);
+    if (!file) return res.status(400).json({ error: 'Not a valid library file.' });
+    if (!file.file_type || (!file.file_type.startsWith('video/') && !file.file_type.startsWith('image/'))) {
+      return res.status(400).json({ error: 'That library file is not a video or image.' });
+    }
+    const url = `${APP_URL}/newsletter-images/${encodeURIComponent(String(file.filename).replace('newsletter-images/', ''))}`;
+    const mediaType = file.file_type.startsWith('video/') ? 'video' : 'image';
+    db.setCampaignVideoMedia(req.params.videoId, url, mediaType, file.id);
+    res.json({ ok: true, url, mediaType });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.delete('/api/admin/campaigns/:id/videos/:videoId', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.deleteCampaignVideo(req.params.videoId); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }

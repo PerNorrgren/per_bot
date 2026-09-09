@@ -2023,7 +2023,11 @@
   let _campVideosCache = [];
   async function loadCampaignVideos() {
     _campVideosCache = await fetch(`/api/admin/campaigns/${curCampaignId}/videos`).then(r=>r.json()).catch(()=>[]);
+    if (!_marketingMediaCache.length) {
+      try { _marketingMediaCache = await fetch('/api/admin/library-files/marketing-media').then(r=>r.json()); } catch(e) { _marketingMediaCache = []; }
+    }
     const list = document.getElementById('campVideosList');
+    const libraryOptionsHtml = '<option value="">Attach existing…</option>' + _marketingMediaCache.map(m => `<option value="${m.id}">${escHtml(m.title)} (${m.mediaType})</option>`).join('');
     list.innerHTML = _campVideosCache.length
       ? _campVideosCache.map(v => `
         <div style="border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px">
@@ -2032,6 +2036,7 @@
             <div style="display:flex;gap:6px;align-items:center;margin-left:8px">
               <span style="font-size:11px;color:${v.status==='recorded'?'rgba(180,230,200,0.85)':'rgba(255,255,255,0.35)'}">${v.status==='recorded' ? '✓ ' + v.media_type : 'not recorded yet'}</span>
               <label class="btn sm" style="cursor:pointer;margin:0">Upload<input type="file" accept="video/*,image/*" style="display:none" onchange="uploadCampaignVideoFile('${v.id}', this)"/></label>
+              <select class="inline-input" style="font-size:11px;width:150px" onchange="attachLibraryToCampaignVideo('${v.id}', this.value)">${libraryOptionsHtml}</select>
               <button class="btn sm" onclick="deleteCampaignVideoRow('${v.id}')" style="color:rgba(255,140,120,0.85)">Delete</button>
             </div>
           </div>
@@ -2134,6 +2139,15 @@
       await loadCampaignVideos();
     } catch(e) { appAlert(e.message); }
     finally { input.value = ''; }
+  }
+  async function attachLibraryToCampaignVideo(id, libraryFileId) {
+    if (!libraryFileId) return;
+    try {
+      const res = await fetch(`/api/admin/campaigns/${curCampaignId}/videos/${id}/attach-library`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ libraryFileId }) });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not attach.');
+      await loadCampaignVideos();
+    } catch(e) { appAlert(e.message); }
   }
   async function saveCampaignGoal() {
     const status = document.getElementById('campGoalSaveStatus');
