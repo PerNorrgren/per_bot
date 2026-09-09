@@ -107,6 +107,10 @@
     .virtue-modal-music-label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:8px; }
     .virtue-modal-music audio { width:100%; }
     .virtue-modal-music-controls { display:flex; gap:8px; margin-top:8px; }
+    .vm-track { font-size:12.5px; color:rgba(255,255,255,0.55); padding:6px 0; cursor:pointer; border-top:1px solid rgba(255,255,255,0.06); }
+    .vm-track:first-child { border-top:none; }
+    .vm-track.current { color:rgba(180,230,200,0.95); }
+    .vm-track:hover { color:rgba(255,255,255,0.85); }
 
     .cta-wrap { text-align:center; margin-top:36px; }
     .cta-btn {
@@ -171,6 +175,7 @@
           <button class="item-btn secondary" onclick="document.getElementById('vmAudio').currentTime = 0; document.getElementById('vmAudio').play();">Play again</button>
           <button class="item-btn secondary" id="vmRepeatBtn" onclick="toggleVmRepeat()">Repeat: On</button>
         </div>
+        <div id="vmTrackList" style="margin-top:10px;display:none"></div>
       </div>
     </div>
   </div>
@@ -358,14 +363,38 @@
     // Per's request — the modal's music: a virtue's uploaded track,
     // looked up by tag and auto-played the moment the modal opens.
     // Populated once loadContent's single fetch returns (see below),
-    // not fetched again per click.
+    // not fetched again per click. Per's request — a virtue can have
+    // more than one uploaded track; musicByTag holds an array per tag
+    // rather than a single file, so a second upload adds to the
+    // rotation instead of silently replacing the first.
     let musicByTag = {};
-    let vmCurrentUrl = null;
+    let vmCurrentTracks = [];
+    let vmCurrentIndex = 0;
 
     function toggleVmRepeat() {
       const audio = document.getElementById('vmAudio');
       audio.loop = !audio.loop;
       document.getElementById('vmRepeatBtn').textContent = 'Repeat: ' + (audio.loop ? 'On' : 'Off');
+    }
+
+    function renderVmTrackList() {
+      const el = document.getElementById('vmTrackList');
+      if (vmCurrentTracks.length < 2) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.style.display = '';
+      el.innerHTML = vmCurrentTracks.map((t, i) =>
+        `<div class="vm-track${i === vmCurrentIndex ? ' current' : ''}" onclick="playVmTrack(${i})">${i === vmCurrentIndex ? '♪ ' : ''}${escHtml(t.title)}</div>`
+      ).join('');
+    }
+    async function playVmTrack(i) {
+      if (i < 0 || i >= vmCurrentTracks.length) return;
+      vmCurrentIndex = i;
+      renderVmTrackList();
+      const audio = document.getElementById('vmAudio');
+      try {
+        const url = await fetchSignedUrl(vmCurrentTracks[i].id);
+        audio.src = url;
+        audio.play().catch(() => {});
+      } catch (e) { /* leave the previous track playing rather than breaking the modal over one bad track */ }
     }
 
     async function openVirtueModal(tag) {
@@ -380,15 +409,16 @@
 
       const audio = document.getElementById('vmAudio');
       audio.pause();
-      const music = musicByTag[tag];
+      vmCurrentTracks = musicByTag[tag] || [];
+      vmCurrentIndex = 0;
       const musicWrap = document.getElementById('vmMusicWrap');
-      if (music) {
+      if (vmCurrentTracks.length) {
         musicWrap.style.display = '';
         audio.loop = true;
         document.getElementById('vmRepeatBtn').textContent = 'Repeat: On';
+        renderVmTrackList();
         try {
-          const url = await fetchSignedUrl(music.id);
-          vmCurrentUrl = url;
+          const url = await fetchSignedUrl(vmCurrentTracks[0].id);
           audio.src = url;
           audio.play().catch(() => {}); // autoplay can be blocked until a real click has happened — the "Click for more" click itself counts as one in every browser tested
         } catch (e) { musicWrap.style.display = 'none'; }
@@ -421,7 +451,7 @@
           // 'music' is background music for that virtue's modal, not a
           // regular listed practice — kept out of the practice list so
           // it doesn't show up twice in two different forms.
-          if (f.is_music) { musicByTag[f.tag] = f; return; }
+          if (f.is_music) { (musicByTag[f.tag] = musicByTag[f.tag] || []).push(f); return; }
           (byTag[f.tag] = byTag[f.tag] || []).push(f);
         });
 
