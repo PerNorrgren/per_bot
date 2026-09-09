@@ -13753,6 +13753,10 @@ app.get('/api/admin/campaigns/:id/progress', auth.requireAuthApi(['admin']), (re
     res.json({ ...db.getCampaignProgress(req.params.id), startedAt: campaign.started_at });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+app.get('/api/admin/campaigns/:id/failed-sends', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getCampaignFailedSends(req.params.id)); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {

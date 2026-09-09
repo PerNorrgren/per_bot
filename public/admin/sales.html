@@ -1858,6 +1858,7 @@
     } else if (data.status === 'active') {
       actions.innerHTML = `<button class="modal-cancel" onclick="closeModal('campaignDetailModalOverlay')">Close</button>
         <button class="btn sm" onclick="showCampaignProgress()">Progress</button>
+        <button class="btn sm" onclick="showFailedSends()" style="color:rgba(255,140,120,0.85)">Failed sends</button>
         <button class="btn sm" onclick="showNextSlots()">Next posting times</button>
         <button class="btn sm" onclick="pauseCampaign()" style="color:rgba(230,175,90,0.9)">Pause campaign</button>`;
     } else if (data.status === 'paused') {
@@ -2419,6 +2420,19 @@
         lines.push('Nothing has fired yet \u2014 check back once the schedule catches up, or see Next posting times.');
       }
       appAlert(lines.join('\n'), 'Progress');
+    } catch(e) { appAlert(e.message); }
+  }
+  async function showFailedSends() {
+    try {
+      const rows = await fetch(`/api/admin/campaigns/${curCampaignId}/failed-sends`).then(r=>r.json());
+      if (!Array.isArray(rows)) throw new Error(rows.error || 'Could not load failed sends.');
+      if (!rows.length) { appAlert('No failed sends on record.', 'Failed sends'); return; }
+      const lines = rows.map(r => {
+        const label = CAMP_CHANNEL_LABELS[r.channel] || r.channel;
+        const preview = (r.content || '').slice(0, 50).trim();
+        return `${label} \u2014 ${formatSentAt(r.sent_at)}\n  "${preview}${preview.length===50?'\u2026':''}"\n  ${r.error || 'No error message recorded.'}`;
+      });
+      appAlert(lines.join('\n\n'), `Failed sends (${rows.length})`);
     } catch(e) { appAlert(e.message); }
   }
   async function activateCampaign() {

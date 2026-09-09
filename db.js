@@ -7895,11 +7895,19 @@ function updateCampaign(id, fields) {
   // goal/promotes_label/promotes_url earlier — anything in this list
   // silently fails to save once a campaign is active, so audience must
   // NOT be here.
-  // Per's request — name is now editable at any status too (it's a
-  // display label, low risk, same reasoning as opening up audience
-  // earlier). offer_id/source_tag/type stay draft-only — those genuinely
-  // change what a live campaign means, not just what it's called.
-  const draftOnlyFields = ['offer_id', 'source_tag', 'type'];
+  // Per's real incident — the client's saveCampaignGoal() sends `type`
+  // unconditionally on every single save from that box (goal, link,
+  // end date, audience, channels — whatever was actually touched),
+  // whether or not type itself changed. With type in this list, that
+  // meant the WHOLE save silently failed the moment a campaign went
+  // active — not just type, everything bundled alongside it in the
+  // same PATCH. Same root cause as the goal/promotes_label and audience
+  // incidents earlier — anything in this list blocks the entire update
+  // once active, not just its own field. type moved out for exactly
+  // that reason: it's genuinely no higher-risk to change post-launch
+  // than audience or name already are. offer_id/source_tag stay
+  // draft-only — those two really do change what a live campaign means.
+  const draftOnlyFields = ['offer_id', 'source_tag'];
   const hasDraftOnlyField = keys.some(k => draftOnlyFields.includes(k));
   const sets = keys.map(k => `${k}=?`).join(', ');
   const where = hasDraftOnlyField ? `WHERE id=? AND status='draft'` : `WHERE id=?`;
@@ -8086,6 +8094,18 @@ function getCampaignProgress(campaignId) {
     SELECT COUNT(*) as total, SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) as active_count
     FROM postings WHERE campaign_id=?`, [campaignId]);
   return { totals, byChannel, postingCounts };
+}
+
+// Per's request — the actual reason behind a failed send, not just the
+// count. Joins back to the posting's own content so each failure is
+// identifiable at a glance (which post, which channel, what went
+// wrong, when) without needing to cross-reference posting ids by hand.
+function getCampaignFailedSends(campaignId, limit = 20) {
+  return queryAll(`
+    SELECT ps.id, ps.channel, ps.error, ps.sent_at, ps.slot_time, p.id as posting_id, p.content
+    FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
+    WHERE p.campaign_id = ? AND ps.status = 'failed'
+    ORDER BY ps.sent_at DESC LIMIT ?`, [campaignId, limit]);
 }
 
 // ── Campaign videos (Per's request) ──
@@ -10875,7 +10895,7 @@ module.exports = {
   getCampaignVideos, getCampaignVideo, createCampaignVideo, updateCampaignVideo, setCampaignVideoMedia, deleteCampaignVideo,
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
-  getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress,
+  getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress, getCampaignFailedSends,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
