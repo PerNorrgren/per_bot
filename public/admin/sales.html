@@ -670,29 +670,30 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:0 0 160px">
             <label style="font-size:11px">Type</label>
-            <select id="campDetailType" style="width:100%" onchange="onCampDetailTypeChanged()">
+            <select id="campDetailType" style="width:100%" onchange="onCampDetailTypeChanged(); saveCampaignGoal();">
               <option value="general">General</option>
               <option value="time_boxed">Time-boxed</option>
             </select>
           </div>
           <div style="flex:0 0 150px" id="campDetailEndDateWrap">
             <label style="font-size:11px">End date</label>
-            <input type="date" id="campDetailEndDate" style="width:100%"/>
+            <input type="date" id="campDetailEndDate" style="width:100%" onchange="saveCampaignGoal()"/>
           </div>
           <div style="flex:1;min-width:220px">
             <label style="font-size:11px">Goal</label>
-            <input type="text" id="campDetailGoal" style="width:100%"/>
+            <input type="text" id="campDetailGoal" style="width:100%" onblur="saveCampaignGoal()"/>
           </div>
           <div style="flex:1;min-width:180px">
             <label style="font-size:11px">Promoting</label>
-            <input type="text" id="campDetailPromotesLabel" style="width:100%"/>
+            <input type="text" id="campDetailPromotesLabel" style="width:100%" onblur="saveCampaignGoal()"/>
           </div>
           <div style="flex:1;min-width:160px">
             <label style="font-size:11px">Link</label>
-            <input type="url" id="campDetailPromotesUrl" style="width:100%"/>
+            <input type="url" id="campDetailPromotesUrl" style="width:100%" onblur="saveCampaignGoal()"/>
           </div>
-          <button class="btn sm" onclick="saveCampaignGoal()">Save</button>
+          <button class="btn sm" onclick="saveCampaignGoal()">Save now</button>
         </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:4px">Every field here saves automatically as you leave it &mdash; nothing is lost by closing this window.</div>
         <div style="margin-top:10px">
           <label style="font-size:11px">Audience for email postings <span style="font-weight:normal;color:rgba(255,255,255,0.35)">(tick any mix — leave all unticked for everyone opted in)</span></label>
           <div style="display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:4px" id="campDetailAudiencePicker">
