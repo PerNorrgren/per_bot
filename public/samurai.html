@@ -48,11 +48,10 @@
        with nothing uploaded yet reads as "not filled in", not broken.
        Per's request — pulled closer together than the original 22px. */
     .virtue-block { margin-bottom:10px; }
-    .virtue-header { display:flex; align-items:baseline; gap:14px; margin-bottom:14px; }
+    .virtue-header { display:flex; align-items:baseline; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
     .virtue-kanji { font-size:30px; line-height:1; color:rgba(180,230,200,0.9); flex-shrink:0; }
-    .virtue-names { display:flex; flex-direction:column; }
-    .virtue-romaji { font-size:17px; color:rgba(255,255,255,0.92); }
-    .virtue-english { font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+    .virtue-romaji { font-size:19px; color:rgba(255,255,255,0.92); }
+    .virtue-english { font-size:19px; color:rgba(255,255,255,0.92); }
 
     /* Per's request — a short teaser line above each virtue's practice
        list, with a link into the fuller explanation + music modal. */
@@ -96,10 +95,10 @@
       font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
     }
     .virtue-modal-close:hover { background:rgba(255,255,255,0.08); }
-    .virtue-modal-header { display:flex; align-items:baseline; gap:16px; margin-bottom:20px; }
+    .virtue-modal-header { display:flex; align-items:baseline; gap:14px; margin-bottom:20px; flex-wrap:wrap; }
     .virtue-modal-kanji { font-size:40px; line-height:1; color:rgba(180,230,200,0.9); }
-    .virtue-modal-romaji { font-size:22px; color:rgba(255,255,255,0.95); }
-    .virtue-modal-english { font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.45); }
+    .virtue-modal-romaji { font-size:24px; color:rgba(255,255,255,0.95); }
+    .virtue-modal-english { font-size:24px; color:rgba(255,255,255,0.95); }
     .virtue-modal-body { font-size:14.5px; line-height:1.85; color:rgba(255,255,255,0.78); }
     .virtue-modal-body p { margin-bottom:14px; }
     .virtue-modal-body p:last-child { margin-bottom:0; }
@@ -162,10 +161,8 @@
       <button class="virtue-modal-close" onclick="closeVirtueModal()">✕</button>
       <div class="virtue-modal-header">
         <span class="virtue-modal-kanji" id="vmKanji"></span>
-        <div>
-          <div class="virtue-modal-romaji" id="vmRomaji"></div>
-          <div class="virtue-modal-english" id="vmEnglish"></div>
-        </div>
+        <span class="virtue-modal-romaji" id="vmRomaji"></span>
+        <span class="virtue-modal-english" id="vmEnglish"></span>
       </div>
       <div class="virtue-modal-body" id="vmBody"></div>
       <div class="virtue-modal-music" id="vmMusicWrap" style="display:none">
@@ -345,10 +342,8 @@
         <div class="virtue-block">
           <div class="virtue-header">
             <span class="virtue-kanji">${v.kanji}</span>
-            <div class="virtue-names">
-              <span class="virtue-romaji">${v.romaji}</span>
-              <span class="virtue-english">${v.english}</span>
-            </div>
+            <span class="virtue-romaji">${v.romaji}</span>
+            <span class="virtue-english">&mdash; ${v.english}</span>
           </div>
           <div class="glass">
             <div class="virtue-more-wrap">
@@ -402,7 +397,7 @@
       if (!v) return;
       document.getElementById('vmKanji').textContent = v.kanji;
       document.getElementById('vmRomaji').textContent = v.romaji;
-      document.getElementById('vmEnglish').textContent = v.english;
+      document.getElementById('vmEnglish').textContent = '\u2014 ' + v.english;
       document.getElementById('vmBody').innerHTML = v.full;
       document.getElementById('virtueModalOverlay').classList.add('open');
       document.body.style.overflow = 'hidden';

@@ -518,7 +518,7 @@
       <div id="upTagsDropdown" style="display:none; position:absolute; z-index:50; top:100%; left:0; right:0; margin-top:4px; background:#171d1a; border:1px solid rgba(255,255,255,0.15); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.4); max-height:280px; overflow-y:auto; padding:8px">
         <div id="upTagsCheckboxList" style="display:flex; flex-direction:column; gap:2px"></div>
         <div style="display:flex; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.08)">
-          <input type="text" id="upNewTagInput" placeholder="New tag name…" style="flex:1; font-size:12px" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewUpTag();}"/>
+          <input type="text" id="upNewTagInput" placeholder="Search or add new tag…" style="flex:1; font-size:12px" oninput="filterUpTagsList()" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewUpTag();}"/>
           <button type="button" class="btn sm primary" onclick="addNewUpTag()">Add</button>
         </div>
       </div>
@@ -2106,13 +2106,26 @@ async function loadUpTagsDropdown() {
   // without a second network call.
   document.getElementById('efTagSuggestions').innerHTML = _upTagsAll.map(t => `<option value="${escHtml(t.tag)}">`).join('');
 }
-function renderUpTagsCheckboxList() {
+// Per's request — typing here now also filters the checkbox list live
+// (e.g. typing "m" narrows to every tag containing "m"), on top of its
+// original job of naming a brand-new tag. The two don't conflict: Add
+// still creates whatever's currently typed, filtered-down list or not.
+function filterUpTagsList() {
+  const q = document.getElementById('upNewTagInput').value.trim().toLowerCase();
+  renderUpTagsCheckboxList(q);
+}
+function renderUpTagsCheckboxList(filterQuery) {
   const el = document.getElementById('upTagsCheckboxList');
+  const list = filterQuery ? _upTagsAll.filter(t => t.tag.includes(filterQuery)) : _upTagsAll;
   if (!_upTagsAll.length) {
     el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:6px 4px">No tags exist yet — add the first one below.</div>';
     return;
   }
-  el.innerHTML = _upTagsAll.map(t => `
+  if (!list.length) {
+    el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic;padding:6px 4px">No matching tags — press Add below to create it.</div>';
+    return;
+  }
+  el.innerHTML = list.map(t => `
     <label style="display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:6px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.8)" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='none'">
       <input type="checkbox" ${_upTagsSelected.has(t.tag)?'checked':''} onchange="onUpTagCheck('${t.tag}', this.checked)"/>
       <span style="flex:1">${t.tag}</span>
