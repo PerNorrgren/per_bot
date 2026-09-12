@@ -8113,10 +8113,45 @@ app.get('/api/admin/poems', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json({ rows: db.getPoemsForAdmin() }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ── R2 upload — Step 1: get a presigned PUT URL for a poem's manual audio.
+// Per App 34 — same real gap as newsletter-audio above: the client
+// (content.html) has been calling this route since it was built against
+// the library-upload pattern, but the route itself was never added —
+// every manual poem-narration upload silently 404'd here and fell back
+// to the legacy server-relayed path.
+app.post('/api/admin/poems/:id/audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const key = `poem-audio/${file.id}-${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('poem audio presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/poems/:id/audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file || file.content_type !== 'poem') return res.status(404).json({ error: 'Not found.' });
+
+    // Path A: already uploaded directly to R2 via presign-upload above.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('poem-audio/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      db.setPoemAudio(file.id, key, 'manual');
+      return res.json({ ok: true });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client.
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!(req.file.mimetype || '').startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
@@ -11007,10 +11042,46 @@ app.post('/api/admin/message-builder/upload-media', auth.requireAuthApi(['admin'
 // private, ownership-checked storage model instead (see
 // /api/journal/:id/audio-url for that existing pattern), which is a
 // separate decision Per hasn't made yet for embedded media specifically.
+// ── R2 upload — Step 1: get a presigned PUT URL for newsletter audio.
+// Per App 34 — real gap found while chasing an unexplained Cloudflare
+// 404 count: the client (message-editor.js) has been calling this route
+// since it was built against the newsletter-videos pattern, but the
+// route itself was never actually added — every single newsletter audio
+// upload silently 404'd on this call, then fell back to the old
+// server-relayed path, which still works but never got the intended fix
+// (bypassing Railway's 5-minute request ceiling for a large recording).
+app.post('/api/admin/newsletter-audio/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!media.isConfigured()) return res.status(503).json({ error: 'Media storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    if (!contentType || !contentType.startsWith('audio/')) return res.status(400).json({ error: 'Only audio files are supported here.' });
+    const ext = (filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const key = `newsletter-audio/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType);
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('newsletter-audio presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/admin/newsletter-audio', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!media.isConfigured()) return res.status(400).json({ error: 'Audio storage (R2) is not configured on this deployment.' });
+
+    // Path A: the upload already happened directly to R2 (see
+    // presign-upload above); this just confirms the key is real and
+    // returns the public URL, no file bytes touch this server at all.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('newsletter-audio/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+      return res.json({ url: `${APP_URL}/newsletter-audio/${encodeURIComponent(key.replace('newsletter-audio/', ''))}` });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client.
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
     if (!req.file.mimetype.startsWith('audio/')) {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Only audio files are supported here.' });
@@ -11889,10 +11960,71 @@ app.get('/api/content/library/:id/usage', auth.requireAuthApi(['admin']), (req, 
 // a replacement PDF gets converted to EPUB exactly the same way a newly
 // uploaded one does, rather than a second, separately-maintained copy of
 // that logic that could quietly drift out of sync with it over time.
+// ── R2 upload — Step 1: get a presigned PUT URL for a library file replacement.
+// Per App 34 — same real gap as the newsletter-audio/poem-audio presign
+// routes above: the client (admin/content.html) has been calling this
+// since it was built against the main library-upload pattern, but the
+// route itself was never added — every file replacement silently 404'd
+// here and fell back to the legacy server-relayed path, missing the
+// actual point of presigning (a big audiobook chapter or PDF replacement
+// could still hit Railway's 5-minute request ceiling).
+app.post('/api/content/library/:id/replace-file/presign-upload', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const file = db.getLibraryFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'Not found.' });
+    if (!media.isConfigured()) return res.status(503).json({ error: 'File storage is not available right now — please try again later.' });
+    const { filename, contentType } = req.body;
+    if (!filename) return res.status(400).json({ error: 'filename required.' });
+    const ext = path.extname(filename) || '';
+    const key = `library-files/${uuidv4()}${ext}`;
+    const uploadUrl = await media.getUploadUrl(key, contentType || 'application/octet-stream');
+    res.json({ uploadUrl, key });
+  } catch (e) {
+    console.error('replace-file presign-upload error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
     if (!file) return res.status(404).json({ error: 'Not found.' });
+
+    // Path A: already uploaded directly to R2 via presign-upload above —
+    // same PDF-to-EPUB handling as the main library upload route's own
+    // Path A (POST /api/content/library), which this mirrors.
+    if (req.body && req.body.r2Key) {
+      const key = req.body.r2Key;
+      if (!key.startsWith('library-files/')) return res.status(400).json({ error: 'Unexpected key.' });
+      const exists = await media.objectExists(key).catch(() => false);
+      if (!exists) return res.status(400).json({ error: 'Upload did not complete — try again.' });
+
+      const uploadedContentType = req.body.contentType || 'application/octet-stream';
+      let mainFilename = key, mainContentType = uploadedContentType, originalPdfKey = null;
+      if (uploadedContentType === 'application/pdf' && media.isConfigured()) {
+        try {
+          const pdfObj = await media.getPublicObject(key);
+          const chunks = [];
+          for await (const chunk of pdfObj.Body) chunks.push(chunk);
+          const pdfBuffer = Buffer.concat(chunks);
+          const epubBuffer = await convertPdfToEpub(pdfBuffer, file.title, brand().name);
+          if (epubBuffer) {
+            const epubKey = `library-epubs/${uuidv4()}.epub`;
+            await media.putObject(epubKey, epubBuffer, 'application/epub+zip');
+            mainFilename = epubKey;
+            mainContentType = 'application/epub+zip';
+            originalPdfKey = key; // already in R2 — no re-upload needed
+          }
+        } catch (e) {
+          console.error('[replace-file pdf conversion] Path A conversion attempt failed, falling back to PDF:', e.message);
+        }
+      }
+      const fileSize = Number(req.body.fileSize) || 0;
+      const originalName = req.body.originalName || key;
+      db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, fileSize, originalName, 'r2', originalPdfKey);
+      return res.json({ ok: true });
+    }
+
+    // Path B — legacy fallback: presign failed, or an older client.
     if (!req.file) return res.status(400).json({ error: 'No file provided.' });
 
     let mainFilename, mainContentType = req.file.mimetype, originalPdfKey = null;
@@ -13663,6 +13795,21 @@ app.patch('/api/admin/membership/plans/:id', auth.requireAuthApi(['admin']), asy
 app.get('/api/admin/offers', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getAllOffers()); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 34 — real gap found chasing an unexplained Cloudflare 404
+// count: db.getFunnelStats() (Per Bot 18) was fully built and exported,
+// and Sales admin's own funnel table has been calling this exact path
+// since it was built — the route connecting the two was simply never
+// added, so every page load quietly 404'd, was swallowed by the
+// client's own .catch(() => []), and just showed "No promo link visits
+// logged yet." forever regardless of real traffic.
+app.get('/api/admin/marketing/funnel', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    res.json(db.getFunnelStats({
+      groupBySource: req.query.groupBySource === '1',
+      groupBySkin: req.query.groupBySkin === '1',
+    }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/offers', auth.requireAuthApi(['admin']), (req, res) => {
   try {
