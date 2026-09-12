@@ -9213,7 +9213,7 @@
   async function checkPendingConsents() {
     try {
       const res = await fetch('/api/my/consents');
-      if (!res.ok) return; // not authenticated as a client yet, or a genuine network hiccup — nothing to gate
+      if (!res.ok) { startPostConsentWatchers(); return; } // not authenticated as a client yet, or a genuine network hiccup — nothing to gate, fail open same as the catch block below
       const data = await res.json();
       _pendingConsentDocs = data.pending || [];
       if (!_pendingConsentDocs.length) {
@@ -9223,6 +9223,7 @@
         // it now that there's genuinely nothing left outstanding rather
         // than leaving it sitting open waiting for a redundant tick.
         document.getElementById('consentGateOverlay').classList.remove('visible');
+        startPostConsentWatchers();
         return;
       }
       const list = document.getElementById('consentGateList');
@@ -9233,7 +9234,22 @@
       document.getElementById('consentGateBtn').disabled = true;
       document.getElementById('consentGateErr').textContent = '';
       document.getElementById('consentGateOverlay').classList.add('visible');
-    } catch(e) { /* if this genuinely fails, better to let someone in than lock them out on a network blip */ }
+    } catch(e) { startPostConsentWatchers(); /* if this genuinely fails, better to let someone in than lock them out on a network blip */ }
+  }
+  // Per App 35 — real gap found: watchForIncomingCalls() (a genuine
+  // "run continuously in the background regardless of which tab is
+  // active" poller) used to start unconditionally at boot, with no
+  // check for whether this consent gate was even showing — so a client
+  // who hadn't yet agreed to the Cancellation Policy/Clinical
+  // Disclaimer/Terms could already be live for an incoming call, sitting
+  // behind the gate. Now only starts once consent is confirmed clear:
+  // already clear, just cleared via submitConsentGate below, or fails
+  // open on a genuine network hiccup (same "better to let someone in
+  // than lock them out" reasoning the gate itself already uses).
+  // Idempotent — watchForIncomingCalls() itself no-ops if already
+  // watching, so calling this from more than one exit point is safe.
+  function startPostConsentWatchers() {
+    if (window.PerBotCall) window.PerBotCall.watchForIncomingCalls();
   }
   // Per Bot 24 — opens a legal document as a real popup window rather
   // than a plain new tab, since a new tab just leaves someone stranded
@@ -9284,6 +9300,7 @@
         if (!res.ok) throw new Error('save failed');
       }
       document.getElementById('consentGateOverlay').classList.remove('visible');
+      startPostConsentWatchers();
     } catch(e) {
       err.textContent = 'Could not save — please check your connection and try again.';
     } finally {
@@ -9371,7 +9388,9 @@
   // Per Bot 12: quietly watches for an incoming video/audio call from this
   // client's facilitator, independent of whichever tab is active — same
   // "run once, regardless of tab" reasoning as the two calls above.
-  if (window.PerBotCall) window.PerBotCall.watchForIncomingCalls();
+  // Per App 35 — moved out of here: now started from inside
+  // checkPendingConsents() (see startPostConsentWatchers there), so it
+  // never begins until the consent gate above has actually cleared.
   // Per Bot 15: builds the facilitator strip at the top of Talk and
   // defaults to Talk selected — this IS the landing experience now, not
   // a separate screen to navigate to.
