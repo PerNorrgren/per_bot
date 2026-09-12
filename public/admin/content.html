@@ -3683,6 +3683,17 @@ async function doUpload(){
   setBtnLoading(btn, false);
   _bulkUploadState.active = false;
   updateUploadTicker();
+  // Per's request — one email per client with newly-assigned content,
+  // fired once the whole batch has genuinely succeeded (not per file,
+  // and not on the early-return failure path above). Counts how many
+  // of THIS batch's successfully-uploaded files went to each distinct
+  // assignedClientId — a batch can cover more than one person, though
+  // usually it's just the one.
+  const assignedCounts = {};
+  runnable.forEach(it => { if (it.done && it.assignedClientId) assignedCounts[it.assignedClientId] = (assignedCounts[it.assignedClientId] || 0) + 1; });
+  if (Object.keys(assignedCounts).length) {
+    fetch('/api/admin/notify-new-practices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ counts: assignedCounts }) }).catch(() => {});
+  }
   showUploadCompletionModal();
 }
 

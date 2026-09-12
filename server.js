@@ -1580,6 +1580,40 @@ function getSessionReminderHoursBefore(type, fallbackHours) {
   return isNaN(hours) || hours < 0 ? fallbackHours : hours;
 }
 
+// Per's request — one email per client when a facilitator finishes a
+// batch upload that assigned them new one-to-one content, fired once
+// the whole batch succeeds (not per file) so three files added in one
+// sitting produce one email, not three. Deliberately generic about
+// what was added ("new practices") rather than naming every title —
+// the actual content is one tap away in the app, and a title list here
+// would just be duplicating what My Practices already shows.
+async function emailNewPracticesAssigned(user, count) {
+  const b = brand();
+  return sendEmail(user.email, `New in your library`,
+    `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hi ${user.name},</h1>
+      <p style="font-size:15px;line-height:1.7;color:#444;margin-bottom:20px">Your facilitator has added ${count} new practice${count === 1 ? '' : 's'} to your account.</p>
+      <p style="font-size:14px;line-height:1.7"><a href="${APP_URL}" style="color:#2d6a4f">Sign in to take a look →</a></p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${b.name} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`
+  );
+}
+app.post('/api/admin/notify-new-practices', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const counts = req.body?.counts || {}; // { [userId]: numberOfFilesAssignedInThisBatch }
+    const results = [];
+    for (const [userId, count] of Object.entries(counts)) {
+      const user = db.getUser(userId);
+      if (!user || !user.email) { results.push({ userId, ok: false, error: 'No such user or no email.' }); continue; }
+      try { await emailNewPracticesAssigned(user, count); results.push({ userId, ok: true }); }
+      catch (e) { results.push({ userId, ok: false, error: e.message }); }
+    }
+    res.json({ results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per Bot 18 — fires when a manually-honoured membership period (set by
 // hand in People admin, not tied to any Stripe subscription — the
 // carried-over-legacy-member case) actually runs out. Distinct from
