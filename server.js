@@ -306,18 +306,35 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
             const whenLine = whenParts.length
               ? `<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Meets ${whenParts.join(', ')}.</p>`
               : '';
+            // Per's request — this read as bare next to Stripe's own
+            // payment-receipt email arriving in the same inbox moments
+            // later. Same colour band + logo-circle treatment as that
+            // email's actual visual anchor (a round mark on a solid
+            // banner, a white card underneath), built with our own logo
+            // if one's set in Settings, falling back to the brand's own
+            // initials exactly the way Stripe's own avatar circle does
+            // when no logo is uploaded there either.
+            const initials = (b.name || 'DM').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+            const logoMark = b.logoUrl
+              ? `<img src="${b.logoUrl}" alt="${b.name}" width="44" height="44" style="border-radius:50%;display:block"/>`
+              : `<div style="width:44px;height:44px;border-radius:50%;background:#fff;color:#2d7873;font-size:15px;font-weight:bold;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif">${initials}</div>`;
             await sendEmail(paymentEmail, `Your place is secured — ${instance.title}`,
-              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
-                <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
-                <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px">You're in, ${tokens.name}.</h2>
-                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
-                ${whenLine}
-                ${membershipLine}
-                <p style="font-size:15px;line-height:1.8;margin-bottom:20px">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
-                <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:12px 28px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
-                <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
-                <p style="font-size:12px;color:#999;line-height:1.6">Cancel within 14 days of registering and before the course starts for a full refund — that's your legal right, and we honour it properly. After that, or once the course has begun, we don't offer refunds, but we're always happy to move you to the next available cohort at no extra cost. <a href="${APP_URL}/legal/cancellation-policy" style="color:#888">Full Cancellation Policy</a></p>
-                <p style="font-size:12px;color:#aaa;margin-top:16px">${b.tagline}</p>
+              `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;background:#eef1f0">
+                <div style="background:#2d4a47;padding:28px 32px;display:flex;align-items:center;gap:14px">
+                  ${logoMark}
+                  <span style="font-size:15px;letter-spacing:0.08em;color:#fff">${b.name}</span>
+                </div>
+                <div style="background:#fff;margin:20px;border-radius:14px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+                  <h2 style="font-weight:normal;font-size:22px;margin-bottom:16px;color:#1a1a1a">You're in, ${tokens.name}.</h2>
+                  <p style="font-size:15px;line-height:1.8;margin-bottom:20px;color:#333">Payment received — your place in <strong>${instance.title}</strong> is secured.</p>
+                  ${whenLine}
+                  ${membershipLine}
+                  <p style="font-size:15px;line-height:1.8;margin-bottom:24px;color:#333">Course material lives in the app, so the last step is setting up your own login — click below to choose a password and go straight to your course.</p>
+                  <a href="${tokens.course_link || tokens.invite_link}" style="display:inline-block;padding:13px 30px;border-radius:8px;background:#2d7873;color:#fff;text-decoration:none;font-size:13px;letter-spacing:0.08em">Set your password →</a>
+                  <hr style="border:none;border-top:1px solid #e8e8e8;margin:32px 0"/>
+                  <p style="font-size:12px;color:#999;line-height:1.6">Cancel within 14 days of registering and before the course starts for a full refund — that's your legal right, and we honour it properly. After that, or once the course has begun, we don't offer refunds, but we're always happy to move you to the next available cohort at no extra cost. <a href="${APP_URL}/legal/cancellation-policy" style="color:#888">Full Cancellation Policy</a></p>
+                </div>
+                <p style="text-align:center;font-size:12px;color:#7a8a87;padding:0 20px 28px">${b.tagline}</p>
               </div>`
             );
           }
@@ -3994,6 +4011,7 @@ async function attemptEnrolUser(user, courseInstanceId) {
         payment_method_types: ['card'],
         line_items: [await resolveCourseCheckoutLineItem(instance)],
         mode: 'payment',
+        invoice_creation: { enabled: true }, // same reasoning as the other course-checkout Session above — a real Invoice, not just the plain automatic Charge receipt
         success_url: `${APP_URL}/client/?enrolled=1`,
         cancel_url:  `${APP_URL}/client/?enrolled=0`,
         metadata: { type: 'course_enrolment', user_id: user.id, course_instance_id: courseInstanceId },
@@ -4265,6 +4283,16 @@ app.post('/api/public/forms/:formId/checkout', async (req, res) => {
       payment_method_types: ['card'],
       line_items: [await resolveCourseCheckoutLineItem(instance)],
       mode: 'payment',
+      // Per's request — a one-time Checkout Session doesn't generate a
+      // real Stripe Invoice by default, only the plainer automatic
+      // receipt email tied straight to the Charge — no logo, no branded
+      // colour, none of Stripe's nicer invoice template a subscription
+      // gets for free (subscriptions always bill via a real Invoice
+      // object). This one line is what actually produces that same
+      // richer receipt for a one-off course payment too, using whatever
+      // logo/colour is already set under Stripe's own Settings >
+      // Branding — nothing else in this codebase controls that part.
+      invoice_creation: { enabled: true },
       success_url: `${APP_URL}/course-instance/${instance.id}?registered=1&responseId=${responseId}`,
       cancel_url: `${APP_URL}/course-instance/${instance.id}?registered=0`,
       metadata: { type: 'course_registration_form', form_response_id: responseId, course_instance_id: instance.id, consent_given: req.body?.consentGiven ? '1' : '0' },
@@ -14993,6 +15021,12 @@ app.post('/api/membership/checkout', auth.requireAuthApi(['client']), async (req
       metadata:             { user_id: user.id, billing, tier: String(resolvedTier) },
       client_reference_id:  user.id,
     };
+    // A subscription always bills via a real Invoice already (Stripe's
+    // own behaviour, nothing to add here) — this only matters for the
+    // one-off lifetime purchase, which otherwise gets the plainer
+    // automatic Charge receipt instead of the same branded invoice
+    // template a subscription gets for free.
+    if (isLifetime) sessionParams.invoice_creation = { enabled: true };
 
     const session = await stripe.checkout.sessions.create(sessionParams);
     res.json({ url: session.url });
