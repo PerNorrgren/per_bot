@@ -9052,6 +9052,7 @@ const REPORTS = {
   email_log:           { title: 'Email Log',             category: 'System',  run: () => db.reportEmailLog() },
   certificates_sent:   { title: 'Certificates Sent',      category: 'Content', run: () => db.reportCertificatesSent() },
   email_health:        { title: 'Email Health',          category: 'System',  run: () => db.reportEmailHealth() },
+  savers_stale_state:  { title: 'Savers: Stale State',    category: 'System',  run: () => db.reportSaversStaleState() },
   generated_images:    { title: 'Generated Images',       category: 'System',  run: () => db.reportGeneratedImages() },
 };
 
