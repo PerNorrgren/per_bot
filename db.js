@@ -6784,6 +6784,15 @@ function hasEverLoggedIn(userId) {
   return !!queryOne(`SELECT 1 as x FROM login_log WHERE user_id=? AND event_type='login' LIMIT 1`, [userId]);
 }
 
+// Per's real incident — same gap as setMemberExpiry below: granting a
+// real paid tier with a real expiry date here never cleared any
+// leftover Savers Protocol grace-period state from an earlier
+// cancellation or payment failure, so the Savers cron kept running on
+// its own independent timeline regardless. Fixed at this shared
+// function rather than only the one admin endpoint that surfaced it,
+// since this same function is what a real successful payment uses too
+// — the fix should hold everywhere a person is actually given paid
+// access, not just the specific path Per happened to hit.
 function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, stripeSubscriptionId) {
   getDbSync().run(
     `UPDATE users SET
@@ -6797,6 +6806,7 @@ function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, s
     [tier, expiresAt||null, trialEndsAt||null, stripeCustomerId||null, stripeSubscriptionId||null, userId]
   );
   save();
+  if (tier > 0 && expiresAt) clearSaversState(userId);
 }
 
 // ── Manual membership expiry override (Per Bot 5, item 6) ──
@@ -6806,6 +6816,23 @@ function setMemberTier(userId, tier, expiresAt, trialEndsAt, stripeCustomerId, s
 // clear trial_ends_at as a side effect even when that's not the intent here.
 // If member_since isn't set yet (a WordPress import with no trial history),
 // this sets it to now so "Member since" has a sensible value to display.
+// Per's real incident — Janice Wright was manually given another year
+// (member_expires_at set well into the future) but kept receiving
+// Savers Protocol emails and was headed for an actual downgrade
+// anyway. Root cause: getUsersDueForSaversEmail/Downgrade never look at
+// member_expires_at at all — they run purely off savers_type/
+// savers_grace_started_at/savers_grace_ends_at, a separate state left
+// over from whatever real Stripe cancellation or payment failure
+// originally triggered it. Extending someone's expiry — by hand here,
+// or via a real successful payment elsewhere in the codebase — never
+// cleared that leftover state, so the grace-period clock kept
+// ticking down completely independently of the fact the person is
+// now actually covered. A real future expiry date is exactly the
+// same signal as clearSaversState's other callers already treat as
+// "this is resolved" (a payment succeeding, a subscription resuming)
+// — so it clears the same way here. Only when a real date is being
+// set, not when clearing one back to null — removing a manual expiry
+// isn't itself a statement that any Savers grace period is resolved.
 function setMemberExpiry(userId, expiresAt) {
   getDbSync().run(
     `UPDATE users SET
@@ -6815,6 +6842,7 @@ function setMemberExpiry(userId, expiresAt) {
     [expiresAt || null, userId]
   );
   save();
+  if (expiresAt) clearSaversState(userId);
 }
 
 // Legacy alias used by existing Admin routes — maps to Member1
@@ -8246,6 +8274,17 @@ function markSaversEmailSent(userId, stage) {
 // Cron candidates — grace already started (so day0 already fired inline
 // in the webhook handler), mid/final touchpoints counted from
 // savers_grace_started_at, same day-window shape for both types.
+// Per's real incident — Janice Wright was manually given another year
+// but kept getting Savers emails anyway, because this query only ever
+// looked at savers_type/savers_grace_started_at, leftover state from
+// whatever real cancellation or payment failure originally triggered
+// it — never at whether the person is actually covered right now.
+// member_expires_at > now is checked directly here too, not just relied
+// on being cleared at write time (setMemberExpiry/setMemberTier do that
+// now as well, but that only prevents this for future changes — anyone
+// already sitting in this stale state, like Janice, needs the read
+// side to catch it too, immediately, without needing their record
+// touched again by hand).
 function getUsersDueForSaversEmail(stage) {
   const days = { mid: 7, final: 13 }[stage];
   const col = { mid: 'savers_email_mid_sent', final: 'savers_email_final_sent' }[stage];
@@ -8254,15 +8293,18 @@ function getUsersDueForSaversEmail(stage) {
     SELECT * FROM users
     WHERE savers_type IS NOT NULL AND savers_grace_started_at IS NOT NULL AND ${col}=0
       AND julianday('now') - julianday(savers_grace_started_at) >= ?
+      AND (member_expires_at IS NULL OR member_expires_at <= datetime('now'))
   `, [days]);
 }
 // Cron candidates for the actual downgrade — grace window fully elapsed,
-// still flagged (nobody cleared it via a real payment succeeding).
+// still flagged (nobody cleared it via a real payment succeeding), AND
+// not already covered by a real future expiry date regardless of source.
 function getUsersDueForSaversDowngrade() {
   return queryAll(`
     SELECT * FROM users
     WHERE savers_type IS NOT NULL AND savers_grace_ends_at IS NOT NULL
       AND savers_grace_ends_at <= datetime('now')
+      AND (member_expires_at IS NULL OR member_expires_at <= datetime('now'))
   `);
 }
 
