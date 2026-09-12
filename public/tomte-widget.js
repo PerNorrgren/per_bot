@@ -291,10 +291,15 @@
     // becomes null) fell through and left whatever was already showing
     // untouched, rather than resetting to the "Tomte" default. Same
     // reasoning for the image.
+    // Per Bot 34 — return value doubles as the cheapest available signal
+    // for "is this visitor logged in at all", reused below to decide
+    // whether the broadcast poll should run — this request already
+    // happens on every page load regardless, so this avoids firing a
+    // second one just to answer the same question.
     async function applyPersonalization() {
       try {
         const res = await fetch('/api/my/tomte-settings');
-        if (!res.ok) return; // not logged in — defaults stay as-is
+        if (!res.ok) return false; // not logged in — defaults stay as-is
         const data = await res.json();
         const nameToShow = data.name || 'Tomte';
         helperName = nameToShow;
@@ -307,9 +312,10 @@
         voiceEnabled = !!data.voiceEnabled;
         updateVoiceToggleUI();
         if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
-      } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
+        return true;
+      } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ return false; }
     }
-    applyPersonalization();
+    const tomteLoginCheck = applyPersonalization();
 
     // Per Bot 18 — proactive tips. Same silent-no-op-if-not-logged-in
     // pattern as applyPersonalization above (tomte-widget.js loads on
@@ -379,9 +385,26 @@
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+    // Per Bot 34 — real bug found: this used to poll unconditionally on
+    // every page tomte-widget.js is embedded on, including the many
+    // public pages (login, register, /promotions, /courses, etc.) where
+    // most visitors are anonymous by design. Every one of those tabs hit
+    // this endpoint every 15s forever, got a 401 back, and quietly did
+    // nothing with it — but Cloudflare still saw it as a huge volume of
+    // repetitive, machine-like traffic against one path and flagged it
+    // as bot-like. Fix is two-layered: don't start polling at all if the
+    // visitor isn't logged in (checked once at init, not on a timer —
+    // see tomteLoginCheck above), and if a session expires mid-poll for
+    // someone who *was* logged in, stop the interval outright on the
+    // first 401 rather than continuing to hit the endpoint forever.
+    let broadcastPollTimer = null;
     async function checkTomteBroadcast() {
       try {
         const res = await fetch('/api/tomte-broadcast?tabId=' + encodeURIComponent(tomteTabId));
+        if (res.status === 401) {
+          if (broadcastPollTimer) { clearInterval(broadcastPollTimer); broadcastPollTimer = null; }
+          return;
+        }
         if (!res.ok) return;
         const broadcast = await res.json();
         if (!broadcast || broadcast.id === lastSeenBroadcastId) return;
@@ -397,15 +420,19 @@
         nudgeScrollContainers();
       } catch(e) { /* quietly no-op */ }
     }
-    checkTomteBroadcast();
-    setInterval(checkTomteBroadcast, 15000);
-    // Mobile browsers suspend timers on a backgrounded tab — coming back
-    // to the app would otherwise wait up to 15s for the next natural
-    // tick before checking. This catches it the moment the tab is
-    // actually looked at again.
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') checkTomteBroadcast();
-    });
+    (async function initTomteBroadcastPolling() {
+      const isLoggedIn = await tomteLoginCheck;
+      if (!isLoggedIn) return; // anonymous visitor on a public page — nothing to poll for
+      checkTomteBroadcast();
+      broadcastPollTimer = setInterval(checkTomteBroadcast, 15000);
+      // Mobile browsers suspend timers on a backgrounded tab — coming
+      // back to the app would otherwise wait up to 15s for the next
+      // natural tick before checking. This catches it the moment the
+      // tab is actually looked at again.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && broadcastPollTimer) checkTomteBroadcast();
+      });
+    })();
 
     // Expressions (Per Bot 8) — swaps to whatever image the server resolved
     // for this action (shrug, smile, thinking, etc.), then quietly reverts

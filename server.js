@@ -5982,6 +5982,13 @@ app.get('/api/tomte-broadcast', auth.requireAuthApi(), (req, res) => {
   if (currentTomteBroadcast && Date.now() - currentTomteBroadcast.createdAt > TOMTE_BROADCAST_TTL_MS) currentTomteBroadcast = null;
   const tabId = (req.query.tabId || '').toString().slice(0, 100);
   if (tabId) activeTomteTabs.set(tabId, Date.now());
+  // Per Bot 34 — this is a live poll, not cacheable content: without
+  // this header, Express's default weak ETag on an unchanging "null"
+  // body caused the browser to send conditional GETs and get back bare
+  // 304s (seen in Per's own Network tab), which is harmless in effect
+  // but pointless and confusing to debug. no-store keeps every poll a
+  // real round trip with a real, readable status.
+  res.set('Cache-Control', 'no-store');
   res.json(currentTomteBroadcast);
 });
 
