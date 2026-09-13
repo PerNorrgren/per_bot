@@ -5158,6 +5158,24 @@ app.get('/api/admin/backup/download', auth.requireAuthApi(['admin']), (req, res)
     res.status(500).json({ error: 'Could not export the database right now.' });
   }
 });
+// Per App 34 — emergency counterpart to the download route above, added
+// live during a same-day production data-loss incident. Accepts a .db
+// file upload and hot-swaps it into the running app immediately — no
+// restart needed, no dependency on Railway's own volume-restore UI.
+// See db.restoreFromBuffer for the safety copy it makes of whatever was
+// live before the swap.
+app.post('/api/admin/backup/restore', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    const buffer = fs.readFileSync(req.file.path);
+    await db.restoreFromBuffer(buffer);
+    fs.unlink(req.file.path, () => {});
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('db backup restore error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 // Export everything as one CSV — for backup, or editing offline before a
 // re-import. Audio-kind rows show the referenced library file's title in
 // the Script column (there's no text to export for those), with Type

@@ -308,6 +308,42 @@
       <div class="field-note" style="margin-bottom:16px">A full copy of the live database, exactly as it stands right now. Safe to download any time — this only reads the data, nothing here can change or affect the live app.</div>
       <a href="/api/admin/backup/download" class="btn-primary" style="display:inline-block; padding:9px 18px; font-size:12px; text-decoration:none;">Download database backup</a>
 
+      <!-- Per App 34 — emergency restore, added live during a same-day
+           production data-loss incident. Deliberately blunt UI (a plain
+           file input + a confirm() dialog) rather than anything fancier
+           — this exists to be used once, under pressure, correctly; not
+           to be a polished everyday feature. -->
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
+        <div class="field-note" style="margin-bottom:10px;color:rgba(255,140,120,0.85)">Restore the live database from a downloaded backup file (.db). This immediately replaces everything currently live — every member, newsletter, and message — with whatever's in the file you choose. The previous live database is copied alongside it on the server first, so this can be undone by hand if you pick the wrong file, but there is no "undo" button here. Use this only if you know exactly which backup you mean to restore.</div>
+        <input type="file" id="restoreDbFile" accept=".db" style="font-size:12px;color:rgba(255,255,255,0.6)"/>
+        <button class="btn-primary" style="margin-left:10px;padding:9px 18px;font-size:12px;background:rgba(200,60,60,0.85)" onclick="restoreDatabaseBackup()">Restore from file</button>
+        <div id="restoreDbFeedback" style="margin-top:10px;font-size:12px"></div>
+      </div>
+      <script>
+        async function restoreDatabaseBackup() {
+          const input = document.getElementById('restoreDbFile');
+          const feedback = document.getElementById('restoreDbFeedback');
+          const file = input.files[0];
+          if (!file) { feedback.textContent = 'Choose a .db file first.'; feedback.style.color = 'rgba(255,140,120,0.9)'; return; }
+          const sure = confirm(`This will immediately replace the entire live database with "${file.name}". Every member, newsletter, and message currently live will be gone, replaced by whatever is in this file. This cannot be undone from here. Continue?`);
+          if (!sure) return;
+          feedback.textContent = 'Restoring — do not close this tab...';
+          feedback.style.color = 'rgba(255,255,255,0.6)';
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/admin/backup/restore', { method: 'POST', body: formData });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Restore failed.');
+            feedback.textContent = 'Restored successfully. Reload any other admin tab to see the restored data.';
+            feedback.style.color = 'rgba(140,220,160,0.9)';
+          } catch (e) {
+            feedback.textContent = 'Restore failed: ' + e.message;
+            feedback.style.color = 'rgba(255,140,120,0.9)';
+          }
+        }
+      </script>
+
       <!-- Per Bot 30 — generic admin scripts table, replacing the pair of
            hand-built one-off buttons above. Rows come straight from the
            server's ADMIN_SCRIPTS registry — adding a future one-time

@@ -3757,6 +3757,36 @@ function exportDbBytes() {
   return Buffer.from(db.export());
 }
 
+// Per App 34 — emergency restore, added after a same-day production
+// data-loss incident where the live database was found reset to an
+// empty schema (cron_log's own earliest surviving entry is 2026-09-12
+// 08:15 — well before that day's real data existed, confirming this
+// isn't a display bug). Railway's own volume-snapshot restore UI proved
+// confusing and risky to operate correctly under pressure — this gives
+// a direct, in-app path that doesn't depend on it at all. Swaps the
+// live in-memory database for the one in the uploaded buffer, then
+// persists it to disk exactly like every other write already does via
+// save(). Before swapping, whatever was live immediately before this
+// call is copied alongside DB_PATH with a timestamped filename — purely
+// so an accidental wrong-file upload can still be recovered by hand
+// from the Railway volume; this function never deletes that copy itself.
+async function restoreFromBuffer(buffer) {
+  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 15) !== 'SQLite format ') {
+    throw new Error('That file does not look like a valid SQLite database.');
+  }
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      const preRestorePath = DB_PATH.replace(/\.db$/, `.pre-restore-${Date.now()}.db`);
+      fs.copyFileSync(DB_PATH, preRestorePath);
+    }
+  } catch (e) {
+    console.error('restoreFromBuffer: could not write pre-restore safety copy, proceeding anyway:', e.message);
+  }
+  const SQL = await initSqlJs();
+  db = new SQL.Database(buffer);
+  save();
+}
+
 function getDbSync() {
   if (!db) throw new Error('DB not initialised');
   return db;
@@ -10816,7 +10846,7 @@ function getUserConsentHistory(userId) {
 }
 
 module.exports = {
-  exportDbBytes,
+  exportDbBytes, restoreFromBuffer,
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
