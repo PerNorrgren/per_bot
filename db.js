@@ -3771,7 +3771,7 @@ function exportDbBytes() {
 // so an accidental wrong-file upload can still be recovered by hand
 // from the Railway volume; this function never deletes that copy itself.
 async function restoreFromBuffer(buffer) {
-  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 15) !== 'SQLite format ') {
+  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 15) !== 'SQLite format 3') {
     throw new Error('That file does not look like a valid SQLite database.');
   }
   try {
