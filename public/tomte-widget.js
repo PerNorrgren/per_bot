@@ -291,15 +291,10 @@
     // becomes null) fell through and left whatever was already showing
     // untouched, rather than resetting to the "Tomte" default. Same
     // reasoning for the image.
-    // Per Bot 34 — return value doubles as the cheapest available signal
-    // for "is this visitor logged in at all", reused below to decide
-    // whether the broadcast poll should run — this request already
-    // happens on every page load regardless, so this avoids firing a
-    // second one just to answer the same question.
     async function applyPersonalization() {
       try {
         const res = await fetch('/api/my/tomte-settings');
-        if (!res.ok) return false; // not logged in — defaults stay as-is
+        if (!res.ok) return; // not logged in — defaults stay as-is
         const data = await res.json();
         const nameToShow = data.name || 'Tomte';
         helperName = nameToShow;
@@ -312,10 +307,9 @@
         voiceEnabled = !!data.voiceEnabled;
         updateVoiceToggleUI();
         if (wsReady) ws.send(JSON.stringify({ type: 'set_voice', enabled: voiceEnabled }));
-        return true;
-      } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ return false; }
+      } catch(e) { /* not logged in, or a network hiccup — defaults are fine */ }
     }
-    const tomteLoginCheck = applyPersonalization();
+    applyPersonalization();
 
     // Per Bot 18 — proactive tips. Same silent-no-op-if-not-logged-in
     // pattern as applyPersonalization above (tomte-widget.js loads on
@@ -335,104 +329,18 @@
       } catch(e) { /* quietly no-op */ }
     })();
 
-    // Per Bot 21 — live broadcast: Per's own one-off message from Comms
-    // admin ("rebooting in 2 minutes"), pushed to anyone with the app
-    // open right now. Unlike the tip above, this genuinely polls rather
-    // than checking once — Tomte's WebSocket only connects once someone
-    // actually opens/uses the widget, so most people sitting on a page
-    // with it merely loaded in the background wouldn't be reachable
-    // through it. Deliberately no seen-tracking on the server at all —
-    // lastSeenBroadcastId lives only in this tab's memory and resets on
-    // reload, matching "not saved for the user, just in the moment."
-    //
-    // tomteTabId — a fresh random id each page load, sent with every
-    // poll purely so the admin side can count distinct active browsers
-    // (see /api/admin/tomte-broadcast). Never stored anywhere client-
-    // side, never tied to the account — same account open on a phone
-    // and a laptop counts as two, which is the more useful number for
-    // "how many screens will actually see this."
-    const tomteTabId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    // Per Bot 21 — real bug found: this used to be a plain JS variable,
-    // which only ever lived for as long as the current page stayed
-    // loaded. Every full page load (a refresh, or simply navigating to
-    // a different page in this multi-page app — most navigation here
-    // IS a fresh page load, not an SPA route change) reset it to null,
-    // so a broadcast that was still active kept popping up again and
-    // again on every single navigation, not just once. sessionStorage
-    // survives navigation/refresh within the same browser tab while
-    // still resetting the moment the tab actually closes — "not saved
-    // for the user" still holds (nothing server-side, nothing account-
-    // tied, nothing that outlives this browsing session).
-    const TOMTE_SEEN_BROADCAST_KEY = 'tomte_seen_broadcast_id';
-    let lastSeenBroadcastId = null;
-    try { lastSeenBroadcastId = sessionStorage.getItem(TOMTE_SEEN_BROADCAST_KEY); } catch(e) {}
-    // Per Bot 21 — same visual pattern as addTipMessage's action link
-    // (a plain <a>, safe innerHTML-free construction since text/labels
-    // are admin-authored, not user input) — broadcasts can optionally
-    // carry a link, e.g. "See what's new" pointing at a changelog page.
-    function addBroadcastMessage(text, linkLabel, linkHref) {
-      const empty = messagesEl.querySelector('.tomte-empty');
-      if (empty) empty.remove();
-      const div = document.createElement('div');
-      div.className = 'tomte-msg tomte-bot';
-      div.textContent = text;
-      if (linkLabel && linkHref) {
-        const a = document.createElement('a');
-        a.href = linkHref; a.className = 'tomte-tip-action'; a.textContent = linkLabel + ' →';
-        div.appendChild(document.createElement('br'));
-        div.appendChild(a);
-      }
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    // Per Bot 34 — real bug found: this used to poll unconditionally on
-    // every page tomte-widget.js is embedded on, including the many
-    // public pages (login, register, /promotions, /courses, etc.) where
-    // most visitors are anonymous by design. Every one of those tabs hit
-    // this endpoint every 15s forever, got a 401 back, and quietly did
-    // nothing with it — but Cloudflare still saw it as a huge volume of
-    // repetitive, machine-like traffic against one path and flagged it
-    // as bot-like. Fix is two-layered: don't start polling at all if the
-    // visitor isn't logged in (checked once at init, not on a timer —
-    // see tomteLoginCheck above), and if a session expires mid-poll for
-    // someone who *was* logged in, stop the interval outright on the
-    // first 401 rather than continuing to hit the endpoint forever.
-    let broadcastPollTimer = null;
-    async function checkTomteBroadcast() {
-      try {
-        const res = await fetch('/api/tomte-broadcast?tabId=' + encodeURIComponent(tomteTabId));
-        if (res.status === 401) {
-          if (broadcastPollTimer) { clearInterval(broadcastPollTimer); broadcastPollTimer = null; }
-          return;
-        }
-        if (!res.ok) return;
-        const broadcast = await res.json();
-        if (!broadcast || broadcast.id === lastSeenBroadcastId) return;
-        lastSeenBroadcastId = broadcast.id;
-        try { sessionStorage.setItem(TOMTE_SEEN_BROADCAST_KEY, broadcast.id); } catch(e) {}
-        // Opens the panel directly rather than going through openPanel()
-        // — that also connects the WebSocket and sends a "greet", neither
-        // of which apply here; this is a one-way notice, not the start
-        // of a conversation.
-        panel.classList.add('tomte-open');
-        positionPanel();
-        addBroadcastMessage(broadcast.text, broadcast.linkLabel, broadcast.linkHref);
-        nudgeScrollContainers();
-      } catch(e) { /* quietly no-op */ }
-    }
-    (async function initTomteBroadcastPolling() {
-      const isLoggedIn = await tomteLoginCheck;
-      if (!isLoggedIn) return; // anonymous visitor on a public page — nothing to poll for
-      checkTomteBroadcast();
-      broadcastPollTimer = setInterval(checkTomteBroadcast, 15000);
-      // Mobile browsers suspend timers on a backgrounded tab — coming
-      // back to the app would otherwise wait up to 15s for the next
-      // natural tick before checking. This catches it the moment the
-      // tab is actually looked at again.
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && broadcastPollTimer) checkTomteBroadcast();
-      });
-    })();
+    // Per App 34 — the live-broadcast feature (Per Bot 21) has been
+    // removed entirely. It originated as a step toward a fully animated
+    // greeting Tomte (speech bubble, waving arms) that was never built;
+    // what shipped instead was a silent background poll that could pop
+    // the panel open on its own. Per's call: Tomte should be a passive
+    // helper that does nothing — no polling, no self-initiated messages
+    // — until the icon is actually pressed. Removed from here: the
+    // 15s poll loop, the per-tab id, the seen-broadcast tracking, and
+    // the message-injection helper. Also removed: the admin authoring
+    // panel in comms.html and all three /api/(admin/)tomte-broadcast
+    // routes in server.js, since nothing would ever display what they'd
+    // send.
 
     // Expressions (Per Bot 8) — swaps to whatever image the server resolved
     // for this action (shrug, smile, thinking, etc.), then quietly reverts
