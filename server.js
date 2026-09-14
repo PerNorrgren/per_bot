@@ -9924,9 +9924,26 @@ facilitatorWss.on('connection', (ws, ctx) => {
   ws.on('close', () => { if (dgWs) { try { dgWs.close(); } catch {} } });
 });
 
+// Per App 34 — every admin page route below used plain res.sendFile()
+// with no Cache-Control header, the exact same gap that caused the
+// Tomte broadcast endpoint's conditional-caching confusion earlier
+// tonight. Suspected of causing a real, harder-to-diagnose instance of
+// the same class of problem: Per deployed a genuine change to
+// reports.html (a fresh Railway deployment confirmed Active), but kept
+// seeing the old page — in a fresh incognito window, ruling out the
+// browser's own cache — pointing at Cloudflare's edge (or some other
+// intermediate cache) serving a stale cached copy of the HTML itself,
+// since nothing ever told it not to. no-store on every admin page
+// means each request is a genuine round trip to this server, always
+// reflecting whatever's actually deployed right now.
+function sendAdminPage(res, filename) {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'admin', filename));
+}
+
 // ── Content API ──
-app.get('/admin/content',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'content.html')));
-app.get('/admin/content/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'content.html')));
+app.get('/admin/content',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'content.html'));
+app.get('/admin/content/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'content.html'));
 
 app.get('/api/content/categories', auth.requireAuthApi(['admin','facilitator','client']), (req, res) => res.json(db.getAllCategories()));
 app.post('/api/content/categories', auth.requireAuthApi(['admin']), (req, res) => {
@@ -14815,37 +14832,37 @@ app.patch('/api/admin/users/:id/downgrade', auth.requireAuthApi(['admin']), (req
 });
 
 // ── Admin comms page ──
-app.get('/admin/comms',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
-app.get('/admin/comms/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms.html')));
+app.get('/admin/comms',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'comms.html'));
+app.get('/admin/comms/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'comms.html'));
 // Per Bot 54 — comms2 is the in-progress replacement for comms.html
 // (see message_versions above): same login gate, served alongside the
 // original rather than in place of it, so both can run side by side
 // until comms2 is fully built and tested and comms.html is retired.
-app.get('/admin/comms2',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms2.html')));
-app.get('/admin/comms2/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'comms2.html')));
+app.get('/admin/comms2',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'comms2.html'));
+app.get('/admin/comms2/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'comms2.html'));
 
 // Per Bot 15n — Talk & Tomte and Sales & Marketing, split out of the
 // Users/Communications pages as part of the six-area admin restructure
 // (People / Content / Talk & Tomte / Communications / Sales & Marketing /
 // Settings — Settings already existed at /setup).
-app.get('/admin/talk',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'talk.html')));
-app.get('/admin/talk/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'talk.html')));
-app.get('/admin/sales',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
-app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'sales.html')));
+app.get('/admin/talk',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'talk.html'));
+app.get('/admin/talk/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'talk.html'));
+app.get('/admin/sales',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'sales.html'));
+app.get('/admin/sales/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'sales.html'));
 
 // Per Bot 20 — Reports hub: a single extensible framework (REPORTS
 // registry below) rather than a bespoke page per report, so adding a new
 // report later is a data function + one registry entry, not a new page.
-app.get('/admin/reports',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
-app.get('/admin/pages',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'pages.html')));
+app.get('/admin/reports',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'reports.html'));
+app.get('/admin/pages',    auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'pages.html'));
 // Per App 31 — Social tab, home for the streamlining plan: the posting
 // schedule config (this session's "A"), and the auto-prepare/calendar
 // pieces ("B"/"C") to follow in upcoming sessions.
-app.get('/admin/social',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
-app.get('/admin/social/',  auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'social.html')));
+app.get('/admin/social',   auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'social.html'));
+app.get('/admin/social/',  auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'social.html'));
 // Per App 31 — Forms module: forms, quizzes, and surveys, one admin page.
-app.get('/admin/forms',    auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'forms.html')));
-app.get('/admin/forms/',   auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'forms.html')));
+app.get('/admin/forms',    auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'forms.html'));
+app.get('/admin/forms/',   auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'forms.html'));
 // Client-facing fill-out page for one form — gated to logged-in clients,
 // same as every other page under /client/.
 // Per's request — this used to require login before the page would even
@@ -14859,7 +14876,7 @@ app.get('/admin/forms/',   auth.requireAuth(['admin']), (req, res) => res.sendFi
 // eligible for anonymous access (tied to a paid course instance) before
 // serving anything. The page itself just needs to be reachable either way.
 app.get('/forms/:id',      (req, res) => res.sendFile(path.join(__dirname, 'public', 'client-form.html')));
-app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin', 'reports.html')));
+app.get('/admin/reports/', auth.requireAuth(['admin']), (req, res) => sendAdminPage(res, 'reports.html'));
 
 // ── Legal document public pages ──
 app.get('/legal', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
