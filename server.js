@@ -5176,29 +5176,80 @@ app.post('/api/admin/backup/restore', auth.requireAuthApi(['admin']), upload.sin
     res.status(500).json({ error: e.message });
   }
 });
-// Per App 34 — daily automatic backups. runDailyBackup() itself (called
-// from cron.js at 01:00 Europe/London — see that file) just wraps
-// db.runDailyBackupToVolume() with the same cron_log recording every
-// other scheduled job already gets. These two routes are the admin-
-// facing half: list what's on disk, download one to pull onto a local
-// machine (e.g. into a OneDrive-synced folder) — same content as
-// /api/admin/backup/download above, just already-saved daily snapshots
-// instead of an on-demand export of right now.
-async function runDailyBackup() {
-  const result = db.runDailyBackupToVolume();
-  return result;
-}
-app.get('/api/admin/backup/daily', auth.requireAuthApi(['admin']), (req, res) => {
-  try { res.json(db.listDailyBackups()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.get('/api/admin/backup/daily/:filename', auth.requireAuthApi(['admin']), (req, res) => {
-  try {
-    const filePath = db.getBackupFilePath(req.params.filename);
-    res.download(filePath, req.params.filename);
-  } catch (e) {
-    res.status(404).json({ error: e.message });
+// Per App 34 — daily automatic backups, moved to R2 (not the Railway
+// volume) after Per correctly flagged that a backup sitting on the same
+// volume as the live DB doesn't protect against whatever wiped the
+// volume itself. Uploaded straight from the in-memory export — the
+// buffer db.exportDbBytes() already returns — with no local disk step
+// at all. Key prefix is 'db-backups/', private (media.putObject, not
+// the public-object path), same access model as everything else
+// sensitive this app stores in R2.
+//
+// Retention is grandfather-father-son, per Per's own spec: the most
+// recent 7 days kept as dailies; the Monday backup kept for the most
+// recent 5 weeks; the 1st-of-month backup kept for the past 12 months.
+// A single date can satisfy more than one tier at once (a Monday that's
+// also the 1st) — computeBackupsToKeep just unions all three tiers and
+// keeps whatever's in the union; everything else gets deleted. Pruning
+// runs after every backup, working from whatever's actually in R2 right
+// now rather than assuming yesterday's run left things in a known
+// state — so a missed day (an outage, R2 briefly down) doesn't throw
+// the schedule off, it just means one tier has a gap.
+const BACKUP_R2_PREFIX = 'db-backups/';
+function computeBackupsToKeep(existingDates) {
+  const keep = new Set();
+  const today = new Date(); // dates are UTC calendar days throughout, matching the YYYY-MM-DD stamp used when writing
+
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+    keep.add(d.toISOString().slice(0, 10));
   }
+
+  const daysSinceMonday = (today.getUTCDay() + 6) % 7; // Mon->0 ... Sun->6
+  const mostRecentMonday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - daysSinceMonday));
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(Date.UTC(mostRecentMonday.getUTCFullYear(), mostRecentMonday.getUTCMonth(), mostRecentMonday.getUTCDate() - 7 * i));
+    keep.add(d.toISOString().slice(0, 10));
+  }
+
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i, 1));
+    keep.add(d.toISOString().slice(0, 10));
+  }
+
+  return existingDates.filter(d => keep.has(d));
+}
+async function runDailyBackup() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const key = `${BACKUP_R2_PREFIX}perbot-backup-${stamp}.db`;
+  await media.putObject(key, db.exportDbBytes(), 'application/octet-stream');
+
+  const existing = await media.listObjects(BACKUP_R2_PREFIX);
+  const dateOf = (obj) => (obj.key.match(/perbot-backup-(\d{4}-\d{2}-\d{2})\.db$/) || [])[1];
+  const existingDates = existing.map(dateOf).filter(Boolean);
+  const toKeep = new Set(computeBackupsToKeep(existingDates));
+  const toDelete = existing.filter(obj => { const d = dateOf(obj); return d && !toKeep.has(d); });
+  for (const obj of toDelete) { try { await media.deleteObject(obj.key); } catch (e) { console.error('[daily backup] prune failed for', obj.key, e.message); } }
+
+  return { file: `perbot-backup-${stamp}.db`, pruned: toDelete.length };
+}
+app.get('/api/admin/backup/daily', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const objs = await media.listObjects(BACKUP_R2_PREFIX);
+    const backups = objs
+      .map(o => ({ filename: o.key.slice(BACKUP_R2_PREFIX.length), sizeBytes: o.sizeBytes, modifiedAt: o.modifiedAt }))
+      .sort((a, b) => b.filename.localeCompare(a.filename));
+    res.json(backups);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/backup/daily/:filename', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    if (!/^perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(req.params.filename)) return res.status(400).json({ error: 'Invalid backup filename.' });
+    const obj = await media.getPublicObject(BACKUP_R2_PREFIX + req.params.filename);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+    obj.Body.pipe(res);
+  } catch (e) { res.status(404).json({ error: 'Backup not found.' }); }
 });
 // Per App 34 — the low-user-count canary, checked every 3 minutes (see
 // cron.js). users dropping below LOW_USER_COUNT_THRESHOLD is exactly

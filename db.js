@@ -3795,57 +3795,6 @@ async function restoreFromBuffer(buffer) {
   save();
 }
 
-// Per App 34 — automatic daily backups, written to the same persistent
-// Railway volume DB_PATH already lives on (so they survive a redeploy
-// just like the live DB does), in a `backups/` subfolder next to it.
-// Kept for BACKUP_RETENTION_DAYS then pruned automatically so this can't
-// grow unbounded — at roughly the live DB's own size per file, 30 days
-// is a trivial fraction of the 50GB volume.
-const BACKUP_RETENTION_DAYS = 30;
-function getBackupsDir() {
-  return path.join(path.dirname(DB_PATH), 'backups');
-}
-function runDailyBackupToVolume() {
-  if (!db) throw new Error('DB not initialised');
-  const dir = getBackupsDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const stamp = new Date().toISOString().slice(0, 10);
-  const filePath = path.join(dir, `perbot-backup-${stamp}.db`);
-  fs.writeFileSync(filePath, Buffer.from(db.export()));
-
-  const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  let pruned = 0;
-  for (const name of fs.readdirSync(dir)) {
-    const p = path.join(dir, name);
-    try {
-      if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); pruned++; }
-    } catch (e) { /* skip anything that can't be stat'd/removed */ }
-  }
-  return { file: `perbot-backup-${stamp}.db`, pruned };
-}
-// Listing + a single safe read, for the admin "Daily backups" panel.
-// Filenames are generated only by runDailyBackupToVolume above (a fixed
-// perbot-backup-YYYY-MM-DD.db shape) — getBackupFilePath still re-checks
-// that shape on every call rather than trusting the caller, since this
-// feeds a public-facing :filename route parameter.
-function listDailyBackups() {
-  const dir = getBackupsDir();
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .filter(name => /^perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(name))
-    .map(name => {
-      const stat = fs.statSync(path.join(dir, name));
-      return { filename: name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
-    })
-    .sort((a, b) => b.filename.localeCompare(a.filename));
-}
-function getBackupFilePath(filename) {
-  if (!/^perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(filename)) throw new Error('Invalid backup filename.');
-  const filePath = path.join(getBackupsDir(), filename);
-  if (!fs.existsSync(filePath)) throw new Error('Backup not found.');
-  return filePath;
-}
-
 // Per App 34 — the low-user-count canary. `users` is the one table that
 // should never realistically drop below a small handful in a live
 // deployment with real members — a fresh/reset database (the same
@@ -10932,7 +10881,6 @@ function getUserConsentHistory(userId) {
 
 module.exports = {
   exportDbBytes, restoreFromBuffer,
-  runDailyBackupToVolume, listDailyBackups, getBackupFilePath,
   getUserCount, getLowUserAlertState, setLowUserAlertState,
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,

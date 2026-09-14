@@ -351,8 +351,8 @@
            OneDrive-synced folder, same file format as the manual
            download button above. -->
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
-        <div class="field-note" style="margin-bottom:10px">Automatic daily backups (kept 30 days). Taken every night at 01:00 UK time, written straight to the persistent volume — independent of anything below.</div>
-        <div id="dailyBackupsList" style="font-size:12.5px;color:rgba(255,255,255,0.55)">Loading…</div>
+        <div class="field-note" style="margin-bottom:10px">Automatic daily backups, stored in R2 (not the Railway volume — a separate failure there won't take these with it). Taken every night at 01:00 UK time. Kept on a grandfather-father-son rotation: the last 7 days, the Monday backup for the last 5 weeks, and the 1st-of-month backup for the last 12 months — everything else is pruned automatically.</div>
+        <div id="dailyBackupsList" style="font-size:12.5px;color:rgba(255,255,255,0.55);max-height:190px;overflow-y:auto">Loading…</div>
       </div>
       <script>
         async function loadDailyBackups() {

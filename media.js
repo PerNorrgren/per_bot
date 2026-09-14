@@ -19,7 +19,7 @@
 // This preserves the same Registered/Member/Client/Facilitator/Admin visibility
 // cascade that already governs which files appear in a person's Content tab.
 
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const R2_ACCOUNT_ID  = process.env.R2_ACCOUNT_ID;
@@ -147,4 +147,18 @@ async function getPublicObject(key) {
   return result; // .Body is a readable stream; .ContentType is the stored MIME type
 }
 
-module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, putObject, uploadPublicObject, getPublicObject, objectExists, R2_BUCKET };
+// Per App 34 — for the daily database backup feature. Everything else in
+// this module works with keys it already knows (a presign response, a
+// playback URL) — this is the first place that needs to discover what's
+// actually sitting in the bucket under a prefix, rather than being told.
+async function listObjects(prefix) {
+  if (!client) throw new Error('R2 is not configured.');
+  const result = await client.send(new ListObjectsV2Command({ Bucket: R2_BUCKET, Prefix: prefix }));
+  return (result.Contents || []).map(obj => ({
+    key: obj.Key,
+    sizeBytes: obj.Size,
+    modifiedAt: obj.LastModified ? obj.LastModified.toISOString() : null,
+  }));
+}
+
+module.exports = { isConfigured, getUploadUrl, getPlaybackUrl, deleteObject, putObject, uploadPublicObject, getPublicObject, listObjects, objectExists, R2_BUCKET };
