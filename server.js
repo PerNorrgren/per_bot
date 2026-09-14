@@ -15637,20 +15637,25 @@ app.get('/auth/linkedin/connect', auth.requireAuth(['admin']), (req, res) => {
 
 app.get('/auth/linkedin/callback', auth.requireAuth(['admin']), async (req, res) => {
   const { code, state, error, error_description } = req.query;
-  const backToComms = (q) => res.redirect(`/admin/comms?${q}`);
+  // Per App 34 — the LinkedIn connect UI moved from Comms 1 to the
+  // Social tab (consolidating social-media admin areas there per Per's
+  // request), so the OAuth round-trip needs to land back on /admin/social
+  // now, not /admin/comms — otherwise reconnecting would succeed but
+  // leave the person looking at a page with no LinkedIn status badge on it.
+  const backToSocial = (q) => res.redirect(`/admin/social?${q}`);
   try {
-    if (error) return backToComms(`li_error=${encodeURIComponent(error_description || error)}`);
+    if (error) return backToSocial(`li_error=${encodeURIComponent(error_description || error)}`);
     const savedState = req.cookies?.li_oauth_state;
     res.clearCookie('li_oauth_state');
     if (!code || !state || !savedState || state !== savedState) {
-      return backToComms('li_error=' + encodeURIComponent('LinkedIn sign-in didn\u2019t complete cleanly — please try Connect again.'));
+      return backToSocial('li_error=' + encodeURIComponent('LinkedIn sign-in didn\u2019t complete cleanly — please try Connect again.'));
     }
     const tokenResp = await publishers.PROVIDERS.linkedin.exchangeCodeForToken(code);
     const memberInfo = await publishers.PROVIDERS.linkedin.fetchMemberInfo(tokenResp.access_token);
     publishers.PROVIDERS.linkedin.saveConnection(tokenResp, memberInfo, req.user?.id || null);
-    return backToComms('li_connected=1');
+    return backToSocial('li_connected=1');
   } catch (e) {
-    return backToComms('li_error=' + encodeURIComponent(e.message));
+    return backToSocial('li_error=' + encodeURIComponent(e.message));
   }
 });
 

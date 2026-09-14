@@ -13,8 +13,15 @@ const meta        = require('./meta');
 // platform key (lowercase, matches what the admin UI already sends) ->
 // provider module. Facebook/Instagram/Threads stay on BulkPublish until
 // meta.js is actually built; flip these three to 'meta' then.
+// LinkedIn switched to BulkPublish too (Per's request) — the direct
+// integration (publishers/linkedin.js) was never actually connected
+// (see the Per App 34 incident), and Per already has LinkedIn connected
+// on BulkPublish's own side from the Pro upgrade. Flip this single line
+// back to 'linkedin' to return to the direct integration later — the
+// OAuth connect UI on the Social tab is left in place for exactly that,
+// nothing else needs to change either way.
 const PLATFORM_PROVIDERS = {
-  linkedin:  'linkedin',
+  linkedin:  'bulkpublish',
   facebook:  'bulkpublish',
   instagram: 'bulkpublish',
   threads:   'bulkpublish',
