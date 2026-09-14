@@ -14413,6 +14413,42 @@ app.post('/api/admin/campaigns/:id/videos/:videoId/upload', auth.requireAuthApi(
     res.status(500).json({ error: 'Could not upload media: ' + e.message });
   }
 });
+// Per's request — Message Builder's media was deliberately AI-generated
+// only until now ("Generated fresh per post, not picked from a library —
+// per Per's own call on this," per the comment on mbMedia above). This
+// is the reversal of that call: a genuine pre-recorded video (or image)
+// can now be attached the same way a generated one is. Mirrors the
+// campaign-video upload route above almost exactly — same R2 key
+// prefix, same library_files registration so it's discoverable from
+// Content > Library afterward — just not tied to a specific campaign or
+// video slot, since Message Builder posts aren't scoped that way.
+app.post('/api/admin/social-posts/media/upload', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    if (!req.file.mimetype.startsWith('image/') && !req.file.mimetype.startsWith('video/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Only image or video files are supported here.' });
+    }
+    const buffer = fs.readFileSync(req.file.path);
+    const ext = req.file.mimetype.startsWith('video/') ? '.webm' : ((req.file.originalname.match(/\.[a-zA-Z0-9]+$/) || ['.png'])[0]);
+    const key = `newsletter-images/social-upload-${uuidv4()}${ext}`;
+    await media.uploadPublicObject(key, buffer, req.file.mimetype);
+    fs.unlink(req.file.path, () => {});
+    const url = `${APP_URL}/newsletter-images/${encodeURIComponent(key.replace('newsletter-images/', ''))}`;
+    const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+    const libraryFileId = uuidv4();
+    db.addLibraryFile(
+      libraryFileId, 'Uploaded social media', 'Uploaded directly into Message Builder (Per App 34).',
+      key, req.file.originalname, req.file.mimetype, buffer.length,
+      'cat-marketing', null, 'admin', 'r2', false, null, null, null
+    );
+    res.json({ ok: true, url, mediaType, libraryFileId });
+  } catch (e) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: 'Could not upload media: ' + e.message });
+  }
+});
 app.post('/api/admin/campaigns/:id/steps/:stepId/regenerate', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const campaign = db.getCampaign(req.params.id);

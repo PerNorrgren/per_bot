@@ -1393,6 +1393,8 @@
           <button class="btn sm" onclick="mbGenerateVideo('${p}')" title="Renders a fresh video using this platform's own text, and attaches it automatically once done">🎥 Generate video</button>
           <button class="btn sm" onclick="mbUseRenderedVideo('${p}')" title="Uses whatever Video Generator below has most recently rendered">🎬 Use rendered video</button>
           `}
+          <button class="btn sm" onclick="document.getElementById('mbUploadInput_${p}').click()" title="Attach a video or image you already have, instead of generating one">📁 Upload your own</button>
+          <input type="file" id="mbUploadInput_${p}" accept="image/*,video/*" style="display:none" onchange="mbUploadMedia(event, '${p}')"/>
           <span id="${mbMediaBadgeId(p)}" style="font-size:11px"></span>
         </div>
       </div>
@@ -1556,6 +1558,33 @@
       return;
     }
     await mbUseRenderedVideo(platform);
+  }
+
+  // Per's request — a genuine pre-recorded video (or image) attached
+  // directly, no generation involved. Same underlying storage as every
+  // other media path here (R2 + a library_files row), so once attached
+  // it behaves identically to a generated one — Remove, View, and
+  // Publish/Schedule all just read mbMedia[platform] and don't know or
+  // care how it got there.
+  async function mbUploadMedia(event, platform) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    const badge = document.getElementById(mbMediaBadgeId(platform));
+    if (badge) badge.innerHTML = '<span style="color:rgba(255,255,255,0.5)">Uploading…</span>';
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch('/api/admin/social-posts/media/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Could not upload.');
+      mbMedia[platform] = { url: data.url, type: data.mediaType };
+      mbRenderMediaBadge(platform);
+      mbPersistMedia(platform);
+    } catch(e) {
+      mbRenderMediaBadge(platform);
+      appAlert(e.message);
+    }
   }
 
   // Debounced so this only fires once typing pauses, not on every
