@@ -9235,6 +9235,14 @@ app.get('/api/admin/reports/:id', auth.requireAuthApi(['admin']), (req, res) => 
   if (!report) return res.status(404).json({ error: 'Unknown report.' });
   try {
     const data = report.run();
+    // Per App 34 — same root cause, one layer deeper than the admin-page
+    // fix above: the page itself stopped being cached, but this JSON
+    // data call is a separate GET request Cloudflare could still cache
+    // independently, which is exactly what kept the Campaigns report
+    // showing stale numbers even after the page-level fix and a cache
+    // purge. Every report is either live counts or a live query against
+    // posting_sends — never safe to serve stale.
+    res.set('Cache-Control', 'no-store');
     res.json({ id: req.params.id, title: report.title, category: report.category, ...data });
   } catch (e) {
     console.error('[reports]', req.params.id, 'failed:', e.message, e.stack);
@@ -14072,6 +14080,7 @@ app.get('/api/admin/postings/issues', auth.requireAuthApi(['admin']), (req, res)
 // or none for "everything" (capped at 300, see getPostingSendHistory).
 app.get('/api/admin/postings/sends', auth.requireAuthApi(['admin']), (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
     res.json(db.getPostingSendHistory({
       channel: req.query.channel || null,
       status: req.query.status || null,
