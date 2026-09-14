@@ -5176,6 +5176,74 @@ app.post('/api/admin/backup/restore', auth.requireAuthApi(['admin']), upload.sin
     res.status(500).json({ error: e.message });
   }
 });
+// Per App 34 — daily automatic backups. runDailyBackup() itself (called
+// from cron.js at 01:00 Europe/London — see that file) just wraps
+// db.runDailyBackupToVolume() with the same cron_log recording every
+// other scheduled job already gets. These two routes are the admin-
+// facing half: list what's on disk, download one to pull onto a local
+// machine (e.g. into a OneDrive-synced folder) — same content as
+// /api/admin/backup/download above, just already-saved daily snapshots
+// instead of an on-demand export of right now.
+async function runDailyBackup() {
+  const result = db.runDailyBackupToVolume();
+  return result;
+}
+app.get('/api/admin/backup/daily', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.listDailyBackups()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/backup/daily/:filename', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const filePath = db.getBackupFilePath(req.params.filename);
+    res.download(filePath, req.params.filename);
+  } catch (e) {
+    res.status(404).json({ error: e.message });
+  }
+});
+// Per App 34 — the low-user-count canary, checked every 3 minutes (see
+// cron.js). users dropping below LOW_USER_COUNT_THRESHOLD is exactly
+// the shape tonight's real incident took (reset to just the seed
+// admin), so this is deliberately a blunt, schema-light check rather
+// than anything trying to be clever about what "normal" looks like.
+// Sends SMS + email once per incident (not once per tick — see
+// db.getLowUserAlertState/setLowUserAlertState for the de-dup) and a
+// quieter recovery email once the count is back above threshold. The
+// in-app banner (public/js/dialogs.js) polls the alert-status route
+// below independently — this function's only job is detection + the
+// outbound alerts, not the UI.
+const LOW_USER_COUNT_THRESHOLD = 10;
+async function checkDatabaseHealth() {
+  const count = db.getUserCount();
+  const state = db.getLowUserAlertState();
+  const b = brand();
+  const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+
+  if (count < LOW_USER_COUNT_THRESHOLD) {
+    if (!state.active) {
+      db.setLowUserAlertState(true, count);
+      const subject = `⚠ ${b.name}: user count dropped to ${count}`;
+      const body = `The live database's user count just dropped to ${count} (alert threshold is ${LOW_USER_COUNT_THRESHOLD}). This is the same shape the ${new Date().toISOString().slice(0, 10)} data-loss incident took — please check the app immediately.\n\nIf this is genuinely expected (a fresh deployment, a deliberate reset), no action needed — this alert clears itself automatically once the count recovers.`;
+      try { await sendEmail(adminEmail, subject, `<pre style="font-family:Georgia,serif;white-space:pre-wrap">${body}</pre>`); } catch (e) { console.error('[health check] alert email failed:', e.message); }
+      try {
+        if (sms.isConfigured()) {
+          const admin = db.getFacilitatorByEmail(adminEmail);
+          if (admin && admin.phone) await sms.sendSms(admin.phone, `${b.name}: user count dropped to ${count} — possible database reset. Check the app now.`);
+        }
+      } catch (e) { console.error('[health check] alert SMS failed:', e.message); }
+    }
+    return { ok: true, count, alertActive: true };
+  }
+
+  if (state.active) {
+    db.setLowUserAlertState(false, count);
+    try { await sendEmail(adminEmail, `${b.name}: user count recovered (${count})`, `<pre style="font-family:Georgia,serif;white-space:pre-wrap">The user count is back to ${count}, above the alert threshold. The earlier low-count alert has cleared.</pre>`); } catch (e) { console.error('[health check] recovery email failed:', e.message); }
+  }
+  return { ok: true, count, alertActive: false };
+}
+app.get('/api/admin/health/alert-status', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getLowUserAlertState()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 // Export everything as one CSV — for backup, or editing offline before a
 // re-import. Audio-kind rows show the referenced library file's title in
 // the Script column (there's no text to export for those), with Type
@@ -17397,7 +17465,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth });
   }
 }
 

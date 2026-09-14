@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -394,7 +394,46 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     catch (e) { console.error('[cron] login_log prune failed:', e.message); }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC)');
+  // ── Daily database backup — 01:00 Europe/London ──
+  // Per App 34, added the same night as a real production data-loss
+  // incident. Deliberately Per's own local time rather than UTC (every
+  // other job in this file is UTC on purpose) — the point of this one
+  // is "a fresh backup waiting when I start my day," which is a
+  // local-time request, not a server-time one. Writes straight onto the
+  // same persistent volume the live DB lives on — see
+  // db.runDailyBackupToVolume for the file path and retention/pruning.
+  cron.schedule('0 1 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await runDailyBackup();
+      console.log('[cron] daily backup:', JSON.stringify(result));
+      record('daily_backup', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] daily backup failed:', e.message);
+      record('daily_backup', 'failed', null, e.message, t0);
+    }
+  }, { timezone: 'Europe/London' });
+
+  // ── Database health check (low-user-count canary) — every 3 minutes ──
+  // Per App 34, added alongside the daily backup above, same incident.
+  // See checkDatabaseHealth in server.js for the actual threshold logic
+  // and where the SMS/email alerts are sent — this job is just the tick.
+  cron.schedule('*/3 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await checkDatabaseHealth();
+      // Only logged to cron_log when something's actually wrong, same
+      // reasoning as the stale-chat-sweep job above — a healthy result
+      // every 3 minutes would otherwise flood the report with ~480
+      // identical no-op rows a day.
+      if (result.alertActive) record('database_health', 'alert', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] database health check failed:', e.message);
+      record('database_health', 'failed', null, e.message, t0);
+    }
+  });
+
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC), daily database backup (01:00 Europe/London), database health check (every 3 min)');
 }
 
 module.exports = { startCronJobs };

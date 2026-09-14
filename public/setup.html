@@ -344,6 +344,37 @@
         }
       </script>
 
+      <!-- Per App 34 — daily automatic backups (01:00 Europe/London,
+           see cron.js). Lives on the same persistent volume as the live
+           DB. This just lists what's on disk with a download link each
+           — the natural way to pull one down to somewhere like a
+           OneDrive-synced folder, same file format as the manual
+           download button above. -->
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">
+        <div class="field-note" style="margin-bottom:10px">Automatic daily backups (kept 30 days). Taken every night at 01:00 UK time, written straight to the persistent volume — independent of anything below.</div>
+        <div id="dailyBackupsList" style="font-size:12.5px;color:rgba(255,255,255,0.55)">Loading…</div>
+      </div>
+      <script>
+        async function loadDailyBackups() {
+          const wrap = document.getElementById('dailyBackupsList');
+          try {
+            const res = await fetch('/api/admin/backup/daily');
+            const backups = await res.json();
+            if (!backups.length) { wrap.textContent = 'No automatic backups yet — the first one lands after the next 01:00 UK run.'; return; }
+            wrap.innerHTML = backups.map(b => {
+              const mb = (b.sizeBytes / (1024 * 1024)).toFixed(1);
+              return `<div style="padding:6px 0;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.05)">
+                <span>${b.filename} — ${mb} MB</span>
+                <a href="/api/admin/backup/daily/${encodeURIComponent(b.filename)}" style="color:rgba(180,230,200,0.85)">Download</a>
+              </div>`;
+            }).join('');
+          } catch (e) {
+            wrap.textContent = 'Could not load the backup list.';
+          }
+        }
+        loadDailyBackups();
+      </script>
+
       <!-- Per Bot 30 — generic admin scripts table, replacing the pair of
            hand-built one-off buttons above. Rows come straight from the
            server's ADMIN_SCRIPTS registry — adding a future one-time

@@ -340,3 +340,48 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectMenu);
   else injectMenu();
 })();
+
+// ── Low-user-count health banner (Per App 34) ── Added the same night as
+// a real production data-loss incident. Polls /api/admin/health/alert-
+// status every 60s (the underlying check itself runs server-side every
+// 3 minutes — see cron.js/checkDatabaseHealth in server.js; polling a bit
+// faster than that here just means noticing a already-active alert
+// sooner on a freshly-opened tab, not causing extra checks). Shows a
+// fixed, impossible-to-miss banner at the very top of the page for as
+// long as the alert is active, and simply disappears again once the
+// count recovers — no dismiss button, on purpose, since this is meant to
+// stay visible until the real problem is actually fixed, not until
+// someone clicks it away.
+(function () {
+  var BANNER_ID = 'lowUserCountBanner';
+  function ensureBanner(count, detectedAt) {
+    var el = document.getElementById(BANNER_ID);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = BANNER_ID;
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:200000;background:#7a1f1f;color:#fff;font-family:Georgia,serif;font-size:13.5px;text-align:center;padding:10px 16px;box-shadow:0 2px 12px rgba(0,0,0,0.4)';
+      document.body.appendChild(el);
+      // Push the rest of the page down so this doesn't sit on top of
+      // the existing nav — a best-effort nudge, not pixel-perfect on
+      // every admin page's own layout.
+      document.body.style.paddingTop = (document.body.style.paddingTop ? 'calc(' + document.body.style.paddingTop + ' + 42px)' : '42px');
+    }
+    var when = detectedAt ? new Date(detectedAt + 'Z').toLocaleString() : 'just now';
+    el.textContent = '⚠ User count dropped to ' + count + ' (detected ' + when + ') — this can mean the database has been reset. Check immediately.';
+  }
+  function removeBanner() {
+    var el = document.getElementById(BANNER_ID);
+    if (el) el.remove();
+  }
+  function poll() {
+    fetch('/api/admin/health/alert-status')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (state) {
+        if (state && state.active) ensureBanner(state.count, state.detectedAt);
+        else removeBanner();
+      })
+      .catch(function () { /* quietly skip this tick — not worth its own error UI */ });
+  }
+  poll();
+  setInterval(poll, 60000);
+})();

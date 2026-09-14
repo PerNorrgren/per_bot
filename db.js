@@ -3072,6 +3072,14 @@ async function getDb() {
     // NULL for every file that was never a PDF, or a PDF that failed
     // conversion and is still being served as the PDF itself.
     "ALTER TABLE library_files ADD COLUMN original_pdf_filename TEXT",
+    // Per App 34 — low-user-count alarm, added the same night as the
+    // emergency restore feature above. Tracks whether an alert is
+    // currently "open" (already sent, waiting for the count to recover)
+    // so the 3-minute health check only sends one SMS+email per genuine
+    // incident rather than one every 3 minutes for as long as it lasts.
+    "ALTER TABLE app_config ADD COLUMN low_user_alert_active INTEGER DEFAULT 0",
+    "ALTER TABLE app_config ADD COLUMN low_user_alert_detected_at TEXT",
+    "ALTER TABLE app_config ADD COLUMN low_user_alert_count INTEGER",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -3784,6 +3792,83 @@ async function restoreFromBuffer(buffer) {
   }
   const SQL = await initSqlJs();
   db = new SQL.Database(buffer);
+  save();
+}
+
+// Per App 34 — automatic daily backups, written to the same persistent
+// Railway volume DB_PATH already lives on (so they survive a redeploy
+// just like the live DB does), in a `backups/` subfolder next to it.
+// Kept for BACKUP_RETENTION_DAYS then pruned automatically so this can't
+// grow unbounded — at roughly the live DB's own size per file, 30 days
+// is a trivial fraction of the 50GB volume.
+const BACKUP_RETENTION_DAYS = 30;
+function getBackupsDir() {
+  return path.join(path.dirname(DB_PATH), 'backups');
+}
+function runDailyBackupToVolume() {
+  if (!db) throw new Error('DB not initialised');
+  const dir = getBackupsDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 10);
+  const filePath = path.join(dir, `perbot-backup-${stamp}.db`);
+  fs.writeFileSync(filePath, Buffer.from(db.export()));
+
+  const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  let pruned = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    try {
+      if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); pruned++; }
+    } catch (e) { /* skip anything that can't be stat'd/removed */ }
+  }
+  return { file: `perbot-backup-${stamp}.db`, pruned };
+}
+// Listing + a single safe read, for the admin "Daily backups" panel.
+// Filenames are generated only by runDailyBackupToVolume above (a fixed
+// perbot-backup-YYYY-MM-DD.db shape) — getBackupFilePath still re-checks
+// that shape on every call rather than trusting the caller, since this
+// feeds a public-facing :filename route parameter.
+function listDailyBackups() {
+  const dir = getBackupsDir();
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter(name => /^perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(name))
+    .map(name => {
+      const stat = fs.statSync(path.join(dir, name));
+      return { filename: name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.filename.localeCompare(a.filename));
+}
+function getBackupFilePath(filename) {
+  if (!/^perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(filename)) throw new Error('Invalid backup filename.');
+  const filePath = path.join(getBackupsDir(), filename);
+  if (!fs.existsSync(filePath)) throw new Error('Backup not found.');
+  return filePath;
+}
+
+// Per App 34 — the low-user-count canary. `users` is the one table that
+// should never realistically drop below a small handful in a live
+// deployment with real members — a fresh/reset database (the same
+// failure this whole feature set responds to) always shows exactly 1
+// (the seed admin) or 0. Deliberately a plain COUNT, not a join or
+// anything schema-sensitive, since this needs to keep working even if
+// the reason for a low count is something stranger than expected.
+function getUserCount() {
+  return queryOne('SELECT COUNT(*) as c FROM users').c;
+}
+function getLowUserAlertState() {
+  const cfg = queryOne("SELECT low_user_alert_active, low_user_alert_detected_at, low_user_alert_count FROM app_config WHERE id='default'");
+  return {
+    active: !!(cfg && cfg.low_user_alert_active),
+    detectedAt: cfg ? cfg.low_user_alert_detected_at : null,
+    count: cfg ? cfg.low_user_alert_count : null,
+  };
+}
+function setLowUserAlertState(active, count) {
+  getDbSync().run(
+    "UPDATE app_config SET low_user_alert_active=?, low_user_alert_detected_at=CASE WHEN ?=1 THEN datetime('now') ELSE low_user_alert_detected_at END, low_user_alert_count=? WHERE id='default'",
+    [active ? 1 : 0, active ? 1 : 0, count]
+  );
   save();
 }
 
@@ -10847,6 +10932,8 @@ function getUserConsentHistory(userId) {
 
 module.exports = {
   exportDbBytes, restoreFromBuffer,
+  runDailyBackupToVolume, listDailyBackups, getBackupFilePath,
+  getUserCount, getLowUserAlertState, setLowUserAlertState,
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,
   logCronRun, getRecentCronRuns, getCronJobSummary, pruneCronLog,
