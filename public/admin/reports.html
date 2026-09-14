@@ -362,8 +362,9 @@
   // an actual <video> element, not an escaped text cell.
   function renderCampaignsReport(campaigns) {
     const el = document.getElementById('reportTable');
-    if (!campaigns.length) { el.innerHTML = '<div class="empty">No active or paused campaigns right now.</div>'; return; }
-    el.innerHTML = campaigns.map(entry => {
+    const campaignsHtml = !campaigns.length
+      ? '<div class="empty">No active or paused campaigns right now.</div>'
+      : campaigns.map(entry => {
       const c = entry.campaign;
       const byChannel = (entry.progress.byChannel || []).map(row =>
         `<span style="margin-right:14px">${escHtml(row.channel)}: ${row.sent_count} sent${row.failed_count ? `, <span style="color:rgba(230,140,120,0.85)">${row.failed_count} failed</span>` : ''}</span>`
@@ -398,6 +399,64 @@
         </div>
       `;
     }).join('');
+    el.innerHTML = campaignsHtml + `
+      <div style="padding:18px 20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+          <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Send History</div>
+          <div style="display:flex;gap:8px">
+            <select id="sendHistoryChannel" onchange="loadSendHistory()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
+              <option value="">All channels</option>
+              <option value="facebook">Facebook</option>
+              <option value="linkedin">LinkedIn</option>
+              <option value="instagram">Instagram</option>
+              <option value="threads">Threads</option>
+              <option value="email">Email</option>
+            </select>
+            <select id="sendHistoryStatus" onchange="loadSendHistory()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
+              <option value="">All statuses</option>
+              <option value="sent">Sent</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+        </div>
+        <div id="sendHistoryList" style="font-size:12.5px"><div class="empty">Loading…</div></div>
+      </div>
+    `;
+    loadSendHistory();
+  }
+  // Per's request, added right after the Campaigns report shipped —
+  // filter by channel and/or success/failure, with the date/time of
+  // each real send attempt. Re-fetches on every dropdown change rather
+  // than filtering client-side, so it stays correct against the 300-row
+  // server-side cap (getPostingSendHistory) instead of silently
+  // filtering an already-truncated local copy.
+  async function loadSendHistory() {
+    const el = document.getElementById('sendHistoryList');
+    if (!el) return; // report re-rendered/navigated away before this resolved
+    const channel = document.getElementById('sendHistoryChannel').value;
+    const status = document.getElementById('sendHistoryStatus').value;
+    el.innerHTML = '<div class="empty">Loading…</div>';
+    const params = new URLSearchParams();
+    if (channel) params.set('channel', channel);
+    if (status) params.set('status', status);
+    try {
+      const rows = await (await fetch(`/api/admin/postings/sends?${params}`)).json();
+      if (!rows.length) { el.innerHTML = '<div class="empty">No sends match this filter.</div>'; return; }
+      el.innerHTML = rows.map(r => {
+        const when = new Date(r.sent_at.replace(' ', 'T') + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+        const statusColor = r.status === 'failed' ? 'rgba(230,140,120,0.85)' : 'rgba(180,230,200,0.8)';
+        return `
+          <div style="display:flex;gap:14px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.05);align-items:baseline">
+            <div style="flex:0 0 150px;color:rgba(255,255,255,0.35);font-size:11.5px">${escHtml(when)}</div>
+            <div style="flex:0 0 80px;color:rgba(255,255,255,0.6)">${escHtml(r.channel)}</div>
+            <div style="flex:0 0 60px;color:${statusColor}">${escHtml(r.status)}</div>
+            <div style="flex:1;color:rgba(255,255,255,0.5);font-size:11.5px">${escHtml(r.campaign_name)}${r.status === 'failed' && r.error ? ` — ${escHtml(r.error)}` : ''}</div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      el.innerHTML = '<div class="empty">Could not load send history.</div>';
+    }
   }
   async function resolvePostingIssueRow(issueId, campaignId) {
     await fetch(`/api/admin/postings/issues/${issueId}/resolve`, { method: 'POST' });

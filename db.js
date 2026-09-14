@@ -10136,6 +10136,33 @@ function reportCampaigns() {
   };
 }
 
+// Per's request, added straight after seeing the Campaigns report live —
+// a filterable send history (channel, success/failure, date/time),
+// separate from the report above's per-campaign pool view. Every real
+// send attempt, not just open/unresolved failures — this is meant for
+// "show me everything that happened," the report above is "what needs
+// my attention." channel/status are optional filters; omitting either
+// means "any." Deliberately capped at 300 rows rather than truly
+// unbounded — a filtered view narrow enough to need more than that is
+// better served by narrowing the filter further, not by scrolling.
+function getPostingSendHistory({ channel, status, campaignId, limit = 300 } = {}) {
+  const where = [];
+  const params = [];
+  if (channel) { where.push('ps.channel=?'); params.push(channel); }
+  if (status)  { where.push('ps.status=?');  params.push(status); }
+  if (campaignId) { where.push('c.id=?'); params.push(campaignId); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  params.push(limit);
+  return queryAll(`
+    SELECT ps.id, ps.channel, ps.status, ps.error, ps.sent_at, ps.resolved_at,
+      p.id as posting_id, p.content, c.id as campaign_id, c.name as campaign_name
+    FROM posting_sends ps
+    JOIN postings p ON p.id = ps.posting_id
+    JOIN campaigns c ON c.id = p.campaign_id
+    ${whereSql}
+    ORDER BY ps.sent_at DESC LIMIT ?`, params);
+}
+
 // Per's request — "a history log in reports where you can see who you
 // sent certificates to." Reuses the existing email_log table (every
 // certificate send, whether self-serve from the client's own Account
@@ -11132,7 +11159,7 @@ module.exports = {
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
   getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress, getCampaignFailedSends,
-  getOpenPostingIssues, countOpenPostingIssues, resolvePostingIssue, resolveAllPostingIssuesForCampaign,
+  getOpenPostingIssues, countOpenPostingIssues, resolvePostingIssue, resolveAllPostingIssuesForCampaign, getPostingSendHistory,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)

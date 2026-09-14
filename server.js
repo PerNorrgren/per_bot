@@ -14048,6 +14048,20 @@ app.get('/api/admin/postings/issues', auth.requireAuthApi(['admin']), (req, res)
   try { res.json(db.getOpenPostingIssues()); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request, added right after the Campaigns report shipped — a
+// filterable send history for the Campaigns report's own use. Query
+// params are all optional: channel (facebook/linkedin/instagram/
+// threads/email), status (sent/failed), campaignId — any combination,
+// or none for "everything" (capped at 300, see getPostingSendHistory).
+app.get('/api/admin/postings/sends', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    res.json(db.getPostingSendHistory({
+      channel: req.query.channel || null,
+      status: req.query.status || null,
+      campaignId: req.query.campaignId || null,
+    }));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 app.post('/api/admin/postings/issues/:id/resolve', auth.requireAuthApi(['admin']), (req, res) => {
   try { db.resolvePostingIssue(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
