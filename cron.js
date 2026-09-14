@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -433,7 +433,26 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC), daily database backup (01:00 Europe/London), database health check (every 3 min)');
+  // ── Daily posting-issues reminder — 07:30 Europe/London ──
+  // Per's request, same night as the per-send notification emails.
+  // Deliberately local time like the daily backup above, not UTC — this
+  // is meant to land in Per's morning, not at a server-clock moment.
+  // sendDailyIssuesReminder itself only actually sends when there's a
+  // genuinely open issue, so a quiet stretch produces no email and no
+  // cron_log row either — same "only log when there's something to
+  // report" reasoning as stale-chat-sweep and database-health above.
+  cron.schedule('30 7 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendDailyIssuesReminder();
+      if (result.sent) record('daily_issues_reminder', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] daily issues reminder failed:', e.message);
+      record('daily_issues_reminder', 'failed', null, e.message, t0);
+    }
+  }, { timezone: 'Europe/London' });
+
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC), daily database backup (01:00 Europe/London), database health check (every 3 min), daily posting-issues reminder (07:30 Europe/London)');
 }
 
 module.exports = { startCronJobs };

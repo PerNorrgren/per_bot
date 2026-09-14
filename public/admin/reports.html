@@ -353,6 +353,62 @@
     setTimeout(() => { btn.textContent = 'Copy image'; }, 2500);
   }
 
+  // Per's request — the missing Campaigns report. Per campaign: its
+  // posting pool (content + whichever video is attached, if any — the
+  // data was already on every posting row, just never shown anywhere),
+  // per-channel sent/failed totals, and its own currently-open issues
+  // with a one-click Resolve. Deliberately custom-rendered rather than
+  // forced into the generic flat table above — a posting's video needs
+  // an actual <video> element, not an escaped text cell.
+  function renderCampaignsReport(campaigns) {
+    const el = document.getElementById('reportTable');
+    if (!campaigns.length) { el.innerHTML = '<div class="empty">No active or paused campaigns right now.</div>'; return; }
+    el.innerHTML = campaigns.map(entry => {
+      const c = entry.campaign;
+      const byChannel = (entry.progress.byChannel || []).map(row =>
+        `<span style="margin-right:14px">${escHtml(row.channel)}: ${row.sent_count} sent${row.failed_count ? `, <span style="color:rgba(230,140,120,0.85)">${row.failed_count} failed</span>` : ''}</span>`
+      ).join('');
+      const postingsHtml = entry.postings.map(p => `
+        <div style="border-top:1px solid rgba(255,255,255,0.06);padding:10px 0">
+          <div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-bottom:4px">${escHtml(p.channel)}${p.video_title ? ` · video: ${escHtml(p.video_title)}` : ' · no video attached'} · ${escHtml(p.status)}</div>
+          <div style="font-size:12.5px;color:rgba(255,255,255,0.7);white-space:pre-wrap">${escHtml((p.content || '').slice(0, 220))}${(p.content || '').length > 220 ? '…' : ''}</div>
+          ${p.media_url ? `<video src="${escHtml(p.media_url)}" controls style="max-width:180px;max-height:100px;margin-top:6px;border-radius:6px"></video>` : ''}
+        </div>
+      `).join('');
+      const issuesHtml = entry.openIssues.length ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(230,140,120,0.25)">
+          <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(230,140,120,0.75);margin-bottom:6px">Open issues (${entry.openIssues.length})</div>
+          ${entry.openIssues.map(i => `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:12px">
+              <span style="color:rgba(255,255,255,0.6)"><b>${escHtml(i.channel)}</b> — ${escHtml(i.error || '')} <span style="color:rgba(255,255,255,0.3)">(${escHtml(i.sent_at)})</span></span>
+              <button class="btn sm" onclick="resolvePostingIssueRow('${i.id}', '${c.id}')">Resolve</button>
+            </div>
+          `).join('')}
+          <button class="btn sm" style="margin-top:6px" onclick="resolveAllIssuesForCampaign('${c.id}')">Resolve all for this campaign</button>
+        </div>` : '';
+      return `
+        <div style="padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.06)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+            <div style="font-size:15px;color:rgba(255,255,255,0.85)">${escHtml(c.name)} <span style="font-size:11px;color:rgba(255,255,255,0.35)">· ${escHtml(c.status)}${c.type ? ' · ' + escHtml(c.type) : ''}</span></div>
+            <div style="font-size:11.5px;color:rgba(255,255,255,0.45)">${byChannel || 'No sends yet'}</div>
+          </div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px">${entry.postings.length} posting(s) in the pool</div>
+          ${postingsHtml}
+          ${issuesHtml}
+        </div>
+      `;
+    }).join('');
+  }
+  async function resolvePostingIssueRow(issueId, campaignId) {
+    await fetch(`/api/admin/postings/issues/${issueId}/resolve`, { method: 'POST' });
+    loadReport('campaigns');
+  }
+  async function resolveAllIssuesForCampaign(campaignId) {
+    if (!(await appConfirm('Mark every open issue for this campaign as resolved?'))) return;
+    await fetch(`/api/admin/campaigns/${campaignId}/issues/resolve-all`, { method: 'POST' });
+    loadReport('campaigns');
+  }
+
   async function openEmailJobContent(i) {
     const j = _currentJobs[i];
     document.getElementById('emailJobContentTitle').textContent = j.subject || '(no subject)';
@@ -467,6 +523,8 @@
         renderEmailHealthReport(data.emailHealth);
       } else if (data.images) {
         renderGeneratedImagesReport(data.images);
+      } else if (data.campaigns) {
+        renderCampaignsReport(data.campaigns);
       } else if (data.table && data.table.rows && data.table.rows.length) {
         tableEl.innerHTML =
           `<div class="report-table-hdr">${data.table.columns.map(c => `<div>${escHtml(c)}</div>`).join('')}</div>` +

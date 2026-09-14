@@ -3080,6 +3080,13 @@ async function getDb() {
     "ALTER TABLE app_config ADD COLUMN low_user_alert_active INTEGER DEFAULT 0",
     "ALTER TABLE app_config ADD COLUMN low_user_alert_detected_at TEXT",
     "ALTER TABLE app_config ADD COLUMN low_user_alert_count INTEGER",
+    // Per's request — a persistent, actionable issues log for posting
+    // failures, distinct from posting_sends' role as a plain history.
+    // NULL = still outstanding; a timestamp means Per has looked at it
+    // and dealt with it (or decided it needs no action) — the daily
+    // reminder counts NULL rows only, so resolving something here is
+    // what actually stops it nagging tomorrow.
+    "ALTER TABLE posting_sends ADD COLUMN resolved_at TEXT",
   ];
   migrations.forEach(sql => {
     try { db.run(sql); } catch(e) { /* column already exists — ignore */ }
@@ -8167,8 +8174,21 @@ function setChannelSchedule(channel, days, times, cooldownDays) {
 // Has this channel already fired for the given exact slot (day+time)
 // today? Guards the engine against firing the same slot twice if the
 // cron ticks more than once within that minute window.
+// Per App 34 — real regression found while diagnosing LinkedIn's 288
+// failed sends against 0 successes: this function only counted
+// status='sent' as "this slot is handled today" — the exact same bug
+// class Per App 33 already fixed once, in the older engine's own copy
+// of this same idea (see server.js's cutover notes). This newer
+// unified-postings-engine version of it was never given the same fix.
+// A failed attempt (LinkedIn never being connected, in this case) left
+// the slot looking unfired, so fireDuePostings retried the same
+// guaranteed-to-fail send on every single 5-minute cron tick all day,
+// every day, instead of once per scheduled slot — 288 near-identical
+// failures instead of the ~3 a real "once daily" schedule would produce
+// over the same window. Fixed the same way as before: any attempt,
+// sent or failed, now closes out the slot for the day.
 function hasFiredSlotToday(channel, slotTime) {
-  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? AND status='sent' LIMIT 1`, [channel, slotTime]);
+  return !!queryOne(`SELECT 1 FROM posting_sends WHERE channel=? AND slot_time=? LIMIT 1`, [channel, slotTime]);
 }
 
 // Per's request — a real progress view for a live campaign: how many
@@ -8209,6 +8229,39 @@ function getCampaignFailedSends(campaignId, limit = 20) {
     FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
     WHERE p.campaign_id = ? AND ps.status = 'failed'
     ORDER BY ps.sent_at DESC LIMIT ?`, [campaignId, limit]);
+}
+
+// Per's request — a real, cross-campaign issues log, not just a
+// per-campaign failure count. Every failed send is a row here already
+// (posting_sends); resolved_at is the only thing this adds — NULL
+// means still outstanding. getOpenPostingIssues feeds both the admin
+// Issues panel and the daily reminder email; resolvePostingIssue is
+// the one action that clears a row off both.
+function getOpenPostingIssues(limit = 200) {
+  return queryAll(`
+    SELECT ps.id, ps.channel, ps.error, ps.sent_at, ps.slot_time,
+      p.id as posting_id, p.content, c.id as campaign_id, c.name as campaign_name
+    FROM posting_sends ps
+    JOIN postings p ON p.id = ps.posting_id
+    JOIN campaigns c ON c.id = p.campaign_id
+    WHERE ps.status = 'failed' AND ps.resolved_at IS NULL
+    ORDER BY ps.sent_at DESC LIMIT ?`, [limit]);
+}
+function countOpenPostingIssues() {
+  return queryOne(`SELECT COUNT(*) as c FROM posting_sends WHERE status='failed' AND resolved_at IS NULL`).c;
+}
+function resolvePostingIssue(id) {
+  getDbSync().run(`UPDATE posting_sends SET resolved_at=datetime('now') WHERE id=?`, [id]);
+  save();
+}
+function resolveAllPostingIssuesForCampaign(campaignId) {
+  getDbSync().run(
+    `UPDATE posting_sends SET resolved_at=datetime('now')
+     WHERE resolved_at IS NULL AND status='failed'
+       AND posting_id IN (SELECT id FROM postings WHERE campaign_id=?)`,
+    [campaignId]
+  );
+  save();
 }
 
 // ── Campaign videos (Per's request) ──
@@ -10047,6 +10100,42 @@ function reportGeneratedImages() {
   };
 }
 
+// Per's request — the one report that was genuinely missing, added the
+// same night as the LinkedIn/hasFiredSlotToday incident that made the
+// gap obvious. Deliberately campaign-centric rather than a flat send
+// log: each active/paused campaign gets its full posting pool (with
+// whichever video is attached, via campaign_video_id — the same field
+// that was already on every posting, just never surfaced anywhere
+// before this), its own progress figures (same numbers Progress/Failed
+// Sends already showed per-campaign), and its open issues specifically
+// (resolved_at IS NULL) rather than the full historical failure list.
+function reportCampaigns() {
+  const campaigns = queryAll(`SELECT * FROM campaigns WHERE status IN ('active','paused') ORDER BY started_at DESC, created_at DESC`);
+  const openIssuesTotal = countOpenPostingIssues();
+  const result = campaigns.map(c => {
+    const postings = queryAll(`
+      SELECT p.*, cv.title as video_title
+      FROM postings p LEFT JOIN campaign_videos cv ON cv.id = p.campaign_video_id
+      WHERE p.campaign_id=? ORDER BY p.created_at ASC`, [c.id]);
+    const progress = getCampaignProgress(c.id);
+    const openIssues = queryAll(`
+      SELECT ps.id, ps.channel, ps.error, ps.sent_at
+      FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
+      WHERE p.campaign_id=? AND ps.status='failed' AND ps.resolved_at IS NULL
+      ORDER BY ps.sent_at DESC LIMIT 15`, [c.id]);
+    return { campaign: c, postings, progress, openIssues };
+  });
+  return {
+    tiles: [
+      { label: 'Active campaigns', value: campaigns.filter(c => c.status === 'active').length },
+      { label: 'Paused campaigns', value: campaigns.filter(c => c.status === 'paused').length },
+      { label: 'Open posting issues (all campaigns)', value: openIssuesTotal },
+    ],
+    campaigns: result,
+    note: campaigns.length ? null : 'No active or paused campaigns right now.',
+  };
+}
+
 // Per's request — "a history log in reports where you can see who you
 // sent certificates to." Reuses the existing email_log table (every
 // certificate send, whether self-serve from the client's own Account
@@ -10996,7 +11085,7 @@ module.exports = {
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
   shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient, getEmailJobRows,
-  createAiGenerateJob, getAiGenerateJob, markAiGenerateJobDone, markAiGenerateJobError, getPendingAiGenerateJobs, pruneOldAiGenerateJobs, reportGeneratedImages,
+  createAiGenerateJob, getAiGenerateJob, markAiGenerateJobDone, markAiGenerateJobError, getPendingAiGenerateJobs, pruneOldAiGenerateJobs, reportGeneratedImages, reportCampaigns,
   // Programmes
   assignProgramme, getProgrammesForUser,
   // History
@@ -11043,6 +11132,7 @@ module.exports = {
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
   getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress, getCampaignFailedSends,
+  getOpenPostingIssues, countOpenPostingIssues, resolvePostingIssue, resolveAllPostingIssuesForCampaign,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)

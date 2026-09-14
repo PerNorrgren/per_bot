@@ -9223,6 +9223,7 @@ const REPORTS = {
   email_health:        { title: 'Email Health',          category: 'System',  run: () => db.reportEmailHealth() },
   savers_stale_state:  { title: 'Savers: Stale State',    category: 'System',  run: () => db.reportSaversStaleState() },
   generated_images:    { title: 'Generated Images',       category: 'System',  run: () => db.reportGeneratedImages() },
+  campaigns:           { title: 'Campaigns',              category: 'Marketing', run: () => db.reportCampaigns() },
 };
 
 app.get('/api/admin/reports', auth.requireAuthApi(['admin']), (req, res) => {
@@ -14039,6 +14040,40 @@ app.get('/api/admin/campaigns/:id/failed-sends', auth.requireAuthApi(['admin']),
   try { res.json(db.getCampaignFailedSends(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a real, cross-campaign issues log (not just per-
+// campaign failure counts), an explicit resolve action so it's a real
+// worklist rather than a growing history, and a daily reminder email
+// if anything's still sitting open. See db.getOpenPostingIssues et al.
+app.get('/api/admin/postings/issues', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.getOpenPostingIssues()); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/postings/issues/:id/resolve', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.resolvePostingIssue(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/campaigns/:id/issues/resolve-all', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.resolveAllPostingIssuesForCampaign(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per's request — checked daily (07:30 Europe/London, cron.js), not on
+// a tick like checkDatabaseHealth above: an open posting issue isn't
+// urgent in the same way a wiped database is, so this is a standing
+// morning nudge rather than a near-real-time alarm. Only sends when
+// there's genuinely something open — an empty issues list produces no
+// email at all, so this can never turn into daily noise regardless of
+// how quiet things are.
+async function sendDailyIssuesReminder() {
+  const count = db.countOpenPostingIssues();
+  if (!count) return { sent: false, count: 0 };
+  const b = brand();
+  const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+  const issues = db.getOpenPostingIssues(10);
+  const preview = issues.map(i => `- [${i.campaign_name}] ${i.channel}: ${i.error} (${i.sent_at})`).join('\n');
+  const body = `${count} unresolved posting issue${count === 1 ? '' : 's'} — this needs a look today.\n\nMost recent:\n${preview}${count > 10 ? `\n...and ${count - 10} more.` : ''}\n\nReview and resolve from Sales & Marketing → the relevant campaign, or from the new Campaigns report.`;
+  await sendEmail(adminEmail, `${b.name}: ${count} posting issue${count === 1 ? '' : 's'} need review`, `<pre style="font-family:Georgia,serif;white-space:pre-wrap">${body}</pre>`);
+  return { sent: true, count };
+}
 app.patch('/api/admin/campaigns/:id', auth.requireAuthApi(['admin']), (req, res) => {
   console.log('[campaign save] PATCH received for', req.params.id, 'body:', JSON.stringify(req.body));
   try {
@@ -14537,6 +14572,33 @@ async function sendDueCampaignSocialSteps() {
 // indefinitely without hand-scheduling each individual send.
 // ─────────────────────────────────────────────────────────────────────
 
+// Per's request — a real-time email after every single posting attempt
+// (success or failure alike), since the only visibility that existed
+// before this was opening the campaign and clicking Progress/Failed
+// Sends by hand. Deliberately fires on success too, not just failure —
+// Per asked for "what has been posted where," not just an error feed.
+// Kept as a fire-and-forget best-effort send (own try/catch) so a
+// notification-email problem can never affect the actual posting
+// result it's reporting on.
+async function notifyPostingResult(posting, campaign, channel, status, error, extra) {
+  try {
+    const b = brand();
+    const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+    const subject = `${status === 'sent' ? '✓' : '⚠'} ${b.name} posting ${status} — ${channel} (${campaign?.name || 'campaign'})`;
+    const lines = [
+      `Campaign: ${campaign?.name || '(unknown)'}`,
+      `Channel: ${channel}`,
+      `Status: ${status}`,
+      error ? `Error: ${error}` : null,
+      extra || null,
+      '',
+      'Message:',
+      posting.content || '(no content)',
+    ].filter(l => l !== null).join('\n');
+    await sendEmail(adminEmail, subject, `<pre style="font-family:Georgia,serif;white-space:pre-wrap">${lines}</pre>`);
+  } catch (e) { console.error('[posting notification] failed to send:', e.message); }
+}
+
 // Same campaign's own Link auto-append as fireCampaignSocialStep already
 // does — kept identical so a posting behaves exactly like a step did for
 // this piece, not a second slightly-different implementation of it.
@@ -14550,9 +14612,11 @@ async function firePostingSocial(posting, slotTime) {
   try {
     const post = await publishers.publishToChannel(posting.channel, postData);
     db.recordPostingSend(uuidv4(), posting.id, posting.channel, slotTime, 'sent', { externalPostId: post?.id || post?.post?.id || null });
+    notifyPostingResult(posting, campaign, posting.channel, 'sent', null);
     return { ok: true };
   } catch (e) {
     db.recordPostingSend(uuidv4(), posting.id, posting.channel, slotTime, 'failed', { error: e.message });
+    notifyPostingResult(posting, campaign, posting.channel, 'failed', e.message);
     return { ok: false, error: e.message };
   }
 }
@@ -14584,8 +14648,9 @@ async function firePostingEmail(posting, slotTime) {
     } catch (e) { failedCount++; }
   }
   const status = failedCount === 0 ? 'sent' : (sentCount === 0 ? 'failed' : 'sent');
-  db.recordPostingSend(uuidv4(), posting.id, 'email', slotTime, status,
-    { error: failedCount ? `${failedCount} of ${recipients.length} recipients failed` : null });
+  const errorNote = failedCount ? `${failedCount} of ${recipients.length} recipients failed` : null;
+  db.recordPostingSend(uuidv4(), posting.id, 'email', slotTime, status, { error: errorNote });
+  notifyPostingResult(posting, campaign, 'email', status, errorNote, `Recipients: ${sentCount} sent, ${failedCount} failed, ${recipients.length} total`);
   return { sentCount, failedCount, total: recipients.length };
 }
 
@@ -17516,7 +17581,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
   }
 }
 

@@ -1900,6 +1900,11 @@
         </div>
         ${p.channel==='email' ? `<input class="inline-input" type="text" id="postSubject_${p.id}" value="${escHtml(p.subject||'')}" style="width:100%;margin-bottom:6px" placeholder="Subject" onblur="savePostingEdit('${p.id}')"/>` : ''}
         <textarea class="inline-input" id="postContent_${p.id}" rows="3" style="width:100%;resize:vertical" onblur="savePostingEdit('${p.id}')">${escHtml(p.content||'')}</textarea>
+        ${p.media_url ? `
+          <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
+            <video src="${escHtml(p.media_url)}" controls style="max-width:220px;max-height:130px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)"></video>
+            <a href="${escHtml(p.media_url)}" target="_blank" style="font-size:11.5px;color:rgba(180,230,200,0.8)">Open video in new tab</a>
+          </div>` : `<div style="margin-top:6px;font-size:11.5px;color:rgba(255,255,255,0.35)">No video attached to this posting.</div>`}
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px">
           <div>
             <label style="font-size:10px;color:rgba(255,255,255,0.4)">Expiry</label><br/>
