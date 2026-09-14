@@ -10108,6 +10108,14 @@ app.patch('/api/admin/instance-sessions/:id', auth.requireAuthApi(['admin']), (r
     const fieldMap = { title:'title', scheduledAt:'scheduled_at', facilitatorNotes:'facilitator_notes', handout:'handout' };
     const fields = {};
     Object.keys(fieldMap).forEach(k => { if (req.body[k] !== undefined) fields[fieldMap[k]] = req.body[k]; });
+    // Per App 35 fix — the Sessions modal's freeform date field is typed
+    // as UK local time (same assumption as schedule_time), same
+    // conversion as generate-from-lessons above so a manual edit here
+    // can't silently reintroduce the same off-by-DST-offset bug.
+    if (fields.scheduled_at) {
+      const parts = parseLocalDateTimeParts(fields.scheduled_at);
+      if (parts) fields.scheduled_at = londonLocalToUtcIso(parts.year, parts.month, parts.day, parts.hour, parts.minute);
+    }
     db.updateInstanceSession(req.params.id, fields);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -10401,6 +10409,46 @@ app.patch('/api/admin/course-instances/:id/certificate-template', auth.requireAu
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per App 35 — Per's schedule_time ("19:00 UK Time") and every
+// per-session date typed into the Sessions modal are wall-clock UK
+// local time, not UTC. Everywhere else in this app treats scheduled_at
+// as genuine UTC (fmtSessionDateTime on the client re-localises it on
+// display; the session-reminders cron fires off it directly) — so the
+// bug was never the display, it was that generate-from-lessons and the
+// per-session save route were writing the typed local digits straight
+// into scheduled_at with a UTC 'Z' bolted on, no conversion. During BST
+// that's a silent 1-hour-early error (19:00 UK Time stored as 19:00Z,
+// which is 20:00 UK time) that only reveals itself once someone checks
+// the clock — and it self-corrects, confusingly, for any date once the
+// clocks go back, since UK time = UTC in winter. Twin of
+// getLocalDayHourDate above, but inverted: that one takes a UTC instant
+// and asks "what's the local wall-clock time," this takes an intended
+// local wall-clock time and asks "what UTC instant is that," using the
+// real Europe/London TZ database via Intl so BST/GMT and the exact
+// changeover date are never hand-maintained here.
+function londonLocalToUtcIso(year, month, day, hour, minute) {
+  const naiveUtcMs = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  const map = {};
+  fmt.formatToParts(new Date(naiveUtcMs)).forEach(p => { map[p.type] = p.value; });
+  const shownLondonMs = Date.UTC(+map.year, +map.month - 1, +map.day, +map.hour === 24 ? 0 : +map.hour, +map.minute, +map.second);
+  const offsetMs = shownLondonMs - naiveUtcMs; // current UK UTC offset: +1h in BST, 0 in GMT
+  return new Date(naiveUtcMs - offsetMs).toISOString();
+}
+// Parses a "YYYY-MM-DD HH:MM"-ish string (the Sessions modal's freeform
+// date field) into its parts, ignoring any trailing seconds/Z if
+// present. Returns null rather than guessing on anything it doesn't
+// recognise.
+function parseLocalDateTimeParts(text) {
+  const m = /^\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/.exec((text || '').trim());
+  if (!m) return null;
+  return { year: +m[1], month: +m[2], day: +m[3], hour: +m[4], minute: +m[5] };
+}
+
 // Per App 31 — server-side twin of content.html's
 // parseScheduleTimeBestEffort (the New Instance modal's End Time
 // helper). Same reasoning: Schedule time is deliberately plain text
@@ -10450,13 +10498,44 @@ app.post('/api/admin/course-instances/:id/sessions/generate-from-lessons', auth.
         // weeks offset), not a week after it.
         const base = new Date(instance.start_date + 'T00:00:00.000Z');
         base.setUTCDate(base.getUTCDate() + (lesson.lesson_number - 1) * 7);
-        if (parsedTime) base.setUTCHours(parsedTime.hour, parsedTime.minute, 0, 0);
-        scheduledAt = base.toISOString();
+        // Per App 35 fix — schedule_time ("19:00 UK Time") is UK local,
+        // not UTC. Date arithmetic above stays in UTC (it's just calendar
+        // maths, unaffected by timezone), but the time-of-day has to go
+        // through the real Europe/London offset for that specific date —
+        // see londonLocalToUtcIso above for why.
+        scheduledAt = parsedTime
+          ? londonLocalToUtcIso(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), parsedTime.hour, parsedTime.minute)
+          : base.toISOString();
       }
       db.addInstanceSession(uuidv4(), req.params.id, lesson.lesson_number, lesson.title, scheduledAt, '', '');
       created++;
     });
     res.json({ ok: true, created, skipped });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 35 — one-time repair for sessions generated before the
+// London-local-time fix above (every generate-from-lessons run to date
+// stored schedule_time's digits as literal UTC, so every existing
+// session in every instance is off by the BST/GMT offset for its own
+// date). Keeps each session's own calendar date exactly as stored —
+// that part was never wrong, only the time-of-day — and recomputes
+// just the time from the instance's schedule_time, correctly converted.
+// Safe to re-run: a session already correct is written back unchanged.
+app.post('/api/admin/course-instances/:id/sessions/resync-times', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const instance = db.getCourseInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found.' });
+    const parsedTime = parseScheduleTimeServerSide(instance.schedule_time);
+    if (!parsedTime) return res.status(400).json({ error: 'This instance has no recognisable Schedule Time set — nothing to resync from.' });
+    const sessions = db.getSessionsForInstance(req.params.id);
+    let updated = 0;
+    sessions.forEach(s => {
+      if (!s.scheduled_at) return;
+      const d = new Date(s.scheduled_at);
+      const newIso = londonLocalToUtcIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), parsedTime.hour, parsedTime.minute);
+      if (newIso !== s.scheduled_at) { db.updateInstanceSession(s.id, { scheduled_at: newIso }); updated++; }
+    });
+    res.json({ ok: true, updated, total: sessions.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

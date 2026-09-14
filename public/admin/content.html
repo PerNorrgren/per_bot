@@ -4535,6 +4535,22 @@ function startNewCertificateFromPicker(){
   _certPendingAssignInstanceId = instanceId;
   openCertificateTemplateEditor(null);
 }
+// Per App 35 fix — scheduled_at is stored as genuine UTC (server.js
+// converts this same field through the real Europe/London offset on
+// save, see londonLocalToUtcIso there). This is the display-side
+// inverse: without it, this field would show the raw UTC string, and
+// saving again unchanged would feed that UTC value back in as if it
+// were UK local time, silently shifting it by the BST/GMT offset on
+// every re-save that doesn't touch the date. Always shows/expects UK
+// local time here, regardless of the admin's own browser timezone.
+function toLondonLocalInputValue(iso){
+  if (!iso) return '';
+  const fmt = new Intl.DateTimeFormat('en-GB', { timeZone:'Europe/London', hour12:false,
+    year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  const map = {};
+  fmt.formatToParts(new Date(iso)).forEach(p => { map[p.type] = p.value; });
+  return `${map.year}-${map.month}-${map.day} ${map.hour === '24' ? '00' : map.hour}:${map.minute}`;
+}
 async function refreshSessionsModal(){
   const instanceId=document.getElementById('sessInstanceId').value;
   const sessions=await fetch(`/api/admin/course-instances/${instanceId}/sessions`).then(r=>r.json());
@@ -4544,7 +4560,7 @@ async function refreshSessionsModal(){
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
         <div style="font-size:14px;color:rgba(255,255,255,0.2);min-width:20px">${s.session_number}</div>
         <input type="text" value="${escAttr(s.title)}" id="sesstitle-${s.id}" style="flex:1"/>
-        <input type="text" value="${escAttr(s.scheduled_at||'')}" id="sessdate-${s.id}" placeholder="YYYY-MM-DD HH:MM" style="width:160px"/>
+        <input type="text" value="${escAttr(toLondonLocalInputValue(s.scheduled_at))}" id="sessdate-${s.id}" placeholder="YYYY-MM-DD HH:MM" style="width:160px"/>
       </div>
       ${renderSessionLessonFiles(s)}
       <textarea id="sesshandout-${s.id}" placeholder="Handout (visible to students)" rows="2" style="width:100%;margin-bottom:6px">${escAttr(s.handout)}</textarea>
@@ -4559,6 +4575,7 @@ async function refreshSessionsModal(){
   h+=`<div style="display:flex;gap:8px">
     <button class="btn primary sm" onclick="addSession()">+ Add session</button>
     <button class="btn sm" onclick="generateSessionsFromLessons()" title="Creates one session per lesson in this course, numbered and dated to match — skips any session number that already exists">Generate from lessons</button>
+    <button class="btn sm" onclick="resyncSessionTimes()" title="Keeps each session's own date, recomputes just the time-of-day from this instance's Schedule Time field above — fixes sessions created before the UK-time fix">Resync times from schedule</button>
   </div>`;
   el.innerHTML=h;
   // These two fields are recreated fresh on every refresh (new session added/
@@ -4586,6 +4603,14 @@ function renderSessionLessonFiles(s){
     ${studentFiles.length ? `<div>Student handout: ${studentFiles.map(fileLink).join('')}</div>` : ''}
     ${guideFiles.length ? `<div${studentFiles.length?' style="margin-top:4px"':''}>Teacher's guide: ${guideFiles.map(fileLink).join('')}</div>` : ''}
   </div>`;
+}
+async function resyncSessionTimes(){
+  const instanceId=document.getElementById('sessInstanceId').value;
+  const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/resync-times`,{method:'POST'});
+  const d=await res.json();
+  if(d.error){appAlert(d.error);return;}
+  await refreshSessionsModal();
+  appAlert(`${d.updated} of ${d.total} session${d.total===1?'':'s'} updated to match this instance's Schedule Time.`);
 }
 async function generateSessionsFromLessons(){
   const instanceId=document.getElementById('sessInstanceId').value;
