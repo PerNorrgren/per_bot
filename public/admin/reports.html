@@ -538,7 +538,7 @@
               <span style="color:${statusColor}">${escHtml(r.status)}</span> ·
               ${escHtml(when)}
             </div>
-            <div style="font-size:12.5px;color:rgba(255,255,255,0.7);white-space:pre-wrap">${escHtml((r.content || '').slice(0, 220))}${(r.content || '').length > 220 ? '…' : ''}</div>
+            <div style="font-size:12.5px;color:rgba(255,255,255,0.7);white-space:pre-wrap">${escHtml(r.content || '')}</div>
             ${r.status === 'failed' && r.error ? `<div style="font-size:11.5px;color:rgba(230,140,120,0.75);margin-top:4px">${escHtml(r.error)}</div>` : ''}
             ${r.media_url ? `<video src="${escHtml(r.media_url)}" controls style="max-width:180px;max-height:100px;margin-top:6px;border-radius:6px"></video>` : ''}
           </div>
