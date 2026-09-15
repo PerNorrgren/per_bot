@@ -17317,7 +17317,16 @@ async function sendDueSessionReminders() {
         try {
           const user = db.getUser(enrolment.user_id);
           if (!user) continue;
-          const sessionDateStr = sessionDate.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+          // Per's request — deep search after the splash-screen bug: this
+          // was the one other place a session's time reached a person
+          // without going through timezone-aware formatting first.
+          // toLocaleString with no timeZone option uses the SERVER's own
+          // system clock, not UK time — on Railway that's UTC, so a
+          // correctly-stored 18:00Z session (= 19:00 UK, BST) would have
+          // read "18:00" in every reminder email and SMS. Same root
+          // cause as the splash screen, different code path — that one
+          // never went through server-side toLocaleString at all.
+          const sessionDateStr = sessionDate.toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
           if (enrolment.reminder_email === undefined || enrolment.reminder_email) {
             await emailFn(user, session.course_title, session.title, sessionDateStr, session.course_instance_id);
           }
