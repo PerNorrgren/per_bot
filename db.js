@@ -8254,13 +8254,15 @@ function resolvePostingIssue(id) {
   getDbSync().run(`UPDATE posting_sends SET resolved_at=datetime('now') WHERE id=?`, [id]);
   save();
 }
-function resolveAllPostingIssuesForCampaign(campaignId) {
-  getDbSync().run(
-    `UPDATE posting_sends SET resolved_at=datetime('now')
-     WHERE resolved_at IS NULL AND status='failed'
-       AND posting_id IN (SELECT id FROM postings WHERE campaign_id=?)`,
-    [campaignId]
-  );
+// Per's request — "resolve all" needed to be scopeable to one channel
+// (mark every LinkedIn issue resolved, leave Instagram's alone), not
+// only all-or-nothing per campaign. channel is optional — omitted
+// means exactly the old all-channels behaviour, unchanged.
+function resolveAllPostingIssuesForCampaign(campaignId, channel) {
+  const where = ['resolved_at IS NULL', "status='failed'", 'posting_id IN (SELECT id FROM postings WHERE campaign_id=?)'];
+  const params = [campaignId];
+  if (channel) { where.push('channel=?'); params.push(channel); }
+  getDbSync().run(`UPDATE posting_sends SET resolved_at=datetime('now') WHERE ${where.join(' AND ')}`, params);
   save();
 }
 // Per's request — the issue-detail modal's "Delete posting" action also

@@ -494,7 +494,7 @@
               </div>
             `).join('')}
           </div>
-          <button class="btn sm" style="margin-top:6px" onclick="resolveAllIssuesForCampaign('${c.id}')">Resolve all for this campaign</button>
+          <button class="btn sm" style="margin-top:6px" onclick="resolveAllIssuesForCampaign('${c.id}')">Resolve all${selectedChannel ? ` (${selectedChannel} only)` : ' for this campaign'}</button>
         </div>` : '';
       return `
         <div style="padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.06)" data-campaign-block="${escHtml(c.id)}">
@@ -625,9 +625,17 @@
       feedback.textContent = e.message;
     }
   }
+  // Per's request — scoped to whichever channel is currently selected
+  // in the filter (e.g. "mark all the LinkedIn issues resolved"),
+  // leaving other channels' open issues untouched; with no channel
+  // filter set, this is unchanged from before — every open issue for
+  // the campaign.
   async function resolveAllIssuesForCampaign(campaignId) {
-    if (!(await appConfirm('Mark every open issue for this campaign as resolved?'))) return;
-    await fetch(`/api/admin/campaigns/${campaignId}/issues/resolve-all`, { method: 'POST' });
+    const channel = document.getElementById('sendChannelFilter').value;
+    const scopeText = channel ? `every open ${channel} issue for this campaign` : 'every open issue for this campaign';
+    if (!(await appConfirm(`Mark ${scopeText} as resolved?`))) return;
+    const params = channel ? `?channel=${encodeURIComponent(channel)}` : '';
+    await fetch(`/api/admin/campaigns/${campaignId}/issues/resolve-all${params}`, { method: 'POST' });
     refreshCampaignsReportData();
   }
 

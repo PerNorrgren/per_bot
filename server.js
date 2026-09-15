@@ -14172,7 +14172,7 @@ app.post('/api/admin/postings/issues/:id/resolve', auth.requireAuthApi(['admin']
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/campaigns/:id/issues/resolve-all', auth.requireAuthApi(['admin']), (req, res) => {
-  try { db.resolveAllPostingIssuesForCampaign(req.params.id); res.json({ ok: true }); }
+  try { db.resolveAllPostingIssuesForCampaign(req.params.id, req.query.channel || req.body?.channel || null); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 // Per's request — the Campaigns report's issue-detail modal's "Delete
