@@ -410,24 +410,37 @@
     const selectedCampaignId = stillValid ? prevSelected : '';
     const shown = selectedCampaignId ? bucketCampaigns.filter(e => e.campaign.id === selectedCampaignId) : bucketCampaigns;
 
+    // Per App 35 fix — these two selects get rebuilt from scratch on
+    // every change (same as campaignFilterSelect above), so without
+    // reading the outgoing element's value first and baking it back in
+    // as `selected`, a fresh <select> with no memory of the choice was
+    // silently replacing it: the dropdown visibly snapped back to "All"
+    // the instant you picked something, AND loadCampaignSendLines below
+    // read that just-reset default instead of what was actually chosen
+    // — so the filter looked entirely broken, not just cosmetically off.
+    const channelSelect = document.getElementById('sendChannelFilter');
+    const selectedChannel = channelSelect ? channelSelect.value : '';
+    const statusSelect = document.getElementById('sendStatusFilter');
+    const selectedStatus = statusSelect ? statusSelect.value : '';
+
     const filtersHtml = `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06);position:sticky;top:0;z-index:3;background:#0d1210">
         <select id="campaignFilterSelect" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
           <option value="">All campaigns${_campaignStatusFilter !== 'all' ? ` (${_campaignStatusFilter})` : ''}</option>
           ${bucketCampaigns.map(e => `<option value="${escHtml(e.campaign.id)}" ${e.campaign.id === selectedCampaignId ? 'selected' : ''}>${escHtml(e.campaign.name)}</option>`).join('')}
         </select>
         <select id="sendChannelFilter" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
-          <option value="">All channels</option>
-          <option value="facebook">Facebook</option>
-          <option value="linkedin">LinkedIn</option>
-          <option value="instagram">Instagram</option>
-          <option value="threads">Threads</option>
-          <option value="email">Email</option>
+          <option value="" ${selectedChannel === '' ? 'selected' : ''}>All channels</option>
+          <option value="facebook" ${selectedChannel === 'facebook' ? 'selected' : ''}>Facebook</option>
+          <option value="linkedin" ${selectedChannel === 'linkedin' ? 'selected' : ''}>LinkedIn</option>
+          <option value="instagram" ${selectedChannel === 'instagram' ? 'selected' : ''}>Instagram</option>
+          <option value="threads" ${selectedChannel === 'threads' ? 'selected' : ''}>Threads</option>
+          <option value="email" ${selectedChannel === 'email' ? 'selected' : ''}>Email</option>
         </select>
         <select id="sendStatusFilter" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
-          <option value="">Sent + failed</option>
-          <option value="sent">Sent only</option>
-          <option value="failed">Failed only</option>
+          <option value="" ${selectedStatus === '' ? 'selected' : ''}>Sent + failed</option>
+          <option value="sent" ${selectedStatus === 'sent' ? 'selected' : ''}>Sent only</option>
+          <option value="failed" ${selectedStatus === 'failed' ? 'selected' : ''}>Failed only</option>
         </select>
       </div>`;
 
@@ -436,15 +449,22 @@
       const byChannel = (entry.progress.byChannel || []).map(row =>
         `<span style="margin-right:14px">${escHtml(row.channel)}: ${row.sent_count} sent${row.failed_count ? `, <span style="color:rgba(230,140,120,0.85)">${row.failed_count} failed</span>` : ''}</span>`
       ).join('');
+      // Per App 35 fix — this row list is its own scroll region now
+      // (rather than flowing straight into the page's single scroll
+      // area), so "Open issues (n)" — which sits outside/above it —
+      // can't scroll out of view while reading down a long list; same
+      // reasoning applies to the send-lines list below.
       const issuesHtml = entry.openIssues.length ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(230,140,120,0.25)">
           <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(230,140,120,0.75);margin-bottom:6px">Open issues (${entry.openIssues.length})</div>
-          ${entry.openIssues.map(i => `
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:12px">
-              <span style="color:rgba(255,255,255,0.6)"><b>${escHtml(i.channel)}</b> — ${escHtml(i.error || '')} <span style="color:rgba(255,255,255,0.3)">(${escHtml(i.sent_at)})</span></span>
-              <button class="btn sm" onclick="resolvePostingIssueRow('${i.id}', '${c.id}')">Resolve</button>
-            </div>
-          `).join('')}
+          <div style="max-height:220px;overflow-y:auto;padding-right:4px">
+            ${entry.openIssues.map(i => `
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:12px">
+                <span style="color:rgba(255,255,255,0.6)"><b>${escHtml(i.channel)}</b> — ${escHtml(i.error || '')} <span style="color:rgba(255,255,255,0.3)">(${escHtml(i.sent_at)})</span></span>
+                <button class="btn sm" onclick="resolvePostingIssueRow('${i.id}', '${c.id}')">Resolve</button>
+              </div>
+            `).join('')}
+          </div>
           <button class="btn sm" style="margin-top:6px" onclick="resolveAllIssuesForCampaign('${c.id}')">Resolve all for this campaign</button>
         </div>` : '';
       return `
@@ -454,7 +474,7 @@
             <div style="font-size:11.5px;color:rgba(255,255,255,0.45)">${byChannel || 'No sends yet'}</div>
           </div>
           ${issuesHtml}
-          <div id="sendLines-${escHtml(c.id)}" style="margin-top:6px"><div class="empty">Loading…</div></div>
+          <div id="sendLines-${escHtml(c.id)}" style="margin-top:6px;max-height:340px;overflow-y:auto;padding-right:4px"><div class="empty">Loading…</div></div>
         </div>
       `;
     }).join('');
