@@ -353,29 +353,89 @@
     setTimeout(() => { btn.textContent = 'Copy image'; }, 2500);
   }
 
-  // Per's request — the missing Campaigns report. Per campaign: its
-  // posting pool (content + whichever video is attached, if any — the
-  // data was already on every posting row, just never shown anywhere),
+  // Per's request — the Campaigns report. Per campaign: name/status,
   // per-channel sent/failed totals, and its own currently-open issues
-  // with a one-click Resolve. Deliberately custom-rendered rather than
-  // forced into the generic flat table above — a posting's video needs
-  // an actual <video> element, not an escaped text cell.
-  function renderCampaignsReport(campaigns) {
+  // with a one-click Resolve — these three are always shown in full,
+  // never touched by the filters below (they're the at-a-glance totals,
+  // not a search result). Below that, the actual send log — Per App 35
+  // made this filterable: the three tiles double as a campaign-status
+  // filter (click one to narrow to just active/paused/campaigns with
+  // open issues, click the selected one again for "all"), a dropdown to
+  // narrow further to one specific campaign, and channel/sent-failed
+  // dropdowns that filter the send lines themselves via
+  // getPostingSendHistory. Each line needs an actual <video> element
+  // for its attached video, not an escaped text cell — deliberately
+  // custom-rendered rather than forced into the generic flat table
+  // above.
+  let _campaignsReportData = [];
+  let _campaignStatusFilter = 'all'; // 'all' | 'active' | 'paused' | 'issues'
+  function campaignTileClick(bucket) {
+    _campaignStatusFilter = (_campaignStatusFilter === bucket) ? 'all' : bucket;
+    document.getElementById('campaignFilterSelect').value = ''; // status bucket changed — a previously-picked campaign may no longer be in it
+    renderCampaignsReport(_campaignsReportData);
+  }
+  function campaignsMatchingStatusFilter(campaigns) {
+    if (_campaignStatusFilter === 'active') return campaigns.filter(e => e.campaign.status === 'active');
+    if (_campaignStatusFilter === 'paused') return campaigns.filter(e => e.campaign.status === 'paused');
+    if (_campaignStatusFilter === 'issues') return campaigns.filter(e => e.openIssues.length > 0);
+    return campaigns;
+  }
+  function renderCampaignsReport(data) {
+    const campaigns = data.campaigns;
+    _campaignsReportData = data;
+    const tilesEl = document.getElementById('reportTiles');
+    // Value/label come straight from data.tiles (server's real totals —
+    // notably countOpenPostingIssues() is NOT the same number as summing
+    // each campaign's openIssues here, since that array is capped at 15
+    // per campaign for display; only the bucket MEMBERSHIP check below
+    // needs "has at least one", which the cap doesn't affect).
+    const tileDefs = [
+      { bucket: 'active', ...( data.tiles[0] || {} ) },
+      { bucket: 'paused', ...( data.tiles[1] || {} ) },
+      { bucket: 'issues', ...( data.tiles[2] || {} ) },
+    ];
+    tilesEl.innerHTML = tileDefs.map(t => `
+      <div class="tile" style="cursor:pointer${_campaignStatusFilter === t.bucket ? ';border-color:rgba(180,230,200,0.5);background:rgba(180,230,200,0.07)' : ''}" onclick="campaignTileClick('${t.bucket}')">
+        <div class="tile-value">${escHtml(t.value)}</div>
+        <div class="tile-label">${escHtml(t.label)}</div>
+      </div>`).join('');
+
     const el = document.getElementById('reportTable');
-    const campaignsHtml = !campaigns.length
-      ? '<div class="empty">No active or paused campaigns right now.</div>'
-      : campaigns.map(entry => {
+    if (!campaigns.length) { el.innerHTML = '<div class="empty">No active or paused campaigns right now.</div>'; return; }
+
+    const bucketCampaigns = campaignsMatchingStatusFilter(campaigns);
+    const campaignSelect = document.getElementById('campaignFilterSelect');
+    const prevSelected = campaignSelect ? campaignSelect.value : '';
+    const stillValid = bucketCampaigns.some(e => e.campaign.id === prevSelected);
+    const selectedCampaignId = stillValid ? prevSelected : '';
+    const shown = selectedCampaignId ? bucketCampaigns.filter(e => e.campaign.id === selectedCampaignId) : bucketCampaigns;
+
+    const filtersHtml = `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <select id="campaignFilterSelect" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
+          <option value="">All campaigns${_campaignStatusFilter !== 'all' ? ` (${_campaignStatusFilter})` : ''}</option>
+          ${bucketCampaigns.map(e => `<option value="${escHtml(e.campaign.id)}" ${e.campaign.id === selectedCampaignId ? 'selected' : ''}>${escHtml(e.campaign.name)}</option>`).join('')}
+        </select>
+        <select id="sendChannelFilter" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
+          <option value="">All channels</option>
+          <option value="facebook">Facebook</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="instagram">Instagram</option>
+          <option value="threads">Threads</option>
+          <option value="email">Email</option>
+        </select>
+        <select id="sendStatusFilter" onchange="renderCampaignsReport(_campaignsReportData)" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
+          <option value="">Sent + failed</option>
+          <option value="sent">Sent only</option>
+          <option value="failed">Failed only</option>
+        </select>
+      </div>`;
+
+    const campaignBlocksHtml = shown.map(entry => {
       const c = entry.campaign;
       const byChannel = (entry.progress.byChannel || []).map(row =>
         `<span style="margin-right:14px">${escHtml(row.channel)}: ${row.sent_count} sent${row.failed_count ? `, <span style="color:rgba(230,140,120,0.85)">${row.failed_count} failed</span>` : ''}</span>`
       ).join('');
-      const postingsHtml = entry.postings.map(p => `
-        <div style="border-top:1px solid rgba(255,255,255,0.06);padding:10px 0">
-          <div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-bottom:4px">${escHtml(p.channel)}${p.video_title ? ` · video: ${escHtml(p.video_title)}` : ' · no video attached'} · ${escHtml(p.status)}</div>
-          <div style="font-size:12.5px;color:rgba(255,255,255,0.7);white-space:pre-wrap">${escHtml((p.content || '').slice(0, 220))}${(p.content || '').length > 220 ? '…' : ''}</div>
-          ${p.media_url ? `<video src="${escHtml(p.media_url)}" controls style="max-width:180px;max-height:100px;margin-top:6px;border-radius:6px"></video>` : ''}
-        </div>
-      `).join('');
       const issuesHtml = entry.openIssues.length ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(230,140,120,0.25)">
           <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(230,140,120,0.75);margin-bottom:6px">Open issues (${entry.openIssues.length})</div>
@@ -388,74 +448,55 @@
           <button class="btn sm" style="margin-top:6px" onclick="resolveAllIssuesForCampaign('${c.id}')">Resolve all for this campaign</button>
         </div>` : '';
       return `
-        <div style="padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <div style="padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.06)" data-campaign-block="${escHtml(c.id)}">
           <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
             <div style="font-size:15px;color:rgba(255,255,255,0.85)">${escHtml(c.name)} <span style="font-size:11px;color:rgba(255,255,255,0.35)">· ${escHtml(c.status)}${c.type ? ' · ' + escHtml(c.type) : ''}</span></div>
             <div style="font-size:11.5px;color:rgba(255,255,255,0.45)">${byChannel || 'No sends yet'}</div>
           </div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:2px">${entry.postings.length} posting(s) in the pool</div>
-          ${postingsHtml}
           ${issuesHtml}
+          <div id="sendLines-${escHtml(c.id)}" style="margin-top:6px"><div class="empty">Loading…</div></div>
         </div>
       `;
     }).join('');
-    el.innerHTML = campaignsHtml + `
-      <div style="padding:18px 20px">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
-          <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">Send History</div>
-          <div style="display:flex;gap:8px">
-            <select id="sendHistoryChannel" onchange="loadSendHistory()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
-              <option value="">All channels</option>
-              <option value="facebook">Facebook</option>
-              <option value="linkedin">LinkedIn</option>
-              <option value="instagram">Instagram</option>
-              <option value="threads">Threads</option>
-              <option value="email">Email</option>
-            </select>
-            <select id="sendHistoryStatus" onchange="loadSendHistory()" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:rgba(255,255,255,0.75);font-size:12px;padding:5px 8px">
-              <option value="">All statuses</option>
-              <option value="sent">Sent</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
-        </div>
-        <div id="sendHistoryList" style="font-size:12.5px"><div class="empty">Loading…</div></div>
-      </div>
-    `;
-    loadSendHistory();
+    el.innerHTML = filtersHtml + (campaignBlocksHtml || '<div class="empty">No campaigns match this filter.</div>');
+
+    shown.forEach(entry => loadCampaignSendLines(entry.campaign.id));
   }
-  // Per's request, added right after the Campaigns report shipped —
-  // filter by channel and/or success/failure, with the date/time of
-  // each real send attempt. Re-fetches on every dropdown change rather
-  // than filtering client-side, so it stays correct against the 300-row
-  // server-side cap (getPostingSendHistory) instead of silently
-  // filtering an already-truncated local copy.
-  async function loadSendHistory() {
-    const el = document.getElementById('sendHistoryList');
+  // Fetches and renders the filtered send lines for one campaign block —
+  // each line is a real send attempt (getPostingSendHistory), not a pool
+  // item, so it always has a genuine sent/failed status and a real
+  // date/time. content/video come along on the same query so a line
+  // reads the same as the old pool view used to, just per-attempt now.
+  async function loadCampaignSendLines(campaignId) {
+    const el = document.getElementById(`sendLines-${campaignId}`);
     if (!el) return; // report re-rendered/navigated away before this resolved
-    const channel = document.getElementById('sendHistoryChannel').value;
-    const status = document.getElementById('sendHistoryStatus').value;
-    el.innerHTML = '<div class="empty">Loading…</div>';
-    const params = new URLSearchParams();
+    const channel = document.getElementById('sendChannelFilter').value;
+    const status = document.getElementById('sendStatusFilter').value;
+    const params = new URLSearchParams({ campaignId });
     if (channel) params.set('channel', channel);
     if (status) params.set('status', status);
     try {
       const rows = await (await fetch(`/api/admin/postings/sends?${params}`)).json();
-      if (!rows.length) { el.innerHTML = '<div class="empty">No sends match this filter.</div>'; return; }
+      if (!document.getElementById(`sendLines-${campaignId}`)) return; // filters changed again mid-fetch
+      if (!rows.length) { el.innerHTML = '<div class="empty" style="padding:10px 0">No sends match this filter.</div>'; return; }
       el.innerHTML = rows.map(r => {
         const when = new Date(r.sent_at.replace(' ', 'T') + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
         const statusColor = r.status === 'failed' ? 'rgba(230,140,120,0.85)' : 'rgba(180,230,200,0.8)';
         return `
-          <div style="display:flex;gap:14px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.05);align-items:baseline">
-            <div style="flex:0 0 150px;color:rgba(255,255,255,0.35);font-size:11.5px">${escHtml(when)}</div>
-            <div style="flex:0 0 80px;color:rgba(255,255,255,0.6)">${escHtml(r.channel)}</div>
-            <div style="flex:0 0 60px;color:${statusColor}">${escHtml(r.status)}</div>
-            <div style="flex:1;color:rgba(255,255,255,0.5);font-size:11.5px">${escHtml(r.campaign_name)}${r.status === 'failed' && r.error ? ` — ${escHtml(r.error)}` : ''}</div>
+          <div style="border-top:1px solid rgba(255,255,255,0.06);padding:10px 0">
+            <div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-bottom:4px">
+              ${escHtml(r.channel)}${r.video_title ? ` · video: ${escHtml(r.video_title)}` : ''} ·
+              <span style="color:${statusColor}">${escHtml(r.status)}</span> ·
+              ${escHtml(when)}
+            </div>
+            <div style="font-size:12.5px;color:rgba(255,255,255,0.7);white-space:pre-wrap">${escHtml((r.content || '').slice(0, 220))}${(r.content || '').length > 220 ? '…' : ''}</div>
+            ${r.status === 'failed' && r.error ? `<div style="font-size:11.5px;color:rgba(230,140,120,0.75);margin-top:4px">${escHtml(r.error)}</div>` : ''}
+            ${r.media_url ? `<video src="${escHtml(r.media_url)}" controls style="max-width:180px;max-height:100px;margin-top:6px;border-radius:6px"></video>` : ''}
           </div>
         `;
       }).join('');
     } catch (e) {
-      el.innerHTML = '<div class="empty">Could not load send history.</div>';
+      if (document.getElementById(`sendLines-${campaignId}`)) el.innerHTML = '<div class="empty" style="padding:10px 0">Could not load sends.</div>';
     }
   }
   async function resolvePostingIssueRow(issueId, campaignId) {
@@ -568,12 +609,18 @@
       document.getElementById('reportDetailLabel').textContent = data.category || '';
       document.getElementById('reportDetailTitle').textContent = data.title || '';
 
-      document.getElementById('reportTiles').innerHTML = (data.tiles || []).map(t => `
-        <div class="tile">
-          <div class="tile-value">${escHtml(t.value)}</div>
-          <div class="tile-label">${escHtml(t.label)}</div>
-        </div>
-      `).join('') || '<div class="empty">No summary figures for this report.</div>';
+      // Campaigns' tiles double as click-to-filter controls and are
+      // rendered by renderCampaignsReport itself, below — the generic
+      // static render here would just get overwritten a line later and
+      // lose the click handlers in the meantime.
+      if (!data.campaigns) {
+        document.getElementById('reportTiles').innerHTML = (data.tiles || []).map(t => `
+          <div class="tile">
+            <div class="tile-value">${escHtml(t.value)}</div>
+            <div class="tile-label">${escHtml(t.label)}</div>
+          </div>
+        `).join('') || '<div class="empty">No summary figures for this report.</div>';
+      }
 
       const tableEl = document.getElementById('reportTable');
       if (data.jobs) {
@@ -583,7 +630,7 @@
       } else if (data.images) {
         renderGeneratedImagesReport(data.images);
       } else if (data.campaigns) {
-        renderCampaignsReport(data.campaigns);
+        renderCampaignsReport(data);
       } else if (data.table && data.table.rows && data.table.rows.length) {
         tableEl.innerHTML =
           `<div class="report-table-hdr">${data.table.columns.map(c => `<div>${escHtml(c)}</div>`).join('')}</div>` +

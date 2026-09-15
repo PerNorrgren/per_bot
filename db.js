@@ -10136,15 +10136,20 @@ function reportCampaigns() {
   };
 }
 
-// Per's request, added straight after seeing the Campaigns report live —
-// a filterable send history (channel, success/failure, date/time),
-// separate from the report above's per-campaign pool view. Every real
-// send attempt, not just open/unresolved failures — this is meant for
-// "show me everything that happened," the report above is "what needs
-// my attention." channel/status are optional filters; omitting either
-// means "any." Deliberately capped at 300 rows rather than truly
-// unbounded — a filtered view narrow enough to need more than that is
-// better served by narrowing the filter further, not by scrolling.
+// Per's request, added straight after seeing the Campaigns report live,
+// then folded into that report itself in Per App 35 — every real send
+// attempt (channel, success/failure, date/time, plus the post content
+// and video so a filtered result reads the same as the pool view used
+// to), filterable by channel and/or success/failure and/or a specific
+// campaign. This is "show me everything that happened, narrowed
+// however I like," as opposed to the campaign header's byChannel totals
+// and open-issues list, which are deliberately never filtered by these
+// same controls — they're the at-a-glance totals, not a search result.
+// channel/status/campaignId are all optional; omitting any means "any".
+// Deliberately capped at 300 rows rather than truly unbounded — a
+// filtered view narrow enough to need more than that is better served
+// by narrowing the filter further (a specific campaign, in practice),
+// not by scrolling.
 function getPostingSendHistory({ channel, status, campaignId, limit = 300 } = {}) {
   const where = [];
   const params = [];
@@ -10155,10 +10160,12 @@ function getPostingSendHistory({ channel, status, campaignId, limit = 300 } = {}
   params.push(limit);
   return queryAll(`
     SELECT ps.id, ps.channel, ps.status, ps.error, ps.sent_at, ps.resolved_at,
-      p.id as posting_id, p.content, c.id as campaign_id, c.name as campaign_name
+      p.id as posting_id, p.content, p.media_url, c.id as campaign_id, c.name as campaign_name,
+      cv.title as video_title
     FROM posting_sends ps
     JOIN postings p ON p.id = ps.posting_id
     JOIN campaigns c ON c.id = p.campaign_id
+    LEFT JOIN campaign_videos cv ON cv.id = p.campaign_video_id
     ${whereSql}
     ORDER BY ps.sent_at DESC LIMIT ?`, params);
 }
