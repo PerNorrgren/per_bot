@@ -5233,6 +5233,41 @@ async function runDailyBackup() {
 
   return { file: `perbot-backup-${stamp}.db`, pruned: toDelete.length };
 }
+// Per's request, added while investigating why the 01:00 job hadn't
+// fired yet — a 05:30 UK follow-up (see cron.js) that checks R2
+// directly for today's exact backup key (same date-stamp logic as
+// runDailyBackup above, so "today" always means the file that job
+// would have written) rather than trusting cron_log, since the two are
+// meant to be independent checks on each other. One retry attempt if
+// it's missing; an alert (email + SMS) only on a genuine double-failure
+// — missing at 05:30 AND the retry itself fails — reusing the exact
+// channel checkDatabaseHealth already uses for this account's other
+// real-incident alarm, since a backup silently not happening is the
+// same "call this immediately" severity as the low-user-count canary.
+async function verifyDailyBackup() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const key = `${BACKUP_R2_PREFIX}perbot-backup-${stamp}.db`;
+  const exists = await media.objectExists(key);
+  if (exists) return { ok: true, found: true, file: `perbot-backup-${stamp}.db` };
+
+  try {
+    const result = await runDailyBackup();
+    return { ok: true, found: false, retried: true, retryResult: result };
+  } catch (e) {
+    const b = brand();
+    const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+    const subject = `⚠ ${b.name}: daily backup missing and retry failed`;
+    const body = `Today's database backup (${key}) wasn't found in R2 at the 05:30 UK check, and a retry just now also failed:\n\n${e.message}\n\nThe live database itself is untouched — this is only about the backup not being written. Worth checking Railway's own backup schedule is still covering you in the meantime, and looking at the server logs around 01:00 and 05:30 UK for what's actually failing.`;
+    try { await sendEmail(adminEmail, subject, `<pre style="font-family:Georgia,serif;white-space:pre-wrap">${body}</pre>`); } catch (e2) { console.error('[backup verify] alert email failed:', e2.message); }
+    try {
+      if (sms.isConfigured()) {
+        const admin = db.getFacilitatorByEmail(adminEmail);
+        if (admin && admin.phone) await sms.sendSms(admin.phone, `${b.name}: today's DB backup is missing and a retry just failed. Check the app.`);
+      }
+    } catch (e3) { console.error('[backup verify] alert SMS failed:', e3.message); }
+    throw e; // let cron.js's own catch below log this to cron_log as a failed run too
+  }
+}
 app.get('/api/admin/backup/daily', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const objs = await media.listObjects(BACKUP_R2_PREFIX);
@@ -17741,7 +17776,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
   }
 }
 

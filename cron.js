@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -416,6 +416,27 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   }, { timezone: 'Europe/London' });
 
+  // ── Daily backup verification + one retry — 05:30 Europe/London ──
+  // Per's request, added while looking into why the 01:00 job above
+  // hadn't fired yet as of Per App 35: a genuinely independent check
+  // (queries R2 directly for today's file, doesn't just trust the
+  // 01:00 job's own cron_log entry) with one retry attempt if it's
+  // missing, and an email+SMS alert only if that retry also fails — see
+  // verifyDailyBackup in server.js for the detail. Chosen a few hours
+  // after 01:00 rather than right alongside it, so a slow start or a
+  // brief R2 hiccup at 01:00 sharp isn't mistaken for a real failure.
+  cron.schedule('30 5 * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await verifyDailyBackup();
+      console.log('[cron] daily backup verify:', JSON.stringify(result));
+      record('daily_backup_verify', 'ok', JSON.stringify(result), null, t0);
+    } catch (e) {
+      console.error('[cron] daily backup verify failed:', e.message);
+      record('daily_backup_verify', 'failed', null, e.message, t0);
+    }
+  }, { timezone: 'Europe/London' });
+
   // ── Database health check (low-user-count canary) — every 3 minutes ──
   // Per App 34, added alongside the daily backup above, same incident.
   // See checkDatabaseHealth in server.js for the actual threshold logic
@@ -454,7 +475,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   }, { timezone: 'Europe/London' });
 
-  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC), daily database backup (01:00 Europe/London), database health check (every 3 min), daily posting-issues reminder (07:30 Europe/London)');
+  console.log('[cron] scheduled: expired trial/membership sweep (06:50 UTC), MOTD (hourly, per-user day/hour prefs), scheduled messages (hourly, 5 past), bulkpublish queue (every 5 min), unified postings engine (every 5 min), trending context refresh (05:05 UTC), form response cleanup (05:20 UTC), email delivery poll (every 30 min), trial emails (07:10 UTC), inactivity reminders (07:20 UTC), renewal reminders (07:30 UTC), birthday messages (07:40 UTC), savers protocol (08:00 UTC), newsletter win-back (08:10 UTC), session reminders (every 15 min), stale chat sweep (every 10 min), cron log prune (05:00 UTC), daily database backup (01:00 Europe/London), daily backup verification + retry (05:30 Europe/London), database health check (every 3 min), daily posting-issues reminder (07:30 Europe/London)');
 }
 
 module.exports = { startCronJobs };
