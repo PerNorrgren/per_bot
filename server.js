@@ -17746,6 +17746,35 @@ async function runPostDbBootTasks() {
   // process died mid-generation (restart, deploy, crash), not a real
   // failure — pick it back up rather than leave it stuck forever.
   recoverPendingAiGenerateJobs();
+  // Per's request, added as an emergency same-day fix — tonight's
+  // Finding Mindfulness session was still showing the wrong time on
+  // the client splash screen, and the resync-times endpoint/button
+  // added earlier this session evidently hadn't been clicked (or that
+  // deploy hadn't gone out) in time for tonight. Rather than rely on
+  // an admin remembering to click a button under time pressure again,
+  // this now runs the identical correction automatically on every
+  // boot: for every course instance with a parseable Schedule Time,
+  // recompute each of its sessions' scheduled_at from that time via
+  // londonLocalToUtcIso, keeping each session's own date exactly as
+  // stored. Idempotent and cheap — an already-correct session is
+  // compared and left untouched, so this is safe to leave running
+  // permanently rather than pull back out later; "we fix it later"
+  // can mean deciding whether the button is still worth keeping
+  // alongside this, not whether the data itself is still wrong.
+  try {
+    let fixedTotal = 0;
+    for (const instance of db.getAllCourseInstances()) {
+      const parsedTime = parseScheduleTimeServerSide(instance.schedule_time);
+      if (!parsedTime) continue;
+      for (const s of db.getSessionsForInstance(instance.id)) {
+        if (!s.scheduled_at) continue;
+        const d = new Date(s.scheduled_at);
+        const correct = londonLocalToUtcIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), parsedTime.hour, parsedTime.minute);
+        if (correct !== s.scheduled_at) { db.updateInstanceSession(s.id, { scheduled_at: correct }); fixedTotal++; }
+      }
+    }
+    if (fixedTotal) console.log(`[boot] session-times self-heal: corrected ${fixedTotal} session(s) to match their instance's Schedule Time.`);
+  } catch (e) { console.error('[boot] session-times self-heal failed:', e.message); }
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
