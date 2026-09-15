@@ -173,6 +173,30 @@
     </div>
   </div>
 
+  <!-- Per App 35 — Campaigns report's issue detail: what actually went
+       wrong, the post content (editable), its video if any, and four
+       explicit actions with their own visible outcome, replacing a bare
+       Resolve button that gave no feedback either way. -->
+  <div class="modal-overlay" id="issueDetailModal" onclick="if(event.target===this)closeModal('issueDetailModal')">
+    <div class="modal" style="max-width:640px">
+      <h3>Posting issue</h3>
+      <div id="issueDetailMeta" style="font-size:12px;color:rgba(255,255,255,0.5)"></div>
+      <div id="issueDetailError" style="font-size:12.5px;color:rgba(230,140,120,0.85)"></div>
+      <textarea id="issueDetailContent" rows="5" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:rgba(255,255,255,0.85);padding:10px;font-family:Georgia,serif;font-size:13px;resize:vertical"></textarea>
+      <div id="issueDetailVideoWrap"></div>
+      <div id="issueDetailFeedback" style="font-size:12px;min-height:16px"></div>
+      <div class="modal-btns" style="justify-content:space-between;flex-wrap:wrap">
+        <button class="btn sm" onclick="issueDetailAction('delete')" style="color:rgba(230,140,120,0.85)">Delete posting</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" onclick="issueDetailAction('save')">Save edit</button>
+          <button class="btn sm" onclick="issueDetailAction('resend')">Resend now</button>
+          <button class="btn sm primary" onclick="issueDetailAction('resolve')">Mark resolved</button>
+          <button class="modal-cancel" onclick="closeModal('issueDetailModal')">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
 
   function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -454,14 +478,19 @@
       // area), so "Open issues (n)" — which sits outside/above it —
       // can't scroll out of view while reading down a long list; same
       // reasoning applies to the send-lines list below.
-      const issuesHtml = entry.openIssues.length ? `
+      // Per's request — every open issue is by definition a failure, so
+      // showing this block while the Sent-only filter is selected made
+      // no sense (it never changed, since it's intentionally unfiltered
+      // otherwise — the true byChannel totals above stay unfiltered on
+      // purpose, but "only show Sent" clearly means "not this").
+      const issuesHtml = (entry.openIssues.length && selectedStatus !== 'sent') ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(230,140,120,0.25)">
           <div style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(230,140,120,0.75);margin-bottom:6px">Open issues (${entry.openIssues.length})</div>
           <div style="max-height:220px;overflow-y:auto;padding-right:4px">
             ${entry.openIssues.map(i => `
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;font-size:12px">
                 <span style="color:rgba(255,255,255,0.6)"><b>${escHtml(i.channel)}</b> — ${escHtml(i.error || '')} <span style="color:rgba(255,255,255,0.3)">(${escHtml(i.sent_at)})</span></span>
-                <button class="btn sm" onclick="resolvePostingIssueRow('${i.id}', '${c.id}')">Resolve</button>
+                <button class="btn sm" onclick="openIssueDetailModal('${i.id}', '${c.id}')">Details</button>
               </div>
             `).join('')}
           </div>
@@ -519,14 +548,87 @@
       if (document.getElementById(`sendLines-${campaignId}`)) el.innerHTML = '<div class="empty" style="padding:10px 0">Could not load sends.</div>';
     }
   }
-  async function resolvePostingIssueRow(issueId, campaignId) {
-    await fetch(`/api/admin/postings/issues/${issueId}/resolve`, { method: 'POST' });
-    loadReport('campaigns');
+  // Per's request — refetches the report data and re-renders directly
+  // (NOT via loadReport, which clears #reportTable to empty before the
+  // fetch resolves — by the time render ran, campaignFilterSelect/
+  // sendChannelFilter/sendStatusFilter would already be gone from the
+  // DOM, so renderCampaignsReport's own "read the outgoing value first"
+  // logic had nothing to read and every filter silently reset. This
+  // updates the same live #reportTable in place instead.
+  async function refreshCampaignsReportData() {
+    const res = await fetch('/api/admin/reports/campaigns');
+    const data = await res.json();
+    if (!res.ok || data.error) return;
+    renderCampaignsReport(data);
+  }
+  // Per's request — Resolve used to fire immediately with no feedback
+  // (did it work? did it do anything at all?) and no way to see what
+  // the problem even was first. This opens a modal with the full
+  // context (content, video, error) and four explicit actions instead,
+  // each with its own visible outcome. Looks the issue up from the
+  // already-loaded report data rather than threading every field through
+  // the onclick attribute — safer than escaping arbitrary post content
+  // into HTML attribute syntax.
+  let _issueDetail = null;
+  function openIssueDetailModal(issueId, campaignId) {
+    const entry = (_campaignsReportData.campaigns || []).find(e => e.campaign.id === campaignId);
+    const issue = entry && entry.openIssues.find(i => i.id === issueId);
+    if (!issue) return;
+    _issueDetail = { issueId, campaignId, postingId: issue.posting_id };
+    document.getElementById('issueDetailMeta').textContent = `${issue.channel} · ${issue.sent_at}`;
+    document.getElementById('issueDetailError').textContent = issue.error || '';
+    document.getElementById('issueDetailContent').value = issue.content || '';
+    document.getElementById('issueDetailVideoWrap').innerHTML = issue.media_url
+      ? `<video src="${escHtml(issue.media_url)}" controls style="max-width:220px;max-height:130px;border-radius:6px;margin-top:8px"></video>`
+      : '<div style="font-size:11.5px;color:rgba(255,255,255,0.35);margin-top:8px">No video attached to this posting.</div>';
+    document.getElementById('issueDetailFeedback').textContent = '';
+    openModal('issueDetailModal');
+  }
+  async function issueDetailAction(action) {
+    if (!_issueDetail) return;
+    const { issueId, campaignId, postingId } = _issueDetail;
+    const feedback = document.getElementById('issueDetailFeedback');
+    feedback.style.color = 'rgba(255,255,255,0.45)';
+    feedback.textContent = 'Working…';
+    try {
+      if (action === 'save') {
+        const content = document.getElementById('issueDetailContent').value;
+        const res = await fetch(`/api/admin/campaigns/${campaignId}/postings/${postingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.error || 'Could not save the edit.');
+        feedback.style.color = 'rgba(180,230,200,0.9)';
+        feedback.textContent = 'Saved. This posting will use the new wording next time it sends.';
+      } else if (action === 'resend') {
+        const res = await fetch(`/api/admin/campaigns/${campaignId}/postings/${postingId}/publish-now`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.error || 'Resend failed.');
+        feedback.style.color = 'rgba(180,230,200,0.9)';
+        feedback.textContent = 'Resent — published live just now.';
+        refreshCampaignsReportData();
+      } else if (action === 'resolve') {
+        const res = await fetch(`/api/admin/postings/issues/${issueId}/resolve`, { method: 'POST' });
+        if (!res.ok) throw new Error('Could not mark this resolved.');
+        closeModal('issueDetailModal');
+        refreshCampaignsReportData();
+        return;
+      } else if (action === 'delete') {
+        if (!(await appConfirm('Delete this posting entirely? Every open issue for it (not just this one) will also be marked resolved. This cannot be undone.'))) { feedback.textContent = ''; return; }
+        const res = await fetch(`/api/admin/campaigns/${campaignId}/postings/${postingId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Could not delete the posting.');
+        await fetch(`/api/admin/postings/${postingId}/issues/resolve-all`, { method: 'POST' }).catch(() => {});
+        closeModal('issueDetailModal');
+        refreshCampaignsReportData();
+        return;
+      }
+    } catch (e) {
+      feedback.style.color = 'rgba(230,140,120,0.9)';
+      feedback.textContent = e.message;
+    }
   }
   async function resolveAllIssuesForCampaign(campaignId) {
     if (!(await appConfirm('Mark every open issue for this campaign as resolved?'))) return;
     await fetch(`/api/admin/campaigns/${campaignId}/issues/resolve-all`, { method: 'POST' });
-    loadReport('campaigns');
+    refreshCampaignsReportData();
   }
 
   async function openEmailJobContent(i) {

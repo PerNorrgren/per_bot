@@ -8263,6 +8263,20 @@ function resolveAllPostingIssuesForCampaign(campaignId) {
   );
   save();
 }
+// Per's request — the issue-detail modal's "Delete posting" action also
+// resolves every open issue tied to that specific posting (not just the
+// one row that was clicked), since a posting retried on every scheduled
+// slot while broken (LinkedIn's 288, for instance) leaves a whole
+// backlog of open issues that all reference the same now-deleted
+// posting — those would otherwise sit open forever with nothing left to
+// fix, edit, or resend.
+function resolveAllPostingIssuesForPosting(postingId) {
+  getDbSync().run(
+    `UPDATE posting_sends SET resolved_at=datetime('now') WHERE resolved_at IS NULL AND status='failed' AND posting_id=?`,
+    [postingId]
+  );
+  save();
+}
 
 // ── Campaign videos (Per's request) ──
 function getCampaignVideos(campaignId) {
@@ -10119,7 +10133,7 @@ function reportCampaigns() {
       WHERE p.campaign_id=? ORDER BY p.created_at ASC`, [c.id]);
     const progress = getCampaignProgress(c.id);
     const openIssues = queryAll(`
-      SELECT ps.id, ps.channel, ps.error, ps.sent_at
+      SELECT ps.id, ps.channel, ps.error, ps.sent_at, p.id as posting_id, p.content, p.media_url
       FROM posting_sends ps JOIN postings p ON p.id = ps.posting_id
       WHERE p.campaign_id=? AND ps.status='failed' AND ps.resolved_at IS NULL
       ORDER BY ps.sent_at DESC LIMIT 15`, [c.id]);
@@ -11166,7 +11180,7 @@ module.exports = {
   setCampaignStepResult, getDueCampaignEmailSteps, getDueCampaignSocialSteps, resetFailedCampaignSteps,
   createPosting, getPosting, getPostingsForCampaign, updatePosting, deletePosting, recordPostingSend,
   getEligiblePostingForSlot, getChannelSchedule, getAllChannelSchedules, setChannelSchedule, hasFiredSlotToday, getCampaignProgress, getCampaignFailedSends,
-  getOpenPostingIssues, countOpenPostingIssues, resolvePostingIssue, resolveAllPostingIssuesForCampaign, getPostingSendHistory,
+  getOpenPostingIssues, countOpenPostingIssues, resolvePostingIssue, resolveAllPostingIssuesForCampaign, resolveAllPostingIssuesForPosting, getPostingSendHistory,
   startSaversCancellation, startSaversGrace, clearSaversState, markSaversEmailSent,
   getUsersDueForSaversEmail, getUsersDueForSaversDowngrade,
   // Social posts (Per Bot 17 phase 4)
