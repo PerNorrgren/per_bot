@@ -399,9 +399,11 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
   // incident. Deliberately Per's own local time rather than UTC (every
   // other job in this file is UTC on purpose) — the point of this one
   // is "a fresh backup waiting when I start my day," which is a
-  // local-time request, not a server-time one. Writes straight onto the
-  // same persistent volume the live DB lives on — see
-  // db.runDailyBackupToVolume for the file path and retention/pruning.
+  // local-time request, not a server-time one. Uploads straight to R2
+  // from the in-memory export — see runDailyBackup/BACKUP_R2_PREFIX/
+  // computeBackupsToKeep in server.js for the key naming and
+  // retention/pruning — deliberately NOT the Railway volume the live DB
+  // lives on, so a wiped volume can't take the backups down with it too.
   cron.schedule('0 1 * * *', async () => {
     const t0 = Date.now();
     try {
