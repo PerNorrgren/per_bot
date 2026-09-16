@@ -11397,6 +11397,57 @@ app.post('/api/content/library/:id/position', auth.requireAuthApi(['client','fac
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+const FREE_PREVIEW_MAX_SECONDS = 180;
+// Per's request — free preview on an audio file should only ever grant
+// the first 3 minutes (the whole thing, if it's already shorter), not
+// full access to the entire recording. Generates a trimmed copy once —
+// same ffprobe-for-duration + ffmpeg-for-cutting pattern as the
+// audiobook/journal-video pipelines above — and caches its R2 key on
+// library_files.preview_key; every later request for this file's preview
+// reuses it rather than re-trimming. Audio only; video/PDF free previews
+// are untouched (still full access, exactly as before this existed).
+// Never throws — a failure here just means the free-preview override
+// falls back to serving the untrimmed original, which is what happened
+// before this feature existed, not a regression.
+async function ensureFreePreviewClip(file) {
+  if (!file || file.preview_key) return; // already has one, or nothing to do
+  if (!file.file_type || !file.file_type.startsWith('audio/')) return;
+  if (file.storage_type !== 'r2' || !media.isConfigured()) return;
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'free-preview-'));
+  try {
+    const ext = (file.filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const localPath = path.join(tmpDir, `original${ext}`);
+    const obj = await media.getPublicObject(file.filename);
+    await new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(localPath);
+      obj.Body.pipe(writeStream);
+      obj.Body.on('error', reject);
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', localPath]);
+    const durationSeconds = parseFloat(stdout.trim()) || 0;
+    // Already short enough — the original itself is a fine preview, no
+    // trimmed copy needed. preview_key stays NULL, playback-url falls
+    // through to serving the original file as-is.
+    if (durationSeconds > 0 && durationSeconds <= FREE_PREVIEW_MAX_SECONDS) return;
+
+    const outPath = path.join(tmpDir, `preview${ext}`);
+    // -c copy: a straight cut, no re-encoding — fast, and unlike video,
+    // audio doesn't need a keyframe-aligned cut point to stay valid.
+    await execFileAsync('ffmpeg', ['-y', '-i', localPath, '-t', String(FREE_PREVIEW_MAX_SECONDS), '-c', 'copy', outPath]);
+    const buffer = await fsp.readFile(outPath);
+    const key = `library-previews/${file.id}${ext}`;
+    await media.uploadPublicObject(key, buffer, file.file_type);
+    db.setLibraryFilePreviewKey(file.id, key);
+  } catch (e) {
+    console.error('[free preview] trim failed for', file.id, '— falling back to full file:', e.message);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
@@ -11408,14 +11459,24 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     // Member/Client only ever gets a URL for what their own tier actually permits —
     // unless this specific file has been flagged as a free preview (Per Bot 18), in
     // which case any logged-in client-role account can play it regardless of tier.
-    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+    const hasFullAccess = (req.user.role === 'facilitator' || req.user.role === 'admin')
       ? !file.archived
-      : (db.canAccessFile(file, userFlags, req.user.id) || (!file.archived && db.fileHasFreePreview(file.id)));
-    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+      : db.canAccessFile(file, userFlags, req.user.id);
+    const viaFreePreview = !hasFullAccess && !file.archived && db.fileHasFreePreview(file.id);
+    if (!hasFullAccess && !viaFreePreview) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
       const isTextHtml = file.file_type === 'text/html';
-      const url = await media.getPlaybackUrl(file.filename, { noCache: isTextHtml, forceUtf8: isTextHtml });
+      // Per's request — free preview on audio plays only the first 3
+      // minutes, not the whole file. preview_key (set by
+      // ensureFreePreviewClip above) is the trimmed copy; falls back to
+      // the original whenever there isn't one — the file's already
+      // short enough to not need trimming, it hasn't been generated yet,
+      // or this access came through hasFullAccess rather than the
+      // preview override at all, in which case the full file is exactly
+      // right regardless.
+      const playbackKey = (viaFreePreview && file.preview_key) ? file.preview_key : file.filename;
+      const url = await media.getPlaybackUrl(playbackKey, { noCache: isTextHtml, forceUtf8: isTextHtml });
       const response = { url, expiresIn: 600 };
       // Unpacked books (see unpack_epub_book.js) get a second URL pointing
       // at the per-resource proxy below — the reader prefers this one so
@@ -12975,6 +13036,20 @@ app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['a
 });
 app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(['admin']), (req, res) => {
   db.setLessonFileRefFreePreview(req.params.id, !!req.body.freePreview);
+  // Per's request — generate (or reuse) the trimmed 3-minute clip right
+  // when free preview is turned ON, so it's ready before any real visitor
+  // hits playback-url, rather than adding first-request latency to
+  // someone's actual play button. Fire-and-forget on purpose — trimming a
+  // long file can take a few seconds, and this checkbox has no loading
+  // state to hold the response open for; if a very first play happens to
+  // land in that gap, playback-url's own fallback (serve the original
+  // when there's no preview_key yet) covers it. Turning free preview OFF
+  // doesn't need to do anything here — any existing clip just sits
+  // unused in R2 until/unless it's turned back on.
+  if (req.body.freePreview) {
+    const ref = db.getFreePreviewRef(req.params.id);
+    if (ref) ensureFreePreviewClip(ref).catch(e => console.error('[free preview] background trim failed:', e.message));
+  }
   res.json({ ok: true });
 });
 // Per Bot 15f — reorder a file within its lesson, one step at a time
