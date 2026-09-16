@@ -5116,7 +5116,7 @@
     // same as audio. Works for both R2-stored and legacy disk files transparently.
     let url;
     let epubReaderUrl = null;
-    let previewInfo = null; // { headline, body, buttonLabel, buttonUrl } — set below if this open is a free-preview grant (video)
+    let previewInfo = null; // { headline, body, buttonLabel, buttonUrl, limitValue } — set below if this open is a free-preview grant (video or ebook)
     try {
       const res  = await fetch(`/api/content/library/${f.id}/playback-url${f.ref_id ? `?fileRefId=${f.ref_id}` : ''}`);
       const data = await res.json();
@@ -5203,6 +5203,28 @@
         document.getElementById('playerOverlay').classList.add('no-outer-scroll', 'epub-reader-active');
         _epubFontPct = epubLoadFontPct();
         rendition.themes.fontSize(_epubFontPct + '%');
+        // Per's request — end-of-preview popup for ebooks, same idea as
+        // audio/video's 'ended' event, adapted to a medium that doesn't
+        // have one. 'relocated' is epub.js's own documented "the reader
+        // moved" event, fired on every page turn and the initial load;
+        // location.start.index is the spine position of what's now on
+        // screen — the exact same number the server's epub-resource
+        // route compares against previewInfo.limitValue to decide
+        // whether to actually serve that chapter (see the matching
+        // comment there). This is what shows the popup at the right
+        // moment; that server-side check is what actually enforces it —
+        // this alone, without the server check, would just be a UI that
+        // trusts the reader not to lie about its own position.
+        let _previewLimitShown = false;
+        if (previewInfo && previewInfo.limitValue) {
+          rendition.on('relocated', (location) => {
+            if (_previewLimitShown) return;
+            if (location && location.start && location.start.index >= previewInfo.limitValue) {
+              _previewLimitShown = true;
+              showPreviewEndedPopup(previewInfo);
+            }
+          });
+        }
         // Per Bot 119 — see the .epub-swipe-capture CSS comment above for
         // the full reasoning. This listens on a plain div in the PARENT
         // document, never inside epub.js's iframe, so it can't be

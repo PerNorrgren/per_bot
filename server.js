@@ -11561,14 +11561,18 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
       // actually exist by the time it's returned.
       let playbackKey = file.filename;
       let previewConfig = null;
-      // Per's request — video/pdf get the same trimmed-preview treatment
-      // as audio, each resolved separately (its own preview_configs
-      // media_type, its own Settings section) since a sensible preview
-      // length for a meditation recording, a course video, and a PDF
-      // aren't the same kind of number (minutes vs minutes vs pages).
+      // Per's request — video/pdf/ebook all get the same trimmed-preview
+      // treatment as audio, each resolved separately (its own
+      // preview_configs media_type, its own Settings section) since a
+      // sensible preview length isn't the same kind of number for any of
+      // them (minutes vs minutes vs pages vs chapters). Ebook is detected
+      // by epub_opf_path rather than file_type, matching how epubReaderUrl
+      // below already detects it — the raw file's content type doesn't
+      // reliably distinguish an unpacked, reader-ready book.
       const previewMediaType = file.file_type && file.file_type.startsWith('audio/') ? 'audio'
         : file.file_type && file.file_type.startsWith('video/') ? 'video'
-        : file.file_type === 'application/pdf' ? 'pdf' : null;
+        : file.file_type === 'application/pdf' ? 'pdf'
+        : file.epub_opf_path ? 'ebook' : null;
       if (viaFreePreview && previewMediaType) {
         let courseId = null, lessonId = null, fileRefId = null;
         if (req.query.fileRefId) {
@@ -11580,8 +11584,15 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
             courseId = lesson ? lesson.course_id : null;
           }
         }
-        const cfg = db.getEffectivePreviewConfig(previewMediaType, { courseId, lessonId, fileRefId });
-        if (cfg.limitValue) {
+        // Ebook context resolution is global-only regardless of what's
+        // passed above — see the matching note in the epub-resource
+        // route on why course/lesson overrides can't reliably apply
+        // there, so resolving them differently just here would make this
+        // response describe a preview the reader wouldn't actually get.
+        const cfg = previewMediaType === 'ebook'
+          ? db.getEffectivePreviewConfig('ebook', {})
+          : db.getEffectivePreviewConfig(previewMediaType, { courseId, lessonId, fileRefId });
+        if (cfg.limitValue && previewMediaType !== 'ebook') {
           if (previewMediaType === 'pdf') await ensureFreePreviewPdf(file, cfg.limitValue);
           else await ensureFreePreviewClip(file, cfg.limitValue);
           const fresh = db.getLibraryFile(file.id); // re-fetch — the ensure* call above may have just updated it
@@ -11593,8 +11604,11 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
         // resolution needs, and returning it here guarantees the popup
         // always describes the exact same preview that was just served,
         // not a second resolution that could theoretically disagree if
-        // something changed between the two requests.
-        previewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl };
+        // something changed between the two requests. limitValue is
+        // included too (not just the display text) — the ebook reader
+        // needs the actual chapter-count number to compare its own
+        // current position against, client-side.
+        previewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl, limitValue: cfg.limitValue };
       }
       const url = await media.getPlaybackUrl(playbackKey, { noCache: isTextHtml, forceUtf8: isTextHtml });
       // Per's request — the client only shows the end-of-preview popup
@@ -12221,6 +12235,31 @@ app.get('/api/content/library/:id/offline-stream', auth.requireAuthApi(['client'
   }
 });
 
+// Per's request — free preview on an ebook only ever grants the first N
+// chapters, gated in the epub-resource route below. This is the "how
+// many chapters are there and in what order" part — parses the OPF the
+// same way buildOfflineManifest just below already does (manifest item
+// id→href, in this case also the <spine> itemref order, which
+// buildOfflineManifest doesn't need since it wants every resource
+// regardless of order). Tested against a real EPUB generated with this
+// app's own epub-gen-memory dependency before trusting it, not just
+// assumed from reading the OPF spec — confirmed the spine's item order
+// really does come back as an ordered array of hrefs matching what a
+// reader would hit page by page.
+async function getEpubSpineHrefs(file) {
+  const opfKey = `epub-unpacked/${file.id}/${file.epub_opf_path}`;
+  const opfObj = await media.getPublicObject(opfKey);
+  const opfXml = await streamToString(opfObj.Body);
+  const manifest = {};
+  for (const m of opfXml.matchAll(/<item\b([^>]*)\/?>/g)) {
+    const idMatch = m[1].match(/\bid="([^"]+)"/);
+    const hrefMatch = m[1].match(/\bhref="([^"]+)"/);
+    if (idMatch && hrefMatch) manifest[idMatch[1]] = decodeURIComponent(hrefMatch[1]);
+  }
+  const spineIds = [...opfXml.matchAll(/<itemref\b[^>]*\bidref="([^"]+)"/g)].map(m => m[1]);
+  return spineIds.map(id => manifest[id]).filter(Boolean);
+}
+
 // Every URL a file needs cached for genuinely complete offline use.
 // Single-file types (audio, PDF, poem/blog HTML) are just the one
 // offline-stream URL above. An EPUB book is many small files (each
@@ -12282,13 +12321,51 @@ app.get('/api/content/library/:id/epub-resource/*', auth.requireAuthApi(['client
 
     const userRec = req.user.role === 'client' ? db.getUser(req.user.id) : null;
     const userFlags = db.userFlagsFromRecord(userRec, req.user.role);
-    const allowed = (req.user.role === 'facilitator' || req.user.role === 'admin')
+    // Per's request — ebooks previously had NO free-preview support at
+    // all (this route only ever checked canAccessFile, flat 403
+    // otherwise) — this is the first time an EPUB can be previewed
+    // below its required tier, same as audio/video/PDF already could.
+    const hasFullAccess = (req.user.role === 'facilitator' || req.user.role === 'admin')
       ? !file.archived
       : db.canAccessFile(file, userFlags, req.user.id);
-    if (!allowed) return res.status(403).json({ error: 'Access denied.' });
+    const viaFreePreview = !hasFullAccess && !file.archived && db.fileHasFreePreview(file.id);
+    if (!hasFullAccess && !viaFreePreview) return res.status(403).json({ error: 'Access denied.' });
     if (!file.epub_opf_path) return res.status(404).json({ error: 'This book has not been unpacked for lazy loading yet.' });
 
     const relPath = req.params[0];
+
+    // Per's request — free preview on an ebook only grants the first N
+    // chapters (spine position — see getEpubSpineHrefs above); every
+    // non-spine resource (images/CSS/fonts/the OPF/NCX itself) is always
+    // allowed regardless, since blocking those would break rendering of
+    // even the chapters that ARE allowed — only content documents that
+    // are actually IN the spine get gated by position.
+    // Resolved at the global level only — this route is hit directly by
+    // the reader's own internal resource fetches (epub.js resolves
+    // relative URLs against the book's base itself), not by a call this
+    // app controls the query string of, so there's no reliable way to
+    // thread a fileRefId through for course/lesson-level overrides the
+    // way playback-url does. A known simplification, not an oversight.
+    if (viaFreePreview) {
+      try {
+        const spineHrefs = await getEpubSpineHrefs(file);
+        const opfDir = file.epub_opf_path.includes('/') ? file.epub_opf_path.slice(0, file.epub_opf_path.lastIndexOf('/') + 1) : '';
+        const spineIndex = spineHrefs.findIndex(h => (opfDir + h) === relPath);
+        if (spineIndex !== -1) {
+          const cfg = db.getEffectivePreviewConfig('ebook', {});
+          if (cfg.limitValue && spineIndex >= cfg.limitValue) {
+            return res.status(403).json({ error: 'Preview limit reached.', previewLimitReached: true });
+          }
+        }
+      } catch (e) {
+        // Spine-check failure shouldn't block a resource that would
+        // otherwise be allowed — same "never throws, falls back" spirit
+        // as ensureFreePreviewClip/ensureFreePreviewPdf, just here that
+        // means "let it through" rather than "serve the original".
+        console.error('[free preview] epub spine check failed for', file.id, '— allowing through:', e.message);
+      }
+    }
+
     const r2Key = `epub-unpacked/${file.id}/${relPath}`;
     const ext = (relPath.split('.').pop() || '').toLowerCase();
     const contentType = {

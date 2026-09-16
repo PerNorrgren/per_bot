@@ -732,6 +732,32 @@
       <div class="field-note" style="margin-bottom:10px">PDF has no natural "end of playback" moment the way audio/video does, so there's no popup for it yet — the preview file itself simply doesn't contain any pages past this limit. Headline/body/button fields will make sense once there's a way to show them (e.g. a banner on the preview page) — no point setting text nothing displays yet.</div>
       <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('pdf')">Save</button>
       <div id="previewPdfFeedback" style="margin-top:10px;font-size:12px"></div>
+
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.06em;margin:22px 0 8px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">Ebook</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Preview length (chapters)</label>
+        <input type="number" id="previewEbookChapters" min="1" step="1" style="width:80px"/>
+      </div>
+      <div class="field-note" style="margin-bottom:10px">Counts the book's own spine position, starting from its very first item — some books' spine starts with a contents/nav page before the real first chapter, which counts as one of these.</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup headline</label>
+        <input type="text" id="previewEbookHeadline" style="width:100%;max-width:420px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup body</label>
+        <textarea id="previewEbookBody" rows="3" style="width:100%;max-width:420px"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button label</label>
+        <input type="text" id="previewEbookButtonLabel" style="width:100%;max-width:280px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button link</label>
+        <input type="text" id="previewEbookButtonUrl" style="width:100%;max-width:280px"/>
+      </div>
+      <div class="field-note" style="margin-bottom:10px">This one's global-only for now — a course or lesson can't override an ebook's preview length yet, unlike the other three types above (the reader fetches each chapter directly, with no reliable way for it to say which lesson it was opened from).</div>
+      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('ebook')">Save</button>
+      <div id="previewEbookFeedback" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>
   <script>
@@ -750,6 +776,7 @@
       audio: { field: 'Minutes', toStorage: v => Math.round(v * 60), fromStorage: v => Math.round(v / 60), fallback: 3 },
       video: { field: 'Minutes', toStorage: v => Math.round(v * 60), fromStorage: v => Math.round(v / 60), fallback: 3 },
       pdf:   { field: 'Pages',   toStorage: v => Math.round(v),      fromStorage: v => Math.round(v),      fallback: 5 },
+      ebook: { field: 'Chapters', toStorage: v => Math.round(v),    fromStorage: v => Math.round(v),      fallback: 3 },
     };
     function previewFieldId(mediaType, field) {
       return 'preview' + mediaType[0].toUpperCase() + mediaType.slice(1) + field;
@@ -810,6 +837,7 @@
     loadPreviewConfig('audio');
     loadPreviewConfig('video');
     loadPreviewConfig('pdf');
+    loadPreviewConfig('ebook');
   </script>
 
   <!-- Legal documents (Per Bot 15h) — moved here from Communications since

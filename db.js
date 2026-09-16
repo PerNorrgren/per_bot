@@ -5205,6 +5205,17 @@ const PREVIEW_CONFIG_DEFAULTS = {
   // unitless in the schema itself the same way preview_configs.limit_value
   // already is, just interpreted per media_type.
   pdf: { limitValue: 5, headline: "You've reached the end of this preview", body: 'Subscribe to read the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
+  // Per's request — chapters, not minutes or pages. limitValue counts
+  // spine position (the EPUB's own reading order — see
+  // getEpubSpineHrefs in server.js), starting from the very first spine
+  // item. Worth knowing: some books' spine starts with a nav/TOC page
+  // before the real first chapter, which counts as one of the N — no
+  // per-book heuristic here to detect and skip front matter, since a
+  // guess that's sometimes wrong is worse than a rule that's simple and
+  // consistent. Client and server both count the exact same way (the
+  // reader's own location.start.index), so the two always agree on
+  // where "chapter N" actually is.
+  ebook: { limitValue: 3, headline: "You've reached the end of this preview", body: 'Subscribe to read the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
 };
 // The resolver — file_ref, then lesson, then course, then global, then
 // the hardcoded default above, first one that actually has a row wins,
