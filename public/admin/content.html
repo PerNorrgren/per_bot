@@ -3435,7 +3435,22 @@ function classifyUnmatchedFile(filename){
 }
 
 let _acGroups = null; // {num, titleGuess, items:[{it}]}[] — built in openAutoCourseConfirm, read by confirmAutoCourse. num==='reference' is the special no-session-number bucket, always sorted last (see confirmAutoCourse). num===0 ("Introduction") sorts first, same as any other numbered group.
-function openAutoCourseConfirm(){
+// Per's report — uploading four files for an EXISTING Session 1 (a
+// real course, a real already-titled lesson) showed "Daily Top-up" as
+// the group's title here, which read as if confirming would create a
+// wrongly-named lesson. It wouldn't have — confirmAutoCourse below only
+// ever uses titleGuess when creating a NEW lesson; a session number
+// that already has one just attaches files to it by lessonId, title
+// untouched. But the guess itself was never actually "the lesson's
+// name" — with several files sharing one session number, the first one
+// happened to reach this loop set the whole group's title, and "first"
+// meant nothing more meaningful than upload-queue order (in this case,
+// alphabetical-ish Finder order put "Daily Top-up" ahead of
+// "Introduction"). Now fetches the target course's real lessons before
+// building the modal at all, so a session number that already exists
+// shows its actual title, not a guess — and confirming does exactly
+// what the modal now says.
+async function openAutoCourseConfirm(){
   const groups = {};
   upQueue.forEach(it => {
     if (!it.fileId) return; // failed uploads never reach here anyway
@@ -3443,6 +3458,20 @@ function openAutoCourseConfirm(){
     if (!groups[info.num]) groups[info.num] = { num: info.num, titleGuess: info.titleGuess, items: [] };
     groups[info.num].items.push(it);
   });
+
+  const target = document.getElementById('upAutoCourseTarget').value;
+  let existingByNum = {}, existingRefTitle = null;
+  if (target && target !== '__new__') {
+    const existingLessons = await fetch(`/api/content/courses/${target}/lessons`).then(r=>r.json()).catch(()=>[]);
+    (existingLessons || []).forEach(l => { existingByNum[l.lesson_number] = l; });
+    const refLesson = (existingLessons || []).find(l => (l.title||'').trim().toLowerCase() === 'reference');
+    if (refLesson) existingRefTitle = refLesson.title;
+  }
+  Object.values(groups).forEach(g => {
+    const existing = g.num === 'reference' ? (existingRefTitle ? { title: existingRefTitle } : null) : existingByNum[g.num];
+    if (existing) { g.titleGuess = existing.title; g.isExisting = true; }
+  });
+
   _acGroups = Object.values(groups).sort((a,b) => {
     if (a.num === 'reference') return 1;
     if (b.num === 'reference') return -1;
@@ -3456,7 +3485,8 @@ function openAutoCourseConfirm(){
         <input type="text" value="${g.titleGuess.replace(/"/g,'&quot;')}" oninput="_acGroups[${gi}].titleGuess=this.value" style="flex:1"/>
       </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.35);padding-left:28px">${g.items.map(it=>it.file.name).join(', ')}</div>
-      ${g.num === 'reference' ? '<div style="font-size:10.5px;color:rgba(180,230,200,0.55);padding-left:28px;margin-top:4px">No session number found in these filenames — grouped here so nothing is left out. Move individual files into the right lesson any time afterward.</div>' : ''}
+      ${g.isExisting ? '<div style="font-size:10.5px;color:rgba(180,230,200,0.55);padding-left:28px;margin-top:4px">This lesson already exists — these files will be added to it, its title won\'t change.</div>' : ''}
+      ${(g.num === 'reference' && !g.isExisting) ? '<div style="font-size:10.5px;color:rgba(180,230,200,0.55);padding-left:28px;margin-top:4px">No session number found in these filenames — grouped here so nothing is left out. Move individual files into the right lesson any time afterward.</div>' : ''}
     </div>
   `).join('');
   document.getElementById('acErr').textContent = '';
