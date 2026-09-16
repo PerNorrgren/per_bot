@@ -1740,6 +1740,24 @@
       <a href="/membership" style="display:inline-block; padding:7px 16px; border-radius:8px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.35); color:rgba(180,230,200,0.9); text-decoration:none; font-size:12px; letter-spacing:0.05em; text-transform:uppercase;">Upgrade to unlock</a>
     </div>
 
+    <!-- Per's request — shown when a free-preview audio clip finishes
+         naturally (see mpPlay's 'ended' handler), never on an ordinary
+         member/client's own full playback. Deliberately NOT auto-
+         dismissing like upgradeNotice above — the person just chose to
+         listen through the whole preview, this is a genuine decision
+         point, not a passing notice to glance at and forget. Content
+         (headline/body/button) comes from the resolved preview config
+         (global default, or a course/lesson/file override once those
+         exist), never hardcoded here. -->
+    <div id="previewEndedOverlay" style="display:none; position:fixed; inset:0; z-index:700; background:rgba(0,0,0,0.72); align-items:center; justify-content:center; padding:20px;">
+      <div style="max-width:360px; width:100%; background:#1a2420; border:1px solid rgba(180,230,200,0.3); border-radius:16px; padding:26px 24px; font-family:Georgia,serif; text-align:center; box-shadow:0 12px 40px rgba(0,0,0,0.5);">
+        <div id="previewEndedHeadline" style="font-size:17px; color:rgba(220,255,235,0.95); margin-bottom:10px;"></div>
+        <div id="previewEndedBody" style="font-size:13.5px; color:rgba(220,255,235,0.75); line-height:1.5; margin-bottom:20px;"></div>
+        <a id="previewEndedButton" href="/membership" style="display:block; padding:11px 16px; border-radius:10px; background:rgba(180,230,200,0.15); border:1px solid rgba(180,230,200,0.4); color:rgba(180,230,200,0.95); text-decoration:none; font-size:13px; letter-spacing:0.04em; text-transform:uppercase; margin-bottom:12px;"></a>
+        <button onclick="document.getElementById('previewEndedOverlay').style.display='none'" style="background:none; border:none; color:rgba(220,255,235,0.4); font-size:12px; cursor:pointer; text-decoration:underline;">Maybe later</button>
+      </div>
+    </div>
+
     <!-- Per Bot 61 — iOS install instructions. Doesn't auto-dismiss like
          upgradeNotice above (someone needs this to stay put while they
          actually go find the Share button and act on it), so it's a
@@ -3757,10 +3775,11 @@
     // rather than built from file.filename directly, so access control is never bypassed.
     let playUrl;
     let resumePosition = 0;
+    let previewInfo = null; // { isPreview, config } — set below if this play is a free-preview grant
     _currentChapters = [];
     try {
       const [playRes, chaptersRes, positionRes] = await Promise.all([
-        fetch(`/api/content/library/${file.id}/playback-url`),
+        fetch(`/api/content/library/${file.id}/playback-url${file.ref_id ? `?fileRefId=${file.ref_id}` : ''}`),
         fetch(`/api/content/library/${file.id}/chapters`).catch(() => null),
         fetch(`/api/content/library/${file.id}/position`).catch(() => null),
       ]);
@@ -3770,6 +3789,12 @@
         return;
       }
       playUrl = data.url;
+      // Per's request — the end-of-preview popup. isPreview/previewConfig
+      // come straight from playback-url's own resolution (course/lesson/
+      // file inheritance, via the fileRefId sent above), so the popup
+      // always matches exactly what was actually just granted — not a
+      // second, potentially-inconsistent lookup.
+      if (data.isPreview && data.previewConfig) previewInfo = data.previewConfig;
       // Chapters/position are nice-to-haves, not required for playback
       // to work — a failure on either just means no chapter list and no
       // resume, never a blocked play.
@@ -3874,6 +3899,10 @@
         body: JSON.stringify({ positionSeconds: 0 })
       }).catch(() => {});
       handleAudioStopped();
+      // Per's request — this really was a free-preview grant (never
+      // shown for a real member/client's own full playback), so this is
+      // the moment to actually ask.
+      if (previewInfo) showPreviewEndedPopup(previewInfo);
     });
     mpAudio.play();
     // Mark play button
@@ -8802,6 +8831,23 @@
     el.style.display = 'block';
     clearTimeout(_upgradeNoticeTimer);
     _upgradeNoticeTimer = setTimeout(() => { el.style.display = 'none'; }, 7000);
+  }
+  // Per's request — end-of-free-preview popup. config's fields can each
+  // individually be missing (a course/lesson override might only set
+  // some of them, or Settings might never have been saved at all) — the
+  // hardcoded fallbacks here match PREVIEW_CONFIG_DEFAULTS in db.js, so
+  // the popup is never blank even in that case. .textContent throughout
+  // (never innerHTML) since this is admin-authored free text — same
+  // reasoning as every other user-visible string in this file, escaping
+  // isn't needed because nothing here is ever parsed as markup.
+  function showPreviewEndedPopup(config) {
+    config = config || {};
+    document.getElementById('previewEndedHeadline').textContent = config.headline || "You've reached the end of this preview";
+    document.getElementById('previewEndedBody').textContent = config.body || 'Subscribe to hear the rest of this — and everything else in the library.';
+    const btn = document.getElementById('previewEndedButton');
+    btn.textContent = config.buttonLabel || 'See membership options';
+    btn.href = config.buttonUrl || '/membership';
+    document.getElementById('previewEndedOverlay').style.display = 'flex';
   }
 
   // Per Bot 21 — real bug found: "Next Lesson →" used to call openLesson

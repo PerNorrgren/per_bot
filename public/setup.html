@@ -663,6 +663,86 @@
     </div>
   </div>
 
+  <!-- Per's request — free-preview length and the end-of-preview popup,
+       both configurable, with the same override-falls-back-to-parent
+       inheritance as file_sequence_override in Content (global here is
+       the top of that chain — course/lesson/file-level override panels
+       are the natural next step, not built yet). Audio only for now;
+       video/PDF/ebook previews use the exact same preview_configs shape
+       once those are built, this card just gains more media-type
+       sections alongside this one rather than needing rework. -->
+  <div class="card">
+    <div class="card-header"><div class="card-title">Content previews</div></div>
+    <div class="card-body">
+      <div class="field-note" style="margin-bottom:16px">How much of a file plays when someone below the tier it needs hits "free preview" — and what the popup says when the preview ends. This is the global default; a specific course, lesson, or file can override it once that's built.</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Audio</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Preview length (minutes)</label>
+        <input type="number" id="previewAudioMinutes" min="1" step="1" style="width:80px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup headline</label>
+        <input type="text" id="previewAudioHeadline" style="width:100%;max-width:420px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup body</label>
+        <textarea id="previewAudioBody" rows="3" style="width:100%;max-width:420px"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button label</label>
+        <input type="text" id="previewAudioButtonLabel" style="width:100%;max-width:280px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button link</label>
+        <input type="text" id="previewAudioButtonUrl" style="width:100%;max-width:280px"/>
+      </div>
+      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfigAudio()">Save</button>
+      <div id="previewAudioFeedback" style="margin-top:10px;font-size:12px"></div>
+    </div>
+  </div>
+  <script>
+    async function loadPreviewConfigAudio() {
+      try {
+        // The resolved effective values (global falls back to hardcoded
+        // defaults if never saved before) — so the fields show something
+        // sensible on a fresh install rather than blank inputs with no
+        // clue what they'd default to.
+        const res = await fetch('/api/client/preview-config/audio');
+        const cfg = await res.json();
+        document.getElementById('previewAudioMinutes').value = cfg.limitValue ? Math.round(cfg.limitValue / 60) : 3;
+        document.getElementById('previewAudioHeadline').value = cfg.headline || '';
+        document.getElementById('previewAudioBody').value = cfg.body || '';
+        document.getElementById('previewAudioButtonLabel').value = cfg.buttonLabel || '';
+        document.getElementById('previewAudioButtonUrl').value = cfg.buttonUrl || '';
+      } catch (e) { /* leave fields blank — Save still works, will just start from scratch */ }
+    }
+    async function savePreviewConfigAudio() {
+      const feedback = document.getElementById('previewAudioFeedback');
+      feedback.textContent = 'Saving…';
+      feedback.style.color = 'rgba(255,255,255,0.5)';
+      const minutes = parseFloat(document.getElementById('previewAudioMinutes').value);
+      try {
+        const res = await fetch('/api/admin/preview-config/global/global/audio', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            limitValue: minutes > 0 ? Math.round(minutes * 60) : null,
+            headline: document.getElementById('previewAudioHeadline').value.trim() || null,
+            body: document.getElementById('previewAudioBody').value.trim() || null,
+            buttonLabel: document.getElementById('previewAudioButtonLabel').value.trim() || null,
+            buttonUrl: document.getElementById('previewAudioButtonUrl').value.trim() || null,
+          }),
+        });
+        if (!res.ok) throw new Error('Save failed.');
+        feedback.textContent = 'Saved.';
+        feedback.style.color = 'rgba(140,220,160,0.9)';
+      } catch (e) {
+        feedback.textContent = 'Could not save: ' + e.message;
+        feedback.style.color = 'rgba(255,140,120,0.9)';
+      }
+    }
+    loadPreviewConfigAudio();
+  </script>
+
   <!-- Legal documents (Per Bot 15h) — moved here from Communications since
        this is where skin-scoped settings now live. A document can be
        global (every skin without its own copy uses it) or scoped to one

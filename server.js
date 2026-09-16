@@ -11397,20 +11397,27 @@ app.post('/api/content/library/:id/position', auth.requireAuthApi(['client','fac
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-const FREE_PREVIEW_MAX_SECONDS = 180;
-// Per's request — free preview on an audio file should only ever grant
-// the first 3 minutes (the whole thing, if it's already shorter), not
-// full access to the entire recording. Generates a trimmed copy once —
-// same ffprobe-for-duration + ffmpeg-for-cutting pattern as the
-// audiobook/journal-video pipelines above — and caches its R2 key on
-// library_files.preview_key; every later request for this file's preview
-// reuses it rather than re-trimming. Audio only; video/PDF free previews
+// Per's request — free preview on an audio file only ever grants the
+// first N minutes (the whole thing, if it's already shorter), not full
+// access to the entire recording. N is resolved from preview_configs
+// (see db.js's getEffectivePreviewConfig — global/course/lesson/file
+// inheritance) rather than a fixed number, since Per can now configure
+// this per course/lesson/file. Generates a trimmed copy once — same
+// ffprobe-for-duration + ffmpeg-for-cutting pattern as the audiobook/
+// journal-video pipelines above — and caches its R2 key + the seconds it
+// was actually trimmed to on library_files.preview_key/preview_key_seconds;
+// reused as-is whenever a later request resolves to the SAME limit, and
+// regenerated when it resolves to a different one (the same file can be
+// free-previewed from more than one lesson with different configured
+// limits, so "already has a preview_key" alone isn't enough to skip —
+// see the seconds comparison below). Audio only; video/PDF free previews
 // are untouched (still full access, exactly as before this existed).
 // Never throws — a failure here just means the free-preview override
 // falls back to serving the untrimmed original, which is what happened
 // before this feature existed, not a regression.
-async function ensureFreePreviewClip(file) {
-  if (!file || file.preview_key) return; // already has one, or nothing to do
+async function ensureFreePreviewClip(file, limitSeconds) {
+  if (!file || !limitSeconds || limitSeconds <= 0) return;
+  if (file.preview_key && file.preview_key_seconds === limitSeconds) return; // already have exactly this
   if (!file.file_type || !file.file_type.startsWith('audio/')) return;
   if (file.storage_type !== 'r2' || !media.isConfigured()) return;
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'free-preview-'));
@@ -11429,18 +11436,24 @@ async function ensureFreePreviewClip(file) {
     const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', localPath]);
     const durationSeconds = parseFloat(stdout.trim()) || 0;
     // Already short enough — the original itself is a fine preview, no
-    // trimmed copy needed. preview_key stays NULL, playback-url falls
-    // through to serving the original file as-is.
-    if (durationSeconds > 0 && durationSeconds <= FREE_PREVIEW_MAX_SECONDS) return;
+    // trimmed copy needed. Recorded as preview_key_seconds=limitSeconds
+    // with a NULL key, so a later request at this same limit doesn't
+    // re-probe the file every time just to reach the same conclusion —
+    // playback-url treats a NULL preview_key as "serve the original"
+    // regardless of why.
+    if (durationSeconds > 0 && durationSeconds <= limitSeconds) {
+      db.setLibraryFilePreviewKey(file.id, null, limitSeconds);
+      return;
+    }
 
     const outPath = path.join(tmpDir, `preview${ext}`);
     // -c copy: a straight cut, no re-encoding — fast, and unlike video,
     // audio doesn't need a keyframe-aligned cut point to stay valid.
-    await execFileAsync('ffmpeg', ['-y', '-i', localPath, '-t', String(FREE_PREVIEW_MAX_SECONDS), '-c', 'copy', outPath]);
+    await execFileAsync('ffmpeg', ['-y', '-i', localPath, '-t', String(limitSeconds), '-c', 'copy', outPath]);
     const buffer = await fsp.readFile(outPath);
-    const key = `library-previews/${file.id}${ext}`;
+    const key = `library-previews/${file.id}-${limitSeconds}${ext}`;
     await media.uploadPublicObject(key, buffer, file.file_type);
-    db.setLibraryFilePreviewKey(file.id, key);
+    db.setLibraryFilePreviewKey(file.id, key, limitSeconds);
   } catch (e) {
     console.error('[free preview] trim failed for', file.id, '— falling back to full file:', e.message);
   } finally {
@@ -11467,17 +11480,49 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
 
     if (file.storage_type === 'r2') {
       const isTextHtml = file.file_type === 'text/html';
-      // Per's request — free preview on audio plays only the first 3
-      // minutes, not the whole file. preview_key (set by
-      // ensureFreePreviewClip above) is the trimmed copy; falls back to
-      // the original whenever there isn't one — the file's already
-      // short enough to not need trimming, it hasn't been generated yet,
-      // or this access came through hasFullAccess rather than the
-      // preview override at all, in which case the full file is exactly
-      // right regardless.
-      const playbackKey = (viaFreePreview && file.preview_key) ? file.preview_key : file.filename;
+      // Per's request — free preview on audio plays only the resolved
+      // limit (global/course/lesson/file inheritance — see
+      // getEffectivePreviewConfig), not the whole file. fileRefId (an
+      // optional query param the client sends when playing from inside
+      // a lesson) is how course/lesson-level overrides get to apply at
+      // all — without it, resolution just falls back to the global
+      // level, which is still correct, only less specific. Awaited
+      // (unlike the toggle route's fire-and-forget trigger) because a
+      // real person is waiting on this response for a URL that has to
+      // actually exist by the time it's returned.
+      let playbackKey = file.filename;
+      let previewConfig = null;
+      if (viaFreePreview && file.file_type && file.file_type.startsWith('audio/')) {
+        let courseId = null, lessonId = null, fileRefId = null;
+        if (req.query.fileRefId) {
+          const ref = db.getFreePreviewRef(req.query.fileRefId);
+          if (ref && ref.id === file.id) {
+            fileRefId = req.query.fileRefId;
+            lessonId = ref.lesson_id;
+            const lesson = db.getLesson(lessonId);
+            courseId = lesson ? lesson.course_id : null;
+          }
+        }
+        const cfg = db.getEffectivePreviewConfig('audio', { courseId, lessonId, fileRefId });
+        if (cfg.limitValue) {
+          await ensureFreePreviewClip(file, cfg.limitValue);
+          const fresh = db.getLibraryFile(file.id); // re-fetch — ensureFreePreviewClip may have just updated it
+          if (fresh && fresh.preview_key && fresh.preview_key_seconds === cfg.limitValue) playbackKey = fresh.preview_key;
+        }
+        // Returned inline rather than making the client make a second
+        // request to resolve it separately — this route already has
+        // exactly the same context (courseId/lessonId/fileRefId) that
+        // resolution needs, and returning it here guarantees the popup
+        // always describes the exact same preview that was just served,
+        // not a second resolution that could theoretically disagree if
+        // something changed between the two requests.
+        previewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl };
+      }
       const url = await media.getPlaybackUrl(playbackKey, { noCache: isTextHtml, forceUtf8: isTextHtml });
-      const response = { url, expiresIn: 600 };
+      // Per's request — the client only shows the end-of-preview popup
+      // when this really was a preview grant (viaFreePreview), never for
+      // a real member/client playing their own fully-accessible content.
+      const response = { url, expiresIn: 600, isPreview: viaFreePreview, previewConfig };
       // Unpacked books (see unpack_epub_book.js) get a second URL pointing
       // at the per-resource proxy below — the reader prefers this one so
       // it fetches chapters as needed rather than the whole .epub upfront.
@@ -11486,8 +11531,25 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
       }
       return res.json(response);
     }
-    // Legacy disk file — same URL pattern as before, no change in behaviour.
-    res.json({ url: `/uploads/${file.filename}`, expiresIn: null });
+    // Legacy disk file — same URL pattern as before, no trimming (this
+    // predates the free-preview clip feature entirely), but still
+    // flagged, with resolved popup content, so the client shows the
+    // popup at natural playback end same as the R2 branch above.
+    let legacyPreviewConfig = null;
+    if (viaFreePreview) {
+      let lessonId = null, courseId = null;
+      if (req.query.fileRefId) {
+        const ref = db.getFreePreviewRef(req.query.fileRefId);
+        if (ref && ref.id === file.id) {
+          lessonId = ref.lesson_id;
+          const lesson = db.getLesson(lessonId);
+          courseId = lesson ? lesson.course_id : null;
+        }
+      }
+      const cfg = db.getEffectivePreviewConfig('audio', { courseId, lessonId, fileRefId: req.query.fileRefId || null });
+      legacyPreviewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl };
+    }
+    res.json({ url: `/uploads/${file.filename}`, expiresIn: null, isPreview: viaFreePreview, previewConfig: legacyPreviewConfig });
   } catch (e) {
     console.error('playback-url error:', e.message);
     res.status(500).json({ error: e.message });
@@ -13036,21 +13098,79 @@ app.patch('/api/content/lesson-file-refs/:id/mandatory', auth.requireAuthApi(['a
 });
 app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(['admin']), (req, res) => {
   db.setLessonFileRefFreePreview(req.params.id, !!req.body.freePreview);
-  // Per's request — generate (or reuse) the trimmed 3-minute clip right
-  // when free preview is turned ON, so it's ready before any real visitor
-  // hits playback-url, rather than adding first-request latency to
-  // someone's actual play button. Fire-and-forget on purpose — trimming a
-  // long file can take a few seconds, and this checkbox has no loading
-  // state to hold the response open for; if a very first play happens to
-  // land in that gap, playback-url's own fallback (serve the original
-  // when there's no preview_key yet) covers it. Turning free preview OFF
-  // doesn't need to do anything here — any existing clip just sits
-  // unused in R2 until/unless it's turned back on.
+  // Per's request — generate (or reuse) the trimmed clip right when free
+  // preview is turned ON, so it's ready before any real visitor hits
+  // playback-url, rather than adding first-request latency to someone's
+  // actual play button. Fire-and-forget on purpose — trimming a long file
+  // can take a few seconds, and this checkbox has no loading state to
+  // hold the response open for; if a very first play happens to land in
+  // that gap, playback-url's own on-demand generation (awaited there,
+  // since a real person IS waiting on that response) covers it. Turning
+  // free preview OFF doesn't need to do anything here — any existing
+  // clip just sits unused in R2 until/unless it's turned back on.
   if (req.body.freePreview) {
     const ref = db.getFreePreviewRef(req.params.id);
-    if (ref) ensureFreePreviewClip(ref).catch(e => console.error('[free preview] background trim failed:', e.message));
+    if (ref) {
+      const lesson = db.getLesson(ref.lesson_id);
+      const cfg = db.getEffectivePreviewConfig('audio', { courseId: lesson?.course_id, lessonId: ref.lesson_id, fileRefId: req.params.id });
+      if (cfg.limitValue) ensureFreePreviewClip(ref, cfg.limitValue).catch(e => console.error('[free preview] background trim failed:', e.message));
+    }
   }
   res.json({ ok: true });
+});
+// Per's request — free-preview limits + end-of-preview popup content,
+// admin CRUD. scopeId is the literal string 'global' (ignored) when
+// scopeType is 'global' — keeps the route shape uniform across all four
+// levels rather than needing an optional param. mediaType is 'audio' for
+// now; the same shape carries video/pdf/ebook whenever those are built,
+// no route change needed. GET returns the raw override for THIS level
+// only (null fields if nothing's been customised here) — the admin UI
+// needs to know what's actually set at this level, not the effective
+// resolved value the client-facing route below returns.
+app.get('/api/admin/preview-config/:scopeType/:scopeId/:mediaType', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { scopeType, scopeId, mediaType } = req.params;
+    const row = db.getPreviewConfig(scopeType, scopeType === 'global' ? null : scopeId, mediaType);
+    res.json(row ? {
+      limitValue: row.limit_value, headline: row.headline, body: row.body,
+      buttonLabel: row.button_label, buttonUrl: row.button_url,
+    } : null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.put('/api/admin/preview-config/:scopeType/:scopeId/:mediaType', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { scopeType, scopeId, mediaType } = req.params;
+    const { limitValue, headline, body, buttonLabel, buttonUrl } = req.body;
+    db.setPreviewConfig(scopeType, scopeType === 'global' ? null : scopeId, mediaType, { limitValue, headline, body, buttonLabel, buttonUrl });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// "Remove override" — back to inheriting from the level above, distinct
+// from saving blank fields (which would instead save an override that
+// happens to be blank). Global has nothing above it to inherit from, so
+// this is refused there rather than silently no-op'ing — the person
+// would see the fields go blank with no explanation for why nothing
+// changed.
+app.delete('/api/admin/preview-config/:scopeType/:scopeId/:mediaType', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const { scopeType, scopeId, mediaType } = req.params;
+    if (scopeType === 'global') return res.status(400).json({ error: 'The global default has nothing to fall back to — edit it instead of removing it.' });
+    db.deletePreviewConfig(scopeType, scopeId, mediaType);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// Client-facing — the resolved (already-inherited) config, for the
+// end-of-preview popup. courseId/lessonId/fileRefId are all optional
+// query params; the resolver just skips whichever levels aren't given
+// and walks up to whichever ancestor actually has an override, same as
+// playback-url's own resolution above.
+app.get('/api/client/preview-config/:mediaType', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
+  try {
+    const cfg = db.getEffectivePreviewConfig(req.params.mediaType, {
+      courseId: req.query.courseId || null, lessonId: req.query.lessonId || null, fileRefId: req.query.fileRefId || null,
+    });
+    res.json(cfg);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Per Bot 15f — reorder a file within its lesson, one step at a time
 // (up/down), rather than a full drag-and-drop reorder — the file list is
