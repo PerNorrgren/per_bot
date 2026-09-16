@@ -5077,6 +5077,23 @@ async function openCourseDetail(courseId){
           <label style="display:flex;align-items:center;gap:3px;margin-left:4px;color:${f.free_preview?'rgba(180,230,200,0.85)':'rgba(255,255,255,0.35)'};cursor:pointer" title="Playable by any Explorer-and-up account, even if this course/lesson is otherwise locked or not enrolled in">
             <input type="checkbox" ${f.free_preview?'checked':''} onchange="toggleFileFreePreview('${f.ref_id}',this.checked)" style="width:11px;height:11px"/> free preview
           </label>
+          <!-- Per's request — the file's own visibility tier (who can play
+               the full thing) was only ever editable from the Library tab,
+               a separate screen from where a facilitator is actually
+               looking at a lesson's files day to day. This is the exact
+               same control (same options, same updateVisibility PATCH,
+               same canSeeFile enforcement at playback-url time) as the
+               Library tab's own dropdown — not a new setting, just added
+               here too so it doesn't need a second trip to change it. -->
+          ${f.assigned_client_id
+            ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap;margin-left:4px" title="Visibility tier is ignored for one-to-one files">My</span>`
+            : `<select class="vis-sel" onchange="updateVisibility('${f.id}',this.value)" title="Who can play the full file — same setting as the Library tab, just editable from here too" style="font-size:11px;margin-left:4px;padding:2px 6px;height:22px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:rgba(255,255,255,0.6)">
+            <option value="registered" ${f.visibility==='registered'?'selected':''}>Explorer</option>
+            <option value="member"     ${f.visibility==='member'    ?'selected':''}>Member</option>
+            <option value="client"     ${f.visibility==='client'    ?'selected':''}>Client</option>
+            <option value="facilitator"${f.visibility==='facilitator'?'selected':''}>Facilitator</option>
+            <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
+          </select>`}
           <select onchange="if(this.value){moveLessonFileToLesson('${f.ref_id}',this.value);} this.selectedIndex=0;" title="Move this file to a different lesson" style="font-size:11px;max-width:120px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:5px;color:rgba(255,255,255,0.6)">
             <option value="">Move to…</option>
             ${lessons.filter(ol=>ol.id!==l.id).map(ol=>`<option value="${ol.id}">${ol.lesson_number} — ${ol.title}</option>`).join('')}
