@@ -11468,6 +11468,68 @@ async function ensureFreePreviewClip(file, limitSeconds) {
   }
 }
 
+// Per's request — same idea as ensureFreePreviewClip above (audio/video),
+// for PDFs: free preview only ever grants the first N pages, not the
+// whole document. A genuinely different mechanism, not a variant of the
+// same one — a page count isn't a timestamp, and the right tool for it
+// is different too, so this is its own function rather than a branch
+// inside ensureFreePreviewClip. Uses pdfseparate + pdfunite (poppler-
+// utils, already installed for pdf-to-epub.js — deliberately NOT qpdf,
+// which would do this in one command but isn't actually installed in
+// production; checked the real Dockerfile before reaching for it, not
+// assumed from what happened to be available in this sandbox). Same
+// preview_key/preview_key_seconds caching as the time-based version —
+// see the PREVIEW_CONFIG_DEFAULTS.pdf comment in db.js for why the
+// "seconds" column name is reused here to mean "page count" instead.
+async function ensureFreePreviewPdf(file, pageLimit) {
+  if (!file || !pageLimit || pageLimit <= 0) return;
+  if (file.preview_key && file.preview_key_seconds === pageLimit) return; // already have exactly this
+  if (!file.file_type || file.file_type !== 'application/pdf') return;
+  if (file.storage_type !== 'r2' || !media.isConfigured()) return;
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'free-preview-pdf-'));
+  try {
+    const localPath = path.join(tmpDir, 'original.pdf');
+    const obj = await media.getPublicObject(file.filename);
+    await new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(localPath);
+      obj.Body.pipe(writeStream);
+      obj.Body.on('error', reject);
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    const { stdout } = await execFileAsync('pdfinfo', [localPath]);
+    const pagesMatch = stdout.match(/^Pages:\s+(\d+)/m);
+    const totalPages = pagesMatch ? parseInt(pagesMatch[1], 10) : 0;
+    // Already short enough — same reasoning as the audio/video version:
+    // record the limit against a NULL key so a later request at this
+    // same limit doesn't re-probe every time, and playback-url serves
+    // the original as-is.
+    if (totalPages > 0 && totalPages <= pageLimit) {
+      db.setLibraryFilePreviewKey(file.id, null, pageLimit);
+      return;
+    }
+
+    // pdfseparate writes one file per page, then pdfunite reassembles
+    // just the first pageLimit of them into a single trimmed PDF —
+    // together doing what qpdf's --pages would do in one step, using
+    // only tools actually present in production.
+    await execFileAsync('pdfseparate', ['-f', '1', '-l', String(pageLimit), localPath, path.join(tmpDir, 'page-%d.pdf')]);
+    const pageFiles = [];
+    for (let i = 1; i <= pageLimit; i++) pageFiles.push(path.join(tmpDir, `page-${i}.pdf`));
+    const outPath = path.join(tmpDir, 'preview.pdf');
+    await execFileAsync('pdfunite', [...pageFiles, outPath]);
+    const buffer = await fsp.readFile(outPath);
+    const key = `library-previews/${file.id}-${pageLimit}.pdf`;
+    await media.uploadPublicObject(key, buffer, 'application/pdf');
+    db.setLibraryFilePreviewKey(file.id, key, pageLimit);
+  } catch (e) {
+    console.error('[free preview] pdf trim failed for', file.id, '— falling back to full file:', e.message);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','facilitator','admin']), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
@@ -11499,12 +11561,14 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
       // actually exist by the time it's returned.
       let playbackKey = file.filename;
       let previewConfig = null;
-      // Per's request — video now gets the same trimmed-preview treatment
-      // as audio, resolved separately (its own preview_configs media_type,
-      // its own Settings section) since a sensible preview length for a
-      // meditation recording and a course video aren't necessarily the same.
+      // Per's request — video/pdf get the same trimmed-preview treatment
+      // as audio, each resolved separately (its own preview_configs
+      // media_type, its own Settings section) since a sensible preview
+      // length for a meditation recording, a course video, and a PDF
+      // aren't the same kind of number (minutes vs minutes vs pages).
       const previewMediaType = file.file_type && file.file_type.startsWith('audio/') ? 'audio'
-        : file.file_type && file.file_type.startsWith('video/') ? 'video' : null;
+        : file.file_type && file.file_type.startsWith('video/') ? 'video'
+        : file.file_type === 'application/pdf' ? 'pdf' : null;
       if (viaFreePreview && previewMediaType) {
         let courseId = null, lessonId = null, fileRefId = null;
         if (req.query.fileRefId) {
@@ -11518,8 +11582,9 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
         }
         const cfg = db.getEffectivePreviewConfig(previewMediaType, { courseId, lessonId, fileRefId });
         if (cfg.limitValue) {
-          await ensureFreePreviewClip(file, cfg.limitValue);
-          const fresh = db.getLibraryFile(file.id); // re-fetch — ensureFreePreviewClip may have just updated it
+          if (previewMediaType === 'pdf') await ensureFreePreviewPdf(file, cfg.limitValue);
+          else await ensureFreePreviewClip(file, cfg.limitValue);
+          const fresh = db.getLibraryFile(file.id); // re-fetch — the ensure* call above may have just updated it
           if (fresh && fresh.preview_key && fresh.preview_key_seconds === cfg.limitValue) playbackKey = fresh.preview_key;
         }
         // Returned inline rather than making the client make a second
@@ -11551,7 +11616,8 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     let legacyPreviewConfig = null;
     if (viaFreePreview) {
       const legacyMediaType = file.file_type && file.file_type.startsWith('audio/') ? 'audio'
-        : file.file_type && file.file_type.startsWith('video/') ? 'video' : null;
+        : file.file_type && file.file_type.startsWith('video/') ? 'video'
+        : file.file_type === 'application/pdf' ? 'pdf' : null;
       let lessonId = null, courseId = null;
       if (req.query.fileRefId) {
         const ref = db.getFreePreviewRef(req.query.fileRefId);
@@ -13127,14 +13193,18 @@ app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(
   // clip just sits unused in R2 until/unless it's turned back on.
   if (req.body.freePreview) {
     const ref = db.getFreePreviewRef(req.params.id);
-    // Per's request — video now goes through the same background-trim
-    // trigger as audio, just resolved against its own media_type.
+    // Per's request — video/pdf now go through the same background-trim
+    // trigger as audio, each resolved against its own media_type.
     const mediaType = ref && ref.file_type && ref.file_type.startsWith('audio/') ? 'audio'
-      : ref && ref.file_type && ref.file_type.startsWith('video/') ? 'video' : null;
+      : ref && ref.file_type && ref.file_type.startsWith('video/') ? 'video'
+      : ref && ref.file_type === 'application/pdf' ? 'pdf' : null;
     if (ref && mediaType) {
       const lesson = db.getLesson(ref.lesson_id);
       const cfg = db.getEffectivePreviewConfig(mediaType, { courseId: lesson?.course_id, lessonId: ref.lesson_id, fileRefId: req.params.id });
-      if (cfg.limitValue) ensureFreePreviewClip(ref, cfg.limitValue).catch(e => console.error('[free preview] background trim failed:', e.message));
+      if (cfg.limitValue) {
+        const job = mediaType === 'pdf' ? ensureFreePreviewPdf(ref, cfg.limitValue) : ensureFreePreviewClip(ref, cfg.limitValue);
+        job.catch(e => console.error('[free preview] background trim failed:', e.message));
+      }
     }
   }
   res.json({ ok: true });

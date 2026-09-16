@@ -723,6 +723,15 @@
       </div>
       <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('video')">Save</button>
       <div id="previewVideoFeedback" style="margin-top:10px;font-size:12px"></div>
+
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.06em;margin:22px 0 8px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">PDF</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Preview length (pages)</label>
+        <input type="number" id="previewPdfPages" min="1" step="1" style="width:80px"/>
+      </div>
+      <div class="field-note" style="margin-bottom:10px">PDF has no natural "end of playback" moment the way audio/video does, so there's no popup for it yet — the preview file itself simply doesn't contain any pages past this limit. Headline/body/button fields will make sense once there's a way to show them (e.g. a banner on the preview page) — no point setting text nothing displays yet.</div>
+      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('pdf')">Save</button>
+      <div id="previewPdfFeedback" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>
   <script>
@@ -730,13 +739,35 @@
     // element-id prefix and the API path segment change), written once and
     // parameterized rather than copy-pasted per type — the same mistake
     // flagged across the rest of this app in the shared-code audit, not
-    // worth repeating here on day one of a brand new feature. Adding pdf/
-    // ebook later is a markup block + two function calls, not two more
-    // functions.
+    // worth repeating here on day one of a brand new feature. Adding
+    // ebook later is a markup block + one more PREVIEW_UNIT entry, not
+    // another function.
+    //
+    // PDF's limit is a page count, not minutes — field name and the
+    // storage conversion both differ per media type, everything else
+    // about load/save is identical.
+    const PREVIEW_UNIT = {
+      audio: { field: 'Minutes', toStorage: v => Math.round(v * 60), fromStorage: v => Math.round(v / 60), fallback: 3 },
+      video: { field: 'Minutes', toStorage: v => Math.round(v * 60), fromStorage: v => Math.round(v / 60), fallback: 3 },
+      pdf:   { field: 'Pages',   toStorage: v => Math.round(v),      fromStorage: v => Math.round(v),      fallback: 5 },
+    };
     function previewFieldId(mediaType, field) {
       return 'preview' + mediaType[0].toUpperCase() + mediaType.slice(1) + field;
     }
+    // Reads an optional field's value, or null if that field doesn't
+    // exist in the DOM for this media type — PDF has no popup fields
+    // (see the field-note in its section), so headline/body/button
+    // simply aren't rendered there at all, not just left blank.
+    function getOptionalFieldValue(mediaType, field) {
+      const el = document.getElementById(previewFieldId(mediaType, field));
+      return el ? el.value.trim() || null : null;
+    }
+    function setOptionalFieldValue(mediaType, field, value) {
+      const el = document.getElementById(previewFieldId(mediaType, field));
+      if (el) el.value = value || '';
+    }
     async function loadPreviewConfig(mediaType) {
+      const unit = PREVIEW_UNIT[mediaType];
       try {
         // The resolved effective values (global falls back to hardcoded
         // defaults if never saved before) — so the fields show something
@@ -744,27 +775,28 @@
         // clue what they'd default to.
         const res = await fetch(`/api/client/preview-config/${mediaType}`);
         const cfg = await res.json();
-        document.getElementById(previewFieldId(mediaType, 'Minutes')).value = cfg.limitValue ? Math.round(cfg.limitValue / 60) : 3;
-        document.getElementById(previewFieldId(mediaType, 'Headline')).value = cfg.headline || '';
-        document.getElementById(previewFieldId(mediaType, 'Body')).value = cfg.body || '';
-        document.getElementById(previewFieldId(mediaType, 'ButtonLabel')).value = cfg.buttonLabel || '';
-        document.getElementById(previewFieldId(mediaType, 'ButtonUrl')).value = cfg.buttonUrl || '';
+        document.getElementById(previewFieldId(mediaType, unit.field)).value = cfg.limitValue ? unit.fromStorage(cfg.limitValue) : unit.fallback;
+        setOptionalFieldValue(mediaType, 'Headline', cfg.headline);
+        setOptionalFieldValue(mediaType, 'Body', cfg.body);
+        setOptionalFieldValue(mediaType, 'ButtonLabel', cfg.buttonLabel);
+        setOptionalFieldValue(mediaType, 'ButtonUrl', cfg.buttonUrl);
       } catch (e) { /* leave fields blank — Save still works, will just start from scratch */ }
     }
     async function savePreviewConfig(mediaType) {
+      const unit = PREVIEW_UNIT[mediaType];
       const feedback = document.getElementById(previewFieldId(mediaType, 'Feedback'));
       feedback.textContent = 'Saving…';
       feedback.style.color = 'rgba(255,255,255,0.5)';
-      const minutes = parseFloat(document.getElementById(previewFieldId(mediaType, 'Minutes')).value);
+      const rawValue = parseFloat(document.getElementById(previewFieldId(mediaType, unit.field)).value);
       try {
         const res = await fetch(`/api/admin/preview-config/global/global/${mediaType}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            limitValue: minutes > 0 ? Math.round(minutes * 60) : null,
-            headline: document.getElementById(previewFieldId(mediaType, 'Headline')).value.trim() || null,
-            body: document.getElementById(previewFieldId(mediaType, 'Body')).value.trim() || null,
-            buttonLabel: document.getElementById(previewFieldId(mediaType, 'ButtonLabel')).value.trim() || null,
-            buttonUrl: document.getElementById(previewFieldId(mediaType, 'ButtonUrl')).value.trim() || null,
+            limitValue: rawValue > 0 ? unit.toStorage(rawValue) : null,
+            headline: getOptionalFieldValue(mediaType, 'Headline'),
+            body: getOptionalFieldValue(mediaType, 'Body'),
+            buttonLabel: getOptionalFieldValue(mediaType, 'ButtonLabel'),
+            buttonUrl: getOptionalFieldValue(mediaType, 'ButtonUrl'),
           }),
         });
         if (!res.ok) throw new Error('Save failed.');
@@ -777,6 +809,7 @@
     }
     loadPreviewConfig('audio');
     loadPreviewConfig('video');
+    loadPreviewConfig('pdf');
   </script>
 
   <!-- Legal documents (Per Bot 15h) — moved here from Communications since

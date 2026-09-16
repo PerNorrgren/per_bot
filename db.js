@@ -5198,6 +5198,13 @@ function deletePreviewConfig(scopeType, scopeId, mediaType) {
 const PREVIEW_CONFIG_DEFAULTS = {
   audio: { limitValue: 180, headline: "You've reached the end of this preview", body: 'Subscribe to hear the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
   video: { limitValue: 180, headline: "You've reached the end of this preview", body: 'Subscribe to watch the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
+  // Per's request — pages, not minutes; limitValue is a page count here,
+  // not seconds. Same preview_key_seconds column reused across all media
+  // types (see ensureFreePreviewPdf in server.js) rather than a rename —
+  // it's really "the limit value a cached preview was generated for",
+  // unitless in the schema itself the same way preview_configs.limit_value
+  // already is, just interpreted per media_type.
+  pdf: { limitValue: 5, headline: "You've reached the end of this preview", body: 'Subscribe to read the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
 };
 // The resolver — file_ref, then lesson, then course, then global, then
 // the hardcoded default above, first one that actually has a row wins,
