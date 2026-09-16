@@ -11397,32 +11397,39 @@ app.post('/api/content/library/:id/position', auth.requireAuthApi(['client','fac
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Per's request — free preview on an audio file only ever grants the
-// first N minutes (the whole thing, if it's already shorter), not full
-// access to the entire recording. N is resolved from preview_configs
-// (see db.js's getEffectivePreviewConfig — global/course/lesson/file
-// inheritance) rather than a fixed number, since Per can now configure
-// this per course/lesson/file. Generates a trimmed copy once — same
-// ffprobe-for-duration + ffmpeg-for-cutting pattern as the audiobook/
-// journal-video pipelines above — and caches its R2 key + the seconds it
-// was actually trimmed to on library_files.preview_key/preview_key_seconds;
-// reused as-is whenever a later request resolves to the SAME limit, and
+// Per's request — free preview on an audio or video file only ever
+// grants the first N minutes (the whole thing, if it's already
+// shorter), not full access. N is resolved from preview_configs (see
+// db.js's getEffectivePreviewConfig — global/course/lesson/file
+// inheritance) rather than a fixed number, since Per can configure this
+// per course/lesson/file, separately for audio vs video. Generates a
+// trimmed copy once — ffprobe for duration, ffmpeg -c copy to cut, no
+// re-encoding — and caches its R2 key + the seconds it was actually
+// trimmed to on library_files.preview_key/preview_key_seconds; reused
+// as-is whenever a later request resolves to the SAME limit, and
 // regenerated when it resolves to a different one (the same file can be
 // free-previewed from more than one lesson with different configured
 // limits, so "already has a preview_key" alone isn't enough to skip —
-// see the seconds comparison below). Audio only; video/PDF free previews
-// are untouched (still full access, exactly as before this existed).
-// Never throws — a failure here just means the free-preview override
-// falls back to serving the untrimmed original, which is what happened
-// before this feature existed, not a regression.
+// see the seconds comparison below). -c copy tested directly against a
+// real video file first, not assumed: cutting at an arbitrary timestamp
+// (not aligned to a keyframe) came out 67ms over the requested length —
+// negligible, not the multi-second keyframe-snap overage a stream copy
+// might be expected to produce. PDF/ebook free previews are still
+// untouched (full access) — a page-count/chapter-count limit needs a
+// completely different approach, not a time cut. Never throws — a
+// failure here just means the free-preview override falls back to
+// serving the untrimmed original, which is what happened before this
+// feature existed, not a regression.
 async function ensureFreePreviewClip(file, limitSeconds) {
   if (!file || !limitSeconds || limitSeconds <= 0) return;
   if (file.preview_key && file.preview_key_seconds === limitSeconds) return; // already have exactly this
-  if (!file.file_type || !file.file_type.startsWith('audio/')) return;
+  const isAudio = file.file_type && file.file_type.startsWith('audio/');
+  const isVideo = file.file_type && file.file_type.startsWith('video/');
+  if (!isAudio && !isVideo) return;
   if (file.storage_type !== 'r2' || !media.isConfigured()) return;
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'free-preview-'));
   try {
-    const ext = (file.filename.match(/\.[a-zA-Z0-9]+$/) || ['.mp3'])[0];
+    const ext = (file.filename.match(/\.[a-zA-Z0-9]+$/) || [isVideo ? '.mp4' : '.mp3'])[0];
     const localPath = path.join(tmpDir, `original${ext}`);
     const obj = await media.getPublicObject(file.filename);
     await new Promise((resolve, reject) => {
@@ -11447,8 +11454,8 @@ async function ensureFreePreviewClip(file, limitSeconds) {
     }
 
     const outPath = path.join(tmpDir, `preview${ext}`);
-    // -c copy: a straight cut, no re-encoding — fast, and unlike video,
-    // audio doesn't need a keyframe-aligned cut point to stay valid.
+    // -c copy: a straight cut, no re-encoding — fast for audio, and
+    // confirmed (see comment above) precise enough for video too.
     await execFileAsync('ffmpeg', ['-y', '-i', localPath, '-t', String(limitSeconds), '-c', 'copy', outPath]);
     const buffer = await fsp.readFile(outPath);
     const key = `library-previews/${file.id}-${limitSeconds}${ext}`;
@@ -11492,7 +11499,13 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
       // actually exist by the time it's returned.
       let playbackKey = file.filename;
       let previewConfig = null;
-      if (viaFreePreview && file.file_type && file.file_type.startsWith('audio/')) {
+      // Per's request — video now gets the same trimmed-preview treatment
+      // as audio, resolved separately (its own preview_configs media_type,
+      // its own Settings section) since a sensible preview length for a
+      // meditation recording and a course video aren't necessarily the same.
+      const previewMediaType = file.file_type && file.file_type.startsWith('audio/') ? 'audio'
+        : file.file_type && file.file_type.startsWith('video/') ? 'video' : null;
+      if (viaFreePreview && previewMediaType) {
         let courseId = null, lessonId = null, fileRefId = null;
         if (req.query.fileRefId) {
           const ref = db.getFreePreviewRef(req.query.fileRefId);
@@ -11503,7 +11516,7 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
             courseId = lesson ? lesson.course_id : null;
           }
         }
-        const cfg = db.getEffectivePreviewConfig('audio', { courseId, lessonId, fileRefId });
+        const cfg = db.getEffectivePreviewConfig(previewMediaType, { courseId, lessonId, fileRefId });
         if (cfg.limitValue) {
           await ensureFreePreviewClip(file, cfg.limitValue);
           const fresh = db.getLibraryFile(file.id); // re-fetch — ensureFreePreviewClip may have just updated it
@@ -11537,6 +11550,8 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     // popup at natural playback end same as the R2 branch above.
     let legacyPreviewConfig = null;
     if (viaFreePreview) {
+      const legacyMediaType = file.file_type && file.file_type.startsWith('audio/') ? 'audio'
+        : file.file_type && file.file_type.startsWith('video/') ? 'video' : null;
       let lessonId = null, courseId = null;
       if (req.query.fileRefId) {
         const ref = db.getFreePreviewRef(req.query.fileRefId);
@@ -11546,8 +11561,10 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
           courseId = lesson ? lesson.course_id : null;
         }
       }
-      const cfg = db.getEffectivePreviewConfig('audio', { courseId, lessonId, fileRefId: req.query.fileRefId || null });
-      legacyPreviewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl };
+      if (legacyMediaType) {
+        const cfg = db.getEffectivePreviewConfig(legacyMediaType, { courseId, lessonId, fileRefId: req.query.fileRefId || null });
+        legacyPreviewConfig = { headline: cfg.headline, body: cfg.body, buttonLabel: cfg.buttonLabel, buttonUrl: cfg.buttonUrl };
+      }
     }
     res.json({ url: `/uploads/${file.filename}`, expiresIn: null, isPreview: viaFreePreview, previewConfig: legacyPreviewConfig });
   } catch (e) {
@@ -13110,9 +13127,13 @@ app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(
   // clip just sits unused in R2 until/unless it's turned back on.
   if (req.body.freePreview) {
     const ref = db.getFreePreviewRef(req.params.id);
-    if (ref) {
+    // Per's request — video now goes through the same background-trim
+    // trigger as audio, just resolved against its own media_type.
+    const mediaType = ref && ref.file_type && ref.file_type.startsWith('audio/') ? 'audio'
+      : ref && ref.file_type && ref.file_type.startsWith('video/') ? 'video' : null;
+    if (ref && mediaType) {
       const lesson = db.getLesson(ref.lesson_id);
-      const cfg = db.getEffectivePreviewConfig('audio', { courseId: lesson?.course_id, lessonId: ref.lesson_id, fileRefId: req.params.id });
+      const cfg = db.getEffectivePreviewConfig(mediaType, { courseId: lesson?.course_id, lessonId: ref.lesson_id, fileRefId: req.params.id });
       if (cfg.limitValue) ensureFreePreviewClip(ref, cfg.limitValue).catch(e => console.error('[free preview] background trim failed:', e.message));
     }
   }

@@ -5197,6 +5197,7 @@ function deletePreviewConfig(scopeType, scopeId, mediaType) {
 // sane, working popup rather than blank/broken.
 const PREVIEW_CONFIG_DEFAULTS = {
   audio: { limitValue: 180, headline: "You've reached the end of this preview", body: 'Subscribe to hear the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
+  video: { limitValue: 180, headline: "You've reached the end of this preview", body: 'Subscribe to watch the rest of this — and everything else in the library.', buttonLabel: 'See membership options', buttonUrl: '/membership' },
 };
 // The resolver — file_ref, then lesson, then course, then global, then
 // the hardcoded default above, first one that actually has a row wins,

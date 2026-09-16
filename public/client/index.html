@@ -5116,8 +5116,9 @@
     // same as audio. Works for both R2-stored and legacy disk files transparently.
     let url;
     let epubReaderUrl = null;
+    let previewInfo = null; // { headline, body, buttonLabel, buttonUrl } — set below if this open is a free-preview grant (video)
     try {
-      const res  = await fetch(`/api/content/library/${f.id}/playback-url`);
+      const res  = await fetch(`/api/content/library/${f.id}/playback-url${f.ref_id ? `?fileRefId=${f.ref_id}` : ''}`);
       const data = await res.json();
       if (!res.ok || !data.url) {
         mediaEl.innerHTML = `<div style="font-size:13px;color:rgba(255,120,100,0.7)">${data.error || 'Could not open this file.'}</div>`;
@@ -5125,6 +5126,10 @@
       }
       url = data.url;
       epubReaderUrl = data.epubReaderUrl || null;
+      // Per's request — same reasoning as mpPlay's audio popup: comes
+      // straight from playback-url's own resolution rather than a
+      // second lookup, so it always matches exactly what was granted.
+      if (data.isPreview && data.previewConfig) previewInfo = data.previewConfig;
     } catch {
       // Per's spec: try live first, fall back to the offline copy only
       // when the request genuinely can't reach the server at all — see
@@ -5306,6 +5311,12 @@
       mediaEl.innerHTML = '';
       const video = document.createElement('video');
       video.src = url; video.controls = true; video.autoplay = true;
+      // Per's request — same popup as audio's end-of-preview, just on the
+      // native <video> element's own 'ended' event instead of mpAudio's
+      // (video never goes through the mini-player). Only ever fires when
+      // previewInfo was actually set above (a genuine free-preview grant),
+      // never for a member/client's own full playback.
+      if (previewInfo) video.addEventListener('ended', () => showPreviewEndedPopup(previewInfo));
       mediaEl.appendChild(video);
     } else if (f.file_type === 'application/pdf') {
       mediaEl.innerHTML = `<iframe src="${url}"></iframe>`;

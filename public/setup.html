@@ -675,6 +675,7 @@
     <div class="card-header"><div class="card-title">Content previews</div></div>
     <div class="card-body">
       <div class="field-note" style="margin-bottom:16px">How much of a file plays when someone below the tier it needs hits "free preview" — and what the popup says when the preview ends. This is the global default; a specific course, lesson, or file can override it once that's built.</div>
+
       <div style="font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">Audio</div>
       <div class="field" style="margin-bottom:10px">
         <label>Preview length (minutes)</label>
@@ -696,40 +697,74 @@
         <label>Button link</label>
         <input type="text" id="previewAudioButtonUrl" style="width:100%;max-width:280px"/>
       </div>
-      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfigAudio()">Save</button>
+      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('audio')">Save</button>
       <div id="previewAudioFeedback" style="margin-top:10px;font-size:12px"></div>
+
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.06em;margin:22px 0 8px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08)">Video</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Preview length (minutes)</label>
+        <input type="number" id="previewVideoMinutes" min="1" step="1" style="width:80px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup headline</label>
+        <input type="text" id="previewVideoHeadline" style="width:100%;max-width:420px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Popup body</label>
+        <textarea id="previewVideoBody" rows="3" style="width:100%;max-width:420px"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button label</label>
+        <input type="text" id="previewVideoButtonLabel" style="width:100%;max-width:280px"/>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Button link</label>
+        <input type="text" id="previewVideoButtonUrl" style="width:100%;max-width:280px"/>
+      </div>
+      <button class="btn-primary" style="padding:9px 18px;font-size:12px" onclick="savePreviewConfig('video')">Save</button>
+      <div id="previewVideoFeedback" style="margin-top:10px;font-size:12px"></div>
     </div>
   </div>
   <script>
-    async function loadPreviewConfigAudio() {
+    // Per's request — genuinely shared logic across media types (only the
+    // element-id prefix and the API path segment change), written once and
+    // parameterized rather than copy-pasted per type — the same mistake
+    // flagged across the rest of this app in the shared-code audit, not
+    // worth repeating here on day one of a brand new feature. Adding pdf/
+    // ebook later is a markup block + two function calls, not two more
+    // functions.
+    function previewFieldId(mediaType, field) {
+      return 'preview' + mediaType[0].toUpperCase() + mediaType.slice(1) + field;
+    }
+    async function loadPreviewConfig(mediaType) {
       try {
         // The resolved effective values (global falls back to hardcoded
         // defaults if never saved before) — so the fields show something
         // sensible on a fresh install rather than blank inputs with no
         // clue what they'd default to.
-        const res = await fetch('/api/client/preview-config/audio');
+        const res = await fetch(`/api/client/preview-config/${mediaType}`);
         const cfg = await res.json();
-        document.getElementById('previewAudioMinutes').value = cfg.limitValue ? Math.round(cfg.limitValue / 60) : 3;
-        document.getElementById('previewAudioHeadline').value = cfg.headline || '';
-        document.getElementById('previewAudioBody').value = cfg.body || '';
-        document.getElementById('previewAudioButtonLabel').value = cfg.buttonLabel || '';
-        document.getElementById('previewAudioButtonUrl').value = cfg.buttonUrl || '';
+        document.getElementById(previewFieldId(mediaType, 'Minutes')).value = cfg.limitValue ? Math.round(cfg.limitValue / 60) : 3;
+        document.getElementById(previewFieldId(mediaType, 'Headline')).value = cfg.headline || '';
+        document.getElementById(previewFieldId(mediaType, 'Body')).value = cfg.body || '';
+        document.getElementById(previewFieldId(mediaType, 'ButtonLabel')).value = cfg.buttonLabel || '';
+        document.getElementById(previewFieldId(mediaType, 'ButtonUrl')).value = cfg.buttonUrl || '';
       } catch (e) { /* leave fields blank — Save still works, will just start from scratch */ }
     }
-    async function savePreviewConfigAudio() {
-      const feedback = document.getElementById('previewAudioFeedback');
+    async function savePreviewConfig(mediaType) {
+      const feedback = document.getElementById(previewFieldId(mediaType, 'Feedback'));
       feedback.textContent = 'Saving…';
       feedback.style.color = 'rgba(255,255,255,0.5)';
-      const minutes = parseFloat(document.getElementById('previewAudioMinutes').value);
+      const minutes = parseFloat(document.getElementById(previewFieldId(mediaType, 'Minutes')).value);
       try {
-        const res = await fetch('/api/admin/preview-config/global/global/audio', {
+        const res = await fetch(`/api/admin/preview-config/global/global/${mediaType}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             limitValue: minutes > 0 ? Math.round(minutes * 60) : null,
-            headline: document.getElementById('previewAudioHeadline').value.trim() || null,
-            body: document.getElementById('previewAudioBody').value.trim() || null,
-            buttonLabel: document.getElementById('previewAudioButtonLabel').value.trim() || null,
-            buttonUrl: document.getElementById('previewAudioButtonUrl').value.trim() || null,
+            headline: document.getElementById(previewFieldId(mediaType, 'Headline')).value.trim() || null,
+            body: document.getElementById(previewFieldId(mediaType, 'Body')).value.trim() || null,
+            buttonLabel: document.getElementById(previewFieldId(mediaType, 'ButtonLabel')).value.trim() || null,
+            buttonUrl: document.getElementById(previewFieldId(mediaType, 'ButtonUrl')).value.trim() || null,
           }),
         });
         if (!res.ok) throw new Error('Save failed.');
@@ -740,7 +775,8 @@
         feedback.style.color = 'rgba(255,140,120,0.9)';
       }
     }
-    loadPreviewConfigAudio();
+    loadPreviewConfig('audio');
+    loadPreviewConfig('video');
   </script>
 
   <!-- Legal documents (Per Bot 15h) — moved here from Communications since
