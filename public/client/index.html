@@ -5342,6 +5342,24 @@
       mediaEl.appendChild(video);
     } else if (f.file_type === 'application/pdf') {
       mediaEl.innerHTML = `<iframe src="${url}"></iframe>`;
+    } else if (f.file_type === 'text/plain') {
+      // Per's request — placeholder notes ("Lesson material to be added
+      // soon"), or any other genuinely plain text content. Fetches and
+      // escapes the raw text (this is NOT HTML — unlike the text/html
+      // branch above, which parses and trusts real markup, plain text
+      // could contain anything and must never be interpreted as markup)
+      // and shows it simply, reusing the same reader styling as
+      // text/html for visual consistency but with none of that branch's
+      // parsing or poem-specific controls, since there's nothing to
+      // parse and no audio to attach.
+      try {
+        const textRes = await fetch(url);
+        const rawText = await textRes.text();
+        const escaped = rawText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        mediaEl.innerHTML = `<div class="text-doc-reader" style="font-size:100%;white-space:pre-wrap">${escaped}</div>`;
+      } catch {
+        mediaEl.innerHTML = `<a class="doc-link" href="${url}" target="_blank" rel="noopener">Open document</a>`;
+      }
     } else if (f.file_type === 'text/html') {
       // Simple generated HTML (blog posts, poems) — fetch and inject the
       // actual content styled to match the app, rather than an iframe
@@ -8716,13 +8734,15 @@
         loadResumeCard();
       };
 
-      if (data.files && data.files.length === 1) {
-        _lessonCtx = null;
-        if (isAudio(data.files[0])) { _onAudioStopCallback = askToComplete; }
-        else { _onPlayerCloseCallback = askToComplete; }
-        logLessonFileOpen(lessonId, data.files[0].id);
-        openContentFile(data.files[0]);
-      } else if (data.files && data.files.length > 1) {
+      // Per's request — a lesson with just one file used to skip straight
+      // to opening it, no list view at all. That looked, to a student, like
+      // the whole lesson was just that one handout — genuinely wrong for a
+      // lesson where Per is deliberately drip-feeding practice audio in
+      // week by week: the list view is what tells them more is coming.
+      // Always shows the chooser now, one row or many — openLessonChooser
+      // itself already renders correctly either way, this was purely about
+      // when it got called at all.
+      if (data.files && data.files.length) {
         _lessonCtx = { lesson: data.lesson, lessonId, askToComplete: data.quiz ? null : askToComplete };
         openLessonChooser(data.lesson, data.files, data.lessonLocked);
       }

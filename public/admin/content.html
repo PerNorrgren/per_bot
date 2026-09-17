@@ -1136,6 +1136,26 @@
   </div>
 </div>
 
+<!-- Per's request — a quick way to add a "more content coming soon" note
+     to a lesson, without needing a real file to upload. Kept deliberately
+     small (title + message only) rather than folding into the file
+     picker above, since there's nothing to pick — this creates the
+     library_files row itself, server-side. -->
+<div class="modal-overlay" id="placeholderFileModal">
+  <div class="modal" style="max-width:480px">
+    <h3>Add placeholder note</h3>
+    <input type="hidden" id="phLessonId"/>
+    <div><label>Title</label><input type="text" id="phTitle" value="Lesson material to be added soon"/></div>
+    <div><label>Message shown when opened</label><textarea id="phContent" rows="4">Lesson material to be added soon.</textarea></div>
+    <div class="modal-note">Shows up in the file list like any other item — opening it just shows this message as plain text.</div>
+    <div class="modal-err" id="phErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('placeholderFileModal')">Cancel</button>
+      <button class="modal-ok" id="phSaveBtn" onclick="savePlaceholderFile()">Add</button>
+    </div>
+  </div>
+</div>
+
 <!-- Quiz Modal — Per Bot 5 follow-on, one quiz per lesson -->
 <div class="modal-overlay" id="quizModal">
   <!-- Per's request — same fix as courseDetailModal, applied here too. -->
@@ -5058,6 +5078,7 @@ async function openCourseDetail(courseId){
         <button class="btn sm" onclick="editLesson('${l.id}','${l.lesson_number}','${l.title.replace(/'/g,"\\'")}','${l.visibility}','${l.access_status||'visible'}')">Edit</button>
         <button class="btn sm" onclick="openQuizModal('${l.id}','${l.title.replace(/'/g,"\\'")}')">Quiz</button>
         <button class="btn sm" onclick="openAddFilesToLesson('${l.id}','${l.title}')">+ Files</button>
+        <button class="btn sm" onclick="openPlaceholderFileModal('${l.id}')" title="Add a text note in place of a real file — e.g. 'Lesson material to be added soon' for content you're drip-feeding in later">+ Placeholder</button>
         <button class="btn sm danger" onclick="delLesson('${l.id}')">Delete</button>
       </div>
       ${files.length?`<div class="lesson-files-list" data-lesson-id="${l.id}" id="lesson-files-${l.id}" style="display:${wasOpen?'flex':'none'};border-top:1px solid rgba(255,255,255,0.05);padding:8px 14px;flex-direction:column;gap:6px">
@@ -5346,6 +5367,48 @@ async function openAddFilesToLesson(lessonId,lessonTitle){
   existing.forEach(f => { _alExistingRefsByFileId[f.id] = f.ref_id; });
   renderPicker('alPicker', existing.map(f=>f.id));
   openModal('addLessonModal');
+}
+
+// Per's request — a lesson with only its handout so far (Per drip-feeds
+// the week's practice audio in as each live-cohort session happens)
+// used to look, to a student, like that handout was the whole lesson.
+// This adds a plain-text note explaining more is coming — no file to
+// upload, so its own small modal rather than routing through the file
+// picker above, which has nothing to pick here.
+function openPlaceholderFileModal(lessonId) {
+  document.getElementById('phLessonId').value = lessonId;
+  document.getElementById('phTitle').value = 'Lesson material to be added soon';
+  document.getElementById('phContent').value = 'Lesson material to be added soon.';
+  document.getElementById('phErr').textContent = '';
+  openModal('placeholderFileModal');
+}
+async function savePlaceholderFile() {
+  const lessonId = document.getElementById('phLessonId').value;
+  const title = document.getElementById('phTitle').value.trim();
+  const content = document.getElementById('phContent').value.trim();
+  const err = document.getElementById('phErr');
+  const btn = document.getElementById('phSaveBtn');
+  if (!title || !content) { err.textContent = 'Title and message are both required.'; return; }
+  err.textContent = '';
+  setBtnLoading(btn, true, 'Adding…');
+  try {
+    const res = await fetch(`/api/admin/lessons/${lessonId}/placeholder-file`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Could not add the placeholder.');
+    closeModal('placeholderFileModal');
+    // Refreshes whichever course is currently open so the new item shows
+    // up in the lesson's file list right away — curCourseId is set by
+    // openCourseDetail itself on every call, so it's reliably the right
+    // course regardless of which modal happened to trigger this save.
+    if (curCourseId) openCourseDetail(curCourseId);
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    setBtnLoading(btn, false);
+  }
 }
 
 function openAddLesson(){

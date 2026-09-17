@@ -11548,7 +11548,11 @@ app.get('/api/content/library/:id/playback-url', auth.requireAuthApi(['client','
     if (!hasFullAccess && !viaFreePreview) return res.status(403).json({ error: 'Access denied.' });
 
     if (file.storage_type === 'r2') {
-      const isTextHtml = file.file_type === 'text/html';
+      // Per's request — text/plain placeholder notes get the same
+      // no-cache/force-utf8 treatment as text/html (poems/blog posts) —
+      // both are small, plausibly-edited-later text content where a
+      // stale cached copy would be the wrong failure mode to have.
+      const isTextHtml = file.file_type === 'text/html' || file.file_type === 'text/plain';
       // Per's request — free preview on audio plays only the resolved
       // limit (global/course/lesson/file inheritance — see
       // getEffectivePreviewConfig), not the whole file. fileRefId (an
@@ -13486,6 +13490,43 @@ app.post('/api/content/lesson-file-refs', auth.requireAuthApi(['admin']), (req, 
   }
 });
 app.delete('/api/content/lesson-file-refs/:id', auth.requireAuthApi(['admin']), (req, res) => { db.removeLessonFileRef(req.params.id); res.json({ ok: true }); });
+
+// Per's request — a lightweight way to signal "more content coming
+// soon" on a lesson that currently only has its handout (a live-cohort
+// course where Per drip-feeds the week's practice audio in as each
+// session happens, rather than having it all ready up front). No
+// binary file to upload here, so this creates the library_files row
+// directly — file_type 'text/plain', the typed message itself is the
+// file's actual content in R2 — and attaches it to the lesson in one
+// step, category/visibility inherited from the lesson's own course/
+// lesson settings the same way a real file added here would get.
+app.post('/api/admin/lessons/:lessonId/placeholder-file', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const lesson = db.getLesson(req.params.lessonId);
+    if (!lesson) return res.status(404).json({ error: 'Lesson not found.' });
+    if (!media.isConfigured()) return res.status(400).json({ error: 'Media storage (R2) is not configured on this deployment.' });
+    const course = db.getCourse(lesson.course_id);
+    const title = (req.body.title || 'Lesson material to be added soon').trim();
+    const content = (req.body.content || 'Lesson material to be added soon.').trim();
+    if (!title || !content) return res.status(400).json({ error: 'A title and message are both required.' });
+
+    const fileId = uuidv4();
+    const key = `placeholder-notes/${fileId}.txt`;
+    const buffer = Buffer.from(content, 'utf8');
+    await media.uploadPublicObject(key, buffer, 'text/plain');
+    db.addLibraryFile(
+      fileId, title, 'Placeholder note added from within a lesson.',
+      key, `${title}.txt`, 'text/plain', buffer.length,
+      course?.category_id || null, course?.subcategory_id || null, lesson.visibility || 'client', 'r2', false, null, null, null
+    );
+    const existingFiles = db.getFilesForLesson(req.params.lessonId);
+    db.addLessonFileRef(uuidv4(), req.params.lessonId, fileId, existingFiles.length, false);
+    res.json({ ok: true, fileId });
+  } catch (e) {
+    console.error('add placeholder file error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.get('/api/content/playlists', auth.requireAuthApi(['admin','facilitator','client']), (req, res) => res.json(db.getAllPlaylists(req.query)));
 app.post('/api/content/playlists', auth.requireAuthApi(['admin']), (req, res) => {
