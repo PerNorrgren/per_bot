@@ -12441,6 +12441,31 @@ app.post('/api/content/library/:id/replace-file/presign-upload', auth.requireAut
     res.status(500).json({ error: e.message });
   }
 });
+// Per's report — a real gap found while working out how to replace "The
+// Wired Heart": this route swapped the raw file in R2 and the DB row
+// correctly, but a book that had already been unpacked for lazy reading
+// (epub_opf_path set — see unpack_epub_book.js) would keep serving its
+// OLD chapter files forever after, since nothing here ever re-ran the
+// unpack step. The reader prefers epubReaderUrl (the unpacked, per-
+// chapter path) whenever epub_opf_path is set, so the swap would have
+// looked like it worked — new file size, new content-type — while
+// anyone actually reading the book kept seeing the old content.
+// runUnpack's targetFileId path (unpack_epub_book.js) always re-unpacks
+// that one book regardless of whether it's already unpacked — the
+// "idempotent, skips if already unpacked" behaviour only applies to its
+// no-target bulk-sweep mode — so this is exactly the existing tool for
+// this, not new unpacking logic. Fire-and-forget: a big book can take a
+// real minute to unzip and re-upload chapter by chapter, and there's
+// nothing worth holding this response open for — the original still
+// serves correctly (via the raw playback-url path) for anyone who opens
+// it in that window.
+function maybeReunpackReplacedEpub(fileId, mainContentType) {
+  if (mainContentType !== 'application/epub+zip') return false;
+  const { runUnpack } = require('./unpack_epub_book');
+  runUnpack((line) => console.log('[replace-file re-unpack]', line), fileId)
+    .catch(e => console.error('[replace-file re-unpack] failed:', e.message));
+  return true;
+}
 app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
@@ -12478,7 +12503,8 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
       const fileSize = Number(req.body.fileSize) || 0;
       const originalName = req.body.originalName || key;
       db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, fileSize, originalName, 'r2', originalPdfKey);
-      return res.json({ ok: true });
+      const unpacking = maybeReunpackReplacedEpub(file.id, mainContentType);
+      return res.json({ ok: true, unpacking });
     }
 
     // Path B — legacy fallback: presign failed, or an older client.
@@ -12515,7 +12541,8 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
     fs.unlink(req.file.path, () => {});
 
     db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
-    res.json({ ok: true });
+    const unpacking = maybeReunpackReplacedEpub(file.id, mainContentType);
+    res.json({ ok: true, unpacking });
   } catch (e) {
     console.error('[replace-file]', e.message);
     res.status(500).json({ error: 'Could not replace this file — please try again.' });

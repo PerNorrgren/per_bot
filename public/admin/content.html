@@ -1883,6 +1883,7 @@ function renderLibCards(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★ Unfeature':'☆ Feature'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})">${f.talk_practice?'🗣️ Remove from Talk':'🗣️ Add to Talk'}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        <button class="btn sm" onclick="replaceLibraryFile('${f.id}', this)" title="Swap the underlying file, keeping this same entry — id, title, visibility, tags, and every course/lesson link all stay put">Replace file</button>
         ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         ${f.use_count>0?`<button class="btn sm" onclick="showUsage('${f.id}')">Where used</button>`:''}
@@ -1930,6 +1931,7 @@ function renderLibList(files){
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
+        <button class="btn sm" onclick="replaceLibraryFile('${f.id}', this)" title="Swap the underlying file, keeping this same entry — id, title, visibility, tags, and every course/lesson link all stay put">Replace</button>
         ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}
         ${f.file_type==='text/html'?`<button class="btn sm" onclick="openTextEditor('${f.id}','${f.title.replace(/'/g,"\\'")}')">Text</button>`:''}
         <button class="btn sm" onclick="openFile('${f.id}','${f.file_type||''}')">Open</button>
@@ -5531,7 +5533,23 @@ async function renameLessonFile(fileId, currentTitle){
 // serves one click at a time anyway.
 let _lessonFileReplaceTarget = null;
 let _lessonFileReplaceButton = null;
+// Per's request — this same replace flow, callable from the Library tab
+// directly rather than only from within a lesson's file row. Tracks
+// which context triggered it so the right thing refreshes afterward
+// (openCourseDetail makes no sense to call from the Library tab, which
+// might not even have a course open) — everything else (presign, direct-
+// to-R2 upload, confirm dialog, the actual replace-file call) is exactly
+// the same regardless of where it was triggered from, since the backend
+// only ever cared about the file id.
+let _fileReplaceContext = 'lesson';
 function replaceLessonFile(fileId, btnEl){
+  _fileReplaceContext = 'lesson';
+  _lessonFileReplaceTarget = fileId;
+  _lessonFileReplaceButton = btnEl || null;
+  document.getElementById('lessonFileReplaceInput').click();
+}
+function replaceLibraryFile(fileId, btnEl){
+  _fileReplaceContext = 'library';
   _lessonFileReplaceTarget = fileId;
   _lessonFileReplaceButton = btnEl || null;
   document.getElementById('lessonFileReplaceInput').click();
@@ -5540,9 +5558,20 @@ async function onLessonFileReplaceSelected(input){
   const newFile = input.files[0];
   const fileId = _lessonFileReplaceTarget;
   const btn = _lessonFileReplaceButton;
+  const context = _fileReplaceContext;
   input.value = ''; // reset so choosing the exact same file a second time still fires 'change'
   if (!newFile || !fileId) return;
-  if (!(await appConfirm(`Replace this file with "${newFile.name}"? The course, quiz, and everyone's progress all stay pointed at it — only the content changes.`))) return;
+  // Per's request — a confirmation that actually says something concrete
+  // about the blast radius, not just "are you sure". use_count (already
+  // tracked and shown as the "Used N×" badge elsewhere in this tab) is
+  // "how many lesson/playlist placements reference this file", the real
+  // number we have — not a live viewer count, which isn't tracked
+  // anywhere in this app, so the wording doesn't claim to know that.
+  const f = allFiles.find(x => x.id === fileId);
+  const usageNote = f && f.use_count > 0
+    ? ` This file is used in ${f.use_count} place${f.use_count === 1 ? '' : 's'} (lessons, playlists, etc.) — all of them switch to the new content at once.`
+    : '';
+  if (!(await appConfirm(`Replace this file with "${newFile.name}"?${usageNote} Everyone's reading/listening progress stays pointed at the same entry — only the content changes.`))) return;
 
   const originalBtnHtml = btn ? btn.innerHTML : null;
   const setProgress = (label) => { if (btn) { btn.disabled = true; btn.innerHTML = label; } };
@@ -5615,10 +5644,13 @@ async function onLessonFileReplaceSelected(input){
   }
   // Per's request — explicit confirmation either way, since a silent
   // refresh looked identical to nothing having happened at all.
-  await appAlert(data.converted
-    ? 'Replaced — the new file is converted and ready to read.'
-    : 'Replaced — the new file is stored and ready to open.');
-  openCourseDetail(curCourseId);
+  await appAlert(data.unpacking
+    ? 'Replaced — the reader\u2019s chapter files are being rebuilt from the new file in the background now. For a full-length book this can take a minute or two; the old content keeps serving correctly in the meantime, so there\u2019s no window where it\u2019s broken.'
+    : data.converted
+      ? 'Replaced — the new file is converted and ready to read.'
+      : 'Replaced — the new file is stored and ready to open.');
+  if (context === 'library') loadAll();
+  else openCourseDetail(curCourseId);
 }
 // Per's request — move a file straight to a different lesson in the same
 // course from its own row, rather than remove-here/re-add-there. Also
