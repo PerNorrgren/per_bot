@@ -1336,6 +1336,43 @@
   </div>
 </div>
 
+<!-- Per's request — a message to everyone actively enrolled in one
+     instance, using the same rich editor as every other message in this
+     app (message-editor.js) and tracked the same way a newsletter is
+     (see POST .../send-email — a real newsletters row, real email_log
+     rows). Deliberately its own small modal rather than folding into
+     Enrolments above — composing a message and viewing the roster are
+     different tasks that happen to share the same audience. -->
+<div class="modal-overlay" id="instanceEmailModal">
+  <div class="modal wide" style="max-width:680px">
+    <h3 id="instEmailModalTitle">Email enrolled participants</h3>
+    <div id="instEmailRecipientNote" class="modal-note" style="margin-bottom:10px"></div>
+    <input type="hidden" id="instEmailInstanceId"/>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px">
+      <div style="flex:1"><label>Subject</label><input type="text" id="instEmailSubject"/></div>
+      <select onchange="if(this.value){insertInstanceEmailToken('subject',this.value);this.value='';}" style="font-size:11px;width:auto">
+        <option value="">Insert…</option>
+        <option value="{{name}}">Recipient's name</option>
+      </select>
+    </div>
+    <label>Message</label>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+      <select onchange="if(this.value){insertInstanceEmailToken('body',this.value);this.value='';}" style="font-size:11px">
+        <option value="">Insert token…</option>
+        <option value="{{name}}">Recipient's name</option>
+        <option value="{{course_link}}">Link to this course</option>
+      </select>
+    </div>
+    <div id="instEmailRichEditor"></div>
+    <div class="modal-note" style="margin-top:6px">{{name}} and {{course_link}} — each person gets their own; {{course_link}} takes them straight to this course in the app, logging in first if they need to.</div>
+    <div class="modal-err" id="instEmailErr"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeModal('instanceEmailModal')">Cancel</button>
+      <button class="modal-ok" id="instEmailSendBtn" onclick="sendInstanceEmail()">Send</button>
+    </div>
+  </div>
+</div>
+
 <!-- Facilitators Modal (Per's request — n facilitators per instance) —
      same shape as Sessions/Enrolments above: a small dedicated modal per
      instance, not a field buried in the main Edit form, since this can
@@ -4092,6 +4129,7 @@ function renderInstances(){
         ${i.mode==='cohort'?`<button class="btn sm" onclick="openSessionsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Sessions</button>`:''}
         ${i.mode==='cohort'?`<button class="btn sm" onclick="openSurveysModal('${i.id}','${i.title.replace(/'/g,"\\'")}')" title="Post-course survey status for everyone enrolled — also lets you send or resend it by hand">Surveys</button>`:''}
         <button class="btn sm" onclick="openEnrolmentsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Enrolments</button>
+        <button class="btn sm" onclick="openInstanceEmailModal('${i.id}','${i.title.replace(/'/g,"\\'")}')" title="Send a message to everyone actively enrolled in this instance">Email</button>
         <button class="btn sm" onclick="openInstanceFacilitatorsModal('${i.id}','${i.title.replace(/'/g,"\\'")}')">Facilitators</button>
         ${i.status==='open'?`<button class="btn sm" onclick="copyInstancePublicLink('${i.id}',this)" title="The public page — shows a date picker if the course has more than one open instance">Copy public link</button>`:''}
         <button class="btn sm danger" onclick="delInstance('${i.id}')">Delete</button>
@@ -4762,6 +4800,83 @@ async function removeEnrolment(enrolmentId, userName){
     await refreshEnrolmentsModal();
     loadAll();
   } catch(e) { appAlert('Could not remove — please try again.'); }
+}
+
+// ── Instance email (Per's request — message everyone actively enrolled
+// in one instance, same rich editor as everywhere else, tracked as a
+// real newsletter send) ──
+let _instEmailRecipientCount = 0;
+async function openInstanceEmailModal(instanceId, instanceTitle){
+  document.getElementById('instEmailInstanceId').value = instanceId;
+  document.getElementById('instEmailModalTitle').textContent = 'Email enrolled participants — ' + instanceTitle;
+  document.getElementById('instEmailSubject').value = '';
+  document.getElementById('instEmailErr').textContent = '';
+  document.getElementById('instEmailRecipientNote').textContent = 'Checking who\u2019s enrolled…';
+  if (!MessageEditor.isMounted('instEmailRichEditor')) {
+    MessageEditor.mountRich('instEmailRichEditor', '', { placeholder: 'Write the message…' });
+  } else {
+    MessageEditor.getInstance('instEmailRichEditor').setContents([]);
+  }
+  openModal('instanceEmailModal');
+  // Same list the Enrolments modal itself shows, filtered here to active
+  // — exactly what send-email will actually use — so the count Per sees
+  // before sending is never a guess.
+  try {
+    const list = await fetch(`/api/admin/course-instances/${instanceId}/enrolments`).then(r=>r.json());
+    _instEmailRecipientCount = list.filter(e => e.status === 'active').length;
+    document.getElementById('instEmailRecipientNote').textContent = _instEmailRecipientCount
+      ? `Sending to ${_instEmailRecipientCount} ${_instEmailRecipientCount===1?'person':'people'} currently enrolled.`
+      : 'No one is actively enrolled in this instance yet.';
+  } catch (e) {
+    _instEmailRecipientCount = 0;
+    document.getElementById('instEmailRecipientNote').textContent = 'Could not check who\u2019s enrolled — try again.';
+  }
+}
+function insertInstanceEmailToken(target, token){
+  if (target === 'subject') { insertTokenAtField(document.getElementById('instEmailSubject'), token); return; }
+  const q = MessageEditor.getInstance('instEmailRichEditor');
+  const range = q.getSelection(true) || { index: q.getLength(), length: 0 };
+  q.insertText(range.index, token);
+  q.setSelection(range.index + token.length);
+}
+// insertTokenAtField — same small helper comms.html/sales.html already
+// each have their own copy of; content.html never had one until now.
+function insertTokenAtField(el, token) {
+  if (!el) return;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  el.value = el.value.slice(0, start) + token + el.value.slice(end);
+  el.focus();
+  const pos = start + token.length;
+  el.setSelectionRange(pos, pos);
+}
+async function sendInstanceEmail(){
+  const instanceId = document.getElementById('instEmailInstanceId').value;
+  const subject = document.getElementById('instEmailSubject').value.trim();
+  const body = MessageEditor.getInstance('instEmailRichEditor').root.innerHTML;
+  const bodyIsBlank = MessageEditor.getInstance('instEmailRichEditor').getText().trim() === '';
+  const err = document.getElementById('instEmailErr');
+  const btn = document.getElementById('instEmailSendBtn');
+  if (!subject) { err.textContent = 'Subject is required.'; return; }
+  if (bodyIsBlank) { err.textContent = 'The message is empty.'; return; }
+  if (!_instEmailRecipientCount) { err.textContent = 'No one is actively enrolled in this instance yet — nothing to send to.'; return; }
+  if (!(await appConfirm(`Send this to ${_instEmailRecipientCount} ${_instEmailRecipientCount===1?'person':'people'} currently enrolled? This goes out right away.`))) return;
+  err.textContent = '';
+  setBtnLoading(btn, true, 'Sending…');
+  try {
+    const res = await fetch(`/api/admin/course-instances/${instanceId}/send-email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subject, body }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Could not send.');
+    closeModal('instanceEmailModal');
+    await appAlert(`Sending to ${data.recipientCount} ${data.recipientCount===1?'person':'people'} now — check Reports \u2192 Email Log for delivery status.`);
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    setBtnLoading(btn, false);
+  }
 }
 
 // ── Instance facilitators (Per's request — n facilitators per instance,

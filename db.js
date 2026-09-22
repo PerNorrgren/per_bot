@@ -5549,6 +5549,27 @@ function getEnrolmentsForInstance(courseInstanceId) {
     return { ...r, total_lessons: totalLessons, completed_lessons: completedLessons, percent_complete: percentComplete };
   });
 }
+// Per's request — recipients for "email everyone enrolled in this
+// instance". Deliberately NOT the same query getNewsletterRecipients
+// uses for a newsletter send — that one requires pref_email_news=1,
+// which is right for a marketing newsletter someone can opt out of, but
+// wrong here: being actively enrolled in (and very likely having paid
+// for) a specific live course is a much stronger, more specific signal
+// than the general newsletter opt-in, and opting out of marketing email
+// shouldn't also mean silently missing word about the course itself.
+// Still excludes archived accounts and anyone with no email at all —
+// the same baseline safety every other send in this app applies. Same
+// column set as getNewsletterRecipients (id/name/email/trial_ends_at/
+// member_expires_at/has_login) since both feed the same runNewsletterSend
+// loop, which needs all of them for buildMessageTokens.
+function getActiveEnrollmentRecipients(courseInstanceId) {
+  return queryAll(
+    `SELECT u.id, u.name, u.email, u.trial_ends_at, u.member_expires_at, (u.password_hash IS NOT NULL) as has_login
+     FROM enrolments e JOIN users u ON e.user_id = u.id
+     WHERE e.course_instance_id=? AND e.status='active' AND u.archived=0 AND u.email IS NOT NULL`,
+    [courseInstanceId]
+  );
+}
 // Per's request — n facilitators per instance, n instances per facilitator.
 // getFacilitatorsForInstance/getInstancesForFacilitator are the two read
 // directions of the same instance_facilitators join table above;
@@ -11256,7 +11277,7 @@ module.exports = {
   getCertificateForEnrolment, getCertificate, getCertificatesForUser, issueCertificateIfEligible,
   getCertificateTemplates, getCertificateTemplate, createCertificateTemplate, updateCertificateTemplate,
   deleteCertificateTemplate, assignCertificateTemplateToInstance, getCertificateTemplateRecipients,
-  getEnrolmentsForInstance, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
+  getEnrolmentsForInstance, getActiveEnrollmentRecipients, updateEnrolmentPaymentStatus, markEnrolmentCompleted, deleteEnrolment,
   // Lesson progress
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions

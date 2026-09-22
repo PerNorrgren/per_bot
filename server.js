@@ -10033,6 +10033,47 @@ app.get('/api/admin/course-instances/:id/enrolments', auth.requireAuthApi(['admi
   try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a message to everyone actively enrolled in this one
+// instance, composed with the same rich editor as every other message in
+// this app, tracked the same way a newsletter send is (a real newsletters
+// row, the same email_log rows, showing up in the same reports) rather
+// than a separate, parallel tracking mechanism. audience is set to the
+// literal string 'instance:<id>' — a convention this route defines
+// itself (not parsing anything a person typed), which runNewsletterSend
+// checks for to build each recipient's {{course_link}} token. Mirrors
+// the scheduled-messages send-now route's exact pattern: create the row,
+// batch-log every recipient as pending, respond immediately with the
+// count, then actually send in the background — a real send to even a
+// modest cohort is too slow to hold the request open for.
+app.post('/api/admin/course-instances/:id/send-email', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (IS_STAGING) return res.status(403).json({ error: 'Sending is disabled on staging.' });
+    const instance = db.getCourseInstance(req.params.id);
+    if (!instance) return res.status(404).json({ error: 'Instance not found.' });
+    const subject = (req.body.subject || '').trim();
+    const body = (req.body.body || '').trim();
+    if (!subject || !body) return res.status(400).json({ error: 'Subject and message are both required.' });
+
+    const recipients = db.getActiveEnrollmentRecipients(req.params.id);
+    if (!recipients.length) return res.status(400).json({ error: 'No one is actively enrolled in this instance yet — nothing to send to.' });
+
+    const newsletterId = uuidv4();
+    db.addNewsletter(newsletterId, subject, body, `instance:${req.params.id}`, 'html', null, 'course-instance-email', null, recipients.map(r => r.id));
+    const newsletter = db.getNewsletter(newsletterId);
+    const logRowsByUserId = {};
+    const pendingLogRows = recipients.map(user => {
+      const id = uuidv4();
+      logRowsByUserId[user.id] = id;
+      return { id, kind: 'newsletter', email: user.email, subject: newsletter.subject, newsletterId: newsletter.id, userId: user.id };
+    });
+    db.logEmailPendingBatch(pendingLogRows);
+    db.updateNewsletterStatus(newsletter.id, 'sending');
+    res.json({ ok: true, started: true, recipientCount: recipients.length });
+    runNewsletterSend(newsletter, recipients, logRowsByUserId).catch(e => {
+      console.error('course-instance send-email background error:', e.message);
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 // Per's request — remove someone from an instance (testing, or a
 // genuine cancellation). Deliberately just the enrolment and its own
 // records (attendance, progress, certificate) — doesn't touch Stripe,
@@ -17638,6 +17679,14 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
   const cfg = db.getAppConfig() || {};
   let sentCount = 0, failedCount = 0;
   const failedRecipients = []; // Per App 30 — feeds the admin exception report below
+  // Per's request — course-instance emails (audience 'instance:<id>', a
+  // convention this feature introduces itself, not user-supplied data
+  // being parsed) get a real {{course_link}} token, same courseLink
+  // buildMessageTokens already builds for session reminders — everything
+  // else about this loop is identical for every other newsletter send,
+  // where this is just null and buildMessageTokens' own courseLink
+  // handling is skipped entirely, unchanged from before.
+  const courseInstanceId = (newsletter.audience || '').startsWith('instance:') ? newsletter.audience.slice('instance:'.length) : null;
 
   for (const user of recipients) {
     // Per Bot 18 (now via the shared buildMessageTokens, Per Bot 19) — if
@@ -17646,7 +17695,7 @@ async function runNewsletterSend(newsletter, recipients, logRowsByUserId) {
     // same query-string shape /promo/<code>?src=... already uses, so it
     // lands in the same funnel report as everything else — rather than
     // the old fixed-14-day /join/<token> link with no attribution at all.
-    const tokens = buildMessageTokens(user, { offerId: newsletter.offer_id, sourceTag: newsletter.source_tag });
+    const tokens = buildMessageTokens(user, { offerId: newsletter.offer_id, sourceTag: newsletter.source_tag, courseInstanceId });
     const subject = fillTemplate(newsletter.subject, tokens);
     const body    = fillTemplate(newsletter.body, tokens);
 
