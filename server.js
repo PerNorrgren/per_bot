@@ -10579,6 +10579,51 @@ app.post('/api/admin/course-instances/:id/sessions/resync-times', auth.requireAu
     res.json({ ok: true, updated, total: sessions.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per's request — a session got skipped (couldn't run that Tuesday), so
+// this session number onward all move back a week, and reminders need
+// to actually reflect that, not just the dates on screen. Shifts every
+// session numbered >= fromSessionNumber by the same number of days,
+// each keeping its OWN current UK-local time-of-day rather than
+// reverting to the instance's schedule_time (a session that had its
+// time individually tweaked keeps that tweak, just on a new date) —
+// same londonLocalToUtcIso DST-aware resolution resync-times above
+// already uses, just re-applied against the shifted date rather than
+// the original one. Also clears session_reminders_sent for every
+// shifted session — see clearSessionRemindersSent (db.js) for why that
+// part is the actual fix, not just the date change: reminders already
+// fired for the old date would otherwise silently never fire again for
+// the new one, since that tracking is keyed by session id, not by what
+// scheduled_at happened to be.
+app.post('/api/admin/course-instances/:id/sessions/shift', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const fromSessionNumber = Number(req.body.fromSessionNumber);
+    const days = Number(req.body.days);
+    if (!Number.isFinite(fromSessionNumber) || !Number.isFinite(days) || days === 0) {
+      return res.status(400).json({ error: 'A starting session number and a non-zero number of days are both required.' });
+    }
+    const sessions = db.getSessionsForInstance(req.params.id);
+    const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour12: false, hour: '2-digit', minute: '2-digit' });
+    let updated = 0;
+    sessions.forEach(s => {
+      if (s.session_number < fromSessionNumber || !s.scheduled_at) return;
+      const d = new Date(s.scheduled_at);
+      // This session's own current UK-local hour/minute — not the
+      // instance's schedule_time — so an individually time-tweaked
+      // session keeps that tweak on its shifted date.
+      const parts = {};
+      fmt.formatToParts(d).forEach(p => { parts[p.type] = p.value; });
+      const hour = parts.hour === '24' ? 0 : Number(parts.hour);
+      const minute = Number(parts.minute);
+      const shifted = new Date(d);
+      shifted.setUTCDate(shifted.getUTCDate() + days);
+      const newIso = londonLocalToUtcIso(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), hour, minute);
+      db.updateInstanceSession(s.id, { scheduled_at: newIso });
+      db.clearSessionRemindersSent(s.id);
+      updated++;
+    });
+    res.json({ ok: true, updated, total: sessions.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── Facilitator-side course teaching (Per's request — allowing other
 // people to facilitate a course, not just Per's own 1:1 clinical work).

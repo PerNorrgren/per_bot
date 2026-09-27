@@ -6061,6 +6061,19 @@ function markSessionReminderSent(id, sessionId, enrolmentId, reminderType) {
   getDbSync().run('INSERT OR IGNORE INTO session_reminders_sent (id, instance_session_id, enrolment_id, reminder_type) VALUES (?,?,?,?)', [id, sessionId, enrolmentId, reminderType]);
   save();
 }
+// Per's request — the real fix a rescheduled session actually needs, not
+// just a new date. session_reminders_sent is keyed by session id, not by
+// what scheduled_at happened to be at the time — so a session whose
+// 3-day/1-day reminders already fired for its OLD date (very likely, if
+// that date has already passed uneventfully, the way a cancelled Tuesday
+// does) would silently never remind anyone again after its date moves,
+// since the tracking row still says "already sent" regardless of the new
+// date. Clearing these is what makes the reminder cron treat the
+// rescheduled session as fresh again.
+function clearSessionRemindersSent(sessionId) {
+  getDbSync().run('DELETE FROM session_reminders_sent WHERE instance_session_id=?', [sessionId]);
+  save();
+}
 function updateInstanceSession(id, fields) {
   const allowed = ['title','scheduled_at','facilitator_notes','handout'];
   const sets = Object.keys(fields).filter(k => allowed.includes(k));
@@ -11282,7 +11295,7 @@ module.exports = {
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
   addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession, getUpcomingSessionThisWeek,
-  getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent,
+  getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent, clearSessionRemindersSent,
   // Student notes
   addStudentNote, getNotesForStudentInInstance, getNotesForInstance,
   getFacilitatorsForInstance, getInstancesForFacilitator, isFacilitatorAssignedToInstance, assignFacilitatorToInstance, removeFacilitatorFromInstance,
