@@ -4664,15 +4664,15 @@ async function refreshSessionsModal(){
   `).join('');
   h+=`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <button class="btn primary sm" onclick="addSession()">+ Add session</button>
-    <button class="btn sm" onclick="generateSessionsFromLessons()" title="Creates one session per lesson in this course, numbered and dated to match — skips any session number that already exists">Generate from lessons</button>
-    <button class="btn sm" onclick="resyncSessionTimes()" title="Keeps each session's own date, recomputes just the time-of-day from this instance's Schedule Time field above — fixes sessions created before the UK-time fix">Resync times from schedule</button>
+    <button class="btn sm" onclick="generateSessionsFromLessons(this)" title="Creates one session per lesson in this course, numbered and dated to match — skips any session number that already exists">Generate from lessons</button>
+    <button class="btn sm" onclick="resyncSessionTimes(this)" title="Keeps each session's own date, recomputes just the time-of-day from this instance's Schedule Time field above — fixes sessions created before the UK-time fix">Resync times from schedule</button>
     <span style="width:1px;align-self:stretch;background:rgba(255,255,255,0.1)"></span>
     <span style="font-size:12px;color:rgba(255,255,255,0.4)">From session</span>
     <input type="number" id="shiftFromSession" min="1" style="width:56px" placeholder="2"/>
     <span style="font-size:12px;color:rgba(255,255,255,0.4)">shift by</span>
     <input type="number" id="shiftDays" value="7" style="width:56px"/>
     <span style="font-size:12px;color:rgba(255,255,255,0.4)">days</span>
-    <button class="btn sm" onclick="shiftSessions()" title="Moves this session number onward by that many days, keeping each one's own time of day — use a negative number to pull sessions earlier instead. Also clears any reminders already sent for the old dates, so they fire correctly for the new ones.">Shift</button>
+    <button class="btn sm" onclick="shiftSessions(this)" title="Moves this session number onward by that many days, keeping each one's own time of day — use a negative number to pull sessions earlier instead. Also clears any reminders already sent for the old dates, so they fire correctly for the new ones.">Shift</button>
   </div>`;
   el.innerHTML=h;
   // These two fields are recreated fresh on every refresh (new session added/
@@ -4701,39 +4701,51 @@ function renderSessionLessonFiles(s){
     ${guideFiles.length ? `<div${studentFiles.length?' style="margin-top:4px"':''}>Teacher's guide: ${guideFiles.map(fileLink).join('')}</div>` : ''}
   </div>`;
 }
-async function resyncSessionTimes(){
+async function resyncSessionTimes(btn){
   const instanceId=document.getElementById('sessInstanceId').value;
-  const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/resync-times`,{method:'POST'});
-  const d=await res.json();
-  if(d.error){appAlert(d.error);return;}
-  await refreshSessionsModal();
-  appAlert(`${d.updated} of ${d.total} session${d.total===1?'':'s'} updated to match this instance's Schedule Time.`);
+  setBtnLoading(btn,true,'Resyncing…');
+  try {
+    const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/resync-times`,{method:'POST'});
+    const d=await res.json();
+    if(d.error){appAlert(d.error);return;}
+    await refreshSessionsModal();
+    appAlert(`${d.updated} of ${d.total} session${d.total===1?'':'s'} updated to match this instance's Schedule Time.`);
+  } catch(e){ appAlert('Could not resync — please try again.'); }
+  finally { setBtnLoading(btn,false); }
 }
 // Per's request — a session got skipped/cancelled, so everything from
 // some point onward moves by a week (or however many days). Clears any
 // already-sent reminders for the shifted sessions server-side (see
 // clearSessionRemindersSent) — that part is what actually gets the
 // reminder emails back in sync, not just the dates changing on screen.
-async function shiftSessions(){
+async function shiftSessions(btn){
   const instanceId=document.getElementById('sessInstanceId').value;
   const fromSessionNumber=Number(document.getElementById('shiftFromSession').value);
   const days=Number(document.getElementById('shiftDays').value);
   if(!fromSessionNumber || !days){ appAlert('Enter which session number to start from, and how many days to shift by.'); return; }
   if(!(await appConfirm(`Shift session ${fromSessionNumber} onward by ${days} day${Math.abs(days)===1?'':'s'}? Each session keeps its own time of day. Reminders already sent for the old dates will be cleared so they fire correctly for the new ones.`))) return;
-  const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/shift`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({fromSessionNumber,days})});
-  const d=await res.json();
-  if(d.error){appAlert(d.error);return;}
-  await refreshSessionsModal();
-  appAlert(`${d.updated} of ${d.total} session${d.total===1?'':'s'} shifted by ${days} day${Math.abs(days)===1?'':'s'}.`);
+  setBtnLoading(btn,true,'Shifting…');
+  try {
+    const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/shift`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fromSessionNumber,days})});
+    const d=await res.json();
+    if(d.error){appAlert(d.error);return;}
+    await refreshSessionsModal();
+    appAlert(`${d.updated} of ${d.total} session${d.total===1?'':'s'} shifted by ${days} day${Math.abs(days)===1?'':'s'}.`);
+  } catch(e){ appAlert('Could not shift — please try again.'); }
+  finally { setBtnLoading(btn,false); }
 }
-async function generateSessionsFromLessons(){
+async function generateSessionsFromLessons(btn){
   const instanceId=document.getElementById('sessInstanceId').value;
-  const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/generate-from-lessons`,{method:'POST'});
-  const d=await res.json();
-  if(d.error){appAlert(d.error);return;}
-  await refreshSessionsModal();
-  appAlert(`${d.created} session${d.created===1?'':'s'} created${d.skipped?`, ${d.skipped} already existed and were left as-is`:''}.`);
+  setBtnLoading(btn,true,'Generating…');
+  try {
+    const res=await fetch(`/api/admin/course-instances/${instanceId}/sessions/generate-from-lessons`,{method:'POST'});
+    const d=await res.json();
+    if(d.error){appAlert(d.error);return;}
+    await refreshSessionsModal();
+    appAlert(`${d.created} session${d.created===1?'':'s'} created${d.skipped?`, ${d.skipped} already existed and were left as-is`:''}.`);
+  } catch(e){ appAlert('Could not generate — please try again.'); }
+  finally { setBtnLoading(btn,false); }
 }
 async function addSession(){
   const instanceId=document.getElementById('sessInstanceId').value;

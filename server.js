@@ -10569,14 +10569,15 @@ app.post('/api/admin/course-instances/:id/sessions/resync-times', auth.requireAu
     const parsedTime = parseScheduleTimeServerSide(instance.schedule_time);
     if (!parsedTime) return res.status(400).json({ error: 'This instance has no recognisable Schedule Time set — nothing to resync from.' });
     const sessions = db.getSessionsForInstance(req.params.id);
-    let updated = 0;
+    const updates = [];
     sessions.forEach(s => {
       if (!s.scheduled_at) return;
       const d = new Date(s.scheduled_at);
       const newIso = londonLocalToUtcIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), parsedTime.hour, parsedTime.minute);
-      if (newIso !== s.scheduled_at) { db.updateInstanceSession(s.id, { scheduled_at: newIso }); updated++; }
+      if (newIso !== s.scheduled_at) updates.push({ id: s.id, scheduledAt: newIso });
     });
-    res.json({ ok: true, updated, total: sessions.length });
+    if (updates.length) db.setInstanceSessionTimesBatch(updates, false);
+    res.json({ ok: true, updated: updates.length, total: sessions.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // Per's request — a session got skipped (couldn't run that Tuesday), so
@@ -10603,7 +10604,7 @@ app.post('/api/admin/course-instances/:id/sessions/shift', auth.requireAuthApi([
     }
     const sessions = db.getSessionsForInstance(req.params.id);
     const fmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour12: false, hour: '2-digit', minute: '2-digit' });
-    let updated = 0;
+    const updates = [];
     sessions.forEach(s => {
       if (s.session_number < fromSessionNumber || !s.scheduled_at) return;
       const d = new Date(s.scheduled_at);
@@ -10617,11 +10618,11 @@ app.post('/api/admin/course-instances/:id/sessions/shift', auth.requireAuthApi([
       const shifted = new Date(d);
       shifted.setUTCDate(shifted.getUTCDate() + days);
       const newIso = londonLocalToUtcIso(shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate(), hour, minute);
-      db.updateInstanceSession(s.id, { scheduled_at: newIso });
-      db.clearSessionRemindersSent(s.id);
-      updated++;
+      updates.push({ id: s.id, scheduledAt: newIso });
     });
-    res.json({ ok: true, updated, total: sessions.length });
+    // One pass, one database write — see setInstanceSessionTimesBatch.
+    db.setInstanceSessionTimesBatch(updates, true);
+    res.json({ ok: true, updated: updates.length, total: sessions.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

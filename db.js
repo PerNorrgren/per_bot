@@ -6082,6 +6082,19 @@ function updateInstanceSession(id, fields) {
   save();
 }
 function deleteInstanceSession(id) { getDbSync().run('DELETE FROM instance_sessions WHERE id=?', [id]); save(); }
+// Per's report — the shift/resync routes were calling updateInstanceSession
+// (and clearSessionRemindersSent) once per session, and save() writes the
+// ENTIRE database to disk synchronously each time: an 11-session shift was
+// ~20 full DB writes back to back, each blocking the whole server, which is
+// why the button sat silent for so long. One pass of statements, one save().
+function setInstanceSessionTimesBatch(updates, clearReminders) {
+  const d = getDbSync();
+  for (const u of updates) {
+    d.run('UPDATE instance_sessions SET scheduled_at=? WHERE id=?', [u.scheduledAt, u.id]);
+    if (clearReminders) d.run('DELETE FROM session_reminders_sent WHERE instance_session_id=?', [u.id]);
+  }
+  save();
+}
 
 // ── Student notes ── (facilitator's private notes on a student within a cohort — separate from the clinical `sessions` table)
 function addStudentNote(id, courseInstanceId, userId, facilitatorId, note) {
@@ -11295,7 +11308,7 @@ module.exports = {
   upsertLessonProgress, getLessonProgress, getProgressForEnrolment, getResumePoint, getDashboardResumeCard, getActivityHome,
   // Cohort live sessions
   addInstanceSession, getSessionsForInstance, getInstanceSession, updateInstanceSession, deleteInstanceSession, getUpcomingSessionThisWeek,
-  getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent, clearSessionRemindersSent,
+  getUpcomingSessionsWithScheduledTime, hasSentSessionReminder, markSessionReminderSent, clearSessionRemindersSent, setInstanceSessionTimesBatch,
   // Student notes
   addStudentNote, getNotesForStudentInInstance, getNotesForInstance,
   getFacilitatorsForInstance, getInstancesForFacilitator, isFacilitatorAssignedToInstance, assignFacilitatorToInstance, removeFacilitatorFromInstance,
