@@ -8812,6 +8812,12 @@ app.post('/api/admin/library-files/share', auth.requireAuthApi(['admin']), (req,
 // list — a handful of people Per has sent a practice to directly, not a
 // second member directory.
 app.get('/api/admin/friends', auth.requireAuthApi(['admin']), (req, res) => {
+  // Per's report — this list looking permanently empty after creating a
+  // friend was the exact same missing-Cache-Control gap the Reports/
+  // admin-page fixes found earlier (Per App 34): nothing told Cloudflare
+  // this is live data, so it served back whatever it first cached —
+  // here, an empty list from before any friend existed.
+  res.set('Cache-Control', 'no-store');
   try { res.json(db.searchFriends((req.query.q || '').trim())); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -8827,6 +8833,7 @@ app.post('/api/admin/friends', auth.requireAuthApi(['admin']), (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/admin/friends/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const friend = db.getFriendById(req.params.id);
     if (!friend) return res.status(404).json({ error: 'Not found.' });
@@ -8866,6 +8873,11 @@ app.delete('/api/admin/friends/:id/files/:fileId', auth.requireAuthApi(['admin']
 // "David — struggling this month") — only note, which Per wrote FOR
 // this person to actually read.
 app.get('/api/share/:token', async (req, res) => {
+  // Same no-store fix as the admin routes above, doubly worth it here:
+  // this is the one Per actually adds/removes practices against after
+  // the link is already out in the world — a cached response would mean
+  // a friend keeps seeing an old list no matter how long they wait.
+  res.set('Cache-Control', 'no-store');
   try {
     const friend = db.getFriendByToken(req.params.token);
     if (!friend) return res.status(404).json({ error: 'This link isn\'t recognised.' });
@@ -8878,6 +8890,7 @@ app.get('/api/share/:token', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/share/:token/files/:fileId/playback-url', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const friend = db.getFriendByToken(req.params.token);
     if (!friend) return res.status(404).json({ error: 'This link isn\'t recognised.' });
@@ -10120,6 +10133,7 @@ app.delete('/api/admin/course-instances/:id', auth.requireAuthApi(['admin']), (r
   catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.get('/api/admin/course-instances/:id/enrolments', auth.requireAuthApi(['admin']), (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try { res.json(db.getEnrolmentsForInstance(req.params.id)); }
   catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -13504,6 +13518,7 @@ app.patch('/api/content/lesson-file-refs/:id/free-preview', auth.requireAuthApi(
 // needs to know what's actually set at this level, not the effective
 // resolved value the client-facing route below returns.
 app.get('/api/admin/preview-config/:scopeType/:scopeId/:mediaType', auth.requireAuthApi(['admin']), (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const { scopeType, scopeId, mediaType } = req.params;
     const row = db.getPreviewConfig(scopeType, scopeType === 'global' ? null : scopeId, mediaType);
@@ -13541,6 +13556,7 @@ app.delete('/api/admin/preview-config/:scopeType/:scopeId/:mediaType', auth.requ
 // and walks up to whichever ancestor actually has an override, same as
 // playback-url's own resolution above.
 app.get('/api/client/preview-config/:mediaType', auth.requireAuthApi(['client','facilitator','admin']), (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const cfg = db.getEffectivePreviewConfig(req.params.mediaType, {
       courseId: req.query.courseId || null, lessonId: req.query.lessonId || null, fileRefId: req.query.fileRefId || null,

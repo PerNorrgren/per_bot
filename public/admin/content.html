@@ -2219,6 +2219,17 @@ async function confirmSharePicker() {
     const data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; return; }
     closeModal('sharePickerModal');
+    // Per's request — the link itself, right at the moment it's actually
+    // needed, not a separate trip to the Friends tab first. Only when
+    // sharing to exactly one friend — with several selected there's no
+    // single link to hand over anyway, and the friend's own detail page
+    // (via the Friends tab) is where that already lives.
+    if (_shareMode === 'friends' && body.friendIds.length === 1) {
+      try {
+        const friend = await (await fetch(`/api/admin/friends/${body.friendIds[0]}`)).json();
+        prompt(`Shared. Here's ${friend.label}'s link — copy it now:`, `${location.origin}/share?t=${friend.token}`);
+      } catch(e) { /* the share itself already succeeded; the link is still on their Friends tab page either way */ }
+    }
     clearSelection();
   } catch(e) {
     err.textContent = 'Something went wrong. Please try again.';
