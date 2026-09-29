@@ -22,6 +22,8 @@
   .practice-title { font-size:17px; color:rgba(255,255,255,0.92); margin-bottom:6px; }
   .practice-desc { font-size:13.5px; line-height:1.6; color:rgba(255,255,255,0.55); margin-bottom:16px; }
   audio, video { width:100%; }
+  .play-btn { display:inline-flex; align-items:center; gap:8px; padding:10px 22px; border-radius:9px; border:1px solid rgba(180,230,200,0.4); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.95); font-family:'Georgia',serif; font-size:14px; letter-spacing:0.02em; cursor:pointer; }
+  .play-btn:hover { background:rgba(180,230,200,0.18); }
   .open-link { display:inline-block; padding:10px 20px; border-radius:9px; border:1px solid rgba(180,230,200,0.4); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.95); text-decoration:none; font-size:13px; letter-spacing:0.04em; }
   .status { text-align:center; padding:80px 20px; color:rgba(255,255,255,0.5); font-size:15px; }
   .app-note { text-align:center; margin-top:44px; font-size:12.5px; color:rgba(255,255,255,0.35); }
@@ -41,6 +43,7 @@
   // nothing else about the visitor.
   const token = new URLSearchParams(location.search).get('t');
   function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function escAttr(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
   async function load() {
     const statusEl = document.getElementById('status');
@@ -78,36 +81,39 @@
   function practiceCardHtml(f) {
     const isAudio = f.file_type && f.file_type.startsWith('audio');
     const isVideo = f.file_type && f.file_type.startsWith('video');
-    const player = isAudio
-      ? `<audio controls preload="none" id="player-${f.id}"></audio>`
-      : isVideo
-        ? `<video controls preload="none" id="player-${f.id}"></video>`
-        : `<a class="open-link" href="#" onclick="openOther('${f.id}');return false;">Open</a>`;
+    const isPlayable = isAudio || isVideo;
     return `
       <div class="practice-card">
         <div class="practice-title">${escHtml(f.title)}</div>
         ${f.description ? `<div class="practice-desc">${escHtml(f.description)}</div>` : ''}
-        ${(isAudio || isVideo) ? `<div onclick="loadPlayer('${f.id}', ${isAudio})" style="display:contents">${player}</div>` : player}
+        <div id="player-wrap-${f.id}">
+          ${isPlayable
+            ? `<button type="button" class="play-btn" onclick="loadPlayer('${f.id}', ${isAudio})">\u25b6 Play</button>`
+            : `<a class="open-link" href="#" onclick="openOther('${f.id}');return false;">Open</a>`}
+        </div>
       </div>`;
   }
 
   // The actual signed R2 URL is only fetched (and the play only logged
-  // server-side) the first time someone presses play — not the moment
+  // server-side) the first time someone presses Play — not the moment
   // the page loads, so just opening the link doesn't itself count as a
-  // "use".
-  const _loaded = new Set();
+  // "use". A real <button> here rather than a click-catching wrapper
+  // around the native <audio controls> element — a click on that
+  // element's own internal play button doesn't reliably bubble to an
+  // ancestor the way a normal element's click does, so the old version
+  // could sit there doing nothing when pressed. This fetches first, THEN
+  // hands the browser a real, already-sourced player.
   async function loadPlayer(fileId, isAudio) {
-    if (_loaded.has(fileId)) return;
-    _loaded.add(fileId);
+    const wrap = document.getElementById(`player-wrap-${fileId}`);
+    wrap.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.5)">Loading\u2026</div>';
     try {
       const res = await fetch(`/api/share/${encodeURIComponent(token)}/files/${fileId}/playback-url`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'failed');
-      const el = document.getElementById(`player-${fileId}`);
-      el.src = data.url;
-      el.play().catch(() => {});
+      const tag = isAudio ? 'audio' : 'video';
+      wrap.innerHTML = `<${tag} controls autoplay src="${escAttr(data.url)}"></${tag}>`;
     } catch (e) {
-      _loaded.delete(fileId);
+      wrap.innerHTML = '<div style="font-size:13px;color:rgba(230,140,120,0.8)">Could not load this \u2014 please try again.</div>';
     }
   }
   async function openOther(fileId) {
