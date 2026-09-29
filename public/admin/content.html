@@ -427,7 +427,18 @@
         </div>
       </div>
 
-    </div>
+    <!-- Per's report — Certificates AND Friends were both silently
+         unreachable, and it had nothing to do with either panel's own
+         content: .main (the scrollable container every other tab lives
+         inside) was being closed right here, one panel too early —
+         Poems was the last one actually inside it. Certificates and
+         Friends were both landing as siblings of .main instead, inside
+         .content, which has overflow:hidden and a .main sibling already
+         claiming height:100% of it — not display:none, genuinely
+         clipped outside the visible box with no way to scroll to it.
+         The </div> that used to sit right here (closing .main) now
+         closes it after Friends instead, so every tab is inside the
+         same container the same way. -->
 
     <!-- Per's request — full control over certificates: create, edit,
          delete, assign to an instance, all through the standard rich
@@ -460,8 +471,11 @@
       <div id="friendsTabList"><div class="loading">Loading…</div></div>
     </div>
 
+    </div>
+
   </div>
 </div>
+
 
 <!-- Breathing Pattern Modal (moved here Per Bot 15m) -->
 <div class="modal-overlay" id="breathingPatternModal">
@@ -2160,6 +2174,7 @@ function renderSharePickerList() {
       <label style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer">
         <input type="checkbox" ${_sharePicked.has(f.id) ? 'checked' : ''} onchange="toggleSharePick('${f.id}',this.checked)"/>
         <div style="flex:1;min-width:0;font-size:13px;color:rgba(255,255,255,0.8)">${escHtml(f.label)}</div>
+        <button type="button" class="btn sm danger" onclick="event.preventDefault();event.stopPropagation();deleteSharePickerFriend('${f.id}','${escAttr(f.label)}')" title="Delete this friend — their link stops working immediately">Delete</button>
       </label>`).join('');
     return;
   }
@@ -2204,6 +2219,18 @@ async function createFriendInline() {
     renderSharePickerList();
   } catch(e) { err.textContent = e.message; }
 }
+// Per's request — deleting a friend right from this list, not just from
+// their own detail page, since this is often exactly where Per notices
+// one that's no longer needed (a stray test entry, someone who's moved
+// on) while picking who to share the next file with.
+async function deleteSharePickerFriend(id, label) {
+  if (!(await appConfirm(`Delete "${label}"? Their link stops working immediately. This can't be undone.`))) return;
+  await fetch(`/api/admin/friends/${id}`, { method: 'DELETE' });
+  _sharePickerFriends = _sharePickerFriends.filter(f => f.id !== id);
+  _sharePicked.delete(id);
+  document.getElementById('sharePickerCount').textContent = _sharePicked.size;
+  renderSharePickerList();
+}
 async function confirmSharePicker() {
   const fileIds = [..._libSel];
   const err = document.getElementById('sharePickerErr');
@@ -2219,16 +2246,14 @@ async function confirmSharePicker() {
     const data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; return; }
     closeModal('sharePickerModal');
-    // Per's request — the link itself, right at the moment it's actually
-    // needed, not a separate trip to the Friends tab first. Only when
-    // sharing to exactly one friend — with several selected there's no
-    // single link to hand over anyway, and the friend's own detail page
-    // (via the Friends tab) is where that already lives.
+    // Per's request — a real Copy button, not a native browser prompt()
+    // (which has no button, just a pre-selected field). Opens the same
+    // detail page the Friends tab uses — it already has exactly that
+    // (copyFriendLink), plus everything else about this friend in one
+    // place. Only when sharing to exactly one friend — with several
+    // selected there's no single page to jump to.
     if (_shareMode === 'friends' && body.friendIds.length === 1) {
-      try {
-        const friend = await (await fetch(`/api/admin/friends/${body.friendIds[0]}`)).json();
-        prompt(`Shared. Here's ${friend.label}'s link — copy it now:`, `${location.origin}/share?t=${friend.token}`);
-      } catch(e) { /* the share itself already succeeded; the link is still on their Friends tab page either way */ }
+      openFriendDetail(body.friendIds[0]);
     }
     clearSelection();
   } catch(e) {
