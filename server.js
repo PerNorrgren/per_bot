@@ -8795,10 +8795,100 @@ app.get('/api/client/content', auth.requireAuthApi(['client','facilitator','admi
 app.post('/api/admin/library-files/share', auth.requireAuthApi(['admin']), (req, res) => {
   const fileIds = Array.isArray(req.body.fileIds) ? req.body.fileIds : [];
   const userIds = Array.isArray(req.body.userIds) ? req.body.userIds : [];
+  const friendIds = Array.isArray(req.body.friendIds) ? req.body.friendIds : [];
   if (!fileIds.length) return res.status(400).json({ error: 'Select at least one file.' });
-  if (!userIds.length) return res.status(400).json({ error: 'Select at least one person.' });
+  if (!userIds.length && !friendIds.length) return res.status(400).json({ error: 'Select at least one person.' });
   fileIds.forEach(fileId => db.shareContentToUsers(fileId, userIds, 'admin', req.user.id, uuidv4));
-  res.json({ ok: true, shared: fileIds.length * userIds.length });
+  // Per's request — friends go through the same bulk share action as
+  // members, just a different table underneath (see db.js's Friends
+  // section for why they're not just users with no login).
+  friendIds.forEach(friendId => db.shareFilesToFriend(fileIds, friendId, uuidv4));
+  res.json({ ok: true, shared: fileIds.length * (userIds.length + friendIds.length) });
+});
+
+// ── Friends (Per's request) — admin CRUD + the public, unauthenticated
+// share page these back. Search/create is deliberately generic (no
+// pagination, no filters) since this is meant to stay a short, personal
+// list — a handful of people Per has sent a practice to directly, not a
+// second member directory.
+app.get('/api/admin/friends', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json(db.searchFriends((req.query.q || '').trim())); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/friends', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const label = (req.body.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'A name or label is required.' });
+    // 24 random bytes, base64url — long enough that guessing one friend's
+    // link from another's, or from their database id, isn't practical.
+    const token = crypto.randomBytes(24).toString('base64url');
+    const friend = db.createFriend(uuidv4(), label, token, req.user.id);
+    res.json(friend);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/friends/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const friend = db.getFriendById(req.params.id);
+    if (!friend) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ...friend, files: db.getFilesForFriend(req.params.id) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/admin/friends/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const label = (req.body.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'A name or label is required.' });
+    db.updateFriend(req.params.id, { label, note: (req.body.note || '').trim() });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/friends/:id', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.deleteFriend(req.params.id); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/friends/:id/files', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const fileIds = Array.isArray(req.body.fileIds) ? req.body.fileIds : [];
+    if (!fileIds.length) return res.status(400).json({ error: 'Select at least one file.' });
+    db.shareFilesToFriend(fileIds, req.params.id, uuidv4);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/admin/friends/:id/files/:fileId', auth.requireAuthApi(['admin']), (req, res) => {
+  try { db.removeFriendShare(req.params.id, req.params.fileId); res.json({ ok: true }); }
+  catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Public share page (Per's request) — no auth.requireAuthApi at all,
+// deliberately: the person on the other end of this link has no
+// account and isn't meant to need one. The token is the entire access
+// control — see getFriendByToken/isFileSharedWithFriend in db.js. Never
+// returns the friend's own label (Per's private name for them, e.g.
+// "David — struggling this month") — only note, which Per wrote FOR
+// this person to actually read.
+app.get('/api/share/:token', async (req, res) => {
+  try {
+    const friend = db.getFriendByToken(req.params.token);
+    if (!friend) return res.status(404).json({ error: 'This link isn\'t recognised.' });
+    const files = db.getFilesForFriend(friend.id).map(f => ({
+      id: f.id, title: f.title, file_type: f.file_type, description: f.description,
+    }));
+    const sentMotds = db.getAllMotd('sent').sort((a, b) => new Date(b.sent_at || b.created_at) - new Date(a.sent_at || a.created_at));
+    const motd = sentMotds[0] ? sentMotds[0].body : null;
+    res.json({ note: friend.note || null, motd, files });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/share/:token/files/:fileId/playback-url', async (req, res) => {
+  try {
+    const friend = db.getFriendByToken(req.params.token);
+    if (!friend) return res.status(404).json({ error: 'This link isn\'t recognised.' });
+    const file = db.getLibraryFile(req.params.fileId);
+    if (!file || file.archived) return res.status(404).json({ error: 'Not found.' });
+    if (!db.isFileSharedWithFriend(friend.id, req.params.fileId)) return res.status(403).json({ error: 'Not shared on this link.' });
+    if (file.storage_type !== 'r2') return res.status(400).json({ error: 'This file can\'t be played here.' });
+    const url = await media.getPlaybackUrl(file.filename, {});
+    db.logFriendFilePlay(uuidv4(), friend.id, req.params.fileId);
+    res.json({ url });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Favourites
@@ -15555,6 +15645,7 @@ app.get('/assets/samurai/hero.png', (req, res) => res.sendFile(path.join(__dirna
 app.get('/alarm', (req, res) => res.sendFile(path.join(__dirname, 'public', 'alarm.html')));
 app.get('/wired-heart', (req, res) => res.sendFile(path.join(__dirname, 'public', 'wired-heart.html')));
 app.get('/welcome', (req, res) => res.sendFile(path.join(__dirname, 'public', 'welcome.html')));
+app.get('/share', (req, res) => res.sendFile(path.join(__dirname, 'public', 'share.html')));
 app.get('/samurai', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai.html')));
 app.get('/samurai-flute', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai-flute.html')));
 app.get('/join', (req, res) => {

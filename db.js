@@ -365,6 +365,53 @@ async function getDb() {
     FOREIGN KEY (user_id) REFERENCES users(id)
   )`);
 
+  // ── Friends (Per's request) — a lightweight recipient for someone who
+  // needs one or two practices, not a full account: no login, no email
+  // sign-up, just a link. token is the sole way in — random, not
+  // sequential or guessable off the friend's own id, so knowing one
+  // friend's link (or their database id) gives no route to any other
+  // friend's page. label is Per's own name for them (never shown on the
+  // public page — that's what note is for, an optional line Per can
+  // write TO them, e.g. "here's the one we talked about"). Deliberately
+  // its own table rather than a stripped-down users row — a friend
+  // never authenticates, never has a tier, never appears in any
+  // member-facing list, and mixing the two would risk exactly that kind
+  // of leak.
+  db.run(`CREATE TABLE IF NOT EXISTS friends (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    note TEXT,
+    token TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    created_by TEXT
+  )`);
+  // Same shape as content_shares above, for a friend instead of a user —
+  // this is what "add and remove as needed" actually updates; the
+  // friend's own link (the token above) never changes regardless of
+  // what's attached here.
+  db.run(`CREATE TABLE IF NOT EXISTS friend_shares (
+    id TEXT PRIMARY KEY,
+    friend_id TEXT NOT NULL,
+    library_file_id TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(friend_id, library_file_id),
+    FOREIGN KEY (friend_id) REFERENCES friends(id),
+    FOREIGN KEY (library_file_id) REFERENCES library_files(id)
+  )`);
+  // Per's request — "how many times each practice has been used", not
+  // just "is it attached". One row per actual play (the public playback-
+  // url route logs one on every request), so this is a real usage count,
+  // not a proxy for it — a friend can be sent three practices and only
+  // ever open one, and this is how Per would see that.
+  db.run(`CREATE TABLE IF NOT EXISTS friend_file_plays (
+    id TEXT PRIMARY KEY,
+    friend_id TEXT NOT NULL,
+    library_file_id TEXT NOT NULL,
+    played_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (friend_id) REFERENCES friends(id),
+    FOREIGN KEY (library_file_id) REFERENCES library_files(id)
+  )`);
+
   // ── AI generate jobs (Per Bot 22) ── Backs the newsletter editor's
   // "Generate & insert" background jobs (see /api/admin/comms-ai-generate).
   // Was an in-memory Map — fine for the request/response latency problem
@@ -7399,6 +7446,67 @@ function removeContentShare(fileId, userId) {
   getDbSync().run('DELETE FROM content_shares WHERE library_file_id=? AND user_id=?', [fileId, userId]);
   save();
 }
+
+// ── Friends ──────────────────────────────────────────────────────────
+function createFriend(id, label, token, createdBy) {
+  getDbSync().run('INSERT INTO friends (id, label, token, created_by) VALUES (?,?,?,?)', [id, label, token, createdBy || null]);
+  save();
+  return getFriendById(id);
+}
+function searchFriends(query) {
+  if (query) return queryAll('SELECT * FROM friends WHERE label LIKE ? ORDER BY label COLLATE NOCASE', [`%${query}%`]);
+  return queryAll('SELECT * FROM friends ORDER BY label COLLATE NOCASE');
+}
+function getFriendById(id) { return queryOne('SELECT * FROM friends WHERE id=?', [id]); }
+// Public lookup — the ONLY thing that can resolve a friend from the
+// outside world, since the public share page and its playback route
+// never see or accept a friend's raw id, only this token.
+function getFriendByToken(token) { return queryOne('SELECT * FROM friends WHERE token=?', [token]); }
+function updateFriend(id, { label, note }) {
+  getDbSync().run('UPDATE friends SET label=?, note=? WHERE id=?', [label, note ?? null, id]);
+  save();
+}
+function deleteFriend(id) {
+  const d = getDbSync();
+  d.run('DELETE FROM friend_file_plays WHERE friend_id=?', [id]);
+  d.run('DELETE FROM friend_shares WHERE friend_id=?', [id]);
+  d.run('DELETE FROM friends WHERE id=?', [id]);
+  save();
+}
+function shareFilesToFriend(fileIds, friendId, makeId) {
+  const d = getDbSync();
+  fileIds.forEach(fileId => {
+    d.run('INSERT OR IGNORE INTO friend_shares (id, friend_id, library_file_id) VALUES (?,?,?)', [makeId(), friendId, fileId]);
+  });
+  save();
+}
+function removeFriendShare(friendId, fileId) {
+  getDbSync().run('DELETE FROM friend_shares WHERE friend_id=? AND library_file_id=?', [friendId, fileId]);
+  save();
+}
+// Play counts joined in directly — the friend detail page always wants
+// "what's shared, and how much has each one actually been used" as one
+// view, never just the share list alone.
+function getFilesForFriend(friendId) {
+  return queryAll(
+    `SELECT f.*, fs.created_at as shared_at,
+       (SELECT COUNT(*) FROM friend_file_plays p WHERE p.friend_id=fs.friend_id AND p.library_file_id=f.id) as play_count
+     FROM friend_shares fs JOIN library_files f ON f.id=fs.library_file_id
+     WHERE fs.friend_id=? AND f.archived=0 ORDER BY fs.created_at DESC`,
+    [friendId]
+  );
+}
+// Confirms fileId is genuinely attached to this friend before the public
+// playback route trusts it — the token alone identifies the friend, but
+// this is what stops that token being used to request a file that was
+// never actually shared with them.
+function isFileSharedWithFriend(friendId, fileId) {
+  return !!queryOne('SELECT 1 FROM friend_shares WHERE friend_id=? AND library_file_id=?', [friendId, fileId]);
+}
+function logFriendFilePlay(id, friendId, fileId) {
+  getDbSync().run('INSERT INTO friend_file_plays (id, friend_id, library_file_id) VALUES (?,?,?)', [id, friendId, fileId]);
+  save();
+}
 // Powers the Tomte "new practices" tip — see /api/my/tomte-tip. Folds in
 // the legacy single-assignment column too (assigned_client_id), since
 // from the client's point of view a facilitator assigning them
@@ -11344,6 +11452,7 @@ module.exports = {
   // Practices
   addPractice, getPracticesForClient, getPractice, toggleFavourite, incrementUseCount, deletePractice, deleteOwnPractice,
   shareContentToUsers, getSharedFilesForUser, removeContentShare, getLatestPracticeArrivalAt, unassignFileFromClient, getEmailJobRows,
+  createFriend, searchFriends, getFriendById, getFriendByToken, updateFriend, deleteFriend, shareFilesToFriend, removeFriendShare, getFilesForFriend, isFileSharedWithFriend, logFriendFilePlay,
   createAiGenerateJob, getAiGenerateJob, markAiGenerateJobDone, markAiGenerateJobError, getPendingAiGenerateJobs, pruneOldAiGenerateJobs, reportGeneratedImages, reportCampaigns,
   // Programmes
   assignProgramme, getProgrammesForUser,

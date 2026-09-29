@@ -237,6 +237,7 @@
         <button class="nav-tab" data-tab="breathing">Breathing</button>
         <button class="nav-tab" data-tab="poems">Poems</button>
         <button class="nav-tab" data-tab="certificates">Certificates</button>
+        <button class="nav-tab" data-tab="friends">Friends</button>
       </div>
       <!-- Per Bot 24 — persistent upload ticker. Hidden unless a bulk
            upload is actually running (see _bulkUploadState), so it stays
@@ -444,6 +445,19 @@
           <div id="certTemplatesTable"><div class="loading">Loading…</div></div>
         </div>
       </div>
+    </div>
+
+    <!-- Per's request — friends who just need a practice or two, no
+         account. This list is how Per gets back to a friend created
+         from the Share picker, without needing to reselect files first;
+         creating a NEW friend still happens from Share to… on a file,
+         since a friend always starts with at least one practice
+         attached. -->
+    <div class="panel" id="panel-friends" style="padding:28px">
+      <div class="section-label">Friends</div>
+      <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:14px">People who just need a practice or two — no account, no login. Each has one link that stays the same as you add or remove what's on it. Create a new friend from "Share to…" on any file in the Library.</div>
+      <input type="text" id="friendsTabSearch" placeholder="Search friends…" oninput="renderFriendsTab()" style="width:100%;max-width:320px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:8px 10px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:13px;margin-bottom:14px"/>
+      <div id="friendsTabList"><div class="loading">Loading…</div></div>
     </div>
 
   </div>
@@ -923,11 +937,21 @@
   <div class="modal" style="max-width:640px">
     <h3>Share to</h3>
     <div style="color:rgba(255,255,255,0.3);font-size:11px;margin-bottom:4px" id="sharePickerSubtitle"></div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button type="button" class="btn sm" id="sharePickerModeMembers" onclick="setSharePickerMode('members')">Members</button>
+      <button type="button" class="btn sm" id="sharePickerModeFriends" onclick="setSharePickerMode('friends')">Friends</button>
+    </div>
     <div style="display:flex; gap:8px; align-items:center;">
       <input type="text" id="sharePickerSearch" placeholder="Search by name or email…" oninput="renderSharePickerList()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:7px 9px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px;"/>
       <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.5);white-space:nowrap;cursor:pointer">
         <input type="checkbox" id="sharePickerSelectedOnly" onchange="renderSharePickerList()"/> Selected only
       </label>
+    </div>
+    <!-- Per's request — a friend who doesn't match any search is one
+         click from being created outright, right here, rather than a
+         separate trip to a Friends screen first. -->
+    <div id="sharePickerNewFriendRow" style="display:none;margin-top:6px">
+      <button type="button" class="btn sm" onclick="createFriendInline()">+ New friend named "<span id="sharePickerNewFriendName"></span>"</button>
     </div>
     <div style="font-size:11px;color:rgba(255,255,255,0.35)"><span id="sharePickerCount">0</span> selected</div>
     <div id="sharePickerList" style="max-height:420px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:10px"></div>
@@ -935,6 +959,37 @@
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeModal('sharePickerModal')">Cancel</button>
       <button class="modal-ok" onclick="confirmSharePicker()">Share</button>
+    </div>
+  </div>
+</div>
+
+<!-- Per's request — a friend's own page: their share link, the note
+     shown on it, everything currently shared with them and how many
+     times each has actually been played, and a way to add more or
+     remove something, all from one place. -->
+<div class="modal-overlay" id="friendDetailModal">
+  <div class="modal" style="max-width:560px">
+    <h3>Friend</h3>
+    <input type="hidden" id="fdId"/>
+    <div><label>Label (for you only — never shown to them)</label><input type="text" id="fdLabel"/></div>
+    <div><label>Note (shown to them at the top of the page)</label><textarea id="fdNote" rows="2" placeholder="e.g. Here's the one we talked about"></textarea></div>
+    <div style="display:flex;gap:8px;align-items:center;margin:6px 0 4px">
+      <button class="btn sm" onclick="saveFriendDetail()">Save</button>
+      <span id="fdSaveMsg" style="font-size:11px;color:rgba(180,230,200,0.8)"></span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 10px;margin:10px 0">
+      <input type="text" id="fdLink" readonly style="flex:1;background:none;border:none;color:rgba(180,230,200,0.9);font-size:12px"/>
+      <button class="btn sm" onclick="copyFriendLink()">Copy link</button>
+    </div>
+    <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin:14px 0 6px">Shared with them</div>
+    <div id="fdFiles" style="max-height:260px;overflow-y:auto"></div>
+    <div style="margin-top:10px">
+      <input type="text" id="fdAddSearch" placeholder="Search library to add another practice…" oninput="renderFriendAddResults()" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:7px 9px;color:rgba(255,255,255,0.8);font-family:Georgia,serif;font-size:12.5px"/>
+      <div id="fdAddResults" style="max-height:160px;overflow-y:auto;margin-top:4px"></div>
+    </div>
+    <div class="modal-btns" style="justify-content:space-between">
+      <button class="btn sm danger" onclick="deleteFriendFromDetail()">Delete friend</button>
+      <button class="modal-cancel" onclick="closeModal('friendDetailModal')">Close</button>
     </div>
   </div>
 </div>
@@ -1550,6 +1605,7 @@ document.querySelectorAll('.nav-tab').forEach(t=>t.addEventListener('click',()=>
   t.classList.add('active');
   document.getElementById('panel-'+t.dataset.tab).classList.add('active');
   if (t.dataset.tab === 'certificates') loadCertificateTemplatesTab();
+  if (t.dataset.tab === 'friends') loadFriendsTab();
 }));
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
@@ -2026,8 +2082,15 @@ async function applyBulkVisibility() {
 // "files" except confirmSharePicker itself) so this can be lifted into
 // Comms largely as-is for targeting a send at specific people instead
 // of a tier.
+//
+// Per's request — Friends (below) reuse this exact modal rather than a
+// second one: same multi-select UX, same sticky-selection set, same
+// Share button — only the data source and what gets POSTed differ,
+// tracked by _shareMode.
 let _sharePicked = new Set();
 let _sharePickerUsers = [];
+let _sharePickerFriends = [];
+let _shareMode = 'members';
 function tierLabel(u) {
   if (u.member_tier === -1 || u.newsletterOnly) return 'Newsletter only';
   if (u.member_tier === 0) return 'Explorer';
@@ -2038,12 +2101,14 @@ async function openSharePicker() {
   const ids = [..._libSel];
   if (!ids.length) return;
   _sharePicked = new Set();
+  _shareMode = 'members';
   document.getElementById('sharePickerSearch').value = '';
   document.getElementById('sharePickerSelectedOnly').checked = false;
   document.getElementById('sharePickerErr').textContent = '';
   document.getElementById('sharePickerCount').textContent = '0';
   document.getElementById('sharePickerSubtitle').textContent =
     `Sharing ${ids.length} file${ids.length > 1 ? 's' : ''} — appears in My Practices for anyone selected below, regardless of their tier or facilitator.`;
+  updateSharePickerModeButtons();
   document.getElementById('sharePickerList').innerHTML = '<div class="empty">Loading…</div>';
   openModal('sharePickerModal');
   try {
@@ -2053,9 +2118,53 @@ async function openSharePicker() {
   }
   renderSharePickerList();
 }
+function updateSharePickerModeButtons() {
+  document.getElementById('sharePickerModeMembers').classList.toggle('primary', _shareMode === 'members');
+  document.getElementById('sharePickerModeFriends').classList.toggle('primary', _shareMode === 'friends');
+  document.getElementById('sharePickerSearch').placeholder = _shareMode === 'friends' ? 'Search friends, or type a new name…' : 'Search by name or email…';
+}
+async function setSharePickerMode(mode) {
+  if (_shareMode === mode) return;
+  _shareMode = mode;
+  updateSharePickerModeButtons();
+  document.getElementById('sharePickerSearch').value = '';
+  if (mode === 'friends' && !_sharePickerFriends.length) {
+    document.getElementById('sharePickerList').innerHTML = '<div class="empty">Loading…</div>';
+    try { _sharePickerFriends = await (await fetch('/api/admin/friends')).json(); }
+    catch(e) { _sharePickerFriends = []; }
+  }
+  renderSharePickerList();
+}
 function renderSharePickerList() {
   const term = document.getElementById('sharePickerSearch').value.trim().toLowerCase();
   const selectedOnly = document.getElementById('sharePickerSelectedOnly').checked;
+  const newFriendRow = document.getElementById('sharePickerNewFriendRow');
+
+  if (_shareMode === 'friends') {
+    let list = _sharePickerFriends;
+    if (term) list = list.filter(f => (f.label || '').toLowerCase().includes(term));
+    if (selectedOnly) list = list.filter(f => _sharePicked.has(f.id));
+    // Offer to create a new friend whenever the search term doesn't
+    // exactly match an existing label — typing is how you both search
+    // AND create here, same box either way.
+    const exactMatch = _sharePickerFriends.some(f => (f.label || '').toLowerCase() === term);
+    if (term && !exactMatch && !selectedOnly) {
+      document.getElementById('sharePickerNewFriendName').textContent = document.getElementById('sharePickerSearch').value.trim();
+      newFriendRow.style.display = '';
+    } else {
+      newFriendRow.style.display = 'none';
+    }
+    const el = document.getElementById('sharePickerList');
+    if (!list.length) { el.innerHTML = `<div class="empty">${selectedOnly ? 'Nothing selected yet.' : 'No matches yet — type a name above to add one.'}</div>`; return; }
+    el.innerHTML = list.map(f => `
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer">
+        <input type="checkbox" ${_sharePicked.has(f.id) ? 'checked' : ''} onchange="toggleSharePick('${f.id}',this.checked)"/>
+        <div style="flex:1;min-width:0;font-size:13px;color:rgba(255,255,255,0.8)">${escHtml(f.label)}</div>
+      </label>`).join('');
+    return;
+  }
+
+  newFriendRow.style.display = 'none';
   let list = _sharePickerUsers;
   if (term) list = list.filter(u => (u.name || '').toLowerCase().includes(term) || (u.email || '').toLowerCase().includes(term));
   if (selectedOnly) list = list.filter(u => _sharePicked.has(u.id));
@@ -2080,16 +2189,32 @@ function toggleSharePick(id, checked) {
   // itself already reflects the change).
   if (document.getElementById('sharePickerSelectedOnly').checked) renderSharePickerList();
 }
+async function createFriendInline() {
+  const label = document.getElementById('sharePickerSearch').value.trim();
+  if (!label) return;
+  const err = document.getElementById('sharePickerErr');
+  try {
+    const res = await fetch('/api/admin/friends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) });
+    const friend = await res.json();
+    if (!res.ok) throw new Error(friend.error || 'Could not create this friend.');
+    _sharePickerFriends.unshift(friend);
+    _sharePicked.add(friend.id);
+    document.getElementById('sharePickerSearch').value = '';
+    document.getElementById('sharePickerCount').textContent = _sharePicked.size;
+    renderSharePickerList();
+  } catch(e) { err.textContent = e.message; }
+}
 async function confirmSharePicker() {
   const fileIds = [..._libSel];
-  const userIds = [..._sharePicked];
   const err = document.getElementById('sharePickerErr');
-  if (!userIds.length) { err.textContent = 'Select at least one person.'; return; }
+  const body = { fileIds };
+  if (_shareMode === 'friends') body.friendIds = [..._sharePicked]; else body.userIds = [..._sharePicked];
+  if (!(body.friendIds || body.userIds).length) { err.textContent = 'Select at least one person.'; return; }
   err.textContent = '';
   try {
     const res = await fetch('/api/admin/library-files/share', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileIds, userIds })
+      body: JSON.stringify(body)
     });
     const data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; return; }
@@ -2098,6 +2223,125 @@ async function confirmSharePicker() {
   } catch(e) {
     err.textContent = 'Something went wrong. Please try again.';
   }
+}
+
+// ── Friend detail (Per's request) — the "build page" for one friend:
+// their link, their note, everything shared with them and how many
+// times each has actually played, add/remove from the same screen.
+let _fdFiles = [];
+let _fdAllFiles = null; // lazily fetched once per modal open, for the "add another" search
+async function openFriendDetail(friendId) {
+  document.getElementById('fdSaveMsg').textContent = '';
+  document.getElementById('fdAddSearch').value = '';
+  document.getElementById('fdAddResults').innerHTML = '';
+  _fdAllFiles = null;
+  document.getElementById('fdFiles').innerHTML = '<div class="empty">Loading…</div>';
+  openModal('friendDetailModal');
+  try {
+    const friend = await (await fetch(`/api/admin/friends/${friendId}`)).json();
+    document.getElementById('fdId').value = friend.id;
+    document.getElementById('fdLabel').value = friend.label;
+    document.getElementById('fdNote').value = friend.note || '';
+    document.getElementById('fdLink').value = `${location.origin}/share?t=${friend.token}`;
+    _fdFiles = friend.files || [];
+    renderFriendFiles();
+  } catch(e) {
+    document.getElementById('fdFiles').innerHTML = '<div class="empty">Could not load this friend.</div>';
+  }
+}
+function renderFriendFiles() {
+  const el = document.getElementById('fdFiles');
+  if (!_fdFiles.length) { el.innerHTML = '<div class="empty">Nothing shared yet — search below to add a practice.</div>'; return; }
+  el.innerHTML = _fdFiles.map(f => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="flex:1;min-width:0;font-size:13px;color:rgba(255,255,255,0.8)">${escHtml(f.title)}</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.4);white-space:nowrap" title="Times actually played, not just shared">${f.play_count} play${f.play_count===1?'':'s'}</div>
+      <button class="btn sm danger" onclick="removeFileFromFriend('${f.id}')">Remove</button>
+    </div>`).join('');
+}
+async function saveFriendDetail() {
+  const id = document.getElementById('fdId').value;
+  const label = document.getElementById('fdLabel').value.trim();
+  const note = document.getElementById('fdNote').value.trim();
+  const msg = document.getElementById('fdSaveMsg');
+  if (!label) { msg.style.color = 'rgba(230,140,120,0.9)'; msg.textContent = 'A label is required.'; return; }
+  try {
+    const res = await fetch(`/api/admin/friends/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, note }) });
+    if (!res.ok) throw new Error();
+    msg.style.color = 'rgba(180,230,200,0.9)';
+    msg.textContent = 'Saved.';
+    const cached = _sharePickerFriends.find(f => f.id === id);
+    if (cached) cached.label = label;
+  } catch(e) {
+    msg.style.color = 'rgba(230,140,120,0.9)';
+    msg.textContent = 'Could not save — please try again.';
+  }
+}
+function copyFriendLink() {
+  const el = document.getElementById('fdLink');
+  el.select();
+  navigator.clipboard?.writeText(el.value).catch(() => {});
+}
+async function removeFileFromFriend(fileId) {
+  const id = document.getElementById('fdId').value;
+  await fetch(`/api/admin/friends/${id}/files/${fileId}`, { method: 'DELETE' });
+  _fdFiles = _fdFiles.filter(f => f.id !== fileId);
+  renderFriendFiles();
+}
+async function renderFriendAddResults() {
+  const term = document.getElementById('fdAddSearch').value.trim().toLowerCase();
+  const el = document.getElementById('fdAddResults');
+  if (!term) { el.innerHTML = ''; return; }
+  if (!_fdAllFiles) { _fdAllFiles = await (await fetch('/api/content/library')).json().catch(() => []); }
+  const already = new Set(_fdFiles.map(f => f.id));
+  const matches = _fdAllFiles.filter(f => !f.archived && !already.has(f.id) && (f.title || '').toLowerCase().includes(term)).slice(0, 12);
+  if (!matches.length) { el.innerHTML = '<div class="empty">No matches.</div>'; return; }
+  el.innerHTML = matches.map(f => `
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <div style="flex:1;min-width:0;font-size:12.5px;color:rgba(255,255,255,0.75)">${escHtml(f.title)}</div>
+      <button class="btn sm" onclick="addFileToFriend('${f.id}')">Add</button>
+    </div>`).join('');
+}
+async function addFileToFriend(fileId) {
+  const id = document.getElementById('fdId').value;
+  await fetch(`/api/admin/friends/${id}/files`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileIds: [fileId] }) });
+  const friend = await (await fetch(`/api/admin/friends/${id}`)).json();
+  _fdFiles = friend.files || [];
+  renderFriendFiles();
+  document.getElementById('fdAddSearch').value = '';
+  document.getElementById('fdAddResults').innerHTML = '';
+}
+async function deleteFriendFromDetail() {
+  const id = document.getElementById('fdId').value;
+  const label = document.getElementById('fdLabel').value;
+  if (!(await appConfirm(`Delete "${label}"? Their link stops working immediately. This can't be undone.`))) return;
+  await fetch(`/api/admin/friends/${id}`, { method: 'DELETE' });
+  _sharePickerFriends = _sharePickerFriends.filter(f => f.id !== id);
+  closeModal('friendDetailModal');
+  if (typeof loadFriendsTab === 'function' && document.getElementById('panel-friends')?.classList.contains('active')) loadFriendsTab();
+}
+let _friendsTabData = [];
+async function loadFriendsTab() {
+  document.getElementById('friendsTabList').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    _friendsTabData = await (await fetch('/api/admin/friends')).json();
+  } catch(e) {
+    _friendsTabData = [];
+  }
+  renderFriendsTab();
+}
+function renderFriendsTab() {
+  const term = document.getElementById('friendsTabSearch').value.trim().toLowerCase();
+  const list = term ? _friendsTabData.filter(f => (f.label || '').toLowerCase().includes(term)) : _friendsTabData;
+  const el = document.getElementById('friendsTabList');
+  if (!list.length) { el.innerHTML = `<div class="empty">${term ? 'No matches.' : 'No friends yet — create one from "Share to…" on any file in the Library.'}</div>`; return; }
+  el.innerHTML = list.map(f => `
+    <div class="card" style="margin-bottom:10px;cursor:pointer" onclick="openFriendDetail('${f.id}')">
+      <div class="card-body" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px">
+        <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtml(f.label)}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35)">Open →</div>
+      </div>
+    </div>`).join('');
 }
 
 async function bulkArchive(archived) {
