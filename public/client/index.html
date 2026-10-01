@@ -21,16 +21,41 @@
     *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; overflow:hidden; font-family:'Georgia',serif; background:#0a0f0d; }
 
-    .slideshow { position:fixed; inset:0; z-index:0; }
+    /* Per App 36 — the scene shows through the app again. It was there
+       all along, but under a 55% black veil, a 55% dark glass tint and a
+       24px blur — together they turned it into flat dark green. Now a
+       light veil, a lighter tint, a small blur on the photos themselves
+       (cheaper on a phone than a full-screen backdrop-filter), and a very
+       slow drift so the scene gently moves, like the login page.
+       The three levels are variables so the idle "look through" state
+       (body.idle-reveal, after a minute with no touch) can ease them all
+       lighter together, and the first touch brings them straight back.
+       Text legibility over the photo comes from the text shadow on
+       .glass and from every white text colour in this file having been
+       lifted to at least ~0.68 opacity. */
+    :root { --scene-veil:0.22; --glass-tint:0.40; --scene-blur:3px; }
+    body.idle-reveal { --scene-veil:0.12; --glass-tint:0.26; --scene-blur:1px; }
+    .slideshow { position:fixed; inset:-40px; z-index:0; filter:blur(var(--scene-blur)); transition:filter 0.9s ease; animation:sceneDrift 70s ease-in-out infinite alternate; will-change:transform; }
+    body.idle-reveal .slideshow { transition:filter 6s ease; }
+    @keyframes sceneDrift {
+      0%   { transform:scale(1.03) translate(0, 0); }
+      50%  { transform:scale(1.09) translate(-1.2%, 0.8%); }
+      100% { transform:scale(1.05) translate(1%, -1%); }
+    }
+    @media (prefers-reduced-motion: reduce) { .slideshow { animation:none; } }
     .slide { position:absolute; inset:0; background-size:cover; background-position:center; opacity:0; transition:opacity 3s ease-in-out; }
     .slide.active { opacity:1; }
-    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,0.55); }
+    .veil { position:fixed; inset:0; z-index:1; background:rgba(0,0,0,var(--scene-veil)); transition:background 0.9s ease; }
+    body.idle-reveal .veil { transition:background 6s ease; }
     .panel { position:fixed; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:14px; }
 
     .glass {
       width:100%; max-width:500px;
-      background:rgba(20,26,24,0.55);
-      backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+      background:rgba(14,20,18,var(--glass-tint));
+      transition:background 0.9s ease;
+      /* Per App 36 — keeps every line of text crisp over the photo: a
+         tight dark edge plus a soft halo. Inherited by all text inside. */
+      text-shadow:0 1px 2px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.6), 0 0 18px rgba(0,0,0,0.45);
       border:1px solid rgba(255,255,255,0.13);
       border-radius:22px; overflow:hidden;
       display:flex; flex-direction:column;
@@ -139,10 +164,15 @@
        slideshow/veil outright while this mode is on, and giving .panel
        and .glass a solid, opaque background of their own before
        inversion — nothing left un-inverted to bleed through. */
+    body.idle-reveal .glass { transition:background 6s ease; }
+    /* Inputs and the light-coloured reader keep their own crisp text —
+       no halo where the background is already solid. */
+    .glass input, .glass textarea, .glass select, .reader-box { text-shadow:none; }
+
     body.a11y-contrast .slideshow,
     body.a11y-contrast .veil { display: none; }
     body.a11y-contrast .panel { background: #0a0f0d; filter: invert(1) hue-rotate(180deg); }
-    body.a11y-contrast .glass { background: #14201c; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    body.a11y-contrast .glass { background: #14201c; backdrop-filter: none; -webkit-backdrop-filter: none; text-shadow:none; }
     body.a11y-contrast .panel img,
     body.a11y-contrast .panel video { filter: invert(1) hue-rotate(180deg); }
 
@@ -156,12 +186,12 @@
     body.a11y-text-large .glass { zoom: 1.15; }
     body.a11y-text-larger .glass { zoom: 1.3; }
 
-    .a11y-toggle-btn { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; color:rgba(255,255,255,0.55); font-size:12px; letter-spacing:0.03em; font-family:'Georgia',serif; padding:6px 14px; line-height:1; display:flex; align-items:center; }
-    .a11y-toggle-btn:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.75); }
+    .a11y-toggle-btn { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; color:rgba(255,255,255,0.82); font-size:12px; letter-spacing:0.03em; font-family:'Georgia',serif; padding:6px 14px; line-height:1; display:flex; align-items:center; }
+    .a11y-toggle-btn:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.9); }
     .a11y-menu { display:none; position:absolute; top:calc(100% + 8px); left:0; z-index:50; background:rgba(20,26,24,0.97); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px; min-width:190px; box-shadow:0 8px 24px rgba(0,0,0,0.4); }
     .a11y-menu.open { display:block; }
-    .a11y-menu-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); padding:6px 8px 2px; }
-    .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.75); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
+    .a11y-menu-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.74); padding:6px 8px 2px; }
+    .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
     .a11y-menu-opt:hover { background:rgba(255,255,255,0.07); }
     .a11y-menu-opt.active { background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.95); }
     /* Per's request — on a phone, the Display button sits near the right
@@ -189,11 +219,11 @@
         overflow-y: auto;
       }
     }
-    .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.4); }
+    .wordmark { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; color:rgba(255,255,255,0.76); }
 
     .tabs { display:flex; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; }
-    .tab { flex:1; padding:11px; text-align:center; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.35); cursor:pointer; background:none; border:none; font-family:'Georgia',serif; transition:all 0.2s; }
-    .tab.active { color:rgba(255,255,255,0.85); border-bottom:1.5px solid rgba(180,230,200,0.6); }
+    .tab { flex:1; padding:11px; text-align:center; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.74); cursor:pointer; background:none; border:none; font-family:'Georgia',serif; transition:all 0.2s; }
+    .tab.active { color:rgba(255,255,255,0.94); border-bottom:1.5px solid rgba(180,230,200,0.6); }
 
     /* Per Bot 9: adaptive sizing for tablets and larger phones. The base
        values above are tuned for a typical ~375–430px-wide phone; rather
@@ -278,7 +308,7 @@
 
     /* Bottom nav (Per Bot 8) — replaces the old 9-across top tab row */
     .bottom-nav { display:flex; border-top:1px solid rgba(255,255,255,0.08); flex-shrink:0; background:rgba(0,0,0,0.12); }
-    .bnav-btn { flex:1; padding:14px 4px 12px; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:rgba(255,255,255,0.4); font-size:15px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
+    .bnav-btn { flex:1; padding:14px 4px 12px; display:flex; flex-direction:column; align-items:center; gap:5px; background:none; border:none; color:rgba(255,255,255,0.76); font-size:15px; letter-spacing:0.04em; font-family:'Georgia',serif; cursor:pointer; transition:color 0.2s; }
     .bnav-icon { font-size:34px; line-height:1; opacity:0.75; }
     .bnav-btn.active { color:rgba(180,230,200,0.9); }
     /* Per Bot 24 — "What's New" home promo: quiet glow + fade-in + small
@@ -291,14 +321,14 @@
        between items) to the card's own bounds, so the outgoing/incoming
        text doesn't visually spill past the card's edges mid-transition. */
     @keyframes whatsNewFadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-    .whats-new-badge { display:inline-flex; align-items:center; font-size:9.5px; letter-spacing:0.06em; color:rgba(180,230,200,0.85); background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); border-radius:20px; padding:2px 8px; text-transform:none; }
+    .whats-new-badge { display:inline-flex; align-items:center; font-size:9.5px; letter-spacing:0.06em; color:rgba(180,230,200,0.94); background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); border-radius:20px; padding:2px 8px; text-transform:none; }
     .bnav-btn.active .bnav-icon { opacity:1; }
 
     /* Library / You mega-views — internal sub-nav + switchable regions */
     .library-view { display:none; flex-direction:column; overflow:hidden; }
     .library-view.visible { display:flex; }
     .lib-subnav { display:flex; gap:6px; padding:12px 16px 8px; flex-shrink:0; overflow-x:auto; }
-    .lib-subnav-btn { padding:7px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); font-size:12px; font-family:'Georgia',serif; cursor:pointer; white-space:nowrap; }
+    .lib-subnav-btn { padding:7px 14px; border-radius:16px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.78); font-size:12px; font-family:'Georgia',serif; cursor:pointer; white-space:nowrap; }
     .lib-subnav-btn.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
     .lib-subnav-btn-danger { border-color:rgba(255,140,120,0.25); color:rgba(255,160,140,0.75); margin-left:auto; }
     .lib-subnav-btn-danger:hover { border-color:rgba(255,140,120,0.5); color:rgba(255,170,150,0.95); }
@@ -323,8 +353,8 @@
     .med-cat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:6px 4px; }
     .med-cat-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 14px; cursor:pointer; transition:border-color 0.2s; }
     .med-cat-card:hover { border-color:rgba(180,230,200,0.3); }
-    .med-cat-name { font-size:14px; color:rgba(255,255,255,0.82); }
-    .med-cat-count { font-size:11px; color:rgba(255,255,255,0.32); margin-top:4px; }
+    .med-cat-name { font-size:14px; color:rgba(255,255,255,0.93); }
+    .med-cat-count { font-size:11px; color:rgba(255,255,255,0.73); margin-top:4px; }
     /* ── Rich editor (Per Bot 25) — styling now lives entirely in the
        shared message-editor.js module (.me-ql-wrap and its .me-ql-simple/
        .me-ql-compact modifiers), the same one every message composer in
@@ -342,18 +372,18 @@
     /* ── Messages (Per Bot 8) — client side ── */
     #youMsgBadge:not(:empty) { display:inline-block; min-width:15px; padding:0 4px; margin-left:5px; border-radius:8px; background:rgba(255,140,120,0.85); color:#1a1a1a; font-size:10px; line-height:15px; text-align:center; }
     .cmsg-thread-tabs { display:flex; gap:6px; flex-wrap:wrap; padding:10px 5px 8px; }
-    .cmsg-thread-tab { padding:6px 13px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); font-size:12px; cursor:pointer; }
+    .cmsg-thread-tab { padding:6px 13px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.78); font-size:12px; cursor:pointer; }
     .cmsg-thread-tab.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
     .cmsg-list { flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:6px 5px; }
     .cmsg-row { display:flex; }
     .cmsg-row.me { justify-content:flex-end; }
     .cmsg-bubble { max-width:80%; padding:10px 13px; border-radius:12px; font-size:13.5px; line-height:1.5; }
     .cmsg-row.me .cmsg-bubble { background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.25); color:rgba(220,255,235,0.92); }
-    .cmsg-row.them .cmsg-bubble { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.82); }
-    .cmsg-meta { font-size:10px; color:rgba(255,255,255,0.3); margin-top:4px; }
-    .cmsg-deleted { font-style:italic; color:rgba(255,255,255,0.3); }
+    .cmsg-row.them .cmsg-bubble { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.93); }
+    .cmsg-meta { font-size:10px; color:rgba(255,255,255,0.72); margin-top:4px; }
+    .cmsg-deleted { font-style:italic; color:rgba(255,255,255,0.72); }
     .cmsg-composer { display:flex; align-items:center; gap:6px; padding:8px 5px 4px; flex-shrink:0; }
-    .cmsg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 12px; color:rgba(255,255,255,0.85); font-size:13.5px; font-family:inherit; }
+    .cmsg-composer input[type=text] { flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 12px; color:rgba(255,255,255,0.94); font-size:13.5px; font-family:inherit; }
     .cmsg-icon-btn { background:none; border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 9px; cursor:pointer; font-size:15px; line-height:1; }
     .cmsg-icon-btn.recording { border-color:rgba(255,120,100,0.5); background:rgba(255,120,100,0.1); }
     .cmsg-icon-btn.pending { border-color:rgba(220,200,120,0.5); background:rgba(220,200,120,0.08); opacity:0.7; cursor:wait; }
@@ -382,7 +412,7 @@
        half the 150px card width — see the Per Bot 37 comment history for
        why that number specifically); every other .shelf-row falls back
        to the plain start-aligned rule below it. */
-    .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.4); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
+    .shelf-label { font-size:11px; letter-spacing:0.12em; color:rgba(255,255,255,0.76); text-transform:uppercase; text-align:left; margin-bottom:10px; padding:0 4px; }
     .shelf-row { display:flex; gap:12px; overflow-x:auto; padding:2px 4px 14px; scroll-snap-type:x proximity; }
     .shelf-row[data-shelf-label="Practices"] {
       /* Per's follow-up — starting pre-centred (equal padding on both
@@ -430,7 +460,7 @@
     }
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
-    .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
+    .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(10,15,13,0.32); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
     .shelf-row[data-shelf-label="Practices"] .shelf-card { scroll-snap-align:center; }
     /* The centred card — kept in sync with whichever card the carousel
        (auto or manual) has actually brought to centre, via the
@@ -446,14 +476,14 @@
     /* Per's request — the app is dark enough already that dimming locked
        cards further makes them look broken/missing rather than "gated".
        The lock emoji already communicates that; no opacity change here. */
-    .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.4; margin-bottom:6px; }
-    .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.4); }
+    .shelf-card-title { font-size:13.5px; color:rgba(255,255,255,0.95); line-height:1.4; margin-bottom:6px; }
+    .shelf-card-meta { font-size:11px; color:rgba(255,255,255,0.76); }
     .transcript-area { width:100%; flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; text-align:center; }
-    .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
+    .save-talk-btn { align-self:center; margin:6px 0 2px; padding:8px 16px; border-radius:20px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.94); font-size:12px; font-family:'Georgia',serif; cursor:pointer; flex-shrink:0; }
     .save-talk-btn:active { background:rgba(180,230,200,0.18); }
-    .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.88); font-style:italic; transition:opacity 0.3s; margin:auto 0; padding:4px 0; }
+    .transcript-text { font-size:16px; line-height:1.7; color:rgba(255,255,255,0.95); font-style:italic; transition:opacity 0.3s; margin:auto 0; padding:4px 0; }
     .transcript-text.dim  { opacity:0.4; }
-    .transcript-text.user { font-style:normal; color:rgba(255,255,255,0.5); font-size:14px; }
+    .transcript-text.user { font-style:normal; color:rgba(255,255,255,0.8); font-size:14px; }
 
     .indicators { height:22px; display:flex; align-items:center; justify-content:center; }
     .wave { display:none; gap:4px; align-items:flex-end; height:20px; }
@@ -480,7 +510,7 @@
        instant they tap the mic or the app starts listening/processing/
        speaking on its own. The pulse is deliberately gentle — this is a
        mindfulness app, not a notification badge. */
-    .tap-hint { font-size:13px; letter-spacing:0.08em; color:rgba(180,230,200,0.75); opacity:0; height:0; overflow:hidden; transition:opacity 0.3s ease; text-transform:uppercase; }
+    .tap-hint { font-size:13px; letter-spacing:0.08em; color:rgba(180,230,200,0.9); opacity:0; height:0; overflow:hidden; transition:opacity 0.3s ease; text-transform:uppercase; }
     .tap-hint.visible { opacity:1; height:auto; animation:tapPulse 2.2s ease-in-out infinite; }
     @keyframes tapPulse { 0%,100% { opacity:0.55; } 50% { opacity:1; } }
     .mic-btn { width:68px; height:68px; border-radius:50%; border:1.5px solid rgba(255,255,255,0.22); background:rgba(255,255,255,0.06); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.25s ease; outline:none; }
@@ -504,7 +534,7 @@
        always saying in plain words what's happening right now. Replaces
        the old tiny 11px uppercase label that only ever said "listening"
        (with no equivalent text at all during "speaking"). */
-    .status { font-size:14.5px; letter-spacing:0.02em; color:rgba(255,255,255,0.35); text-transform:none; height:20px; transition:color 0.25s; }
+    .status { font-size:14.5px; letter-spacing:0.02em; color:rgba(255,255,255,0.74); text-transform:none; height:20px; transition:color 0.25s; }
     .status.on { color:rgba(255,160,140,0.9); }
     .status.processing { color:rgba(230,185,120,0.9); }
     .status.speaking { color:rgba(180,230,200,0.9); }
@@ -518,7 +548,7 @@
       position:absolute; bottom:calc(100% + 14px); left:50%; transform:translateX(-50%);
       width:200px; background:rgba(20,26,23,0.97); border:1px solid rgba(180,230,200,0.4);
       border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.5;
-      color:rgba(255,255,255,0.85); text-align:center; box-shadow:0 6px 24px rgba(0,0,0,0.4);
+      color:rgba(255,255,255,0.94); text-align:center; box-shadow:0 6px 24px rgba(0,0,0,0.4);
       z-index:5; opacity:0; pointer-events:none; transition:opacity 0.3s ease;
     }
     .mic-coachmark.visible { opacity:1; pointer-events:auto; }
@@ -530,14 +560,14 @@
       content:''; position:absolute; top:calc(100% - 1px); left:50%; transform:translateX(-50%);
       border:6px solid transparent; border-top-color:#141a17;
     }
-    .mic-coachmark-dismiss { display:block; margin:8px auto 0; background:none; border:none; color:rgba(180,230,200,0.85); font-size:12px; text-decoration:underline; cursor:pointer; padding:2px; }
+    .mic-coachmark-dismiss { display:block; margin:8px auto 0; background:none; border:none; color:rgba(180,230,200,0.94); font-size:12px; text-decoration:underline; cursor:pointer; padding:2px; }
 
     /* Show/hide transcript toggle (Per Bot 21) — "listen is enough" by
        default: the spoken reply is the primary experience, the on-screen
        text is now an optional aid rather than something competing for
        attention throughout every session. Remembered per-browser. */
-    .transcript-toggle { display:flex; align-items:center; justify-content:center; gap:6px; font-size:11.5px; letter-spacing:0.05em; color:rgba(255,255,255,0.35); cursor:pointer; text-transform:uppercase; padding:4px 0; }
-    .transcript-toggle:hover { color:rgba(255,255,255,0.6); }
+    .transcript-toggle { display:flex; align-items:center; justify-content:center; gap:6px; font-size:11.5px; letter-spacing:0.05em; color:rgba(255,255,255,0.74); cursor:pointer; text-transform:uppercase; padding:4px 0; }
+    .transcript-toggle:hover { color:rgba(255,255,255,0.84); }
     .transcript-area.transcript-hidden { display:none; }
 
     /* Practices */
@@ -545,27 +575,27 @@
     .practices-view.visible { display:flex; }
     .timer-view { display:none; flex-direction:column; overflow:hidden; position:relative; }
     .timer-view.visible { display:flex; }
-    .timer-close-btn { position:absolute; top:8px; right:4px; z-index:10; width:36px; height:36px; border-radius:50%; background:rgba(10,15,13,0.65); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+    .timer-close-btn { position:absolute; top:8px; right:4px; z-index:10; width:36px; height:36px; border-radius:50%; background:rgba(10,15,13,0.65); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.92); font-size:18px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; }
     .timer-scroll { flex:1; overflow-y:auto; padding:4px 2px 24px; display:flex; flex-direction:column; align-items:center; }
-    .timer-display { font-size:56px; font-family:'Georgia',serif; color:rgba(255,255,255,0.9); letter-spacing:0.02em; margin-top:18px; line-height:1; }
-    .timer-display-sub { font-size:12px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.55); margin:6px 0 22px; }
+    .timer-display { font-size:56px; font-family:'Georgia',serif; color:rgba(255,255,255,0.96); letter-spacing:0.02em; margin-top:18px; line-height:1; }
+    .timer-display-sub { font-size:12px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.82); margin:6px 0 22px; }
     .timer-controls { width:100%; max-width:340px; display:flex; flex-direction:column; gap:20px; }
-    .timer-section-label { font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:10px; }
+    .timer-section-label { font-size:11px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.72); margin-bottom:10px; }
     .timer-chip-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-    .timer-chip { padding:8px 14px; border-radius:20px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.6); font-size:13px; font-family:'Georgia',serif; cursor:pointer; }
+    .timer-chip { padding:8px 14px; border-radius:20px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.84); font-size:13px; font-family:'Georgia',serif; cursor:pointer; }
     .timer-chip.active { border-color:rgba(180,230,200,0.5); background:rgba(180,230,200,0.13); color:rgba(180,230,200,0.9); }
     .timer-custom-row { display:flex; align-items:center; gap:12px; }
     .timer-custom-row input[type=range] { flex:1; }
-    .timer-custom-row span { font-size:13px; color:rgba(255,255,255,0.5); min-width:56px; text-align:right; }
-    .timer-toggle-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.65); padding:7px 0; cursor:pointer; }
-    .timer-toggle-row input[type=number] { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:rgba(255,255,255,0.8); text-align:center; font-family:'Georgia',serif; padding:3px; }
+    .timer-custom-row span { font-size:13px; color:rgba(255,255,255,0.8); min-width:56px; text-align:right; }
+    .timer-toggle-row { display:flex; align-items:center; gap:8px; font-size:13px; color:rgba(255,255,255,0.86); padding:7px 0; cursor:pointer; }
+    .timer-toggle-row input[type=number] { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:rgba(255,255,255,0.92); text-align:center; font-family:'Georgia',serif; padding:3px; }
     .timer-field-row { display:flex; flex-direction:column; gap:6px; padding:8px 0; }
-    .timer-field-row label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); }
-    .timer-field-row select { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:9px 10px; font-size:14px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; }
+    .timer-field-row label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.72); }
+    .timer-field-row select { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:9px 10px; font-size:14px; color:rgba(255,255,255,0.92); font-family:'Georgia',serif; }
     .timer-err { font-size:12px; color:rgba(255,140,120,0.8); min-height:14px; }
     .timer-start-btn { padding:14px; border-radius:12px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.13); color:rgba(180,230,200,0.9); font-size:15px; font-family:'Georgia',serif; cursor:pointer; margin-top:4px; }
     .timer-running-buttons { display:flex; gap:12px; justify-content:center; margin-top:8px; }
-    .timer-btn { flex:1; padding:13px; border-radius:12px; border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.7); font-size:14px; font-family:'Georgia',serif; cursor:pointer; }
+    .timer-btn { flex:1; padding:13px; border-radius:12px; border:1px solid rgba(255,255,255,0.16); background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.88); font-size:14px; font-family:'Georgia',serif; cursor:pointer; }
     .timer-btn-stop { border-color:rgba(255,140,120,0.3); background:rgba(255,140,120,0.08); color:rgba(255,160,140,0.85); }
     /* Breathing timer — a solid circle that expands on the in-breath, holds
        its size during a hold phase, and contracts on the out-breath. Scale
@@ -588,8 +618,8 @@
     .practice-item:hover { background:rgba(255,255,255,0.09); }
     .practice-icon { font-size:18px; flex-shrink:0; }
     .practice-info { flex:1; min-width:0; }
-    .practice-title { font-size:14px; color:rgba(255,255,255,0.82); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .practice-meta { font-size:11px; color:rgba(255,255,255,0.35); margin-top:2px; }
+    .practice-title { font-size:14px; color:rgba(255,255,255,0.93); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .practice-meta { font-size:11px; color:rgba(255,255,255,0.74); margin-top:2px; }
     .heart-btn { background:none; border:none; cursor:pointer; font-size:18px; opacity:0.35; transition:all 0.2s; flex-shrink:0; padding:4px; }
     .heart-btn.fav { opacity:1; }
     /* Same sticky-:hover-on-touch fix as .offline-tick-btn below — this
@@ -604,7 +634,7 @@
        full opacity + a highlight colour once marked. Blue/teal rather
        than the heart's usual red-toned "favourited" look, so the two
        ticks read as clearly different actions at a glance. */
-    .offline-tick-btn { background:none; border:none; cursor:pointer; font-size:16px; opacity:0.3; transition:all 0.2s; flex-shrink:0; padding:6px; color:rgba(255,255,255,0.6); }
+    .offline-tick-btn { background:none; border:none; cursor:pointer; font-size:16px; opacity:0.3; transition:all 0.2s; flex-shrink:0; padding:6px; color:rgba(255,255,255,0.84); }
     .offline-tick-btn.active { opacity:1; color:rgba(140,190,230,0.95); }
     /* Per's report — "half greyed, then goes fully dark once you tap a
        DIFFERENT file" is the classic sticky-:hover bug on touchscreens:
@@ -620,20 +650,20 @@
     @media (hover: hover) {
       .offline-tick-btn:hover { opacity:0.75; transform:scale(1.1); }
     }
-    .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+    .no-practices { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.72); font-size:14px; font-style:italic; }
     .practices-group-row { display:flex; gap:8px; padding:10px 5px 12px; }
-    .practices-group-chip { font-size:11px; padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; }
+    .practices-group-chip { font-size:11px; padding:6px 14px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.78); cursor:pointer; font-family:Georgia,serif; }
     .practices-group-chip.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
-    .practices-group-hdr { display:flex; align-items:center; justify-content:space-between; padding:10px 5px; cursor:pointer; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.5); border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px; }
-    .practices-group-count { font-size:11px; color:rgba(255,255,255,0.3); }
+    .practices-group-hdr { display:flex; align-items:center; justify-content:space-between; padding:10px 5px; cursor:pointer; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.8); border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px; }
+    .practices-group-count { font-size:11px; color:rgba(255,255,255,0.72); }
 
     /* Sessions */
     .sessions-view { display:none; flex-direction:column; overflow:hidden; }
     .sessions-view.visible { display:flex; }
     .sessions-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
     .session-item { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:14px; margin-bottom:8px; }
-    .session-date { font-size:11px; color:rgba(255,255,255,0.3); margin-bottom:6px; }
-    .session-summary { font-size:13px; color:rgba(255,255,255,0.65); line-height:1.65; }
+    .session-date { font-size:11px; color:rgba(255,255,255,0.72); margin-bottom:6px; }
+    .session-summary { font-size:13px; color:rgba(255,255,255,0.86); line-height:1.65; }
     .history-view { display:none; flex-direction:column; overflow:hidden; }
     .history-view.visible { display:flex; }
     .history-scroll { overflow-y:auto; flex:1; padding:14px 18px; max-height:calc(var(--vh,1vh)*90 - 180px); min-height:0; }
@@ -644,78 +674,78 @@
        matching style; kept minimal and consistent with the rest of the app. */
     .btn.sm {
       padding:6px 12px; border-radius:7px; border:1px solid rgba(255,255,255,0.15);
-      background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.6); font-size:11.5px;
+      background:rgba(255,255,255,0.04); color:rgba(255,255,255,0.84); font-size:11.5px;
       font-family:Georgia,serif; cursor:pointer;
     }
-    .btn.sm:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.85); }
+    .btn.sm:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.94); }
     /* Per Bot 16 — three more classes found with no CSS rule at all,
        falling back to the browser default (black text, grey button) on
        the dark background — same underlying issue as .no-content above. */
     .btn-primary {
       padding:9px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3);
-      background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:13px;
+      background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.94); font-size:13px;
       font-family:Georgia,serif; cursor:pointer;
     }
     .btn-primary:hover { background:rgba(180,230,200,0.16); color:rgba(180,230,200,0.95); }
-    .msg { font-size:12.5px; color:rgba(255,255,255,0.5); margin-top:6px; }
-    .timer-section { color:rgba(255,255,255,0.7); }
+    .msg { font-size:12.5px; color:rgba(255,255,255,0.8); margin-top:6px; }
+    .timer-section { color:rgba(255,255,255,0.88); }
     .history-body { flex:1; min-width:0; }
-    .history-title { font-size:13px; color:rgba(255,255,255,0.75); line-height:1.4; }
-    .history-meta { font-size:11px; color:rgba(255,255,255,0.3); margin-top:3px; }
-    .no-history { font-size:13px; color:rgba(255,255,255,0.35); padding:20px; text-align:center; }
-    .no-sessions { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+    .history-title { font-size:13px; color:rgba(255,255,255,0.9); line-height:1.4; }
+    .history-meta { font-size:11px; color:rgba(255,255,255,0.72); margin-top:3px; }
+    .no-history { font-size:13px; color:rgba(255,255,255,0.74); padding:20px; text-align:center; }
+    .no-sessions { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.72); font-size:14px; font-style:italic; }
     .upgrade-prompt { text-align:center; padding:40px 24px; display:flex; flex-direction:column; align-items:center; gap:10px; }
-    .upgrade-prompt-title { font-size:15px; color:rgba(255,255,255,0.7); }
-    .upgrade-prompt-text { font-size:13px; color:rgba(255,255,255,0.35); line-height:1.6; max-width:280px; }
-    .upgrade-prompt-btn { margin-top:6px; padding:10px 22px; border-radius:9px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; text-decoration:none; font-family:'Georgia',serif; transition:background 0.2s; }
+    .upgrade-prompt-title { font-size:15px; color:rgba(255,255,255,0.88); }
+    .upgrade-prompt-text { font-size:13px; color:rgba(255,255,255,0.74); line-height:1.6; max-width:280px; }
+    .upgrade-prompt-btn { margin-top:6px; padding:10px 22px; border-radius:9px; border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.94); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; text-decoration:none; font-family:'Georgia',serif; transition:background 0.2s; }
     .upgrade-prompt-btn:hover { background:rgba(180,230,200,0.18); }
 
     /* ── Resume card (Talk tab) ── */
     .resume-card { display:none; background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.2); border-radius:12px; padding:12px 16px; margin-bottom:14px; cursor:pointer; transition:background 0.2s; }
     .resume-card:hover { background:rgba(180,230,200,0.12); }
-    .resume-card-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.55); margin-bottom:4px; }
-    .resume-card-title { font-size:14px; color:rgba(255,255,255,0.85); }
-    .resume-card-sub { font-size:12px; color:rgba(255,255,255,0.4); margin-top:2px; }
-    .talk-hint-banner { background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.2); border-radius:12px; padding:12px 16px; margin-bottom:14px; font-size:13px; color:rgba(255,255,255,0.75); }
+    .resume-card-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(180,230,200,0.82); margin-bottom:4px; }
+    .resume-card-title { font-size:14px; color:rgba(255,255,255,0.94); }
+    .resume-card-sub { font-size:12px; color:rgba(255,255,255,0.76); margin-top:2px; }
+    .talk-hint-banner { background:rgba(180,230,200,0.07); border:1px solid rgba(180,230,200,0.2); border-radius:12px; padding:12px 16px; margin-bottom:14px; font-size:13px; color:rgba(255,255,255,0.9); }
     .talk-hint-banner .thb-actions { display:flex; gap:10px; margin-top:10px; }
     .talk-hint-banner button { padding:6px 14px; border-radius:8px; font-size:12px; cursor:pointer; font-family:'Georgia',serif; }
     .talk-hint-banner .thb-yes { border:1px solid rgba(180,230,200,0.35); background:rgba(180,230,200,0.12); color:rgba(180,230,200,0.9); }
-    .talk-hint-banner .thb-no { border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); }
-    .talk-hint-banner a { color:rgba(180,230,200,0.85); text-decoration:underline; }
+    .talk-hint-banner .thb-no { border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.78); }
+    .talk-hint-banner a { color:rgba(180,230,200,0.94); text-decoration:underline; }
 
     /* ── Courses ── */
     .courses-view { display:none; flex-direction:column; overflow:hidden; }
     .courses-view.visible { display:flex; }
     .courses-scroll { flex:1; overflow-y:auto; padding:16px 18px 24px; }
-    .courses-section-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:10px; }
+    .courses-section-label { font-size:10px; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.72); margin-bottom:10px; }
     .course-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px 16px; margin-bottom:10px; cursor:pointer; transition:border-color 0.2s; }
     .course-card:hover { border-color:rgba(255,255,255,0.18); }
     /* No opacity dimming — see .shelf-card.locked note above; the lock
        emoji on the title already does the job. */
-    .course-card-title { font-size:14px; color:rgba(255,255,255,0.82); }
-    .course-card-sub { font-size:12px; color:rgba(255,255,255,0.35); margin-top:3px; }
+    .course-card-title { font-size:14px; color:rgba(255,255,255,0.93); }
+    .course-card-sub { font-size:12px; color:rgba(255,255,255,0.74); margin-top:3px; }
     .course-progress-bar { height:5px; background:rgba(255,255,255,0.08); border-radius:3px; margin-top:10px; overflow:hidden; }
     .course-progress-fill { height:100%; background:rgba(180,230,200,0.6); border-radius:3px; transition:width 0.3s; }
-    .course-progress-pct { font-size:11px; color:rgba(180,230,200,0.6); margin-top:4px; }
-    .course-card-badge { display:inline-block; font-size:10px; letter-spacing:0.05em; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.4); margin-top:6px; }
+    .course-progress-pct { font-size:11px; color:rgba(180,230,200,0.84); margin-top:4px; }
+    .course-card-badge { display:inline-block; font-size:10px; letter-spacing:0.05em; padding:2px 8px; border-radius:4px; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.76); margin-top:6px; }
     .course-card-price { font-size:12px; color:rgba(255,200,130,0.75); margin-top:6px; }
-    .courses-back-btn { background:none; border:none; color:rgba(255,255,255,0.4); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; margin-bottom:14px; padding:0; }
-    .courses-back-btn:hover { color:rgba(180,230,200,0.7); }
+    .courses-back-btn { background:none; border:none; color:rgba(255,255,255,0.76); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; margin-bottom:14px; padding:0; }
+    .courses-back-btn:hover { color:rgba(180,230,200,0.88); }
     .lesson-item-row { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:12px 14px; margin-bottom:8px; }
-    .lesson-item-num { font-size:16px; color:rgba(255,255,255,0.2); min-width:22px; }
+    .lesson-item-num { font-size:16px; color:rgba(255,255,255,0.68); min-width:22px; }
     .lesson-item-body { flex:1; min-width:0; }
-    .lesson-item-title { font-size:13px; color:rgba(255,255,255,0.8); }
+    .lesson-item-title { font-size:13px; color:rgba(255,255,255,0.92); }
     .lesson-item-status { font-size:11px; margin-top:3px; }
-    .lesson-item-desc { font-size:12px; color:rgba(255,255,255,0.45); margin-top:2px; line-height:1.4; }
-    .lesson-item-progress { margin-left:8px; color:rgba(180,230,200,0.8); }
+    .lesson-item-desc { font-size:12px; color:rgba(255,255,255,0.78); margin-top:2px; line-height:1.4; }
+    .lesson-item-progress { margin-left:8px; color:rgba(180,230,200,0.92); }
     .lesson-item-lock { margin-left:6px; font-size:11px; opacity:0.6; }
-    .lesson-item-status.completed { color:rgba(180,230,200,0.65); }
+    .lesson-item-status.completed { color:rgba(180,230,200,0.86); }
     .lesson-item-status.in_progress { color:rgba(255,200,130,0.65); }
-    .lesson-item-status.not_started { color:rgba(255,255,255,0.3); }
-    .lesson-open-btn { padding:7px 16px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.08); color:rgba(180,230,200,0.8); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; flex-shrink:0; }
-    .quiz-question-text { font-size:14px; color:rgba(255,255,255,0.82); margin-bottom:8px; }
-    .quiz-option-row { display:flex; align-items:center; gap:10px; padding:8px 0; font-size:13px; color:rgba(255,255,255,0.65); }
-    .quiz-result-pass { color:rgba(180,230,200,0.85); font-size:14px; text-align:center; }
+    .lesson-item-status.not_started { color:rgba(255,255,255,0.72); }
+    .lesson-open-btn { padding:7px 16px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.08); color:rgba(180,230,200,0.92); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; flex-shrink:0; }
+    .quiz-question-text { font-size:14px; color:rgba(255,255,255,0.93); margin-bottom:8px; }
+    .quiz-option-row { display:flex; align-items:center; gap:10px; padding:8px 0; font-size:13px; color:rgba(255,255,255,0.86); }
+    .quiz-result-pass { color:rgba(180,230,200,0.94); font-size:14px; text-align:center; }
     .quiz-result-fail { color:rgba(255,140,120,0.85); font-size:14px; text-align:center; }
 
     /* Content tab */
@@ -726,14 +756,14 @@
     .content-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
 
     .content-section { margin-bottom:4px; }
-    .content-section-hdr { font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:rgba(255,255,255,0.3); padding:12px 18px 6px; display:flex; align-items:center; justify-content:space-between; }
+    .content-section-hdr { font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:rgba(255,255,255,0.72); padding:12px 18px 6px; display:flex; align-items:center; justify-content:space-between; }
     .content-filters { display:flex; gap:6px; padding:10px 18px 4px; flex-wrap:wrap; }
-    .content-filter-chip { font-size:11px; padding:5px 12px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.45); cursor:pointer; font-family:Georgia,serif; transition:all 0.15s; }
+    .content-filter-chip { font-size:11px; padding:5px 12px; border-radius:14px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.78); cursor:pointer; font-family:Georgia,serif; transition:all 0.15s; }
     .content-filter-chip.active { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); }
     .library-search-row { position:relative; padding:10px 18px 2px; }
-    .library-search-input { width:100%; box-sizing:border-box; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:9px 34px 9px 12px; color:rgba(255,255,255,0.85); font-size:13.5px; font-family:'Georgia',serif; }
-    .library-search-input::placeholder { color:rgba(255,255,255,0.3); }
-    .library-search-clear { display:none; position:absolute; right:26px; top:18px; background:none; border:none; color:rgba(255,255,255,0.3); font-size:15px; cursor:pointer; padding:2px 6px; }
+    .library-search-input { width:100%; box-sizing:border-box; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:9px 34px 9px 12px; color:rgba(255,255,255,0.94); font-size:13.5px; font-family:'Georgia',serif; }
+    .library-search-input::placeholder { color:rgba(255,255,255,0.72); }
+    .library-search-clear { display:none; position:absolute; right:26px; top:18px; background:none; border:none; color:rgba(255,255,255,0.72); font-size:15px; cursor:pointer; padding:2px 6px; }
     .library-search-clear.visible { display:block; }
     .content-item { display:flex; align-items:center; gap:10px; padding:9px 18px; cursor:pointer; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.04); }
     .content-item:hover { background:rgba(255,255,255,0.04); }
@@ -752,29 +782,29 @@
     .content-item.offline-unavailable .heart-btn,
     .content-item.offline-unavailable .play-btn { pointer-events:none; }
     .content-icon { font-size:16px; flex-shrink:0; width:20px; text-align:center; }
-    .content-title { flex:1; font-size:13px; color:rgba(255,255,255,0.8); line-height:1.4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .content-desc { font-size:11px; color:rgba(255,255,255,0.3); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .heart-btn { background:none; border:none; cursor:pointer; font-size:15px; padding:4px; color:rgba(255,255,255,0.2); transition:all 0.15s; flex-shrink:0; }
+    .content-title { flex:1; font-size:13px; color:rgba(255,255,255,0.92); line-height:1.4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .content-desc { font-size:11px; color:rgba(255,255,255,0.72); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .heart-btn { background:none; border:none; cursor:pointer; font-size:15px; padding:4px; color:rgba(255,255,255,0.68); transition:all 0.15s; flex-shrink:0; }
     .heart-btn.active { color:rgba(255,120,120,0.8); }
     .heart-btn:hover { transform:scale(1.2); }
-    .play-btn { background:none; border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; transition:all 0.15s; color:rgba(255,255,255,0.5); font-size:10px; }
-    .play-btn:hover { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.8); }
+    .play-btn { background:none; border:1px solid rgba(255,255,255,0.12); border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; transition:all 0.15s; color:rgba(255,255,255,0.8); font-size:10px; }
+    .play-btn:hover { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.3); color:rgba(180,230,200,0.92); }
     .play-btn.playing { background:rgba(180,230,200,0.12); border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.9); }
 
     /* Mini player */
     .mini-player { display:none; padding:10px 16px; border-top:1px solid rgba(255,255,255,0.07); background:rgba(180,230,200,0.04); flex-shrink:0; }
     .mini-player.visible { display:block; }
-    .mini-player-title { font-size:12px; color:rgba(255,255,255,0.6); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .mini-player-title { font-size:12px; color:rgba(255,255,255,0.84); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .mini-player-controls { display:flex; align-items:center; gap:10px; }
-    .mp-btn { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:50%; width:30px; height:30px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:rgba(255,255,255,0.6); font-size:11px; flex-shrink:0; }
-    .mp-btn:hover { border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.8); }
+    .mp-btn { background:none; border:1px solid rgba(255,255,255,0.15); border-radius:50%; width:30px; height:30px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:rgba(255,255,255,0.84); font-size:11px; flex-shrink:0; }
+    .mp-btn:hover { border-color:rgba(180,230,200,0.4); color:rgba(180,230,200,0.92); }
     .mp-progress { flex:1; height:3px; background:rgba(255,255,255,0.1); border-radius:2px; cursor:pointer; position:relative; }
     .mp-progress-fill { height:100%; background:rgba(180,230,200,0.6); border-radius:2px; transition:width 0.5s linear; }
-    .mp-time { font-size:10px; color:rgba(255,255,255,0.3); flex-shrink:0; }
+    .mp-time { font-size:10px; color:rgba(255,255,255,0.72); flex-shrink:0; }
 
     /* User playlists */
-    .pl-create-btn { margin:8px 18px; padding:7px 14px; border-radius:8px; border:1px solid rgba(180,230,200,0.2); background:none; color:rgba(180,230,200,0.5); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; transition:all 0.2s; width:calc(100% - 36px); }
-    .pl-create-btn:hover { background:rgba(180,230,200,0.07); color:rgba(180,230,200,0.8); }
+    .pl-create-btn { margin:8px 18px; padding:7px 14px; border-radius:8px; border:1px solid rgba(180,230,200,0.2); background:none; color:rgba(180,230,200,0.8); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; font-family:'Georgia',serif; transition:all 0.2s; width:calc(100% - 36px); }
+    .pl-create-btn:hover { background:rgba(180,230,200,0.07); color:rgba(180,230,200,0.92); }
 
     /* Poems — the daily message archive, five-line stanzas, read aloud */
     .poems-view { display:none; flex-direction:column; overflow:hidden; }
@@ -783,21 +813,21 @@
     .poems-scroll::-webkit-scrollbar { width:3px; }
     .poems-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
     .poem-card { display:flex; align-items:flex-start; gap:12px; padding:16px 15px; margin-bottom:9px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:13px; }
-    .poem-lines { flex:1; min-width:0; font-size:14px; line-height:1.65; color:rgba(255,255,255,0.8); white-space:pre-line; }
-    .poem-date { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); margin-top:10px; }
-    .poem-month-hdr { display:flex; align-items:center; justify-content:space-between; width:100%; padding:12px 15px; margin:14px 0 9px; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); font-family:'Georgia',serif; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.45); cursor:pointer; }
+    .poem-lines { flex:1; min-width:0; font-size:14px; line-height:1.65; color:rgba(255,255,255,0.92); white-space:pre-line; }
+    .poem-date { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.7); margin-top:10px; }
+    .poem-month-hdr { display:flex; align-items:center; justify-content:space-between; width:100%; padding:12px 15px; margin:14px 0 9px; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); font-family:'Georgia',serif; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.78); cursor:pointer; }
     .poem-month-hdr:first-child { margin-top:0; }
-    .poem-month-hdr:hover { color:rgba(255,255,255,0.7); }
-    .poem-month-count { font-size:11px; letter-spacing:0; text-transform:none; color:rgba(255,255,255,0.3); }
-    .poem-play-btn { flex-shrink:0; width:36px; height:36px; border-radius:50%; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.08); color:rgba(180,230,200,0.85); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; transition:all 0.2s; }
+    .poem-month-hdr:hover { color:rgba(255,255,255,0.88); }
+    .poem-month-count { font-size:11px; letter-spacing:0; text-transform:none; color:rgba(255,255,255,0.72); }
+    .poem-play-btn { flex-shrink:0; width:36px; height:36px; border-radius:50%; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.08); color:rgba(180,230,200,0.94); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; transition:all 0.2s; }
     .poem-play-btn:hover { background:rgba(180,230,200,0.16); }
     .poem-play-btn.playing { background:rgba(180,230,200,0.22); border-color:rgba(180,230,200,0.5); }
     .poem-play-btn.loading { opacity:0.5; cursor:wait; }
-    .no-poems { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.3); font-size:14px; font-style:italic; }
+    .no-poems { text-align:center; padding:32px 20px; color:rgba(255,255,255,0.72); font-size:14px; font-style:italic; }
     /* Per Bot 16 — had no rule at all, so empty-state messages ("Nothing
        new to enrol in right now.", etc.) fell back to the browser's
        default black text, invisible against the dark glass background. */
-    .no-content { text-align:center; padding:24px 20px; color:rgba(255,255,255,0.35); font-size:14px; }
+    .no-content { text-align:center; padding:24px 20px; color:rgba(255,255,255,0.74); font-size:14px; }
     .voice-list { display:flex; flex-direction:column; gap:8px; }
     .voice-row { display:flex; align-items:center; gap:10px; padding:10px 13px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); border-radius:10px; cursor:pointer; transition:all 0.2s; }
     .voice-row:hover { background:rgba(255,255,255,0.08); }
@@ -807,25 +837,25 @@
     .voice-radio-dot { width:6px; height:6px; border-radius:50%; background:rgba(180,230,200,0.9); display:none; }
     .voice-row.selected .voice-radio-dot { display:block; }
     .voice-info { flex:1; }
-    .voice-name { font-size:13px; color:rgba(255,255,255,0.78); }
-    .voice-desc { font-size:11px; color:rgba(255,255,255,0.32); margin-top:2px; }
+    .voice-name { font-size:13px; color:rgba(255,255,255,0.91); }
+    .voice-desc { font-size:11px; color:rgba(255,255,255,0.73); margin-top:2px; }
 
     /* Playlist modals */
     .pl-modal-overlay { display:none; position:fixed; inset:0; z-index:300; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
     .pl-modal-overlay.visible { display:flex; }
     .pl-modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:24px; width:100%; max-width:320px; display:flex; flex-direction:column; gap:14px; }
-    .pl-modal h3 { font-size:15px; color:rgba(255,255,255,0.85); font-weight:normal; margin:0; }
-    .pl-modal input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none; }
+    .pl-modal h3 { font-size:15px; color:rgba(255,255,255,0.94); font-weight:normal; margin:0; }
+    .pl-modal input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.93); font-family:'Georgia',serif; outline:none; }
     .pl-modal-btns { display:flex; gap:10px; justify-content:flex-end; }
-    .pl-modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
-    .pl-modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
-    .onb-option { display:block; width:100%; text-align:left; padding:12px 14px; margin-bottom:8px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.75); font-family:'Georgia',serif; font-size:13px; cursor:pointer; transition:background 0.15s; }
+    .pl-modal-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.78); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .pl-modal-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.92); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .onb-option { display:block; width:100%; text-align:left; padding:12px 14px; margin-bottom:8px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.9); font-family:'Georgia',serif; font-size:13px; cursor:pointer; transition:background 0.15s; }
     .onb-option:hover { background:rgba(180,230,200,0.08); border-color:rgba(180,230,200,0.25); }
-    #onbDobMonth, #onbDobDay { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 8px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; }
+    #onbDobMonth, #onbDobDay { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 8px; font-size:13px; color:rgba(255,255,255,0.92); font-family:'Georgia',serif; outline:none; }
     .pl-pick-list { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow-y:auto; }
-    .pl-pick-item { padding:10px 13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:9px; font-size:13px; color:rgba(255,255,255,0.75); cursor:pointer; transition:background 0.15s; }
+    .pl-pick-item { padding:10px 13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); border-radius:9px; font-size:13px; color:rgba(255,255,255,0.9); cursor:pointer; transition:background 0.15s; }
     .pl-pick-item:hover, .pl-pick-item:active { background:rgba(180,230,200,0.1); border-color:rgba(180,230,200,0.25); }
-    .pl-delete-confirm { font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6; }
+    .pl-delete-confirm { font-size:13px; color:rgba(255,255,255,0.84); line-height:1.6; }
 
 
     .player-overlay { display:none; position:absolute; inset:0; z-index:10; background:rgba(10,15,13,0.94); backdrop-filter:blur(12px); border-radius:22px; flex-direction:column; align-items:center; justify-content:flex-start; gap:20px; padding:32px; overflow-y:auto; -webkit-overflow-scrolling:touch; }
@@ -942,12 +972,12 @@
        row and the floating close button (both outside this box). */
     .epub-swipe-capture { position:absolute; inset:0; z-index:5; touch-action:none; background:transparent; }
     .reader-controls { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; max-width:700px; margin:10px auto 0; }
-    .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
+    .reader-nav-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.94); width:40px; height:40px; border-radius:50%; font-size:18px; cursor:pointer; }
     .reader-font-btns { display:flex; gap:6px; }
-    .reader-font-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.85); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
+    .reader-font-btn { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.94); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
     .reader-toc-panel { display:none; position:absolute; bottom:70px; left:50%; transform:translateX(-50%); width:min(90vw,700px); max-height:50vh; overflow-y:auto; background:#14211d; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px; z-index:502; }
     .reader-toc-panel.open { display:block; }
-    .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.85); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
+    .reader-toc-item { display:block; width:100%; text-align:left; background:none; border:none; border-bottom:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.94); padding:10px 8px; font-family:Georgia,serif; font-size:13px; cursor:pointer; }
     .reader-toc-item:last-child { border-bottom:none; }
     .reader-toc-item:hover { background:rgba(255,255,255,0.06); }
     /* Presentation slide viewer — rebuilt on Swiper.js (Per Bot 119)
@@ -968,7 +998,7 @@
     .pptx-swiper { width:100%; height:100%; border-radius:8px; overflow:hidden; }
     .pptx-swiper .swiper-slide { display:flex; align-items:center; justify-content:center; background:transparent; }
     .pptx-swiper .swiper-slide img { max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.35); }
-    .slide-counter { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:rgba(255,255,255,0.7); font-size:12.5px; background:rgba(10,15,13,0.5); padding:3px 10px; border-radius:10px; z-index:2; pointer-events:none; }
+    .slide-counter { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:rgba(255,255,255,0.88); font-size:12.5px; background:rgba(10,15,13,0.5); padding:3px 10px; border-radius:10px; z-index:2; pointer-events:none; }
     .text-reader-controls { display:flex; justify-content:center; gap:8px; margin-bottom:14px; }
     /* The description row duplicates the title for videos (e.g. "Mindfulness
        For Life — Lesson 1, Part 1: Waking Up from Autopilot" under a title
@@ -982,7 +1012,7 @@
        most of the space. This one is pinned to a corner regardless of
        video size, so there's always something reachable without relying
        on scrolling, fullscreen quirks, or the browser's own back button. */
-    .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.8); font-size:18px; cursor:pointer; align-items:center; justify-content:center; touch-action:none; }
+    .player-close-floating { display:none; position:fixed; top:16px; right:16px; z-index:501; width:40px; height:40px; border-radius:50%; background:rgba(10,15,13,0.85); border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.92); font-size:18px; cursor:pointer; align-items:center; justify-content:center; touch-action:none; }
     .player-overlay.video-mode .player-close-floating, .player-overlay.reader-mode .player-close-floating { display:flex; }
     /* Per's request — the epub reader had two separate rows for exit:
        the floating X up top, and the actual reading controls (prev/toc/
@@ -1004,9 +1034,9 @@
     .player-overlay.video-mode .player-title, .player-overlay.reader-mode .player-title {
       padding:0 52px; box-sizing:border-box; margin-top:4px;
     }
-    .player-title { font-size:17px; color:rgba(255,255,255,0.88); text-align:center; }
-    .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.7); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
-    .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.5); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
+    .player-title { font-size:17px; color:rgba(255,255,255,0.95); text-align:center; }
+    .player-text { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.88); text-align:center; font-style:italic; max-height:200px; overflow-y:auto; }
+    .player-close { background:none; border:1px solid rgba(255,255,255,0.2); color:rgba(255,255,255,0.8); padding:8px 20px; border-radius:20px; cursor:pointer; font-size:12px; letter-spacing:0.1em; text-transform:uppercase; font-family:'Georgia',serif; }
     .player-btns { display:flex; gap:10px; }
     /* Per found a THIRD close mechanism, not just the floating X and the
        new one in reader-controls — this plain text "Close" button (plus
@@ -1028,15 +1058,15 @@
        trying to squeeze five columns onto a narrow phone screen. */
     .lesson-file-table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
     .lesson-file-table { width:100%; border-collapse:collapse; font-size:13px; min-width:420px; }
-    .lesson-file-table th { text-align:left; padding:8px 10px; font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(255,255,255,0.4); border-bottom:1px solid rgba(255,255,255,0.12); cursor:pointer; white-space:nowrap; user-select:none; }
-    .lesson-file-table th:hover { color:rgba(255,255,255,0.7); }
+    .lesson-file-table th { text-align:left; padding:8px 10px; font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(255,255,255,0.76); border-bottom:1px solid rgba(255,255,255,0.12); cursor:pointer; white-space:nowrap; user-select:none; }
+    .lesson-file-table th:hover { color:rgba(255,255,255,0.88); }
     .lesson-file-table th .sort-arrow { opacity:0.5; margin-left:3px; font-size:10px; }
     .lesson-file-table td { padding:9px 10px; border-bottom:1px solid rgba(255,255,255,0.05); vertical-align:middle; }
     .lesson-file-table tr.chooser-locked-row td { opacity:0.5; }
     .lesson-file-table .file-type-icon { font-size:17px; width:26px; text-align:center; }
-    .lesson-file-table .file-name-cell { color:rgba(255,255,255,0.85); }
+    .lesson-file-table .file-name-cell { color:rgba(255,255,255,0.94); }
     .lesson-file-table .file-action-btn { padding:6px 16px; border-radius:8px; background:rgba(180,230,200,0.12); border:1px solid rgba(180,230,200,0.3); color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:12px; cursor:pointer; white-space:nowrap; }
-    .lesson-file-table .file-action-btn.is-locked { background:none; border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.4); }
+    .lesson-file-table .file-action-btn.is-locked { background:none; border-color:rgba(255,255,255,0.15); color:rgba(255,255,255,0.76); }
     /* Per's request — the offline arrow needs to be clearly visible, not
        a faint 0.3-opacity icon someone has to look for. */
     .lesson-file-table .offline-tick-btn { opacity:0.6; font-size:19px; }
@@ -1046,7 +1076,7 @@
     .text-doc-reader {
       max-height:65vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
       max-width:560px; margin:0 auto; padding:4px 12px 12px;
-      color:rgba(255,255,255,0.85); font-family:'Georgia',serif; font-size:16px; line-height:1.7;
+      color:rgba(255,255,255,0.94); font-family:'Georgia',serif; font-size:16px; line-height:1.7;
       text-align:center;
     }
     /* The source files are plain generated HTML with no theme of their own
@@ -1057,39 +1087,39 @@
     .text-doc-reader h1, .text-doc-reader h2, .text-doc-reader h3 {
       color:rgba(255,255,255,0.95); font-weight:normal; font-style:italic; margin:0 0 18px;
     }
-    .text-doc-reader p { color:rgba(255,255,255,0.85); margin:0 0 14px; text-align:center !important; }
+    .text-doc-reader p { color:rgba(255,255,255,0.94); margin:0 0 14px; text-align:center !important; }
     .text-doc-reader a { color:rgba(180,230,200,0.9); }
     .now-playing-card { display:flex; flex-direction:column; align-items:center; gap:18px; padding:20px 0; }
     .now-playing-icon { font-size:40px; opacity:0.7; }
     .now-playing-controls { display:flex; align-items:center; gap:14px; width:100%; max-width:360px; }
-    .np-btn { background:none; border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.85); width:44px; height:44px; border-radius:50%; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .np-btn { background:none; border:1px solid rgba(255,255,255,0.25); color:rgba(255,255,255,0.94); width:44px; height:44px; border-radius:50%; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
     .np-progress-wrap { display:flex; align-items:center; gap:10px; width:100%; max-width:360px; }
     .np-progress { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.15); cursor:pointer; position:relative; }
     .np-progress-fill { height:100%; border-radius:3px; background:rgba(180,230,200,0.8); width:0%; }
-    .np-time { font-size:11px; color:rgba(255,255,255,0.4); min-width:34px; text-align:right; }
+    .np-time { font-size:11px; color:rgba(255,255,255,0.76); min-width:34px; text-align:right; }
     /* Per Bot 46 — chapter list, only ever rendered for files that
        actually have chapters (audiobooks combined via the admin
        audiobook-combine flow); everything else's now-playing card looks
        exactly as it did before this was added. */
     .now-playing-chapters { width:100%; max-width:400px; max-height:240px; overflow-y:auto; margin-top:6px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px; }
-    .np-chapter-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:9px 6px; cursor:pointer; border-radius:6px; font-size:13px; color:rgba(255,255,255,0.6); }
+    .np-chapter-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:9px 6px; cursor:pointer; border-radius:6px; font-size:13px; color:rgba(255,255,255,0.84); }
     .np-chapter-row:hover { background:rgba(255,255,255,0.06); }
     .np-chapter-row.active { color:rgba(180,230,200,0.95); background:rgba(180,230,200,0.08); }
     .np-chapter-title { text-align:left; flex:1; }
-    .np-chapter-time { font-size:11px; color:rgba(255,255,255,0.35); flex-shrink:0; }
+    .np-chapter-time { font-size:11px; color:rgba(255,255,255,0.74); flex-shrink:0; }
 
     /* Start screen — identical to Mare Bot */
     #start { position:fixed; inset:0; background:rgba(10,12,10,0.88); display:none; align-items:center; justify-content:center; z-index:99; }
     #start-inner { text-align:center; max-width:320px; padding:32px; }
-    #start-inner h1 { font-size:36px; color:rgba(255,255,255,0.85); margin-bottom:12px; font-weight:normal; font-style:italic; }
-    #start-inner p { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.45); margin-bottom:36px; }
-    #start-btn { background:transparent; border:1px solid rgba(180,230,200,0.4); color:rgba(180,230,200,0.8); padding:14px 36px; border-radius:6px; font-family:inherit; font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; }
+    #start-inner h1 { font-size:36px; color:rgba(255,255,255,0.94); margin-bottom:12px; font-weight:normal; font-style:italic; }
+    #start-inner p { font-size:15px; line-height:1.8; color:rgba(255,255,255,0.78); margin-bottom:36px; }
+    #start-btn { background:transparent; border:1px solid rgba(180,230,200,0.4); color:rgba(180,230,200,0.92); padding:14px 36px; border-radius:6px; font-family:inherit; font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; }
     #start-btn:hover { border-color:rgba(180,230,200,0.8); color:rgba(180,230,200,1); }
 
     /* Thinking indicator */
     .thinking { display:none; align-items:center; gap:8px; padding:10px 14px; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.12); border-radius:10px; margin-top:4px; }
     .thinking.visible { display:flex; }
-    .thinking-text { font-size:12px; color:rgba(180,230,200,0.5); letter-spacing:0.08em; }
+    .thinking-text { font-size:12px; color:rgba(180,230,200,0.8); letter-spacing:0.08em; }
     .thinking-dots { display:flex; gap:4px; }
     .thinking-dots span { width:5px; height:5px; border-radius:50%; background:rgba(180,230,200,0.4); animation:db 1.2s ease-in-out infinite; }
     .thinking-dots span:nth-child(1){animation-delay:0s}
@@ -1100,13 +1130,13 @@
     .pw-overlay { display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,0.65); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
     .pw-overlay.visible { display:flex; }
     .pw-modal { background:#141a17; border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:100%; max-width:340px; display:flex; flex-direction:column; gap:14px; }
-    .pw-modal h3 { font-size:16px; color:rgba(255,255,255,0.85); font-weight:normal; }
-    .pw-field label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); display:block; margin-bottom:5px; }
-    .pw-field input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.82); font-family:'Georgia',serif; outline:none; }
+    .pw-modal h3 { font-size:16px; color:rgba(255,255,255,0.94); font-weight:normal; }
+    .pw-field label { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.74); display:block; margin-bottom:5px; }
+    .pw-field input { width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 13px; font-size:14px; color:rgba(255,255,255,0.93); font-family:'Georgia',serif; outline:none; }
     .pw-err { font-size:12px; color:rgba(255,120,100,0.8); min-height:16px; }
     .pw-btns { display:flex; gap:10px; justify-content:flex-end; }
-    .pw-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.45); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
-    .pw-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.8); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .pw-cancel { padding:8px 18px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); background:none; color:rgba(255,255,255,0.78); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
+    .pw-ok { padding:8px 18px; border-radius:8px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.92); cursor:pointer; font-family:'Georgia',serif; font-size:13px; }
   </style>
   <!-- EPUB reader (Per Bot 14) — JSZip is epub.js's own dependency for
        reading the zip container; must load before epub.js itself. -->
@@ -1166,7 +1196,7 @@
 
     <div class="header">
       <div style="display:flex;align-items:center;gap:10px">
-        <button class="home-icon-btn" onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.4);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
+        <button class="home-icon-btn" onclick="goHome()" title="Home" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,0.76);font-size:17px;padding:0;line-height:1;display:flex;align-items:center">🏠</button>
         <div class="wordmark" data-brand="name" onclick="goHome()" style="cursor:pointer" title="Home">Deeper Mindfulness</div>
       </div>
       <div style="position:relative">
@@ -1217,16 +1247,16 @@
              card below only renders when there's a course in progress,
              so a margin-top approach on it would silently stop applying
              whenever it's hidden. -->
-        <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase; margin-bottom:-13px;"></div>
+        <div id="calmWelcome" style="font-size:12px; letter-spacing:0.08em; color:rgba(255,255,255,0.8); text-transform:uppercase; margin-bottom:-13px;"></div>
         <!-- Per Bot 24 (activity/engagement, group 1) — quiet consistency/
              milestone line. Hidden entirely unless there's something
              genuinely true and worth saying — never shows "0 times this
              week", and a milestone (rare, only shown once ever) takes
              priority over the plain weekly count when both would
              otherwise apply. See loadActivitySummary below. -->
-        <div id="activitySummary" style="display:none; font-size:12px; color:rgba(180,230,200,0.6); margin-bottom:-13px; margin-top:4px;"></div>
+        <div id="activitySummary" style="display:none; font-size:12px; color:rgba(180,230,200,0.84); margin-bottom:-13px; margin-top:4px;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
-        <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.9); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
+        <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.96); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15); margin-bottom:-13px;"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
           <!-- Per Bot 24 — "What's New" home promo (item 11), replacing
@@ -1242,16 +1272,16 @@
                urgency — deliberately quiet, matching the house style's
                own "no hype" rule for this exact kind of copy. -->
           <div id="whatsNewPromo" class="whats-new-card" style="display:none">
-            <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.4); text-transform:uppercase; margin-bottom:10px; text-align:center; display:flex; align-items:center; justify-content:center; gap:7px;">
+            <div style="font-size:11px; letter-spacing:0.1em; color:rgba(255,255,255,0.76); text-transform:uppercase; margin-bottom:10px; text-align:center; display:flex; align-items:center; justify-content:center; gap:7px;">
               <span>What's new</span>
               <span class="whats-new-badge">✦ New</span>
             </div>
-            <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.82); margin-bottom:14px; text-align:left"></div>
-            <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
+            <div id="whatsNewPromoBody" style="font-size:14px; line-height:1.6; color:rgba(255,255,255,0.93); margin-bottom:14px; text-align:left"></div>
+            <button type="button" id="whatsNewPromoBtn" onclick="openWhatsNewLink()" style="display:none; width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px 8px; color:rgba(255,255,255,0.92); font-family:Georgia,serif; font-size:13px; cursor:pointer; text-align:center;"></button>
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:16px; margin-bottom:-13px;">
-          <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
+          <button type="button" id="calmSoundsBtn" onclick="openCalmingSoundsModal()" style="background:none; border:none; color:rgba(255,255,255,0.78); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">♪ Hear Calming Sounds</button>
           <!-- Per Bot 24 (activity/engagement, group 3 — quick capture,
                follow-up) — one-tap voice note right from Talk itself,
                the natural place for it since Talk is already voice-first.
@@ -1263,7 +1293,7 @@
                those choices stay in Journal's fuller form for anyone
                who wants them). Available to every tier, same as
                Journal itself — nothing here checks member level. -->
-          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Make a note</button>
+          <button type="button" id="quickVoiceNoteBtn" onclick="openQuickVoiceNote()" style="background:none; border:none; color:rgba(255,255,255,0.78); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">📓 Make a note</button>
         </div>
 
         <!-- Per's request — "a little note when they log in to remind
@@ -1332,10 +1362,10 @@
            nothing else — one action, nothing to figure out. Tapping it
            calls startLiveTalk(), same conversation flow as before. -->
       <div id="talkMicOnly" style="display:none; flex-direction:column; align-items:center; justify-content:center; gap:22px; flex:1; width:100%;">
-        <button type="button" id="talkMicOnlyBtn" onclick="beginTalkFromMicOnly()" title="Talk to Per" style="width:170px; height:170px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.9); cursor:pointer; display:flex; align-items:center; justify-content:center;">
+        <button type="button" id="talkMicOnlyBtn" onclick="beginTalkFromMicOnly()" title="Talk to Per" style="width:170px; height:170px; border-radius:50%; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.35); color:rgba(255,255,255,0.96); cursor:pointer; display:flex; align-items:center; justify-content:center;">
           <svg viewBox="0 0 24 24" style="width:56px; height:56px; fill:rgba(255,255,255,0.85)"><path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v7a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-7 9a1 1 0 0 1 1 1 6 6 0 0 0 12 0 1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V23h3a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2h3v-2.062A8 8 0 0 1 4 13a1 1 0 0 1 1-1z"/></svg>
         </button>
-        <div style="font-size:13px; letter-spacing:0.08em; color:rgba(255,255,255,0.5); text-transform:uppercase;">Tap to Talk</div>
+        <div style="font-size:13px; letter-spacing:0.08em; color:rgba(255,255,255,0.8); text-transform:uppercase;">Tap to Talk</div>
       </div>
 
       <div id="talkChatContent" style="display:none; flex-direction:column; align-items:center; gap:20px; flex:1; width:100%; min-height:0;">
@@ -1382,13 +1412,13 @@
              whenever there's spare height, and simply falls in as the
              last item otherwise (long conversation, small screen). -->
         <div style="display:flex; gap:10px; align-items:center; margin-top:auto;">
-          <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📄 Past summaries</button>
+          <button type="button" id="talkSummariesToggleBtn" onclick="toggleTalkSummaries()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.78); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📄 Past summaries</button>
           <!-- Per Bot 24 — Quick voice note was only ever reachable from
                the calm landing screen (before a conversation starts),
                which meant it was effectively invisible for most of the
                time actually spent in Talk. Same button, same modal,
                just also available here mid-conversation. -->
-          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.45); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📓 Make a note</button>
+          <button type="button" onclick="openQuickVoiceNote()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:20px; padding:6px 14px; color:rgba(255,255,255,0.78); font-family:Georgia,serif; font-size:11.5px; cursor:pointer;">📓 Make a note</button>
         </div>
         <div id="talkSummariesPanel" style="display:none; width:100%; max-height:220px; overflow-y:auto;">
           <div class="practices-scroll" id="talkSummariesList"></div>
@@ -1405,7 +1435,7 @@
            model as the facilitator app selecting a client. -->
       <div id="facDetailPane" style="display:none; flex-direction:column; overflow-y:auto; flex:1; width:100%; min-height:0;">
         <div style="padding:16px 16px 0">
-          <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:8px">Your arc</div>
+          <div style="font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.74); margin-bottom:8px">Your arc</div>
           <div id="facArcDisplay" style="margin-bottom:18px"></div>
           <div class="lib-subnav" style="margin-bottom:0">
             <button class="lib-subnav-btn active" id="facDetailSubMessages" onclick="switchFacDetailSub('messages')">Messages<span id="youMsgBadge"></span></button>
@@ -1494,7 +1524,7 @@
            lesson's files) at a time. -->
       <div class="lib-sub-panel" id="libOfflinePanel">
         <div style="padding:14px 18px 4px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-          <div style="font-size:12px;color:rgba(255,255,255,0.4)" id="offlineFilesSummary">Loading…</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.76)" id="offlineFilesSummary">Loading…</div>
           <button type="button" id="offlineRemoveAllBtn" onclick="removeAllOfflineFiles()" style="display:none;background:rgba(255,255,255,0.06);border:1px solid rgba(255,140,120,0.3);border-radius:8px;color:rgba(255,160,140,0.85);font-family:Georgia,serif;font-size:12px;padding:7px 14px;cursor:pointer;white-space:nowrap">Remove all</button>
         </div>
         <div class="practices-scroll" id="offlineFilesList"></div>
@@ -1513,7 +1543,7 @@
       <div class="mini-player" id="miniPlayer">
         <div class="mini-player-title" id="miniPlayerTitle" onclick="expandMiniPlayer()" style="cursor:pointer;display:flex;align-items:center;gap:6px">
           <span id="miniPlayerTitleText">—</span>
-          <span style="font-size:11px;color:rgba(255,255,255,0.35);flex-shrink:0" title="Open full player">⌃</span>
+          <span style="font-size:11px;color:rgba(255,255,255,0.74);flex-shrink:0" title="Open full player">⌃</span>
         </div>
         <div class="mini-player-controls">
           <button class="mp-btn" id="mpPlayBtn" onclick="mpToggle()">▶</button>
@@ -1565,29 +1595,29 @@
         <div class="poems-scroll" id="journalScroll" style="display:flex; flex-direction:column; gap:16px;">
           <button class="btn-primary" style="align-self:flex-start" onclick="openJournalForm()">+ Write an entry</button>
           <div id="journalForm" style="display:none; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:16px; flex-direction:column; gap:10px;">
-            <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit;"/>
-            <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.9); font-family:inherit; resize:vertical;"></textarea>
+            <input type="text" id="journalTitle" placeholder="Title (optional)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.96); font-family:inherit;"/>
+            <textarea id="journalContent" placeholder="Write whatever feels true right now…" style="min-height:140px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:10px 12px; color:rgba(255,255,255,0.96); font-family:inherit; resize:vertical;"></textarea>
             <!-- Per Bot 25 — Dictate moved into the rich editor's own
                  toolbar (the 🎙️ button, wired via mountRichEditor's
                  onDictate callback below) — no longer a separate button
                  here. Still the same /api/journal/dictate endpoint and
                  mechanics, just triggered from the toolbar instead. -->
-            <div style="font-size:12px; color:rgba(255,255,255,0.4);">or <label style="color:rgba(180,230,200,0.7); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label>
+            <div style="font-size:12px; color:rgba(255,255,255,0.76);">or <label style="color:rgba(180,230,200,0.88); cursor:pointer; text-decoration:underline;">upload a .txt file<input type="file" id="journalFileInput" accept=".txt" style="display:none" onchange="handleJournalFileSelect()"/></label>
               <!-- Per Bot 24 (activity/engagement, group 3 — quick
                    capture) — record a voice note instead of typing.
                    toggleJournalVoiceRecording() handles the actual
                    MediaRecorder start/stop; saveJournalEntry() below
                    picks up journalVoiceBlob the same way it already
                    picks up journalUploadedFile for the .txt path. -->
-              or <a href="#" onclick="toggleJournalVoiceRecording();return false" id="journalVoiceLink" style="color:rgba(180,230,200,0.7); text-decoration:underline;">record a voice note</a>
+              or <a href="#" onclick="toggleJournalVoiceRecording();return false" id="journalVoiceLink" style="color:rgba(180,230,200,0.88); text-decoration:underline;">record a voice note</a>
             </div>
             <div id="journalVoiceRecorder" style="display:none; align-items:center; gap:10px; background:rgba(180,230,200,0.06); border:1px solid rgba(180,230,200,0.2); border-radius:10px; padding:10px 14px;">
-              <span id="journalVoiceStatus" style="font-size:13px; color:rgba(255,255,255,0.7); flex:1;">Recording… <span id="journalVoiceTimer">0:00</span></span>
+              <span id="journalVoiceStatus" style="font-size:13px; color:rgba(255,255,255,0.88); flex:1;">Recording… <span id="journalVoiceTimer">0:00</span></span>
               <audio id="journalVoicePreview" controls style="display:none; height:32px; max-width:180px;"></audio>
               <button type="button" class="btn sm" id="journalVoiceStopBtn" onclick="toggleJournalVoiceRecording()">⏹ Stop</button>
               <button type="button" class="btn sm" id="journalVoiceDiscardBtn" onclick="discardJournalVoiceRecording()" style="display:none">Discard</button>
             </div>
-            <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.6);">
+            <div style="display:flex; gap:16px; font-size:13px; color:rgba(255,255,255,0.84);">
               <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareBot"/> Let Talk use this</label>
               <label id="journalShareFacilitatorLabel" style="display:none; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="journalShareFacilitator"/> Share with my facilitator</label>
             </div>
@@ -1610,7 +1640,7 @@
              hearted, anywhere in the app — with the heart shown right
              here too, so un-hearting one clears it straight off this
              list. -->
-        <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">My poems</div>
+        <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:rgba(255,255,255,0.76); margin-bottom:14px;">My poems</div>
         <div class="poems-scroll" id="poemsScroll">
           <div class="no-poems">Loading…</div>
         </div>
@@ -1705,8 +1735,8 @@
         <div class="timer-controls breathing-controls-compact" id="breathingControlsPre">
           <div class="timer-section">
             <div class="timer-section-label">Choose a pattern</div>
-            <div class="timer-chip-row breathing-pattern-chips" id="breathingPatternChips"><span style="color:rgba(255,255,255,0.3); font-size:13px">Loading…</span></div>
-            <div id="breathingPatternSituation" style="font-size:12.5px; color:rgba(255,255,255,0.4); font-style:italic; min-height:16px; margin-top:2px"></div>
+            <div class="timer-chip-row breathing-pattern-chips" id="breathingPatternChips"><span style="color:rgba(255,255,255,0.72); font-size:13px">Loading…</span></div>
+            <div id="breathingPatternSituation" style="font-size:12.5px; color:rgba(255,255,255,0.76); font-style:italic; min-height:16px; margin-top:2px"></div>
           </div>
 
           <div class="timer-section">
@@ -1792,9 +1822,9 @@
          real dismiss-to-close overlay instead of a timed toast. -->
     <div id="iosInstallOverlay" style="display:none; position:fixed; inset:0; z-index:700; background:rgba(0,0,0,0.6); align-items:center; justify-content:center; padding:20px;">
       <div style="max-width:340px; width:100%; background:#141a17; border:1px solid rgba(255,255,255,0.15); border-radius:16px; padding:24px; font-family:Georgia,serif; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,0.5);">
-        <div style="font-size:16px; color:rgba(255,255,255,0.9); margin-bottom:14px">Add to Home Screen</div>
-        <div id="iosInstallBody" style="font-size:13.5px; color:rgba(255,255,255,0.7); line-height:1.7; text-align:left; margin-bottom:18px"></div>
-        <div id="iosInstallFootnote" style="font-size:12px; color:rgba(255,255,255,0.4); margin-bottom:18px"></div>
+        <div style="font-size:16px; color:rgba(255,255,255,0.96); margin-bottom:14px">Add to Home Screen</div>
+        <div id="iosInstallBody" style="font-size:13.5px; color:rgba(255,255,255,0.88); line-height:1.7; text-align:left; margin-bottom:18px"></div>
+        <div id="iosInstallFootnote" style="font-size:12px; color:rgba(255,255,255,0.76); margin-bottom:18px"></div>
         <button type="button" onclick="document.getElementById('iosInstallOverlay').style.display='none'" style="background:rgba(180,230,200,0.1); border:1px solid rgba(180,230,200,0.3); border-radius:9px; color:rgba(180,230,200,0.9); font-family:Georgia,serif; font-size:13px; padding:10px 24px; cursor:pointer;">Got it</button>
       </div>
     </div>
@@ -1812,12 +1842,12 @@
          rather than two near-identical elements. -->
     <div id="tomteNudgeBubble" style="display:none; position:fixed; right:14px; bottom:86px; z-index:800; width:280px; max-width:calc(100vw - 28px); background:#141a17; border:1px solid rgba(230,175,90,0.35); border-radius:14px; padding:16px; font-family:Georgia,serif; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
       <div style="position:absolute; bottom:-8px; right:22px; width:16px; height:16px; background:#141a17; border-right:1px solid rgba(230,175,90,0.35); border-bottom:1px solid rgba(230,175,90,0.35); transform:rotate(45deg);"></div>
-      <button type="button" onclick="dismissTomteNudge()" aria-label="Dismiss" style="position:absolute; top:8px; right:10px; background:none; border:none; color:rgba(255,255,255,0.35); font-size:16px; cursor:pointer; padding:4px;">&times;</button>
+      <button type="button" onclick="dismissTomteNudge()" aria-label="Dismiss" style="position:absolute; top:8px; right:10px; background:none; border:none; color:rgba(255,255,255,0.74); font-size:16px; cursor:pointer; padding:4px;">&times;</button>
       <div style="font-size:13px; color:rgba(230,175,90,0.9); margin-bottom:6px; padding-right:16px">Did you know?</div>
-      <div id="tomteNudgeText" style="font-size:13px; color:rgba(255,255,255,0.75); line-height:1.6; margin-bottom:12px"></div>
+      <div id="tomteNudgeText" style="font-size:13px; color:rgba(255,255,255,0.9); line-height:1.6; margin-bottom:12px"></div>
       <div style="display:flex; gap:8px">
         <button type="button" onclick="tomteNudgeCta()" style="flex:1; background:rgba(230,175,90,0.12); border:1px solid rgba(230,175,90,0.35); border-radius:8px; color:rgba(255,214,150,0.95); font-family:Georgia,serif; font-size:12.5px; padding:8px; cursor:pointer;">Show me how</button>
-        <button type="button" onclick="dismissTomteNudge()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; padding:8px 12px; cursor:pointer;">Not now</button>
+        <button type="button" onclick="dismissTomteNudge()" style="background:none; border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px; padding:8px 12px; cursor:pointer;">Not now</button>
       </div>
     </div>
 
@@ -1851,8 +1881,8 @@
          sidestep the whole problem regardless of where the row is
          scrolled to. -->
     <div id="timersDropdown" style="display:none; position:fixed; z-index:60; background:#12181a; border:1px solid rgba(255,255,255,0.14); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.4); padding:6px; min-width:180px;">
-      <button type="button" onclick="chooseTimersMenuEntry('timer')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🧘 Meditation Timer</button>
-      <button type="button" onclick="chooseTimersMenuEntry('breathing')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🌬️ Breathing Timer</button>
+      <button type="button" onclick="chooseTimersMenuEntry('timer')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.92); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🧘 Meditation Timer</button>
+      <button type="button" onclick="chooseTimersMenuEntry('breathing')" style="display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.92); font-family:Georgia,serif; font-size:13.5px; padding:10px 12px; cursor:pointer; border-radius:8px; white-space:nowrap;">🌬️ Breathing Timer</button>
     </div>
 
     <div class="bottom-nav">
@@ -1881,11 +1911,11 @@
 <div class="pw-overlay" id="consentGateOverlay" style="z-index:500">
   <div class="pw-modal" style="max-width:480px">
     <h3>Before you continue</h3>
-    <div style="font-size:12px;color:rgba(255,255,255,0.45);line-height:1.6;margin-bottom:14px">Please read and agree to continue.</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.78);line-height:1.6;margin-bottom:14px">Please read and agree to continue.</div>
     <div id="consentGateList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
     <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin-bottom:16px">
       <input type="checkbox" id="consentGateCheckbox" onchange="document.getElementById('consentGateBtn').disabled = !this.checked" style="margin-top:3px"/>
-      <span style="font-size:13px;color:rgba(255,255,255,0.7)">I have read and agree to the above.</span>
+      <span style="font-size:13px;color:rgba(255,255,255,0.88)">I have read and agree to the above.</span>
     </label>
     <div class="pw-err" id="consentGateErr"></div>
     <div class="pw-btns">
@@ -1901,13 +1931,13 @@
      priority over a nice-to-have celebration. -->
 <div class="pw-overlay" id="welcomeFanfareOverlay" style="z-index:480">
   <div class="pw-modal" style="max-width:420px;text-align:center">
-    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.7);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">You're registered</div>
+    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.88);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">You're registered</div>
     <h3 id="welcomeFanfareTitle" style="margin-top:4px"></h3>
-    <div id="welcomeFanfareWhen" style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6"></div>
+    <div id="welcomeFanfareWhen" style="font-size:14px;color:rgba(255,255,255,0.84);line-height:1.6"></div>
     <div class="pw-btns" style="justify-content:center;margin-top:6px">
       <button class="pw-ok" onclick="dismissWelcomeFanfare(true)">Take me there</button>
     </div>
-    <button onclick="dismissWelcomeFanfare(false)" style="background:none;border:none;color:rgba(255,255,255,0.35);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Maybe later</button>
+    <button onclick="dismissWelcomeFanfare(false)" style="background:none;border:none;color:rgba(255,255,255,0.74);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Maybe later</button>
   </div>
 </div>
 
@@ -1917,14 +1947,14 @@
      it — no separate state needed) or dismiss it for good. -->
 <div class="pw-overlay" id="explorerPromoOverlay" style="z-index:470">
   <div class="pw-modal" style="max-width:420px;text-align:center">
-    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.7);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">New live course</div>
+    <div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:rgba(180,230,200,0.88);background:rgba(180,230,200,0.1);border-radius:999px;padding:5px 14px;margin:0 auto 6px;display:inline-block">New live course</div>
     <h3 id="explorerPromoTitle" style="margin-top:4px"></h3>
-    <div id="explorerPromoWhen" style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6"></div>
+    <div id="explorerPromoWhen" style="font-size:14px;color:rgba(255,255,255,0.84);line-height:1.6"></div>
     <div class="pw-btns" style="justify-content:center;margin-top:6px">
       <a id="explorerPromoRegisterBtn" class="pw-ok" style="text-decoration:none" target="_blank" rel="noopener" onclick="dismissExplorerPromo(false)">Register here →</a>
     </div>
-    <button onclick="dismissExplorerPromo(false)" style="background:none;border:none;color:rgba(255,255,255,0.35);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Not now</button>
-    <button onclick="dismissExplorerPromo(true)" style="background:none;border:none;color:rgba(255,255,255,0.25);font-family:Georgia,serif;font-size:11px;text-decoration:underline;cursor:pointer;margin-top:6px;display:block;margin-left:auto;margin-right:auto">Don't show this again</button>
+    <button onclick="dismissExplorerPromo(false)" style="background:none;border:none;color:rgba(255,255,255,0.74);font-family:Georgia,serif;font-size:12px;cursor:pointer;margin-top:2px">Not now</button>
+    <button onclick="dismissExplorerPromo(true)" style="background:none;border:none;color:rgba(255,255,255,0.7);font-family:Georgia,serif;font-size:11px;text-decoration:underline;cursor:pointer;margin-top:6px;display:block;margin-left:auto;margin-right:auto">Don't show this again</button>
   </div>
 </div>
 
@@ -1996,13 +2026,13 @@
       <button type="button" class="btn" onclick="setQuickJournalMode('voice')">🎙 Voice memo</button>
       <button type="button" class="btn" onclick="setQuickJournalMode('write')">✏️ Write memo</button>
     </div>
-    <div id="quickVoiceStatus" style="display:none;font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px"></div>
+    <div id="quickVoiceStatus" style="display:none;font-size:13px;color:rgba(255,255,255,0.84);margin-bottom:14px"></div>
     <div id="quickVoiceRecordWrap" style="display:none;align-items:center;gap:12px;justify-content:center;margin-bottom:14px">
       <button type="button" class="btn" id="quickVoiceRecordBtn" onclick="toggleQuickVoiceRecording()">● Record</button>
-      <span id="quickVoiceTimer" style="font-size:13px;color:rgba(255,255,255,0.5);display:none">0:00</span>
+      <span id="quickVoiceTimer" style="font-size:13px;color:rgba(255,255,255,0.8);display:none">0:00</span>
     </div>
     <audio id="quickVoicePreview" controls style="display:none;width:100%;margin-bottom:14px"></audio>
-    <textarea id="quickJournalText" placeholder="Whatever's on your mind…" style="display:none;width:100%;min-height:120px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px;color:rgba(255,255,255,0.85);font-family:Georgia,serif;font-size:14px;margin-bottom:14px;resize:vertical"></textarea>
+    <textarea id="quickJournalText" placeholder="Whatever's on your mind…" style="display:none;width:100%;min-height:120px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px;color:rgba(255,255,255,0.94);font-family:Georgia,serif;font-size:14px;margin-bottom:14px;resize:vertical"></textarea>
     <!-- Per Bot 24 — dictate into the textarea above, rather than typing.
          Separate recording state from Voice Memo's own (dictateRecorder
          etc, not quickVoiceRecorder) even though the underlying
@@ -2012,7 +2042,7 @@
          other. -->
     <div id="dictateWrap" style="display:none;align-items:center;gap:10px;margin-bottom:14px">
       <button type="button" class="btn sm" id="dictateBtn" onclick="toggleDictation()">🎙 Dictate</button>
-      <span id="dictateStatus" style="font-size:12px;color:rgba(255,255,255,0.5)"></span>
+      <span id="dictateStatus" style="font-size:12px;color:rgba(255,255,255,0.8)"></span>
     </div>
     <div class="pw-btns">
       <button class="pw-cancel" onclick="closeQuickVoiceNote()">Cancel</button>
@@ -2039,17 +2069,17 @@
 <div class="pw-overlay" id="coursePurchaseModal">
   <div class="pw-modal" style="max-width:380px">
     <h3 id="cpTitle">Course</h3>
-    <div id="cpDesc" style="font-size:13px;color:rgba(255,255,255,0.45);line-height:1.5"></div>
+    <div id="cpDesc" style="font-size:13px;color:rgba(255,255,255,0.78);line-height:1.5"></div>
     <button class="pw-ok" id="cpBuyBtn" style="width:100%;text-align:center;padding:12px" onclick="purchaseCourseOneOff()">
       Buy this course — <span id="cpPrice"></span>
     </button>
     <div style="display:flex;align-items:center;gap:10px;margin:2px 0">
       <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
-      <div style="font-size:11px;color:rgba(255,255,255,0.3)">or</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.72)">or</div>
       <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
     </div>
-    <div style="font-size:12.5px;color:rgba(255,255,255,0.4);line-height:1.5">Become a Member for unlimited access to every course, practice, and more — instead of paying per course.</div>
-    <a href="/membership" style="display:block;text-align:center;padding:11px;border-radius:8px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.08);color:rgba(180,230,200,0.85);text-decoration:none;font-size:13px">See Membership</a>
+    <div style="font-size:12.5px;color:rgba(255,255,255,0.76);line-height:1.5">Become a Member for unlimited access to every course, practice, and more — instead of paying per course.</div>
+    <a href="/membership" style="display:block;text-align:center;padding:11px;border-radius:8px;border:1px solid rgba(180,230,200,0.3);background:rgba(180,230,200,0.08);color:rgba(180,230,200,0.94);text-decoration:none;font-size:13px">See Membership</a>
     <div class="pw-err" id="cpErr"></div>
     <div class="pw-btns">
       <button class="pw-cancel" onclick="document.getElementById('coursePurchaseModal').classList.remove('visible')">Not now</button>
@@ -2230,6 +2260,32 @@
       slideEls[cur].classList.add('active');
     }, 16000);
   });
+
+  // ── Idle look-through (Per App 36) ── After a minute with no touch,
+  // click, key or scroll, body.idle-reveal eases the veil, glass tint and
+  // photo blur lighter over 6 seconds so more of the scene comes through
+  // — not a screensaver, nothing covers the app and nothing moves out of
+  // place. The first touch brings it straight back (under a second).
+  // Mouse movement counts too on a computer, throttled so it's cheap.
+  (function () {
+    const IDLE_MS = 60000;
+    let idleTimer = null, lastMove = 0;
+    const goIdle = () => { if (!document.hidden) document.body.classList.add('idle-reveal'); };
+    const wake = () => {
+      document.body.classList.remove('idle-reveal');
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(goIdle, IDLE_MS);
+    };
+    ['pointerdown', 'touchstart', 'keydown', 'wheel'].forEach(ev =>
+      window.addEventListener(ev, wake, { passive: true, capture: true }));
+    window.addEventListener('scroll', wake, { passive: true, capture: true });
+    window.addEventListener('pointermove', () => {
+      const now = Date.now();
+      if (now - lastMove > 500) { lastMove = now; wake(); }
+    }, { passive: true, capture: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) wake(); });
+    wake();
+  })();
 
   // ── Tabs ──
   // Best-effort signal that a Talk conversation may be over — sendBeacon
@@ -2431,18 +2487,18 @@
     el.innerHTML = `
       <div style="border:1px solid rgba(180,230,200,0.25); background:rgba(180,230,200,0.06); border-radius:12px; padding:16px; margin-bottom:14px">
         <div style="font-size:13.5px; color:rgba(200,235,215,0.95); margin-bottom:4px">Give a friend their first month ${badge}</div>
-        <div style="font-size:12px; color:rgba(255,255,255,0.5); line-height:1.6; margin-bottom:12px">Share your link. When a friend you invited becomes a paying member, you get a free month too — no limit on how many.</div>
+        <div style="font-size:12px; color:rgba(255,255,255,0.8); line-height:1.6; margin-bottom:12px">Share your link. When a friend you invited becomes a paying member, you get a free month too — no limit on how many.</div>
         <div style="display:flex; gap:8px; margin-bottom:${d.events.length ? '12px' : '0'}">
-          <input type="text" readonly value="${d.referralLink}" onclick="this.select()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.7); font-size:11.5px; font-family:Georgia,serif"/>
+          <input type="text" readonly value="${d.referralLink}" onclick="this.select()" style="flex:1; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; padding:8px 10px; color:rgba(255,255,255,0.88); font-size:11.5px; font-family:Georgia,serif"/>
           <button class="btn sm" onclick="sendReferralLink()">Send</button>
         </div>
         ${d.events.length ? `
-          <div style="font-size:11px; color:rgba(255,255,255,0.35); margin-bottom:6px">${d.monthsEarned} free month${d.monthsEarned === 1 ? '' : 's'} earned so far</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.74); margin-bottom:6px">${d.monthsEarned} free month${d.monthsEarned === 1 ? '' : 's'} earned so far</div>
           <div style="display:flex; flex-direction:column; gap:6px; max-height:140px; overflow-y:auto">
             ${d.events.map(e => `
               <div style="font-size:12px; color:${e.seen ? 'rgba(255,255,255,0.45)' : 'rgba(200,235,215,0.9)'}; display:flex; justify-content:space-between; gap:8px">
                 <span>${e.seen ? '' : '🎉 '}${(e.referredName || 'A friend').split(' ')[0]} joined — +${e.daysCredited} days</span>
-                <span style="color:rgba(255,255,255,0.3); flex-shrink:0">${(e.createdAt||'').slice(0,10)}</span>
+                <span style="color:rgba(255,255,255,0.72); flex-shrink:0">${(e.createdAt||'').slice(0,10)}</span>
               </div>
             `).join('')}
           </div>
@@ -2514,7 +2570,7 @@
     // touched it.
     if (m.content_type === 'voice')  return `<audio controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px"></audio>`;
     if (m.content_type === 'video')  return `<video controls preload="metadata" src="/uploads/${m.filename}" style="max-width:220px;border-radius:8px"></video>`;
-    if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.85)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
+    if (m.content_type === 'attachment') return `<a href="/uploads/${m.filename}" target="_blank" style="color:rgba(180,230,200,0.94)">📎 ${m.original_filename || 'Attachment'}</a>${m.content ? '<div style="margin-top:4px">'+m.content+'</div>' : ''}`;
     return m.content || '';
   }
   function renderCmsgList(msgs) {
@@ -2775,8 +2831,8 @@
     if (!entries.length) { el.innerHTML = '<div class="no-poems">No entries yet — write your first whenever you\'re ready.</div>'; return; }
     el.innerHTML = entries.map(e => {
       const badges = [];
-      if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with Talk</span>');
-      if (e.share_with_facilitator) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.7);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with facilitator</span>');
+      if (e.share_with_bot) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.88);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with Talk</span>');
+      if (e.share_with_facilitator) badges.push('<span style="font-size:11px;color:rgba(180,230,200,0.88);border:1px solid rgba(180,230,200,0.3);border-radius:20px;padding:2px 8px;">Shared with facilitator</span>');
       // Per Bot 24 (activity/engagement, group 3) — voice entries show a
       // small play control that fetches a fresh signed playback URL only
       // when actually tapped, rather than resolving one for every entry
@@ -2787,12 +2843,12 @@
       return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
           <div>
-            <div style="font-weight:600;color:rgba(255,255,255,0.85)">${escHtmlJournal(e.title)}</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:2px">${(e.created_at||'').slice(0,10)}</div>
+            <div style="font-weight:600;color:rgba(255,255,255,0.94)">${escHtmlJournal(e.title)}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.74);margin-top:2px">${(e.created_at||'').slice(0,10)}</div>
           </div>
           <button class="btn sm" onclick="deleteJournalEntryUI('${e.id}')">Delete</button>
         </div>
-        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.7);line-height:1.6${e.source_type==='upload'||e.source_type==='voice'?';white-space:pre-wrap':''}">${e.source_type==='upload'||e.source_type==='voice' ? escHtmlJournal(e.content) : (e.content||'')}</div>
+        <div style="margin-top:10px;font-size:14px;color:rgba(255,255,255,0.88);line-height:1.6${e.source_type==='upload'||e.source_type==='voice'?';white-space:pre-wrap':''}">${e.source_type==='upload'||e.source_type==='voice' ? escHtmlJournal(e.content) : (e.content||'')}</div>
         ${voicePlayer}
         ${badges.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
       </div>`;
@@ -4310,7 +4366,7 @@
           <div class="content-title" style="white-space:normal">${f.title}</div>
           <div class="content-desc" style="white-space:normal">${f.approxBytes ? formatOfflineBytes(f.approxBytes) : 'Saved for offline use'}${f.error ? ' · could not be cached: ' + f.error : ''}</div>
         </div>
-        <button type="button" onclick="event.stopPropagation();playOfflineItem(_offlineTabFiles[${i}])" style="background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.25);border-radius:8px;color:rgba(180,230,200,0.85);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">${playLabel}</button>
+        <button type="button" onclick="event.stopPropagation();playOfflineItem(_offlineTabFiles[${i}])" style="background:rgba(180,230,200,0.08);border:1px solid rgba(180,230,200,0.25);border-radius:8px;color:rgba(180,230,200,0.94);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">${playLabel}</button>
         ${fromCache ? '' : `<button type="button" onclick="event.stopPropagation();removeOneOfflineFile('${f.id}')" style="background:none;border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,150,140,0.8);font-family:Georgia,serif;font-size:12px;padding:6px 12px;cursor:pointer;flex-shrink:0">Remove</button>`}
       </div>
     `;
@@ -4420,7 +4476,7 @@
   const CONTENT_CACHE_KEY = 'dm_content_cache';
   async function loadContent() {
     const el = document.getElementById('contentScroll');
-    el.innerHTML = '<div style="padding:20px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:rgba(255,255,255,0.72);font-size:13px">Loading…</div>';
 
     try {
       const [filesRes, plRes] = await Promise.all([
@@ -4471,7 +4527,7 @@
         <div id="content-search-results">${
           matches.length
             ? matches.map(f => contentItemHTML(f)).join('')
-            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No matches — try a different word.</div>'
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">No matches — try a different word.</div>'
         }</div>
       </div>`;
     } else {
@@ -4501,7 +4557,7 @@
         <div id="content-favs">${
           favs.length
             ? favs.map(f => contentItemHTML(f)).join('')
-            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Tap ♥ on any item to add it here.</div>'
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">Tap ♥ on any item to add it here.</div>'
         }</div>
       </div>`;
 
@@ -4509,7 +4565,7 @@
         <div id="content-all">${
           rest.length
             ? rest.map(f => contentItemHTML(f)).join('')
-            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No content here yet.</div>'
+            : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">No content here yet.</div>'
         }</div>
       </div>`;
     }
@@ -4596,21 +4652,21 @@
   }
 
   function renderUserPlaylistsHTML() {
-    if (!_userPlaylists.length) return '<div style="padding:4px 18px 8px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No playlists yet.</div>';
+    if (!_userPlaylists.length) return '<div style="padding:4px 18px 8px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">No playlists yet.</div>';
     return _userPlaylists.map(pl => `
       <div style="margin:4px 18px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;padding:9px 13px;gap:8px">
           <span style="font-size:14px">🎵</span>
-          <span style="flex:1;font-size:13px;color:rgba(255,255,255,0.75)">${pl.name}</span>
-          <span style="font-size:11px;color:rgba(255,255,255,0.25)">${pl.items.length} track${pl.items.length!==1?'s':''}</span>
-          <button onclick="deleteUserPlaylist('${pl.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:14px;padding:2px 4px">×</button>
+          <span style="flex:1;font-size:13px;color:rgba(255,255,255,0.9)">${pl.name}</span>
+          <span style="font-size:11px;color:rgba(255,255,255,0.7)">${pl.items.length} track${pl.items.length!==1?'s':''}</span>
+          <button onclick="deleteUserPlaylist('${pl.id}')" style="background:none;border:none;color:rgba(255,255,255,0.68);cursor:pointer;font-size:14px;padding:2px 4px">×</button>
         </div>
         ${pl.items.map(item => `
           <div class="content-item" style="padding:7px 13px 7px 36px">
             <span class="content-icon">🎵</span>
             <div class="content-title">${item.title}</div>
             <button class="play-btn" data-file-id="${item.id}" onclick="event.stopPropagation();mpPlayById('${item.id}')">▶</button>
-            <button onclick="event.stopPropagation();removeFromPlaylist('${pl.id}','${item.id}')" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:13px;padding:2px 4px">×</button>
+            <button onclick="event.stopPropagation();removeFromPlaylist('${pl.id}','${item.id}')" style="background:none;border:none;color:rgba(255,255,255,0.68);cursor:pointer;font-size:13px;padding:2px 4px">×</button>
           </div>`).join('')}
       </div>`).join('');
   }
@@ -4782,7 +4838,7 @@
     const overlay  = document.getElementById('plPickModal');
     const list     = document.getElementById('plPickList');
     list.innerHTML = _userPlaylists.map(pl => `
-      <div class="pl-pick-item" onclick="addToPlaylistConfirm('${pl.id}','${fileId}')">${pl.name} <span style="color:rgba(255,255,255,0.3);font-size:11px">${pl.items.length} track${pl.items.length!==1?'s':''}</span></div>
+      <div class="pl-pick-item" onclick="addToPlaylistConfirm('${pl.id}','${fileId}')">${pl.name} <span style="color:rgba(255,255,255,0.72);font-size:11px">${pl.items.length} track${pl.items.length!==1?'s':''}</span></div>
     `).join('');
     overlay.classList.add('visible');
   }
@@ -4983,7 +5039,7 @@
     mediaEl.innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;padding:0 30px;text-align:center">
         ${YY_SPINNER_SVG.replace('class="btn-spinner"', 'class="btn-spinner" style="width:48px;height:48px"')}
-        <div style="font-size:14.5px;color:rgba(255,255,255,0.6)">Getting this ready to view — one moment…</div>
+        <div style="font-size:14.5px;color:rgba(255,255,255,0.84)">Getting this ready to view — one moment…</div>
       </div>
     `;
     try {
@@ -5043,7 +5099,7 @@
     mediaEl.innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;padding:0 30px;text-align:center">
         ${YY_SPINNER_SVG.replace('class="btn-spinner"', 'class="btn-spinner" style="width:48px;height:48px"')}
-        <div style="font-size:14.5px;color:rgba(255,255,255,0.6)">Getting this ready to read — one moment…</div>
+        <div style="font-size:14.5px;color:rgba(255,255,255,0.84)">Getting this ready to read — one moment…</div>
       </div>
     `;
     try {
@@ -5108,7 +5164,7 @@
     document.getElementById('playerTitle').textContent = f.title;
     document.getElementById('playerText').innerHTML  = f.description || '';
     const mediaEl = document.getElementById('playerMedia');
-    mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Loading…</div>';
+    mediaEl.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.72)">Loading…</div>';
     const overlayEl = document.getElementById('playerOverlay');
     overlayEl.classList.toggle('video-mode', type === 'video');
     // Per Bot 16 — was `isEpub` only, so every other kind of document
@@ -5805,7 +5861,7 @@
         area: ac.area, course: ac.course, date: f.created_at || '', is_favourite: !!f.is_favourite });
     });
 
-    if (!rows.length) return '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">Nothing in My Practices yet — favourite a practice or meditation, and anything a facilitator or admin gives you shows up here too.</div>';
+    if (!rows.length) return '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">Nothing in My Practices yet — favourite a practice or meditation, and anything a facilitator or admin gives you shows up here too.</div>';
 
     const { col, dir } = _myPracticesSort;
     // Per Bot 25 — 'default' and 'fav' both sort favourite-first, tied
@@ -5834,7 +5890,7 @@
     }
 
     const arrow = (c) => col === c ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
-    const th = (c, label, align) => `<th onclick="sortMyPracticesTable('${c}')" style="text-align:${align||'left'};padding:8px 10px;cursor:pointer;color:rgba(255,255,255,0.45);font-weight:normal;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;user-select:none;white-space:nowrap">${label}${arrow(c)}</th>`;
+    const th = (c, label, align) => `<th onclick="sortMyPracticesTable('${c}')" style="text-align:${align||'left'};padding:8px 10px;cursor:pointer;color:rgba(255,255,255,0.78);font-weight:normal;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;user-select:none;white-space:nowrap">${label}${arrow(c)}</th>`;
     const rowsHtml = rows.map(r => {
       // Per's request — "same for all files": identical treatment to
       // the main content list. r.icon !== '🎬' is the same video
@@ -5848,12 +5904,12 @@
         <td style="padding:9px 10px;cursor:${rowOfflineUnavailable ? 'default' : 'pointer'}" onclick="${rowOnClick}">
           <div style="display:flex;align-items:center;gap:8px">
             <span>${rowOfflineUnavailable ? '📡' : r.icon}</span>
-            <div><div style="color:rgba(255,255,255,0.85)">${r.name}</div><div style="font-size:11px;color:rgba(255,255,255,0.4)">${r.subtitle}</div></div>
+            <div><div style="color:rgba(255,255,255,0.94)">${r.name}</div><div style="font-size:11px;color:rgba(255,255,255,0.76)">${r.subtitle}</div></div>
           </div>
         </td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.area || '—'}</td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${r.course || '—'}</td>
-        <td style="padding:9px 10px;color:rgba(255,255,255,0.5);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}</td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.8);white-space:nowrap">${r.area || '—'}</td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.8);white-space:nowrap">${r.course || '—'}</td>
+        <td style="padding:9px 10px;color:rgba(255,255,255,0.8);white-space:nowrap">${(r.date || '').slice(0, 10) || '—'}</td>
         <td style="padding:9px 10px;white-space:nowrap;text-align:right">
           <button class="heart-btn ${r.is_favourite ? 'active' : ''}" onclick="event.stopPropagation();toggleFavouriteInMyPractices('${r.kind}','${r.id}',this)" title="Favourite">♥</button>
           ${r.icon !== '🎬' ? `<button class="offline-tick-btn ${isMarkedOffline(r.id) ? 'active' : ''}" onclick="event.stopPropagation();toggleOfflineMark('${r.id}',this)" title="Available offline">⬇</button>` : ''}
@@ -5905,7 +5961,7 @@
         ...matchedFiles.map(f => ({ title: f.title || '', html: contentItemHTML(f) })),
       ].sort((a, b) => a.title.localeCompare(b.title));
       el.innerHTML = `<div class="content-section-hdr">${rows.length} result${rows.length !== 1 ? 's' : ''} for "${escapeHtml(searchQ)}"</div>` +
-        (rows.length ? rows.map(r => r.html).join('') : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No matches — try a different word.</div>');
+        (rows.length ? rows.map(r => r.html).join('') : '<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">No matches — try a different word.</div>');
       return;
     }
 
@@ -5957,7 +6013,7 @@
       sessionGroupsHtml += `<div class="content-section-hdr">Talk sessions</div>`;
       sessionGroupsHtml += practiceItemHTML(talkSessions[0]);
       if (talkSessions.length > 1) {
-        sessionGroupsHtml += `<button type="button" onclick="openTalkSessionsModal()" style="display:block; width:calc(100% - 36px); margin:6px 18px 0; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.5); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">See all ${talkSessions.length} sessions with Talk →</button>`;
+        sessionGroupsHtml += `<button type="button" onclick="openTalkSessionsModal()" style="display:block; width:calc(100% - 36px); margin:6px 18px 0; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.8); font-family:Georgia,serif; font-size:12.5px; cursor:pointer;">See all ${talkSessions.length} sessions with Talk →</button>`;
       }
     }
     // Per Bot 15d — stashed for openTalkSessionsModal, called from the
@@ -6021,7 +6077,7 @@
     if (_practicesGroupMode !== 'mine' && facilitatorItems.length) {
       const shown = facilitatorItems.slice(0, 5);
       const seeAll = facilitatorItems.length > 5
-        ? `<button onclick="setPracticesGroupMode('mine')" style="display:block; width:100%; text-align:center; background:rgba(180,230,200,0.08); border:1px solid rgba(180,230,200,0.25); border-radius:10px; color:rgba(180,230,200,0.85); font-family:Georgia,serif; font-size:12.5px; padding:9px; margin-bottom:6px; cursor:pointer;">You have ${facilitatorItems.length} practices in My Practices — click to view</button>`
+        ? `<button onclick="setPracticesGroupMode('mine')" style="display:block; width:100%; text-align:center; background:rgba(180,230,200,0.08); border:1px solid rgba(180,230,200,0.25); border-radius:10px; color:rgba(180,230,200,0.94); font-family:Georgia,serif; font-size:12.5px; padding:9px; margin-bottom:6px; cursor:pointer;">You have ${facilitatorItems.length} practices in My Practices — click to view</button>`
         : '';
       html += `<div class="content-section-hdr">My tracks</div>
         ${seeAll}<div style="max-height:340px; overflow-y:auto;">${shown.map(x => x.kind === 'file' ? contentItemHTML(x.item) : practiceItemHTML(x.item)).join('')}</div>`;
@@ -6055,7 +6111,7 @@
     });
     const groupKeys = Object.keys(groups);
     if (!groupKeys.length) {
-      html += `<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.2);font-style:italic">No ${_practicesGroupMode === 'area' ? 'FELT·FIBRE area' : 'course'} tagged practices yet.</div>`;
+      html += `<div style="padding:8px 18px;font-size:12px;color:rgba(255,255,255,0.68);font-style:italic">No ${_practicesGroupMode === 'area' ? 'FELT·FIBRE area' : 'course'} tagged practices yet.</div>`;
     } else {
       groupKeys.forEach(key => {
         const open = openPracticeGroups.has(key);
@@ -6405,7 +6461,7 @@
   function renderBreathingPatternChips() {
     const row = document.getElementById('breathingPatternChips');
     if (!breathingPatterns.length) {
-      row.innerHTML = '<span style="color:rgba(255,255,255,0.3); font-size:13px">No patterns available yet.</span>';
+      row.innerHTML = '<span style="color:rgba(255,255,255,0.72); font-size:13px">No patterns available yet.</span>';
       return;
     }
     row.innerHTML = breathingPatterns.map(p =>
@@ -6650,11 +6706,11 @@
         return `
         <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;cursor:pointer" onclick="switchTab('courses')">
           <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px">
-            <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">${escHtmlJournal(section.label)}</span>
-            <span style="font-size:12px;color:rgba(255,255,255,0.3)">→</span>
+            <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.76)">${escHtmlJournal(section.label)}</span>
+            <span style="font-size:12px;color:rgba(255,255,255,0.72)">→</span>
           </div>
           <div style="padding:0 14px 12px">
-            <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtmlJournal(top.title || '(untitled)')}</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.94)">${escHtmlJournal(top.title || '(untitled)')}</div>
           </div>
         </div>`;
       }
@@ -6673,16 +6729,16 @@
       return `
       <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer" onclick="toggleActivityHomeSection('${section.key}')">
-          <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.4)">${escHtmlJournal(section.label)}</span>
-          <span style="font-size:12px;color:rgba(255,255,255,0.3)">${expanded ? '▲' : '▼'}</span>
+          <span style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(255,255,255,0.76)">${escHtmlJournal(section.label)}</span>
+          <span style="font-size:12px;color:rgba(255,255,255,0.72)">${expanded ? '▲' : '▼'}</span>
         </div>
         <div style="padding:0 14px 12px;cursor:pointer" onclick="event.stopPropagation();openActivityHomeItem('${section.key}','${top.id}')">
-          <div style="font-size:14px;color:rgba(255,255,255,0.85)">${escHtmlJournal(top.title || '(untitled)')}</div>
+          <div style="font-size:14px;color:rgba(255,255,255,0.94)">${escHtmlJournal(top.title || '(untitled)')}</div>
         </div>
         ${expanded && rest.length ? `
         <div style="border-top:1px solid rgba(255,255,255,0.06)">
           ${rest.map(item => `
-            <div style="padding:10px 14px;font-size:13px;color:rgba(255,255,255,0.65);cursor:pointer;border-top:1px solid rgba(255,255,255,0.04)" onclick="openActivityHomeItem('${section.key}','${item.id}')">
+            <div style="padding:10px 14px;font-size:13px;color:rgba(255,255,255,0.86);cursor:pointer;border-top:1px solid rgba(255,255,255,0.04)" onclick="openActivityHomeItem('${section.key}','${item.id}')">
               ${escHtmlJournal(item.title || '(untitled)')}
             </div>`).join('')}
         </div>` : ''}
@@ -7258,7 +7314,7 @@
     if (!listEl) return;
     listEl.innerHTML = items.length
       ? items.map(f => contentItemHTML(f)).join('')
-      : `<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.35);font-style:italic">${emptyText}</div>`;
+      : `<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.74);font-style:italic">${emptyText}</div>`;
     listEl.style.overflowY = 'hidden'; void listEl.offsetHeight; listEl.style.overflowY = 'auto';
   }
   function showShelfList(items, opts) {
@@ -7266,7 +7322,7 @@
     const search = opts.search ? `
       <input type="search" id="shelfListSearch" placeholder="Search practices…" autocomplete="off"
         style="width:100%;box-sizing:border-box;margin:0 0 10px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.06);color:#fff;font-family:inherit;font-size:14px;outline:none">
-      <div id="shelfListCount" style="font-size:11px;letter-spacing:0.08em;color:rgba(255,255,255,0.4);margin:0 4px 8px">${items.length} practice${items.length === 1 ? '' : 's'}</div>` : '';
+      <div id="shelfListCount" style="font-size:11px;letter-spacing:0.08em;color:rgba(255,255,255,0.76);margin:0 4px 8px">${items.length} practice${items.length === 1 ? '' : 's'}</div>` : '';
     document.getElementById('playerMedia').innerHTML = `${search}<div class="lesson-chooser-list" id="shelfListItems"></div>`;
     renderShelfListItems(items, opts.emptyText || 'Nothing here yet.');
     if (opts.search) {
@@ -7301,14 +7357,14 @@
       const reminders = (m.reminder_slots || []).map(r => `${SHELF_WEEKDAYS[r.weekday]} ${r.time}`).join(' and ');
       return `
         <div style="${cardStyle}">
-          <div style="font-size:18px;color:rgba(255,255,255,0.92);margin-bottom:6px">🎥 ${escapeHtml(m.title)}</div>
-          <div style="font-size:13px;color:rgba(180,230,200,0.85);margin-bottom:4px">${escapeHtml(m.schedule_text || '')}</div>
-          ${m.next_label ? `<div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:8px">Next: ${escapeHtml(m.next_label)}</div>` : ''}
-          ${m.description ? `<div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.65);margin:8px 0 10px;white-space:pre-line">${escapeHtml(m.description)}</div>` : ''}
-          ${reminders ? `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:12px">Reminder emails go out ${escapeHtml(reminders)} (UK time), with the link.</div>` : ''}
+          <div style="font-size:18px;color:rgba(255,255,255,0.97);margin-bottom:6px">🎥 ${escapeHtml(m.title)}</div>
+          <div style="font-size:13px;color:rgba(180,230,200,0.94);margin-bottom:4px">${escapeHtml(m.schedule_text || '')}</div>
+          ${m.next_label ? `<div style="font-size:13px;color:rgba(255,255,255,0.88);margin-bottom:8px">Next: ${escapeHtml(m.next_label)}</div>` : ''}
+          ${m.description ? `<div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.86);margin:8px 0 10px;white-space:pre-line">${escapeHtml(m.description)}</div>` : ''}
+          ${reminders ? `<div style="font-size:12px;color:rgba(255,255,255,0.76);margin-bottom:12px">Reminder emails go out ${escapeHtml(reminders)} (UK time), with the link.</div>` : ''}
           <button type="button" class="shelf-head-btn" style="font-size:12px;padding:10px 20px" onclick="openLiveMeeting('${m.id}')">Join the meeting<span class="shelf-head-arrow">›</span></button>
         </div>`;
-    }).join('') : '<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.35);font-style:italic">No live meetings right now.</div>';
+    }).join('') : '<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.74);font-style:italic">No live meetings right now.</div>';
     document.getElementById('playerMedia').innerHTML = `<div class="lesson-chooser-list" style="padding-top:4px">${html}</div>`;
   }
   async function openShelfList(key) {
@@ -7330,7 +7386,7 @@
 
     if (key === 'popular') {
       openShelfListOverlay('Popular Practices');
-      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);text-align:center">Loading…</div>';
+      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.72);text-align:center">Loading…</div>';
       const byId = {};
       shelfPracticeFiles().forEach(f => { byId[f.id] = f; });
       // Only ids this person can actually see (byId is built from their
@@ -7369,7 +7425,7 @@
     if (group === 'poems' || group === 'posts') {
       document.getElementById('playerTitle').textContent = group === 'poems' ? 'Poems' : 'Posts';
       document.getElementById('playerText').innerHTML = '';
-      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);text-align:center">Loading…</div>';
+      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.72);text-align:center">Loading…</div>';
       try {
         const type = group === 'poems' ? 'poem' : 'blog';
         const res = await fetch(`/api/client/library/${type}`);
@@ -7505,7 +7561,7 @@
         if (!data.count) return null;
         return {
           html: `<h3>New in your library</h3>
-            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:18px">You have ${data.count} new file${data.count === 1 ? '' : 's'} in your library.</div>`,
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.92);margin-bottom:18px">You have ${data.count} new file${data.count === 1 ? '' : 's'} in your library.</div>`,
           buttons: `<button class="pw-ok" onclick="loginNotifyRespond('library','view')">View my library</button>
             <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('library','dismiss')">Dismiss</button>`,
         };
@@ -7523,10 +7579,10 @@
         const cfg = await window.brandReady.catch(() => ({}));
         return {
           html: `<h3>A quick thought</h3>
-            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:18px">${data.message} If ${cfg.appName || 'this'} has been good for you, would you share it with someone who might feel the same?</div>`,
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.92);margin-bottom:18px">${data.message} If ${cfg.appName || 'this'} has been good for you, would you share it with someone who might feel the same?</div>`,
           buttons: `<button class="pw-ok" onclick="loginNotifyRespond('referral','share')">Yes, share</button>
             <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('referral','not_now')">Not now</button>
-            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.35);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('referral','no_thanks')">Don't ask again</button>`,
+            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.74);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('referral','no_thanks')">Don't ask again</button>`,
         };
       },
       onShown: () => fetch('/api/my/referral-prompt/shown', { method: 'POST' }).catch(() => {}),
@@ -7547,7 +7603,7 @@
         const dayOptions = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
         return {
           html: `<h3>One more thing</h3>
-            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.8);margin-bottom:14px">We never got your birthday — just the day, so we can say happy birthday. No year, ever.</div>
+            <div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.92);margin-bottom:14px">We never got your birthday — just the day, so we can say happy birthday. No year, ever.</div>
             <div style="display:flex;gap:8px;margin-bottom:18px">
               <select id="loginNotifyBdayMonth" style="flex:1">
                 <option value="">Month</option>
@@ -7560,7 +7616,7 @@
             </div>`,
           buttons: `<button class="pw-ok" onclick="loginNotifyRespond('birthday','save')">Save</button>
             <button class="pw-ok" style="background:none;border:1px solid rgba(255,255,255,0.15)" onclick="loginNotifyRespond('birthday','not_now')">Not now</button>
-            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.35);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('birthday','no_thanks')">Don't ask again</button>`,
+            <button class="pw-ok" style="background:none;border:none;color:rgba(255,255,255,0.74);text-decoration:underline;font-size:12px" onclick="loginNotifyRespond('birthday','no_thanks')">Don't ask again</button>`,
         };
       },
       onShown: () => fetch('/api/my/birthday-prompt/shown', { method: 'POST' }).catch(() => {}),
@@ -7797,7 +7853,7 @@
   async function openCalmingSoundsModal() {
     document.getElementById('calmingSoundsModal').classList.add('visible');
     const listEl = document.getElementById('calmingSoundsList');
-    listEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">Loading…</div>';
+    listEl.innerHTML = '<div style="color:rgba(255,255,255,0.76);font-size:13px;padding:8px 0">Loading…</div>';
     try {
       const res = await fetch('/api/client/content');
       const files = await res.json();
@@ -7810,7 +7866,7 @@
   function renderCalmingSoundsList() {
     const listEl = document.getElementById('calmingSoundsList');
     if (!_calmingSoundsList.length) {
-      listEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No calming sounds added yet.</div>';
+      listEl.innerHTML = '<div style="color:rgba(255,255,255,0.76);font-size:13px;padding:8px 0">No calming sounds added yet.</div>';
       return;
     }
     listEl.innerHTML = _calmingSoundsList.map(f => `
@@ -8377,14 +8433,14 @@
     document.getElementById('facDetailPane').style.display = isTalk ? 'none' : 'flex';
     if (isTalk) return;
 
-    document.getElementById('facArcDisplay').innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px">Loading…</div>';
+    document.getElementById('facArcDisplay').innerHTML = '<div style="color:rgba(255,255,255,0.72);font-size:13px">Loading…</div>';
     try {
       const res = await fetch('/api/client/arc');
       const data = await res.json();
       const lines = (data.arc || '').split('\n').map(l => l.replace(/^[-•\s]+/, '').trim()).filter(Boolean);
       document.getElementById('facArcDisplay').innerHTML = lines.length
-        ? '<ul style="margin:0; padding-left:18px; color:rgba(255,255,255,0.75); font-size:13.5px; line-height:1.8">' + lines.map(l => `<li>${l.replace(/</g,'&lt;')}</li>`).join('') + '</ul>'
-        : '<div style="color:rgba(255,255,255,0.3);font-size:13px;font-style:italic">Nothing here yet — this fills in as you have sessions.</div>';
+        ? '<ul style="margin:0; padding-left:18px; color:rgba(255,255,255,0.9); font-size:13.5px; line-height:1.8">' + lines.map(l => `<li>${l.replace(/</g,'&lt;')}</li>`).join('') + '</ul>'
+        : '<div style="color:rgba(255,255,255,0.72);font-size:13px;font-style:italic">Nothing here yet — this fills in as you have sessions.</div>';
     } catch(e) {}
 
     switchFacDetailSub(_currentFacDetailSub);
@@ -8484,7 +8540,7 @@
           <button class="btn sm" onclick="playSharedSession('${call.id}')">▶ Play recording</button>
           ${call.transcript ? `<button class="btn sm" onclick="toggleSessionTranscript('${call.id}')">Transcript</button>` : ''}
         </div>
-        <div id="sessionTranscript_${call.id}" style="display:none; font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6; white-space:pre-wrap; background:rgba(255,255,255,0.03); border-radius:8px; padding:12px;">${(call.transcript || '').replace(/</g,'&lt;')}</div>
+        <div id="sessionTranscript_${call.id}" style="display:none; font-size:13px; color:rgba(255,255,255,0.84); line-height:1.6; white-space:pre-wrap; background:rgba(255,255,255,0.03); border-radius:8px; padding:12px;">${(call.transcript || '').replace(/</g,'&lt;')}</div>
       </div>
     `).join('');
   }
@@ -8784,7 +8840,7 @@
       if (data.instance.schedule_day) whenParts.push(data.instance.schedule_day + (data.instance.schedule_time ? `, ${data.instance.schedule_time}` : ''));
       if (data.instance.start_date) whenParts.push(`starts ${new Date(data.instance.start_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`);
       const instanceWhenLine = isCohort && whenParts.length
-        ? `<div class="lesson-item-desc" style="margin-top:6px;color:rgba(255,255,255,0.6)">Meets ${whenParts.join(', ')}.</div>` : '';
+        ? `<div class="lesson-item-desc" style="margin-top:6px;color:rgba(255,255,255,0.84)">Meets ${whenParts.join(', ')}.</div>` : '';
       const zoomLine = isCohort && data.instance.zoom_link
         ? `<div style="margin-top:10px"><a href="${data.instance.zoom_link}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 20px;border-radius:10px;background:rgba(180,230,200,0.12);border:1px solid rgba(180,230,200,0.3);color:rgba(180,230,200,0.9);text-decoration:none;font-size:13px">Join Zoom session →</a></div>`
         : '';
@@ -8794,7 +8850,7 @@
       // deliberately scoped to live cohort courses.
       const offlineAllLine = isCohort
         ? `<div style="margin-top:12px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.6)">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.84)">
               <input type="checkbox" id="courseOfflineAllChk" onchange="onCourseOfflineAllToggled('${instanceId}', this)"/>
               Take all course material offline
             </label>
@@ -8809,7 +8865,7 @@
         ${offlineAllLine}
         ${isCohort ? `
         <div id="reminderPrefsCard" style="margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border-radius:10px;font-size:13px">
-          <div style="margin-bottom:8px;color:rgba(255,255,255,0.6)">Session reminders</div>
+          <div style="margin-bottom:8px;color:rgba(255,255,255,0.84)">Session reminders</div>
           <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer">
             <input type="checkbox" id="remindEmailChk" ${data.enrolment.reminder_email ? 'checked' : ''}/> Email
           </label>
@@ -8848,7 +8904,7 @@
         // on its row. fmtSessionDateTime formats the same UTC ISO string
         // every other date-ish field in this app already stores/expects.
         const dateLine = isCohort && l.scheduledAt
-          ? `<div class="lesson-item-desc" style="color:rgba(180,230,200,0.7)">${fmtSessionDateTime(l.scheduledAt)}</div>` : '';
+          ? `<div class="lesson-item-desc" style="color:rgba(180,230,200,0.88)">${fmtSessionDateTime(l.scheduledAt)}</div>` : '';
         const openClick = l.lockReason === 'admin'
           ? `showLockedNotice('This lesson is not currently available.')`
           : `openLesson('${l.id}')`;
@@ -9422,7 +9478,7 @@
       resultEl.style.display = 'block';
       resultEl.innerHTML = `<div class="${data.passed?'quiz-result-pass':'quiz-result-fail'}">
         ${data.scorePct}% — ${data.passed ? 'Passed' : 'Not quite — try again anytime'}
-        <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:4px">${data.correctCount} of ${data.totalQuestions} correct</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.74);margin-top:4px">${data.correctCount} of ${data.totalQuestions} correct</div>
       </div>`;
       document.getElementById('quizSubmitBtn').style.display = 'none';
 
@@ -9923,7 +9979,7 @@
   <div class="pl-modal" style="max-width:340px">
     <div id="onbStep1">
       <h3>How should we reach you?</h3>
-      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">If you've been away a few days — nothing more than that.</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.76);margin:-6px 0 4px">If you've been away a few days — nothing more than that.</div>
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('none')">Don't remind me</button>
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('email')">Email only</button>
       <button type="button" class="onb-option" onclick="onbSetReminderStyle('email_sms')">Email and text message</button>
@@ -9933,7 +9989,7 @@
     </div>
     <div id="onbStep1b" style="display:none">
       <h3>A daily message?</h3>
-      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">A short thought or prompt each day, by email. You can turn this off any time in Settings.</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.76);margin:-6px 0 4px">A short thought or prompt each day, by email. You can turn this off any time in Settings.</div>
       <button type="button" class="onb-option" onclick="onbSetMotdPref(1)">Yes, send it</button>
       <button type="button" class="onb-option" onclick="onbSetMotdPref(0)">No thanks</button>
       <div class="pl-modal-btns">
@@ -9942,7 +9998,7 @@
     </div>
     <div id="onbStep2" style="display:none">
       <h3>When's your birthday?</h3>
-      <div style="font-size:12px;color:rgba(255,255,255,0.4);margin:-6px 0 4px">Optional — just the day, so we can say happy birthday. No year, ever.</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.76);margin:-6px 0 4px">Optional — just the day, so we can say happy birthday. No year, ever.</div>
       <div style="display:flex;gap:8px">
         <select id="onbDobMonth" style="flex:1">
           <option value="">Month</option>
