@@ -192,6 +192,16 @@ app.use((req, res, next) => {
   return res.status(503).set('X-Maintenance', 'true').type('html').send(MAINTENANCE_HTML);
 });
 
+// Per App 36 — default Cache-Control: no-store on every /api response.
+// The missing-header bug (Cloudflare caching the first response to a GET
+// and serving it to everyone afterwards) has now bitten at least eight
+// separate routes across Per App 34 and 35, each found only after Per
+// saw stale or empty data live. Fixing routes one at a time as they
+// were touched never closed the class; this does. Set before any route
+// runs, so a route that genuinely wants caching (media with its own
+// max-age/immutable header) still overrides it by setting its own.
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+
 // ── Stripe webhook — MUST be registered before app.use(express.json()) below. ──
 // Stripe signature verification needs the exact raw request bytes; if the global
 // json() parser runs first, it consumes the body and re-parses it into an object,
@@ -3734,6 +3744,23 @@ app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res)
     const userFlags = db.userFlagsFromRecord(db.getUser(req.user.id), 'client');
     const files = db.getRecentStandaloneFiles(req.params.type, null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) }));
     res.json(files);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per App 36 — the full "Popular Practices" list behind the home-screen
+// heading button. The shelf itself only shows the top 5; this returns a
+// longer ranked list (pinned first, then by real plays), dropping
+// anything nobody has played yet unless an admin pinned it. Visibility
+// isn't decided here — the client cross-references these ids against
+// /api/client/featured's `content`, which is already scoped to what this
+// person can see (tier/one-to-one), so a hidden file never shows up.
+app.get('/api/client/popular-practices', auth.requireAuthApi(['client']), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const rows = db.getPopularPractices(50)
+      .filter(p => p.popular_pinned || p.play_count > 0)
+      .map(p => ({ id: p.id, play_count: p.play_count, pinned: !!p.popular_pinned }));
+    res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

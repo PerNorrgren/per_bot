@@ -400,6 +400,34 @@
       padding:2px calc(50% - 75px) 14px 4px;
       scroll-snap-type:x mandatory;
     }
+    /* Per App 36 — a shelf heading with somewhere to go (the full list
+       for that category) is a real button: white pill, dark text, with
+       a › to show it leads on. Live Meetings has no list page, so it
+       keeps the plain .shelf-label above. */
+    .shelf-head { display:flex; align-items:center; margin-bottom:10px; padding:0 4px; }
+    .shelf-head-btn { display:inline-flex; align-items:center; gap:6px; background:#fff; color:#0a0f0d; border:none; border-radius:999px; padding:7px 14px; font-family:inherit; font-size:11px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.25); transition:transform 0.15s ease, background 0.15s ease; }
+    .shelf-head-btn:hover { background:#eef7f1; }
+    .shelf-head-btn:active { transform:scale(0.97); }
+    .shelf-head-btn .shelf-head-arrow { font-size:14px; line-height:1; letter-spacing:0; }
+    /* Per App 36 — every row scrollable on every device. Touch already
+       swiped natively; a mouse had no way along a row at all (the only
+       route was a 3px scrollbar), so most of Courses was unreachable on
+       desktop. Rows now drag with the mouse (initShelfScrolling), and on
+       devices with a real pointer get ‹ › buttons that only show when
+       there's more in that direction. overscroll-behavior-x stops a
+       swipe at the row's end turning into the browser's back gesture. */
+    .shelf-scroller { position:relative; }
+    .shelf-row { overscroll-behavior-x:contain; }
+    .shelf-row.dragging { scroll-snap-type:none !important; cursor:grabbing; user-select:none; -webkit-user-select:none; }
+    .shelf-row.dragging .shelf-card { pointer-events:none; }
+    .shelf-nav { display:none; position:absolute; top:50%; transform:translateY(-60%); width:34px; height:34px; border-radius:50%; border:none; background:#fff; color:#0a0f0d; font-size:20px; line-height:34px; text-align:center; padding:0; cursor:pointer; z-index:3; box-shadow:0 2px 10px rgba(0,0,0,0.4); font-family:inherit; }
+    .shelf-nav.prev { left:4px; }
+    .shelf-nav.next { right:4px; }
+    @media (hover:hover) and (pointer:fine) {
+      .shelf-row { cursor:grab; }
+      .shelf-scroller.can-prev .shelf-nav.prev,
+      .shelf-scroller.can-next .shelf-nav.next { display:block; }
+    }
     .shelf-row::-webkit-scrollbar { height:3px; }
     .shelf-row::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
     .shelf-card { flex:0 0 auto; scroll-snap-align:start; width:150px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:16px 14px; cursor:pointer; text-align:left; transition:transform 0.35s ease, border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease; }
@@ -6851,6 +6879,7 @@
     if (themeCards.length) {
       shelves.push({
         label: 'Practices',
+        listKey: 'practices',
         count: shelfCounts.practices,
         rows: themeCards,
         cardHtml: (row, i) => `
@@ -6865,6 +6894,7 @@
     if (courses.length) {
       shelves.push({
         label: 'Courses',
+        listKey: 'courses',
         count: shelfCounts.courses,
         rows: courses,
         cardHtml: (c) => `
@@ -6902,19 +6932,19 @@
           </div>
         `;
       };
-      shelves.push({ label: 'Popular Practices', count: popularPractices.length, rows: popularPractices, cardHtml: popularCard });
+      shelves.push({ label: 'Popular Practices', listKey: 'popular', count: popularPractices.length, rows: popularPractices, cardHtml: popularCard });
     }
 
     if (recentPoems.length) {
-      shelves.push({ label: 'Poems', count: shelfCounts.poems, rows: recentPoems, cardHtml: miniCard });
+      shelves.push({ label: 'Poems', listKey: 'poems', count: shelfCounts.poems, rows: recentPoems, cardHtml: miniCard });
     }
 
     if (recentPosts.length) {
-      shelves.push({ label: 'Posts', count: shelfCounts.posts, rows: recentPosts, cardHtml: miniCard });
+      shelves.push({ label: 'Posts', listKey: 'posts', count: shelfCounts.posts, rows: recentPosts, cardHtml: miniCard });
     }
 
     if (recentBooks.length) {
-      shelves.push({ label: 'Books', count: shelfCounts.books, rows: recentBooks, cardHtml: miniCard });
+      shelves.push({ label: 'Books', listKey: 'books', count: shelfCounts.books, rows: recentBooks, cardHtml: miniCard });
     }
 
     // Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
@@ -6943,13 +6973,26 @@
     // openContentFile) — books don't need it, every book already shows
     // as its own card in the row, nothing further to reveal.
     _shelvesData = { practices: themeCards, poems: [{ label: 'Poems', items: recentPoems }], posts: [{ label: 'Posts', items: recentPosts }] };
-    el.innerHTML = shelves.map(s => `
+    // Per App 36 — kept for the heading buttons' full-list pages.
+    _shelfListSources = { popular: popularPractices, books: recentBooks };
+    el.innerHTML = shelves.map(s => {
+      const headText = `${s.label}${(s.count !== undefined && s.count !== null) ? ` (${s.count})` : ''}`;
+      const head = s.listKey
+        ? `<div class="shelf-head"><button type="button" class="shelf-head-btn" onclick="openShelfList('${s.listKey}')">${headText}<span class="shelf-head-arrow">›</span></button></div>`
+        : `<div class="shelf-label">${headText}</div>`;
+      return `
       <div>
-        <div class="shelf-label">${s.label}${(s.count !== undefined && s.count !== null) ? ` (${s.count})` : ''}</div>
-        <div class="shelf-row" data-shelf-label="${s.label}">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
+        ${head}
+        <div class="shelf-scroller">
+          <button type="button" class="shelf-nav prev" aria-label="Scroll left">‹</button>
+          <div class="shelf-row" data-shelf-label="${s.label}">${s.rows.map((row, i) => s.cardHtml(row, i)).join('')}</div>
+          <button type="button" class="shelf-nav next" aria-label="Scroll right">›</button>
+        </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
     initShelfCarousels();
+    initShelfScrolling();
   }
   // Per Bot 37 — auto-advancing carousels: each .shelf-row moves itself
   // one card at a time, pausing while it's actually being looked at
@@ -7100,6 +7143,191 @@
       if (getCarouselAutoplayEnabled()) startTimer();
     });
   }
+  // Per App 36 — every shelf row reachable end to end on any device.
+  // Touch swipes natively already. A mouse gets click-and-drag, plus
+  // ‹ › buttons (CSS shows them only on hover-capable devices, and only
+  // in a direction where there's more to see). A drag only starts after
+  // 6px of movement, so an ordinary click on a card still opens it; once
+  // a drag has started, the click that follows the release is swallowed
+  // so letting go over a card doesn't open it by accident. Pointer
+  // capture is taken only once a drag starts — taking it on pointerdown
+  // would retarget every plain click to the row and break the cards.
+  // Everything registers into _shelfCarouselCleanups (reset by
+  // initShelfCarousels, which always runs first), so re-renders never
+  // stack listeners.
+  let _shelfListSources = {};
+  function initShelfScrolling() {
+    document.querySelectorAll('#featuredShelves .shelf-scroller').forEach(scroller => {
+      const row = scroller.querySelector('.shelf-row');
+      const prev = scroller.querySelector('.shelf-nav.prev');
+      const next = scroller.querySelector('.shelf-nav.next');
+      if (!row) return;
+
+      const updateNav = () => {
+        const max = row.scrollWidth - row.clientWidth;
+        scroller.classList.toggle('can-prev', row.scrollLeft > 8);
+        scroller.classList.toggle('can-next', max > 8 && row.scrollLeft < max - 8);
+      };
+      // The Practices row autoplays; pressing an arrow should hold it
+      // still for a moment, the same as touching it does. Its existing
+      // pauseThenResume listens for touchstart, so a synthetic one is
+      // the way in (the drag handler below ignores non-pointer events).
+      const nudge = (dir) => {
+        row.dispatchEvent(new Event('touchstart'));
+        row.scrollBy({ left: dir * Math.max(160, row.clientWidth * 0.8), behavior: 'smooth' });
+      };
+      const onPrev = (e) => { e.stopPropagation(); nudge(-1); };
+      const onNext = (e) => { e.stopPropagation(); nudge(1); };
+      prev && prev.addEventListener('click', onPrev);
+      next && next.addEventListener('click', onNext);
+
+      let downX = 0, startScroll = 0, pointerId = null, dragging = false, suppressClick = false;
+      const onDown = (e) => {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
+        downX = e.clientX; startScroll = row.scrollLeft; pointerId = e.pointerId; dragging = false;
+      };
+      const onMove = (e) => {
+        if (pointerId === null || e.pointerId !== pointerId) return;
+        const dx = e.clientX - downX;
+        if (!dragging) {
+          if (Math.abs(dx) < 6) return;
+          dragging = true;
+          row.classList.add('dragging');
+          try { row.setPointerCapture(pointerId); } catch (err) {}
+        }
+        row.scrollLeft = startScroll - dx;
+      };
+      const onUp = () => {
+        if (pointerId === null) return;
+        if (dragging) {
+          suppressClick = true;
+          setTimeout(() => { suppressClick = false; }, 0);
+          try { row.releasePointerCapture(pointerId); } catch (err) {}
+          row.classList.remove('dragging');
+        }
+        pointerId = null; dragging = false;
+      };
+      const onClickCapture = (e) => {
+        if (suppressClick) { e.stopPropagation(); e.preventDefault(); suppressClick = false; }
+      };
+      row.addEventListener('pointerdown', onDown);
+      row.addEventListener('pointermove', onMove);
+      row.addEventListener('pointerup', onUp);
+      row.addEventListener('pointercancel', onUp);
+      row.addEventListener('click', onClickCapture, true);
+      row.addEventListener('scroll', updateNav, { passive: true });
+      window.addEventListener('resize', updateNav);
+      updateNav();
+      // Widths aren't final until the row is actually on screen (the
+      // landing can render while hidden), so check again next frame.
+      requestAnimationFrame(updateNav);
+
+      _shelfCarouselCleanups.push(() => {
+        prev && prev.removeEventListener('click', onPrev);
+        next && next.removeEventListener('click', onNext);
+        row.removeEventListener('pointerdown', onDown);
+        row.removeEventListener('pointermove', onMove);
+        row.removeEventListener('pointerup', onUp);
+        row.removeEventListener('pointercancel', onUp);
+        row.removeEventListener('click', onClickCapture, true);
+        row.removeEventListener('scroll', updateNav);
+        window.removeEventListener('resize', updateNav);
+      });
+    });
+  }
+
+  // Per App 36 — the shelf heading buttons. Courses goes to the Courses
+  // tab (already the full course list, enrol flow included); Poems and
+  // Posts reuse the existing full-catalogue overlay. Practices, Popular
+  // Practices and Books open a list overlay built the same way as
+  // openThemeDetail's, so rows behave identically (heart/play/queue via
+  // contentItemHTML). Practices gets a search box — it's hundreds of
+  // items in one list.
+  function openShelfListOverlay(title) {
+    pushPlayerHistoryState();
+    const overlay = document.getElementById('playerOverlay');
+    overlay.classList.remove('video-mode');
+    overlay.classList.add('reader-mode');
+    document.getElementById('fullscreenBtn').style.display = 'none';
+    overlay.classList.add('visible');
+    document.getElementById('playerTitle').textContent = title;
+    document.getElementById('playerText').innerHTML = '';
+  }
+  function renderShelfListItems(items, emptyText) {
+    const listEl = document.getElementById('shelfListItems');
+    if (!listEl) return;
+    listEl.innerHTML = items.length
+      ? items.map(f => contentItemHTML(f)).join('')
+      : `<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.35);font-style:italic">${emptyText}</div>`;
+    listEl.style.overflowY = 'hidden'; void listEl.offsetHeight; listEl.style.overflowY = 'auto';
+  }
+  function showShelfList(items, opts) {
+    opts = opts || {};
+    const search = opts.search ? `
+      <input type="search" id="shelfListSearch" placeholder="Search practices…" autocomplete="off"
+        style="width:100%;box-sizing:border-box;margin:0 0 10px;padding:10px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);background:rgba(255,255,255,0.06);color:#fff;font-family:inherit;font-size:14px;outline:none">
+      <div id="shelfListCount" style="font-size:11px;letter-spacing:0.08em;color:rgba(255,255,255,0.4);margin:0 4px 8px">${items.length} practice${items.length === 1 ? '' : 's'}</div>` : '';
+    document.getElementById('playerMedia').innerHTML = `${search}<div class="lesson-chooser-list" id="shelfListItems"></div>`;
+    renderShelfListItems(items, opts.emptyText || 'Nothing here yet.');
+    if (opts.search) {
+      const input = document.getElementById('shelfListSearch');
+      input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        const matched = q ? items.filter(f => (f.title || '').toLowerCase().includes(q) || (f.description || '').toLowerCase().includes(q)) : items;
+        document.getElementById('shelfListCount').textContent = q
+          ? `${matched.length} result${matched.length === 1 ? '' : 's'}`
+          : `${items.length} practice${items.length === 1 ? '' : 's'}`;
+        renderShelfListItems(matched, 'No matches — try a different word.');
+      });
+    }
+  }
+  function shelfPracticeFiles() {
+    const seen = new Set();
+    return (_featuredContentData || []).filter(f => {
+      if (!['meditation', 'practice'].includes(f.content_type) || seen.has(f.id)) return false;
+      seen.add(f.id); return true;
+    });
+  }
+  async function openShelfList(key) {
+    if (key === 'courses') { switchTab('courses'); return; }
+    if (key === 'poems' || key === 'posts') { openThemeDetail(key, 0); return; }
+
+    if (key === 'practices') {
+      openShelfListOverlay('Practices');
+      showShelfList(naturalTitleSort(shelfPracticeFiles()), { search: true, emptyText: 'No practices yet.' });
+      return;
+    }
+
+    if (key === 'books') {
+      openShelfListOverlay('Books');
+      showShelfList(naturalTitleSort(_shelfListSources.books || []), { emptyText: 'No books yet.' });
+      return;
+    }
+
+    if (key === 'popular') {
+      openShelfListOverlay('Popular Practices');
+      document.getElementById('playerMedia').innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);text-align:center">Loading…</div>';
+      const byId = {};
+      shelfPracticeFiles().forEach(f => { byId[f.id] = f; });
+      // Only ids this person can actually see (byId is built from their
+      // own tier-scoped list) — anything else is dropped, not shown.
+      const toItems = (ranked) => ranked.map(r => byId[r.id]).filter(Boolean);
+      let items;
+      try {
+        const res = await fetch('/api/client/popular-practices');
+        const ranked = await res.json();
+        if (!res.ok || !Array.isArray(ranked)) throw new Error((ranked && ranked.error) || `status ${res.status}`);
+        items = toItems(ranked);
+      } catch (e) {
+        // Offline or a server error — fall back to the shelf's own top
+        // five rather than an empty page.
+        console.error('Popular practices list error:', e);
+        items = toItems(_shelfListSources.popular || []);
+      }
+      showShelfList(items, { emptyText: 'Nothing has been played yet.' });
+    }
+  }
+
   // Every card in every row (Courses aside) opens the same list-style
   // overlay — heart/play/add-to-playlist per row, reusing contentItemHTML
   // exactly as Library already does, so favouriting or queueing something
