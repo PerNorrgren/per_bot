@@ -421,6 +421,16 @@
 
       <div class="pref-row">
         <div class="pref-label">
+          <div class="pref-name">Live meeting reminders</div>
+          <div class="pref-desc">The day before our regular live practice, with the link to join</div>
+        </div>
+        <div class="channel-pair">
+          <label class="channel-check"><input type="checkbox" id="prefLiveMeetingsEmail" onchange="savePrefs()"/> Email</label>
+        </div>
+      </div>
+
+      <div class="pref-row">
+        <div class="pref-label">
           <div class="pref-name">Practice reminders</div>
           <div class="pref-desc">A gentle nudge if you haven't practised in a few days</div>
         </div>
@@ -830,6 +840,7 @@
     document.getElementById('prefMotdEmail').checked      = !!a.pref_email_motd;
     document.getElementById('prefMotdSms').checked        = !!a.pref_sms_motd;
     document.getElementById('prefRemindersEmail').checked = !!a.pref_email_reminders;
+    document.getElementById('prefLiveMeetingsEmail').checked = a.pref_email_live_meetings === undefined || a.pref_email_live_meetings === null ? true : !!a.pref_email_live_meetings;
     document.getElementById('prefRemindersSms').checked   = !!a.pref_sms_reminders;
     document.getElementById('prefRenewalEmail').checked   = !!a.pref_email_renewal;
     document.getElementById('prefRenewalSms').checked     = !!a.pref_sms_renewal;
@@ -1408,6 +1419,7 @@
         pref_email_motd:      document.getElementById('prefMotdEmail').checked      ? 1 : 0,
         pref_sms_motd:        document.getElementById('prefMotdSms').checked        ? 1 : 0,
         pref_email_reminders: document.getElementById('prefRemindersEmail').checked ? 1 : 0,
+        pref_email_live_meetings: document.getElementById('prefLiveMeetingsEmail').checked ? 1 : 0,
         pref_sms_reminders:   document.getElementById('prefRemindersSms').checked   ? 1 : 0,
         pref_email_renewal:   document.getElementById('prefRenewalEmail').checked   ? 1 : 0,
         pref_sms_renewal:     document.getElementById('prefRenewalSms').checked     ? 1 : 0,

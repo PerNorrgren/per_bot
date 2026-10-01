@@ -121,6 +121,10 @@ async function getDb() {
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN description TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN reminder_slots TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  // Per App 36 — its own opt-out, separate from pref_email_reminders
+  // (the inactivity nudge): the live practice reminder goes to everyone
+  // on file by default, and turning it off is a link in the email itself.
+  try { db.run(`ALTER TABLE users ADD COLUMN pref_email_live_meetings INTEGER DEFAULT 1`); } catch(e) {}
   // One row per reminder actually fired — slot_key is the UK date and
   // time it was due ('2026-10-07 11:00'). The primary key is what stops
   // a cron overlap or a restart sending the same reminder twice.
@@ -4534,13 +4538,16 @@ function updateLiveMeeting(id, fields) {
   getDbSync().run(`UPDATE live_meetings SET ${sets.join(',')} WHERE id=?`, vals);
   save();
 }
-// Everyone who can actually open the app (has a login, not a
-// newsletter-only contact, not archived or a system account) and hasn't
-// switched off reminder emails, minus addresses already known to bounce.
+// Per App 36 — everyone on file with an email: Explorers, Members,
+// newsletter-only contacts, login or not. Leaves out only archived
+// people, system accounts, anyone who turned this reminder off
+// (pref_email_live_meetings=0, via the link in the email or My Account),
+// and addresses already known to bounce — sending to those hurts
+// delivery for everyone else.
 function getLiveMeetingReminderRecipients() {
   return queryAll(`SELECT id, name, email, trial_ends_at, member_expires_at, (password_hash IS NOT NULL) as has_login FROM users
-    WHERE archived=0 AND email IS NOT NULL AND email != '' AND password_hash IS NOT NULL
-      AND member_tier >= 0 AND pref_email_reminders=1
+    WHERE archived=0 AND email IS NOT NULL AND email != ''
+      AND COALESCE(pref_email_live_meetings,1)=1
       AND COALESCE(is_system_client,0)=0 AND COALESCE(email_health,'ok') != 'failed'`);
 }
 // Claims a reminder slot. Returns true only for the first caller — the
@@ -7276,7 +7283,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale','carousel_autoplay'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale','carousel_autoplay'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,

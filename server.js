@@ -2356,6 +2356,58 @@ app.get('/join/:token', (req, res) => {
 // matching how virtually every real newsletter unsubscribe link behaves.
 // Doesn't touch pref_email_motd/reminders/renewal — only the newsletter
 // preference this link was actually about.
+// Per App 36 — turn the live meeting reminder off (or back on) from the
+// link in the email, no login needed. Uses the same never-expiring
+// per-person token as the newsletter unsubscribe. The GET only shows a
+// page with a button; the change happens on the POST. Mail security
+// scanners open links in emails automatically, and a GET that switched
+// the reminder off would quietly drop people from the most important
+// practice without them ever clicking.
+function liveReminderPage(heading, message, formHtml) {
+  const b = brand();
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Meeting reminders — ${b.name}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;} html,body{height:100%;font-family:Georgia,serif;background:#0a0f0d;color:rgba(255,255,255,0.82);display:flex;align-items:center;justify-content:center;}
+  .card{max-width:440px;padding:40px 32px;text-align:center;}
+  .wordmark{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:rgba(255,255,255,0.35);margin-bottom:20px;}
+  h1{font-size:20px;font-weight:normal;color:rgba(255,255,255,0.85);margin-bottom:14px;}
+  p{font-size:14px;line-height:1.7;color:rgba(255,255,255,0.55);margin-bottom:22px;}
+  button{font-family:inherit;font-size:13px;letter-spacing:0.1em;text-transform:uppercase;padding:12px 24px;border-radius:999px;border:none;background:#fff;color:#0a0f0d;cursor:pointer;}
+  a{color:rgba(180,230,200,0.7);text-decoration:none;}
+</style></head>
+<body><div class="card"><div class="wordmark">${b.name}</div><h1>${heading}</h1><p>${message}</p>${formHtml || ''}</div></body></html>`;
+}
+app.get('/live-meeting-reminders/:token', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const user = db.getUserByUnsubscribeToken(req.params.token);
+  if (!user) return res.status(404).send(liveReminderPage('Link not found', "This link isn't valid — it may have been copied incorrectly."));
+  const on = Number(user.pref_email_live_meetings ?? 1) === 1;
+  const action = `/live-meeting-reminders/${encodeURIComponent(req.params.token)}`;
+  if (on) {
+    return res.send(liveReminderPage('Live meeting reminders',
+      'These are the emails the day before our regular live practice, with the link to join. Would you like to stop them?',
+      `<form method="POST" action="${action}"><input type="hidden" name="on" value="0"/><button type="submit">Turn off meeting reminders</button></form>`));
+  }
+  res.send(liveReminderPage('Meeting reminders are off',
+    "You won't get the live practice reminders. You're always welcome back.",
+    `<form method="POST" action="${action}"><input type="hidden" name="on" value="1"/><button type="submit">Turn them back on</button></form>`));
+});
+app.post('/live-meeting-reminders/:token', express.urlencoded({ extended: false }), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const user = db.getUserByUnsubscribeToken(req.params.token);
+  if (!user) return res.status(404).send(liveReminderPage('Link not found', "This link isn't valid — it may have been copied incorrectly."));
+  const turnOn = String((req.body && req.body.on) || '') === '1';
+  db.updateUserPreferences(user.id, { pref_email_live_meetings: turnOn ? 1 : 0 });
+  const action = `/live-meeting-reminders/${encodeURIComponent(req.params.token)}`;
+  if (turnOn) {
+    return res.send(liveReminderPage('Reminders are back on', 'You\'ll get the reminder the day before each live practice, with the link to join.'));
+  }
+  res.send(liveReminderPage('Meeting reminders are off',
+    "You won't get the live practice reminders any more. Your other emails aren't affected.",
+    `<form method="POST" action="${action}"><input type="hidden" name="on" value="1"/><button type="submit">Changed your mind? Turn them back on</button></form>`));
+});
 app.get('/unsubscribe/:token', (req, res) => {
   const b = brand();
   const user = db.getUserByUnsubscribeToken(req.params.token);
@@ -10756,9 +10808,9 @@ function buildLiveMeetingReminderEmail(user, meeting, next) {
       ${meeting.description ? `<p style="font-size:15px;line-height:1.7">${esc(meeting.description)}</p>` : ''}
       <p style="margin:28px 0"><a href="${esc(meeting.meeting_url)}" style="display:inline-block;background:#2d6a4f;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-size:15px">Join the meeting</a></p>
       <p style="font-size:13px;line-height:1.7;color:#666">Or copy this link: <a href="${esc(meeting.meeting_url)}" style="color:#2d6a4f;word-break:break-all">${esc(meeting.meeting_url)}</a></p>
-      <p style="font-size:13px;line-height:1.7;color:#666">You can also find it in the app, under Live Meetings.</p>
+      ${user.has_login ? `<p style="font-size:13px;line-height:1.7;color:#666">You can also find it in the app, under Live Meetings.</p>` : ''}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
-      <p style="font-size:12px;color:#aaa">${esc(b.name)} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+      <p style="font-size:12px;color:#aaa;line-height:1.7">You're getting this because you're on the ${esc(b.name)} list. <a href="${APP_URL}/live-meeting-reminders/${encodeURIComponent(db.ensureUnsubscribeToken(user.id) || '')}" style="color:#888">Turn off these meeting reminders</a></p>
     </div>`;
   return { subject, html };
 }
@@ -14237,7 +14289,7 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
     // affected by this. Found while building the birthday re-offer,
     // which reads this same onboarding_completed field as its own
     // eligibility gate.
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','carousel_autoplay'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','carousel_autoplay'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     if (prefs.a11y_contrast !== undefined) {
