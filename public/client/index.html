@@ -195,7 +195,14 @@
 
     .a11y-toggle-btn { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; color:rgba(255,255,255,0.82); font-size:12px; letter-spacing:0.03em; font-family:'Georgia',serif; padding:6px 14px; line-height:1; display:flex; align-items:center; }
     .a11y-toggle-btn:hover { background:rgba(255,255,255,0.09); color:rgba(255,255,255,0.9); }
-    .a11y-menu { display:none; position:absolute; top:calc(100% + 8px); left:0; z-index:50; background:rgba(20,26,24,0.97); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px; min-width:190px; box-shadow:0 8px 24px rgba(0,0,0,0.4); }
+    /* Per App 36 — anchored to the button's RIGHT edge (was left:0): the
+       Display button sits at the right of the header, so a left-anchored
+       menu ran past the glass edge and got clipped (the glass has
+       overflow:hidden). Opening leftwards keeps it inside on every width
+       above the phone breakpoint, which has its own centred rule below.
+       max-height + scroll so Large/Larger text can't push it off the
+       bottom either. */
+    .a11y-menu { display:none; position:absolute; top:calc(100% + 8px); right:0; left:auto; max-height:calc(100vh - 160px); overflow-y:auto; z-index:50; background:rgba(20,26,24,0.97); border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:8px; min-width:190px; box-shadow:0 8px 24px rgba(0,0,0,0.4); }
     .a11y-menu.open { display:block; }
     .a11y-menu-label { font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.74); padding:6px 8px 2px; }
     .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
