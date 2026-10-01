@@ -14289,13 +14289,18 @@ app.patch('/api/account', auth.requireAuthApi(['client']), async (req, res) => {
     // affected by this. Found while building the birthday re-offer,
     // which reads this same onboarding_completed field as its own
     // eligibility gate.
-    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','carousel_autoplay'];
+    const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','a11y_contrast','a11y_text_scale','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','carousel_autoplay','a11y_scene_level'];
     const prefs = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) prefs[k] = req.body[k]; });
     if (prefs.a11y_contrast !== undefined) {
       const v = Number(prefs.a11y_contrast);
       if (v !== 0 && v !== 1) return res.status(400).json({ error: 'a11y_contrast must be 0 or 1.' });
       prefs.a11y_contrast = v;
+    }
+    if (prefs.a11y_scene_level !== undefined) {
+      const v = Math.round(Number(prefs.a11y_scene_level));
+      if (!Number.isFinite(v) || v < 0 || v > 100) return res.status(400).json({ error: 'a11y_scene_level must be 0 to 100.' });
+      prefs.a11y_scene_level = v;
     }
     if (prefs.a11y_text_scale !== undefined) {
       if (!['normal','large','larger'].includes(prefs.a11y_text_scale)) {

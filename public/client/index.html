@@ -33,8 +33,15 @@
        Text legibility over the photo comes from the text shadow on
        .glass and from every white text colour in this file having been
        lifted to at least ~0.68 opacity. */
-    :root { --scene-veil:0.22; --glass-tint:0.40; --scene-blur:3px; }
-    body.idle-reveal { --scene-veil:0.12; --glass-tint:0.26; --scene-blur:1px; }
+    /* Display > Background (Per App 36) sets all six from one slider,
+       0 = no scene at all, 100 = these defaults (see applySceneLevel). */
+    :root { --scene-veil:0.22; --glass-tint:0.40; --scene-blur:3px;
+            --scene-veil-idle:0.12; --glass-tint-idle:0.26; --scene-blur-idle:1px; }
+    body.idle-reveal { --scene-veil:var(--scene-veil-idle); --glass-tint:var(--glass-tint-idle); --scene-blur:var(--scene-blur-idle); }
+    /* Slider at 0: nothing to see, so stop drawing and moving the photos. */
+    body.scene-off .slideshow { display:none; }
+    /* While the slider is being dragged, follow it instantly. */
+    body.scene-adjusting .veil, body.scene-adjusting .glass, body.scene-adjusting .slideshow { transition:none !important; }
     .slideshow { position:fixed; inset:-40px; z-index:0; filter:blur(var(--scene-blur)); transition:filter 0.9s ease; animation:sceneDrift 70s ease-in-out infinite alternate; will-change:transform; }
     body.idle-reveal .slideshow { transition:filter 6s ease; }
     @keyframes sceneDrift {
@@ -194,6 +201,9 @@
     .a11y-menu-opt { display:block; width:100%; text-align:left; background:none; border:none; color:rgba(255,255,255,0.9); font-family:Georgia,serif; font-size:13px; padding:8px; border-radius:8px; cursor:pointer; }
     .a11y-menu-opt:hover { background:rgba(255,255,255,0.07); }
     .a11y-menu-opt.active { background:rgba(180,230,200,0.14); color:rgba(180,230,200,0.95); }
+    .a11y-scene-row { display:flex; align-items:center; gap:10px; padding:6px 8px 10px; }
+    .a11y-scene-row input[type=range] { flex:1; accent-color:rgba(180,230,200,0.95); cursor:pointer; min-width:120px; }
+    .a11y-scene-val { font-size:12px; color:rgba(255,255,255,0.9); min-width:36px; text-align:right; font-variant-numeric:tabular-nums; }
     /* Per's request — on a phone, the Display button sits near the right
        edge of the header, and the menu was anchored left:0 relative to
        IT (see .a11y-menu above), so its right side — where "High
@@ -1165,7 +1175,29 @@
       if (scale === 'large') document.body.classList.add('a11y-text-large');
       else if (scale === 'larger') document.body.classList.add('a11y-text-larger');
     } catch(e) {}
+    try { applySceneLevel(localStorage.getItem('a11y_scene_level')); } catch(e) {}
   })();
+  // Per App 36 — Display > Background. One number, 0–100, drives the
+  // veil, glass tint and photo blur, plus their lighter idle versions.
+  // 100 = the default look; 0 = no scene (solid dark glass on black).
+  function applySceneLevel(raw) {
+    var n = (raw === null || raw === undefined || raw === '') ? 100 : Number(raw);
+    if (!isFinite(n)) n = 100;
+    n = Math.max(0, Math.min(100, Math.round(n)));
+    var k = n / 100, r = document.documentElement.style;
+    var veil = 1 - 0.78 * k, tint = 1 - 0.60 * k, blur = 3 * k;
+    r.setProperty('--scene-veil', veil.toFixed(3));
+    r.setProperty('--glass-tint', tint.toFixed(3));
+    r.setProperty('--scene-blur', blur.toFixed(2) + 'px');
+    r.setProperty('--scene-veil-idle', (veil - 0.10 * k).toFixed(3));
+    r.setProperty('--glass-tint-idle', (tint - 0.14 * k).toFixed(3));
+    r.setProperty('--scene-blur-idle', Math.max(0, blur - 2 * k).toFixed(2) + 'px');
+    document.body.classList.toggle('scene-off', n === 0);
+    var sl = document.getElementById('a11ySceneSlider'), lab = document.getElementById('a11ySceneVal');
+    if (sl && Number(sl.value) !== n) sl.value = n;
+    if (lab) lab.textContent = n + '%';
+    return n;
+  }
 </script>
 
 <!-- Single persistent audio element, reused for every spoken reply — see
@@ -1209,6 +1241,12 @@
           <button class="a11y-menu-opt" id="a11yTextNormal" onclick="setA11yTextScale('normal')">Normal</button>
           <button class="a11y-menu-opt" id="a11yTextLarge" onclick="setA11yTextScale('large')">Large</button>
           <button class="a11y-menu-opt" id="a11yTextLarger" onclick="setA11yTextScale('larger')">Larger</button>
+          <div class="a11y-menu-label">Background</div>
+          <div class="a11y-scene-row">
+            <input type="range" id="a11ySceneSlider" min="0" max="100" step="1" value="100" aria-label="How much background shows through"
+              oninput="onSceneSliderInput(this.value)" onchange="onSceneSliderCommit(this.value)"/>
+            <span class="a11y-scene-val" id="a11ySceneVal">100%</span>
+          </div>
           <div class="a11y-menu-label">Movement</div>
           <button class="a11y-menu-opt" id="a11yCarouselOn" onclick="setCarouselAutoplay(1)">Carousel moves on its own</button>
           <button class="a11y-menu-opt" id="a11yCarouselOff" onclick="setCarouselAutoplay(0)">Carousel stays still</button>
@@ -9530,10 +9568,30 @@
       await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_text_scale: scale }) });
     } catch(e) {}
   }
+  let _sceneAdjustTimer = null;
+  function onSceneSliderInput(val) {
+    document.body.classList.add('scene-adjusting');
+    clearTimeout(_sceneAdjustTimer);
+    _sceneAdjustTimer = setTimeout(() => document.body.classList.remove('scene-adjusting'), 300);
+    const n = applySceneLevel(val);
+    try { localStorage.setItem('a11y_scene_level', String(n)); } catch(e) {}
+  }
+  async function onSceneSliderCommit(val) {
+    const n = applySceneLevel(val);
+    try { localStorage.setItem('a11y_scene_level', String(n)); } catch(e) {}
+    try {
+      await fetch('/api/account', { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ a11y_scene_level: n }) });
+    } catch(e) { /* applied locally regardless */ }
+  }
   async function loadA11yPrefsFromServer() {
     try {
       const res = await fetch('/api/account');
       const data = await res.json();
+      if (data.a11y_scene_level !== undefined) {
+        const lvl = data.a11y_scene_level === null ? 100 : Number(data.a11y_scene_level);
+        applySceneLevel(lvl);
+        try { localStorage.setItem('a11y_scene_level', String(lvl)); } catch(e) {}
+      }
       const contrast = !!Number(data.a11y_contrast);
       const scale = data.a11y_text_scale || 'normal';
       applyA11yState(contrast, scale);
@@ -9556,6 +9614,7 @@
     } catch(e) {
       applyA11yState(document.body.classList.contains('a11y-contrast'), localStorage.getItem('a11y_text_scale') || 'normal');
       applyCarouselAutoplayState(getCarouselAutoplayEnabled());
+      try { applySceneLevel(localStorage.getItem('a11y_scene_level')); } catch(e2) {}
     }
   }
   // Per Bot 40 — Display > Movement. Same save-to-account pattern as

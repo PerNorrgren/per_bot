@@ -3102,6 +3102,9 @@ async function getDb() {
     // behaviour) rather than off, so this migration doesn't silently
     // change anything for people who never open Display settings.
     "ALTER TABLE users ADD COLUMN carousel_autoplay INTEGER DEFAULT NULL",
+    // Per App 36 — Display > Background: how much of the scene shows
+    // through the glass, 0 (none) to 100 (full). NULL = never set = 100.
+    "ALTER TABLE users ADD COLUMN a11y_scene_level INTEGER DEFAULT NULL",
     // Per Bot 48 — Per's follow-up: he'd set "What's New seconds per
     // item" (whats_new_seconds_per_item above) to 10, expecting it to
     // control the Practices shelf carousel's speed — a reasonable
@@ -7283,7 +7286,7 @@ function markAsSystemClient(id) {
 
 // ── User preferences (My Account) ──
 function updateUserPreferences(userId, prefs) {
-  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale','carousel_autoplay'];
+  const allowed = ['pref_email_motd','pref_email_reminders','pref_email_renewal','pref_email_news','pref_email_live_meetings','pref_sms','pref_sms_motd','pref_sms_reminders','pref_sms_renewal','pref_email_messages','pref_sms_messages','pref_keep_history','phone','language','motd_days','motd_hour','timezone','voice_id','dob_month','dob_day','onboarding_completed','keep_history_prompted','voice_hint_shown','tomte_name','a11y_contrast','a11y_text_scale','carousel_autoplay','a11y_scene_level'];
   const sets = Object.keys(prefs).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE users SET ${sets} WHERE id=?`,
