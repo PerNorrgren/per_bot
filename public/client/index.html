@@ -402,8 +402,8 @@
     }
     /* Per App 36 — a shelf heading with somewhere to go (the full list
        for that category) is a real button: white pill, dark text, with
-       a › to show it leads on. Live Meetings has no list page, so it
-       keeps the plain .shelf-label above. */
+       a › to show it leads on. A shelf without a listKey would fall back
+       to the plain .shelf-label above. */
     .shelf-head { display:flex; align-items:center; margin-bottom:10px; padding:0 4px; }
     .shelf-head-btn { display:inline-flex; align-items:center; gap:6px; background:#fff; color:#0a0f0d; border:none; border-radius:999px; padding:7px 14px; font-family:inherit; font-size:11px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,0.25); transition:transform 0.15s ease, background 0.15s ease; }
     .shelf-head-btn:hover { background:#eef7f1; }
@@ -6959,13 +6959,13 @@
     if (liveMeetings && liveMeetings.length) {
       const meetingCard = (m) => `
         <div class="shelf-card" onclick="openLiveMeeting('${m.id}')">
-          <div class="shelf-card-title">🎥 ${m.title}</div>
-          <div class="shelf-card-meta">${m.schedule_text}</div>
+          <div class="shelf-card-title">🎥 ${escapeHtml(m.title)}</div>
+          <div class="shelf-card-meta">${escapeHtml(m.next_label ? 'Next: ' + m.next_label : m.schedule_text)}</div>
         </div>
       `;
       _liveMeetingsById = {};
       liveMeetings.forEach(m => { _liveMeetingsById[m.id] = m; });
-      shelves.push({ label: 'Live Meetings', count: shelfCounts.liveMeetings, rows: liveMeetings, cardHtml: meetingCard });
+      shelves.push({ label: 'Live Meetings', listKey: 'meetings', count: shelfCounts.liveMeetings, rows: liveMeetings, cardHtml: meetingCard });
     }
 
     // poems/posts keep this around for the "More poems/posts →" link
@@ -7288,8 +7288,32 @@
       seen.add(f.id); return true;
     });
   }
+  // Per App 36 — the Live Meetings page: every active meeting with its
+  // regular day and time, the next date (worked out server-side in UK
+  // time, so the clock change is handled there), any note, when the
+  // reminder emails go out, and a Join button.
+  const SHELF_WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function openLiveMeetingsPage() {
+    openShelfListOverlay('Live Meetings');
+    const meetings = Object.values(_liveMeetingsById || {});
+    const cardStyle = 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);border-radius:16px;padding:18px 18px 16px;margin:0 0 14px;text-align:left';
+    const html = meetings.length ? meetings.map(m => {
+      const reminders = (m.reminder_slots || []).map(r => `${SHELF_WEEKDAYS[r.weekday]} ${r.time}`).join(' and ');
+      return `
+        <div style="${cardStyle}">
+          <div style="font-size:18px;color:rgba(255,255,255,0.92);margin-bottom:6px">🎥 ${escapeHtml(m.title)}</div>
+          <div style="font-size:13px;color:rgba(180,230,200,0.85);margin-bottom:4px">${escapeHtml(m.schedule_text || '')}</div>
+          ${m.next_label ? `<div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:8px">Next: ${escapeHtml(m.next_label)}</div>` : ''}
+          ${m.description ? `<div style="font-size:14px;line-height:1.6;color:rgba(255,255,255,0.65);margin:8px 0 10px;white-space:pre-line">${escapeHtml(m.description)}</div>` : ''}
+          ${reminders ? `<div style="font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:12px">Reminder emails go out ${escapeHtml(reminders)} (UK time), with the link.</div>` : ''}
+          <button type="button" class="shelf-head-btn" style="font-size:12px;padding:10px 20px" onclick="openLiveMeeting('${m.id}')">Join the meeting<span class="shelf-head-arrow">›</span></button>
+        </div>`;
+    }).join('') : '<div style="padding:12px 4px;font-size:12px;color:rgba(255,255,255,0.35);font-style:italic">No live meetings right now.</div>';
+    document.getElementById('playerMedia').innerHTML = `<div class="lesson-chooser-list" style="padding-top:4px">${html}</div>`;
+  }
   async function openShelfList(key) {
     if (key === 'courses') { switchTab('courses'); return; }
+    if (key === 'meetings') { openLiveMeetingsPage(); return; }
     if (key === 'poems' || key === 'posts') { openThemeDetail(key, 0); return; }
 
     if (key === 'practices') {

@@ -3725,7 +3725,7 @@ app.get('/api/client/featured', auth.requireAuthApi(['client']), (req, res) => {
       recentPoems: db.getRecentStandaloneFiles('poem', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentPosts: db.getRecentStandaloneFiles('blog', 5, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
       recentBooks: db.getRecentStandaloneFiles('book', null, userFlags, req.user.id).map(f => ({ ...f, is_favourite: favIds.has(f.id) })),
-      liveMeetings: db.getLiveMeetings(true), // Per Bot 38 — its own shelf, Books then Live Meetings
+      liveMeetings: db.getLiveMeetings(true).map(m => decorateLiveMeetingForClient(m)), // Per Bot 38 — its own shelf; Per App 36 — next date + schedule label
       popularPractices: db.getPopularPractices(5), // Per's request
       shelfCounts: db.getShelfCounts(), // Per Bot 44 — Explorer+Member totals shown in each shelf heading
       carouselSpeedSeconds: db.getAppConfig()?.carousel_speed_seconds ?? 3.5, // Per Bot 48
@@ -3781,24 +3781,87 @@ app.patch('/api/admin/library/:id/pin-popular', auth.requireAuthApi(['admin']), 
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+// Per App 36 — validates the structured fields; returns {fields} or {error}.
+function cleanLiveMeetingFields(body) {
+  const f = {};
+  const b = body || {};
+  ['title', 'schedule_text', 'meeting_url', 'description'].forEach(k => { if (b[k] !== undefined) f[k] = String(b[k] || '').trim(); });
+  if (b.sort_order !== undefined) f.sort_order = Number(b.sort_order) || 0;
+  if (b.active !== undefined) f.active = !!b.active;
+  if (b.reminders_enabled !== undefined) f.reminders_enabled = !!b.reminders_enabled;
+  if (b.weekday !== undefined) {
+    if (b.weekday === null || b.weekday === '') f.weekday = null;
+    else { const w = Number(b.weekday); if (!Number.isInteger(w) || w < 0 || w > 6) return { error: 'Day must be a weekday.' }; f.weekday = w; }
+  }
+  if (b.start_time !== undefined) {
+    if (!b.start_time) f.start_time = null;
+    else if (hhmmToMinutes(b.start_time) === null) return { error: 'Start time must look like 06:30.' };
+    else f.start_time = String(b.start_time).padStart(5, '0');
+  }
+  if (b.reminder_slots !== undefined) {
+    if (!Array.isArray(b.reminder_slots)) return { error: 'Reminder times are not in the right format.' };
+    const slots = [];
+    for (const x of b.reminder_slots) {
+      const w = Number(x && x.weekday);
+      if (!Number.isInteger(w) || w < 0 || w > 6 || hhmmToMinutes(x.time) === null) return { error: 'Each reminder needs a day and a time like 11:00.' };
+      slots.push({ weekday: w, time: String(x.time).padStart(5, '0') });
+    }
+    f.reminder_slots = slots;
+  }
+  if (f.meeting_url !== undefined && f.meeting_url && !/^https?:\/\//i.test(f.meeting_url)) return { error: 'Meeting URL must start with https://' };
+  return { fields: f };
+}
 app.get('/api/admin/live-meetings', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
-  try { res.json(db.getLiveMeetings(false)); } catch(e) { res.status(500).json({ error: e.message }); }
+  try {
+    res.json(db.getLiveMeetings(false).map(m => {
+      const next = nextLiveMeetingOccurrence(m);
+      return { ...m, next_label: next ? `${next.dateLabel}, ${next.timeLabel}` : null, recent_reminders: db.getRecentLiveMeetingReminders(m.id, 3) };
+    }));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/admin/live-meetings', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
   try {
-    const { title, schedule_text, meeting_url, sort_order, active } = req.body || {};
-    if (!title || !schedule_text || !meeting_url) return res.status(400).json({ error: 'Title, schedule text, and meeting URL are all required.' });
-    const id = db.createLiveMeeting({ title, schedule_text, meeting_url, sort_order: sort_order || 0, active: active !== false });
+    const { fields, error } = cleanLiveMeetingFields(req.body);
+    if (error) return res.status(400).json({ error });
+    if (!fields.title || !fields.meeting_url) return res.status(400).json({ error: 'Title and meeting URL are both required.' });
+    if (!fields.schedule_text) fields.schedule_text = liveMeetingScheduleLabel(fields) || 'Regular meeting';
+    const id = db.createLiveMeeting({ ...fields, active: fields.active !== false });
     res.json({ ok: true, id });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.patch('/api/admin/live-meetings/:id', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
-  try { db.updateLiveMeeting(req.params.id, req.body || {}); res.json({ ok: true }); }
-  catch(e) { res.status(500).json({ error: e.message }); }
+  try {
+    if (!db.getLiveMeeting(req.params.id)) return res.status(404).json({ error: 'Meeting not found.' });
+    const { fields, error } = cleanLiveMeetingFields(req.body);
+    if (error) return res.status(400).json({ error });
+    if (fields.title === '' || fields.meeting_url === '') return res.status(400).json({ error: 'Title and meeting URL cannot be empty.' });
+    db.updateLiveMeeting(req.params.id, fields);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/admin/live-meetings/:id', auth.requireAuthApi(['admin', 'facilitator']), (req, res) => {
   try { db.deleteLiveMeeting(req.params.id); res.json({ ok: true }); }
   catch(e) { res.status(500).json({ error: e.message }); }
+});
+// Per App 36 — send this meeting's reminder right now, outside the
+// weekly schedule (e.g. a missed week). Replies with the recipient
+// count straight away and sends in the background, like the other
+// bulk sends; results show in Reports → Email Log.
+app.post('/api/admin/live-meetings/:id/send-reminder', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    if (IS_STAGING) return res.status(403).json({ error: 'Sending is disabled on staging.' });
+    const m = db.getLiveMeeting(req.params.id);
+    if (!m) return res.status(404).json({ error: 'Meeting not found.' });
+    if (!m.meeting_url) return res.status(400).json({ error: 'This meeting has no link yet.' });
+    const recipientCount = db.getLiveMeetingReminderRecipients().length;
+    if (!recipientCount) return res.status(400).json({ error: 'No one is set to receive reminder emails.' });
+    const slotKey = `manual ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
+    db.claimLiveMeetingReminderSlot(m.id, slotKey);
+    res.json({ ok: true, recipientCount });
+    sendLiveMeetingReminderNow(m)
+      .then(r => db.setLiveMeetingReminderCount(m.id, slotKey, r.sent))
+      .catch(e => console.error('live meeting manual reminder error:', e.message));
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/client/courses', auth.requireAuthApi(['client']), (req, res) => {
@@ -10619,6 +10682,125 @@ function parseLocalDateTimeParts(text) {
   const m = /^\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})/.exec((text || '').trim());
   if (!m) return null;
   return { year: +m[1], month: +m[2], day: +m[3], hour: +m[4], minute: +m[5] };
+}
+
+// ── Live meetings: next date + reminders (Per App 36) ──
+const WEEKDAY_NAMES_EN = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+// The current UK wall-clock date, weekday and minutes-since-midnight.
+function londonNowParts(now = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short'
+  });
+  const m = {};
+  fmt.formatToParts(now).forEach(p => { m[p.type] = p.value; });
+  const hour = +m.hour === 24 ? 0 : +m.hour;
+  const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(m.weekday);
+  return { year: +m.year, month: +m.month, day: +m.day, weekday, minutes: hour * 60 + +m.minute,
+    dateStr: `${m.year}-${m.month}-${m.day}` };
+}
+function hhmmToMinutes(t) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t || '');
+  return m ? (+m[1]) * 60 + (+m[2]) : null;
+}
+// Next time this meeting starts, strictly after `now`. Null if the
+// meeting has no structured day/time yet (only display text).
+function nextLiveMeetingOccurrence(meeting, now = new Date()) {
+  if (meeting.weekday === null || meeting.weekday === undefined || !meeting.start_time) return null;
+  const startMin = hhmmToMinutes(meeting.start_time);
+  if (startMin === null) return null;
+  const today = londonNowParts(now);
+  for (let d = 0; d <= 7; d++) {
+    const cal = new Date(Date.UTC(today.year, today.month - 1, today.day + d));
+    if (cal.getUTCDay() !== Number(meeting.weekday)) continue;
+    const iso = londonLocalToUtcIso(cal.getUTCFullYear(), cal.getUTCMonth() + 1, cal.getUTCDate(), Math.floor(startMin / 60), startMin % 60);
+    if (new Date(iso) > now) {
+      const dateLabel = `${WEEKDAY_NAMES_EN[cal.getUTCDay()]} ${cal.getUTCDate()} ${cal.toLocaleString('en-GB', { month: 'long', timeZone: 'UTC' })}`;
+      return { iso, daysAway: d, dateLabel, timeLabel: `${meeting.start_time} UK time` };
+    }
+  }
+  return null;
+}
+// "Every Thursday · 06:30 UK time" when structured, else the free text.
+function liveMeetingScheduleLabel(meeting) {
+  if (meeting.weekday !== null && meeting.weekday !== undefined && meeting.start_time) {
+    return `Every ${WEEKDAY_NAMES_EN[Number(meeting.weekday)]} · ${meeting.start_time} UK time`;
+  }
+  return meeting.schedule_text || '';
+}
+function decorateLiveMeetingForClient(m, now = new Date()) {
+  const next = nextLiveMeetingOccurrence(m, now);
+  return {
+    id: m.id, title: m.title, meeting_url: m.meeting_url, description: m.description || '',
+    schedule_text: liveMeetingScheduleLabel(m),
+    next_iso: next ? next.iso : null,
+    next_label: next ? `${next.daysAway === 0 ? 'Today' : next.daysAway === 1 ? 'Tomorrow' : next.dateLabel}, ${next.timeLabel}` : null,
+    reminder_slots: m.reminders_enabled ? m.reminder_slots : [],
+  };
+}
+function buildLiveMeetingReminderEmail(user, meeting, next) {
+  const b = brand();
+  const tokens = buildMessageTokens(user);
+  const when = next
+    ? (next.daysAway === 0 ? `today, ${next.dateLabel}` : next.daysAway === 1 ? `tomorrow, ${next.dateLabel}` : next.dateLabel)
+    : liveMeetingScheduleLabel(meeting);
+  const timeText = next ? ` at ${next.timeLabel}` : '';
+  const subject = next
+    ? `Reminder: ${meeting.title} — ${next.daysAway === 1 ? 'tomorrow' : next.daysAway === 0 ? 'today' : WEEKDAY_NAMES_EN[Number(meeting.weekday)]} at ${next.timeLabel}`
+    : `Reminder: ${meeting.title}`;
+  const esc = (t) => String(t || '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+  const html = `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
+      <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${esc(b.name)}</div>
+      <h1 style="font-size:22px;font-weight:normal;color:#1a1a1a;margin-bottom:24px">Hello ${esc(tokens.name)},</h1>
+      <p style="font-size:15px;line-height:1.7">A gentle reminder: <strong>${esc(meeting.title)}</strong> is on ${esc(when)}${esc(timeText)}.</p>
+      ${meeting.description ? `<p style="font-size:15px;line-height:1.7">${esc(meeting.description)}</p>` : ''}
+      <p style="margin:28px 0"><a href="${esc(meeting.meeting_url)}" style="display:inline-block;background:#2d6a4f;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;font-size:15px">Join the meeting</a></p>
+      <p style="font-size:13px;line-height:1.7;color:#666">Or copy this link: <a href="${esc(meeting.meeting_url)}" style="color:#2d6a4f;word-break:break-all">${esc(meeting.meeting_url)}</a></p>
+      <p style="font-size:13px;line-height:1.7;color:#666">You can also find it in the app, under Live Meetings.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
+      <p style="font-size:12px;color:#aaa">${esc(b.name)} · <a href="${APP_URL}/account" style="color:#aaa">Manage email preferences</a></p>
+    </div>`;
+  return { subject, html };
+}
+// Sends one reminder for one meeting to every eligible person. Never
+// stops on a single failed address; returns real counts.
+async function sendLiveMeetingReminderNow(meeting) {
+  const recipients = db.getLiveMeetingReminderRecipients();
+  const next = nextLiveMeetingOccurrence(meeting);
+  let sent = 0, failed = 0;
+  for (const user of recipients) {
+    try {
+      const { subject, html } = buildLiveMeetingReminderEmail(user, meeting, next);
+      const r = await sendEmailWithBackoff(user.email, subject, html, { kind: 'live-meeting-reminder', userId: user.id });
+      if (r.ok) sent++; else failed++;
+    } catch(e) { failed++; }
+  }
+  return { recipients: recipients.length, sent, failed };
+}
+// Cron (every 5 min). A slot is due from its UK time until 2 hours
+// after, so a restart or a missed tick still sends it — but only once,
+// thanks to claimLiveMeetingReminderSlot.
+async function sendDueLiveMeetingReminders() {
+  const result = { sentCount: 0, meetings: 0, errors: [] };
+  if (IS_STAGING) return result;
+  const now = londonNowParts();
+  for (const m of db.getLiveMeetings(true)) {
+    if (!m.reminders_enabled || !m.meeting_url) continue;
+    for (const slot of m.reminder_slots) {
+      const slotMin = hhmmToMinutes(slot.time);
+      if (slotMin === null || now.weekday !== slot.weekday) continue;
+      if (now.minutes < slotMin || now.minutes >= slotMin + 120) continue;
+      const slotKey = `${now.dateStr} ${slot.time}`;
+      if (!db.claimLiveMeetingReminderSlot(m.id, slotKey)) continue;
+      try {
+        const r = await sendLiveMeetingReminderNow(m);
+        db.setLiveMeetingReminderCount(m.id, slotKey, r.sent);
+        result.sentCount += r.sent; result.meetings++;
+        if (r.failed) result.errors.push(`${m.title} ${slotKey}: ${r.failed} failed`);
+      } catch(e) { result.errors.push(`${m.title} ${slotKey}: ${e.message}`); }
+    }
+  }
+  return result;
 }
 
 // Per App 31 — server-side twin of content.html's
@@ -18447,7 +18629,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
   }
 }
 

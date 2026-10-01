@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -363,6 +363,25 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] session reminders failed:', e.message);
       record('session_reminders', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── Live meeting reminders (Per App 36) — every 5 minutes ── Each
+  // meeting's weekly reminder slots (e.g. Wednesday 11:00 and 20:00 UK
+  // time for the Thursday practice). A slot stays due for 2 hours after
+  // its time so a restart doesn't lose it; live_meeting_reminders_sent's
+  // primary key is what stops it going twice. Logged only when it sent.
+  cron.schedule('*/5 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const result = await sendDueLiveMeetingReminders();
+      if (result.sentCount > 0 || result.errors.length) {
+        console.log('[cron] live meeting reminders:', JSON.stringify(result));
+        record('live_meeting_reminders', result.errors.length ? 'partial' : 'ok', JSON.stringify(result), result.errors.length ? result.errors.join('; ') : null, t0);
+      }
+    } catch (e) {
+      console.error('[cron] live meeting reminders failed:', e.message);
+      record('live_meeting_reminders', 'failed', null, e.message, t0);
     }
   });
 

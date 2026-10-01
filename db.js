@@ -108,6 +108,46 @@ async function getDb() {
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
+  // Per App 36 — a real day and time, not just display text, so the app
+  // can work out the next meeting date and send reminders. weekday is
+  // 0=Sun..6=Sat, start_time 'HH:MM' UK time (Europe/London, so it
+  // follows BST/GMT on its own). reminder_slots is a JSON array of
+  // {weekday, time} — the UK-time moments a reminder email goes out
+  // each week. reminders_enabled lets a meeting keep its slots on file
+  // while reminders are paused.
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN weekday INTEGER`); } catch(e) {}
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN start_time TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN duration_minutes INTEGER`); } catch(e) {}
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN description TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN reminder_slots TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE live_meetings ADD COLUMN reminders_enabled INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  // One row per reminder actually fired — slot_key is the UK date and
+  // time it was due ('2026-10-07 11:00'). The primary key is what stops
+  // a cron overlap or a restart sending the same reminder twice.
+  db.run(`CREATE TABLE IF NOT EXISTS live_meeting_reminders_sent (
+    meeting_id TEXT NOT NULL,
+    slot_key TEXT NOT NULL,
+    recipient_count INTEGER DEFAULT 0,
+    sent_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (meeting_id, slot_key)
+  )`);
+  // Per App 36 — the regular Thursday practice: Thursdays 06:30 UK
+  // time, reminders Wednesday 11:00 and 20:00. Only touches a row that
+  // mentions Thursday and has never had a structured day set, so it
+  // runs once and never overwrites anything edited in Settings later.
+  try {
+    const stmt = db.prepare(`SELECT id, reminder_slots FROM live_meetings
+      WHERE weekday IS NULL AND (LOWER(title) LIKE '%thursday%' OR LOWER(schedule_text) LIKE '%thursday%')`);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    stmt.free();
+    rows.forEach(r => {
+      db.run(`UPDATE live_meetings SET weekday=4, start_time='06:30',
+        reminder_slots=COALESCE(reminder_slots, ?), reminders_enabled=CASE WHEN reminder_slots IS NULL THEN 1 ELSE reminders_enabled END
+        WHERE id=?`, [JSON.stringify([{ weekday: 3, time: '11:00' }, { weekday: 3, time: '20:00' }]), r.id]);
+      console.log(`[live meetings] set Thursday 06:30 + Wednesday 11:00/20:00 reminders on meeting ${r.id}`);
+    });
+  } catch(e) { console.error('[live meetings] Thursday seed failed:', e.message); }
 
   // ── Admin scripts state (Per Bot 43) ── Per noticed the "Not run yet /
   // Done / Failed" status on the Settings > scripts table was resetting
@@ -4451,33 +4491,76 @@ function archiveLibraryFile(id, archived) {
 // addFileTag is idempotent (UNIQUE(file_id,tag) + INSERT OR IGNORE) so re-running
 // an import script never duplicates a tag on the same file.
 // ── Live meetings (Per Bot 38) ──
+function parseReminderSlots(raw) {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    return Array.isArray(arr) ? arr.filter(x => x && Number.isInteger(+x.weekday) && /^\d{2}:\d{2}$/.test(x.time || '')).map(x => ({ weekday: +x.weekday, time: x.time })) : [];
+  } catch(e) { return []; }
+}
 function getLiveMeetings(activeOnly = false) {
   const rows = queryAll(`SELECT * FROM live_meetings ${activeOnly ? 'WHERE active=1' : ''} ORDER BY sort_order ASC, created_at ASC`);
-  return rows.map(r => ({ ...r, active: !!r.active }));
+  return rows.map(r => ({ ...r, active: !!r.active, reminders_enabled: !!r.reminders_enabled, reminder_slots: parseReminderSlots(r.reminder_slots) }));
 }
-function createLiveMeeting({ title, schedule_text, meeting_url, sort_order = 0, active = 1 }) {
+function getLiveMeeting(id) {
+  return getLiveMeetings(false).find(m => m.id === id) || null;
+}
+function createLiveMeeting({ title, schedule_text, meeting_url, sort_order = 0, active = 1, weekday = null, start_time = null, duration_minutes = null, description = null, reminder_slots = null, reminders_enabled = 0 }) {
   const id = crypto.randomUUID();
   getDbSync().run(
-    'INSERT INTO live_meetings (id,title,schedule_text,meeting_url,sort_order,active) VALUES (?,?,?,?,?,?)',
-    [id, title, schedule_text, meeting_url, sort_order, active ? 1 : 0]
+    `INSERT INTO live_meetings (id,title,schedule_text,meeting_url,sort_order,active,weekday,start_time,duration_minutes,description,reminder_slots,reminders_enabled)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, title, schedule_text, meeting_url, sort_order, active ? 1 : 0, weekday, start_time, duration_minutes, description,
+     reminder_slots ? JSON.stringify(reminder_slots) : null, reminders_enabled ? 1 : 0]
   );
   save();
   return id;
 }
+// Per App 36 — explicit undefined check per column (a column not sent
+// is left alone), so a PATCH with only {active} can never bind
+// undefined into the SQL — the db.js Object.keys(fields) pitfall.
 function updateLiveMeeting(id, fields) {
-  const cols = ['title', 'schedule_text', 'meeting_url', 'sort_order', 'active'];
+  const cols = ['title', 'schedule_text', 'meeting_url', 'sort_order', 'active', 'weekday', 'start_time', 'duration_minutes', 'description', 'reminder_slots', 'reminders_enabled'];
   const sets = [], vals = [];
   for (const c of cols) {
     if (fields[c] === undefined) continue;
+    let v = fields[c];
+    if (c === 'active' || c === 'reminders_enabled') v = v ? 1 : 0;
+    else if (c === 'reminder_slots') v = v ? JSON.stringify(v) : null;
     sets.push(`${c}=?`);
-    vals.push(c === 'active' ? (fields[c] ? 1 : 0) : fields[c]);
+    vals.push(v);
   }
   if (!sets.length) return;
   vals.push(id);
   getDbSync().run(`UPDATE live_meetings SET ${sets.join(',')} WHERE id=?`, vals);
   save();
 }
+// Everyone who can actually open the app (has a login, not a
+// newsletter-only contact, not archived or a system account) and hasn't
+// switched off reminder emails, minus addresses already known to bounce.
+function getLiveMeetingReminderRecipients() {
+  return queryAll(`SELECT id, name, email, trial_ends_at, member_expires_at, (password_hash IS NOT NULL) as has_login FROM users
+    WHERE archived=0 AND email IS NOT NULL AND email != '' AND password_hash IS NOT NULL
+      AND member_tier >= 0 AND pref_email_reminders=1
+      AND COALESCE(is_system_client,0)=0 AND COALESCE(email_health,'ok') != 'failed'`);
+}
+// Claims a reminder slot. Returns true only for the first caller — the
+// primary key makes the claim atomic, so two overlapping ticks can't
+// both send.
+function claimLiveMeetingReminderSlot(meetingId, slotKey) {
+  if (queryOne('SELECT 1 FROM live_meeting_reminders_sent WHERE meeting_id=? AND slot_key=?', [meetingId, slotKey])) return false;
+  getDbSync().run('INSERT OR IGNORE INTO live_meeting_reminders_sent (meeting_id, slot_key) VALUES (?,?)', [meetingId, slotKey]);
+  save();
+  return true;
+}
+function setLiveMeetingReminderCount(meetingId, slotKey, count) {
+  getDbSync().run('UPDATE live_meeting_reminders_sent SET recipient_count=? WHERE meeting_id=? AND slot_key=?', [count, meetingId, slotKey]);
+  save();
+}
+function getRecentLiveMeetingReminders(meetingId, limit = 5) {
+  return queryAll('SELECT slot_key, recipient_count, sent_at FROM live_meeting_reminders_sent WHERE meeting_id=? ORDER BY sent_at DESC LIMIT ?', [meetingId, limit]);
+}
 function deleteLiveMeeting(id) {
+  getDbSync().run('DELETE FROM live_meeting_reminders_sent WHERE meeting_id=?', [id]);
   getDbSync().run('DELETE FROM live_meetings WHERE id=?', [id]);
   save();
 }
@@ -11371,6 +11454,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
+  getLiveMeeting, getLiveMeetingReminderRecipients, claimLiveMeetingReminderSlot, setLiveMeetingReminderCount, getRecentLiveMeetingReminders,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag, getFilesBySamuraiTags,
   addUploadQueueItems, getUploadQueueItems, removeUploadQueueItem, removeUploadQueueItems,

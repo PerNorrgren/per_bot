@@ -77,11 +77,62 @@
     .btn-primary { padding:13px; border-radius:10px; border:1px solid rgba(180,230,200,0.3); background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.85); font-size:13px; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; transition:all 0.2s; font-family:'Georgia',serif; }
     .btn-primary:hover { background:rgba(180,230,200,0.18); }
     .btn-primary:disabled { opacity:0.5; cursor:not-allowed; }
+    /* Per App 36 — standard working-button spinner (yin/yang), same as
+       the other admin pages; this page never had it. */
+    .btn-spinner { display:inline-block; width:13px; height:13px; vertical-align:-2px; margin-right:5px; animation:yy-spin 0.85s linear infinite; }
+    @keyframes yy-spin { to { transform:rotate(360deg); } }
+    /* Per App 36 — Live Meetings editor */
+    .lm-input, .lm-select, .lm-textarea { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:8px 11px; font-size:13px; color:rgba(255,255,255,0.85); font-family:'Georgia',serif; outline:none; box-sizing:border-box; }
+    .lm-input:focus, .lm-select:focus, .lm-textarea:focus { border-color:rgba(180,230,200,0.4); }
+    .lm-select option { background:#1a2420; }
+    .lm-label { font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:4px; display:block; }
+    .lm-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .lm-btn { padding:7px 14px; font-size:11.5px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); border-radius:8px; color:rgba(255,255,255,0.75); cursor:pointer; font-family:'Georgia',serif; white-space:nowrap; }
+    .lm-btn.danger { color:rgba(255,180,170,0.85); }
+    .lm-btn:disabled { opacity:0.55; cursor:not-allowed; }
     .msg { font-size:13px; text-align:center; min-height:18px; }
     .msg.err { color:rgba(255,120,100,0.8); }
   </style>
 </head>
 <body>
+<script>
+  // ── Working-button feedback (Per App 36) — the standing admin rule:
+  // every button that waits on the server spins while it works and
+  // confirms when it's done. runBusy picks up the clicked button from
+  // the click itself (window.event, read synchronously at the start), so
+  // handlers don't need their onclick changed. The handler calls start()
+  // once any confirm step has passed, and returns a truthy value (or a
+  // message string) only when the action really succeeded — that's what
+  // shows the completion popup; a failure shows its own error instead.
+  const YY_SPINNER_SVG = `<svg class="btn-spinner" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/>
+    <path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/>
+    <circle cx="50" cy="27" r="7" fill="#141a17"/>
+    <circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/>
+  </svg>`;
+  function setBtnLoading(btn, loading, workingLabel) {
+    if (!btn) return;
+    if (loading) {
+      if (btn.dataset.origHtml === undefined) btn.dataset.origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = YY_SPINNER_SVG + (workingLabel || 'Working…');
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.origHtml !== undefined) { btn.innerHTML = btn.dataset.origHtml; delete btn.dataset.origHtml; }
+    }
+  }
+  async function runBusy(workingLabel, doneMessage, fn) {
+    const ev = window.event;
+    const btn = ev && ev.target && ev.target.closest ? ev.target.closest('button') : null;
+    let started = false;
+    const start = () => { if (!started) { started = true; setBtnLoading(btn, true, workingLabel); } };
+    let ok;
+    try { ok = await fn(start); }
+    finally { if (started) setBtnLoading(btn, false); }
+    if (ok) appAlert(typeof ok === 'string' ? ok : doneMessage);
+    return ok;
+  }
+</script>
 
 <div class="topbar" id="setupTopbar">
   <div style="position:relative">
@@ -287,17 +338,22 @@
   </div>
 
   <!-- Per Bot 38 — Live Meetings: recurring group calls (Zoom etc.),
-       shown as their own carousel under Books on the splash screen.
-       Same list-plus-add-row pattern as Skins above. -->
+       shown as their own carousel and (Per App 36) their own page on the
+       splash screen. Per App 36 adds a real day and UK time per meeting,
+       weekly reminder emails with the link, and editing in place. -->
   <div class="card">
     <div class="card-header"><div class="card-title">Live Meetings</div></div>
     <div class="card-body">
-      <div class="field-note" style="margin-bottom:16px">Recurring group calls — e.g. "Every Thursday morning" — shown as their own carousel under Books on the splash screen. Tapping a card opens the meeting URL directly.</div>
-      <div id="liveMeetingsList" style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px"></div>
-      <div style="display:flex; flex-direction:column; gap:8px; padding:12px; background:rgba(255,255,255,0.03); border-radius:10px">
-        <input type="text" id="newMeetingTitle" placeholder="Title, e.g. Weekly Live Meeting"/>
-        <input type="text" id="newMeetingSchedule" placeholder="Schedule text, e.g. Every Thursday morning"/>
-        <input type="text" id="newMeetingUrl" placeholder="Meeting URL, e.g. https://zoom.us/j/..."/>
+      <div class="field-note" style="margin-bottom:6px">Recurring group calls, shown on the home screen and on the Live Meetings page. Set the day and UK time and the app works out the next date itself, through the clock changes. Reminder emails go to every member with a login who hasn't switched off reminder emails, with a Join button linking to the meeting.</div>
+      <div id="liveMeetingsList" style="display:flex; flex-direction:column; gap:12px; margin-bottom:8px"></div>
+      <div style="display:flex; flex-direction:column; gap:10px; padding:14px; background:rgba(255,255,255,0.03); border-radius:10px">
+        <div class="lm-label" style="margin:0">Add a meeting</div>
+        <input class="lm-input" type="text" id="newMeetingTitle" placeholder="Title, e.g. Thursday Morning Practice"/>
+        <input class="lm-input" type="text" id="newMeetingUrl" placeholder="Meeting URL, e.g. https://zoom.us/j/..."/>
+        <div class="lm-grid">
+          <select class="lm-select" id="newMeetingWeekday"></select>
+          <input class="lm-input" type="time" id="newMeetingTime" value="06:30"/>
+        </div>
         <button class="btn-primary" style="padding:9px 18px; font-size:12px; white-space:nowrap; align-self:flex-start" onclick="createLiveMeeting()">+ Add meeting</button>
       </div>
       <div class="msg err" id="liveMeetingsErr" style="margin-top:8px"></div>
@@ -327,12 +383,14 @@
       </div>
       <script>
         async function restoreDatabaseBackup() {
+    return runBusy('Restoring…', 'Database restored.', async (start) => {
           const input = document.getElementById('restoreDbFile');
           const feedback = document.getElementById('restoreDbFeedback');
           const file = input.files[0];
           if (!file) { feedback.textContent = 'Choose a .db file first.'; feedback.style.color = 'rgba(255,140,120,0.9)'; return; }
           const sure = confirm(`This will immediately replace the entire live database with "${file.name}". Every member, newsletter, and message currently live will be gone, replaced by whatever is in this file. This cannot be undone from here. Continue?`);
           if (!sure) return;
+          start();
           feedback.textContent = 'Restoring — do not close this tab...';
           feedback.style.color = 'rgba(255,255,255,0.6)';
           try {
@@ -343,11 +401,13 @@
             if (!res.ok) throw new Error(data.error || 'Restore failed.');
             feedback.textContent = 'Restored successfully. Reload any other admin tab to see the restored data.';
             feedback.style.color = 'rgba(140,220,160,0.9)';
+            return 'Database restored. Reload any other admin tab to see the restored data.';
           } catch (e) {
             feedback.textContent = 'Restore failed: ' + e.message;
             feedback.style.color = 'rgba(255,140,120,0.9)';
           }
-        }
+        });
+  }
       </script>
 
       <!-- Per App 34 — daily automatic backups (01:00 Europe/London,
@@ -477,39 +537,43 @@
     });
   }
   async function runSelectedAdminScripts() {
+    return runBusy('Running…', 'Scripts finished — see the log below.', async (start) => {
     const ids = Array.from(_adminScriptsSelected);
     if (!ids.length) return;
-    const btn = document.getElementById('scriptsRunBtn');
     const logEl = document.getElementById('scriptsLog');
     logEl.textContent = '';
-    btn.disabled = true;
-    btn.textContent = 'Running…';
+    start();
     for (const id of ids) {
       await runOneAdminScript(id, logEl);
     }
-    btn.disabled = false;
-    btn.textContent = 'Run selected';
+    return true;
+  });
   }
   async function deleteSelectedAdminScripts() {
+    return runBusy('Deleting…', 'Removed from the list.', async (start) => {
     const ids = Array.from(_adminScriptsSelected);
     if (!ids.length) return;
     const names = ids.map(id => { const s = _adminScripts.find(x => x.id === id); return s ? s.label : id; }).join(', ');
     if (!confirm(`Remove ${ids.length === 1 ? 'this script' : 'these scripts'} from the list? (${names})\n\nThis only hides ${ids.length === 1 ? 'it' : 'them'} here — nothing already run is undone.`)) return;
-    const btn = document.getElementById('scriptsDeleteBtn');
-    btn.disabled = true;
-    btn.textContent = 'Deleting…';
+    start();
     for (const id of ids) {
       try { await fetch(`/api/admin/scripts/${id}`, { method: 'DELETE' }); } catch(e) {}
     }
     _adminScriptsSelected = new Set();
-    btn.disabled = false;
-    btn.textContent = 'Delete selected';
     await loadAdminScripts();
+    return true;
+  });
   }
   loadAdminScripts();
 
-  // ── Live Meetings (Per Bot 38) ──
+  // ── Live Meetings (Per Bot 38; Per App 36 — day/time, reminders, edit) ──
+  const LM_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   let _liveMeetingsData = [];
+  function lmEsc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
+  function lmDayOptions(selected, allowNone) {
+    return (allowNone ? `<option value="" ${selected === null || selected === undefined ? 'selected' : ''}>No set day</option>` : '') +
+      LM_DAYS.map((d, i) => `<option value="${i}" ${Number(selected) === i && selected !== null && selected !== undefined ? 'selected' : ''}>${d}</option>`).join('');
+  }
   async function loadLiveMeetings() {
     try {
       const res = await fetch('/api/admin/live-meetings');
@@ -517,50 +581,134 @@
       renderLiveMeetingsList();
     } catch(e) { /* quiet — secondary panel */ }
   }
+  function lmSlotRow(id, slot) {
+    return `<div class="lm-slot" style="display:flex;gap:8px;align-items:center">
+      <select class="lm-select lm-slot-day" style="flex:1">${lmDayOptions(slot.weekday, false)}</select>
+      <input class="lm-input lm-slot-time" type="time" value="${lmEsc(slot.time)}" style="width:120px"/>
+      <button type="button" class="lm-btn danger" onclick="this.closest('.lm-slot').remove()">Remove</button>
+    </div>`;
+  }
+  function addLiveMeetingSlot(id) {
+    const wrap = document.getElementById(`lmSlots_${id}`);
+    wrap.insertAdjacentHTML('beforeend', lmSlotRow(id, { weekday: 3, time: '11:00' }));
+  }
   function renderLiveMeetingsList() {
     const el = document.getElementById('liveMeetingsList');
-    if (!_liveMeetingsData.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No live meetings yet — the Books shelf on the splash screen will not show a Live Meetings row until there is at least one.</div>'; return; }
-    el.innerHTML = _liveMeetingsData.map(m => `
-      <div style="display:flex; flex-direction:column; gap:6px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 14px; ${m.active ? '' : 'opacity:0.5'}">
+    if (!Array.isArray(_liveMeetingsData) || !_liveMeetingsData.length) { el.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3);font-style:italic">No live meetings yet — the home screen shows no Live Meetings row until there is at least one.</div>'; return; }
+    el.innerHTML = _liveMeetingsData.map(m => {
+      const recent = (m.recent_reminders || []).map(r => `${lmEsc(r.slot_key)} → ${r.recipient_count} sent`).join(' · ');
+      return `
+      <div style="display:flex; flex-direction:column; gap:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:14px; ${m.active ? '' : 'opacity:0.6'}">
         <div style="display:flex; align-items:center; gap:10px">
-          <div style="flex:1">
-            <div style="font-size:13.5px;color:rgba(255,255,255,0.85)">${m.title}</div>
-            <div style="font-size:11.5px;color:rgba(255,255,255,0.4)">${m.schedule_text}</div>
-          </div>
-          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.5);cursor:pointer;white-space:nowrap">
-            <input type="checkbox" ${m.active ? 'checked' : ''} onchange="toggleLiveMeetingActive('${m.id}', this.checked)"/> Active
+          <div style="flex:1;font-size:14px;color:rgba(255,255,255,0.88)">${lmEsc(m.title)}</div>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:rgba(255,255,255,0.55);cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="lmActive_${m.id}" ${m.active ? 'checked' : ''}/> Active
           </label>
-          <button style="padding:6px 12px;font-size:11px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:rgba(255,180,170,0.85);cursor:pointer" onclick="deleteLiveMeeting('${m.id}')">Delete</button>
         </div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.35);word-break:break-all">${m.meeting_url}</div>
-      </div>
-    `).join('');
+        <div style="font-size:12px;color:rgba(180,230,200,0.8)">${m.next_label ? 'Next: ' + lmEsc(m.next_label) : 'No day and time set yet — reminders and the next date need both.'}</div>
+        <div><label class="lm-label">Title</label><input class="lm-input" style="width:100%" id="lmTitle_${m.id}" value="${lmEsc(m.title)}"/></div>
+        <div><label class="lm-label">Meeting URL</label><input class="lm-input" style="width:100%" id="lmUrl_${m.id}" value="${lmEsc(m.meeting_url)}"/></div>
+        <div class="lm-grid">
+          <div><label class="lm-label">Day</label><select class="lm-select" style="width:100%" id="lmDay_${m.id}">${lmDayOptions(m.weekday, true)}</select></div>
+          <div><label class="lm-label">Start time (UK)</label><input class="lm-input" style="width:100%" type="time" id="lmTime_${m.id}" value="${lmEsc(m.start_time || '')}"/></div>
+        </div>
+        <div><label class="lm-label">Note shown on the Live Meetings page and in the reminder (optional)</label><textarea class="lm-textarea" style="width:100%;min-height:54px" id="lmDesc_${m.id}">${lmEsc(m.description || '')}</textarea></div>
+        <div style="padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:10px;display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer">
+            <input type="checkbox" id="lmRemOn_${m.id}" ${m.reminders_enabled ? 'checked' : ''}/> Send weekly reminder emails (UK time)
+          </label>
+          <div id="lmSlots_${m.id}" style="display:flex;flex-direction:column;gap:6px">${(m.reminder_slots || []).map(sl => lmSlotRow(m.id, sl)).join('')}</div>
+          <button type="button" class="lm-btn" style="align-self:flex-start" onclick="addLiveMeetingSlot('${m.id}')">+ Add reminder time</button>
+          ${recent ? `<div style="font-size:11px;color:rgba(255,255,255,0.35)">Recent reminders: ${recent}</div>` : '<div style="font-size:11px;color:rgba(255,255,255,0.35)">No reminders sent yet.</div>'}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-primary" style="padding:8px 16px;font-size:11.5px" onclick="saveLiveMeeting('${m.id}')">Save</button>
+          <button type="button" class="lm-btn" onclick="sendLiveMeetingReminderNow('${m.id}')">Send reminder now</button>
+          <button type="button" class="lm-btn danger" style="margin-left:auto" onclick="deleteLiveMeeting('${m.id}')">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
   }
   async function createLiveMeeting() {
-    const titleEl = document.getElementById('newMeetingTitle');
-    const schedEl = document.getElementById('newMeetingSchedule');
-    const urlEl = document.getElementById('newMeetingUrl');
-    const errEl = document.getElementById('liveMeetingsErr');
-    const title = titleEl.value.trim(), schedule_text = schedEl.value.trim(), meeting_url = urlEl.value.trim();
-    if (!title || !schedule_text || !meeting_url) { errEl.textContent = 'Title, schedule text, and meeting URL are all required.'; return; }
-    errEl.textContent = '';
-    try {
-      const res = await fetch('/api/admin/live-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, schedule_text, meeting_url }) });
-      const data = await res.json();
-      if (!res.ok) { errEl.textContent = data.error || 'Could not add the meeting.'; return; }
-      titleEl.value = ''; schedEl.value = ''; urlEl.value = '';
-      await loadLiveMeetings();
-    } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+    return runBusy('Adding…', 'Meeting added.', async (start) => {
+      const titleEl = document.getElementById('newMeetingTitle');
+      const urlEl = document.getElementById('newMeetingUrl');
+      const errEl = document.getElementById('liveMeetingsErr');
+      const title = titleEl.value.trim(), meeting_url = urlEl.value.trim();
+      const weekday = document.getElementById('newMeetingWeekday').value;
+      const start_time = document.getElementById('newMeetingTime').value;
+      if (!title || !meeting_url) { errEl.textContent = 'Title and meeting URL are both required.'; return; }
+      errEl.textContent = '';
+      start();
+      try {
+        const res = await fetch('/api/admin/live-meetings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, meeting_url, weekday: weekday === '' ? null : Number(weekday), start_time: start_time || null }) });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || 'Could not add the meeting.'; return; }
+        titleEl.value = ''; urlEl.value = '';
+        await loadLiveMeetings();
+        return true;
+      } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+    });
   }
-  async function toggleLiveMeetingActive(id, active) {
-    try { await fetch(`/api/admin/live-meetings/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }); await loadLiveMeetings(); }
-    catch(e) { document.getElementById('liveMeetingsErr').textContent = 'Could not update — please try again.'; }
+  async function saveLiveMeeting(id) {
+    return runBusy('Saving…', 'Meeting saved.', async (start) => {
+      const errEl = document.getElementById('liveMeetingsErr');
+      const dayVal = document.getElementById(`lmDay_${id}`).value;
+      const slots = Array.from(document.querySelectorAll(`#lmSlots_${id} .lm-slot`)).map(row => ({
+        weekday: Number(row.querySelector('.lm-slot-day').value),
+        time: row.querySelector('.lm-slot-time').value,
+      }));
+      if (slots.some(sl => !sl.time)) { appAlert('Every reminder needs a time — fill it in or remove that row.'); return; }
+      const body = {
+        title: document.getElementById(`lmTitle_${id}`).value.trim(),
+        meeting_url: document.getElementById(`lmUrl_${id}`).value.trim(),
+        weekday: dayVal === '' ? null : Number(dayVal),
+        start_time: document.getElementById(`lmTime_${id}`).value || null,
+        description: document.getElementById(`lmDesc_${id}`).value.trim(),
+        active: document.getElementById(`lmActive_${id}`).checked,
+        reminders_enabled: document.getElementById(`lmRemOn_${id}`).checked,
+        reminder_slots: slots,
+      };
+      if (body.reminders_enabled && (body.weekday === null || !body.start_time)) { appAlert('Set the meeting day and start time before turning reminders on, so the reminder can say when it is.'); return; }
+      if (body.reminders_enabled && !slots.length) { appAlert('Add at least one reminder time, or untick weekly reminders.'); return; }
+      errEl.textContent = '';
+      start();
+      try {
+        const res = await fetch(`/api/admin/live-meetings/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json();
+        if (!res.ok) { appAlert(data.error || 'Could not save the meeting.'); return; }
+        await loadLiveMeetings();
+        return true;
+      } catch(e) { appAlert('Something went wrong. Please try again.'); }
+    });
+  }
+  async function sendLiveMeetingReminderNow(id) {
+    return runBusy('Sending…', 'Reminder sent.', async (start) => {
+      const m = _liveMeetingsData.find(x => x.id === id);
+      if (!(await appConfirm(`Send the reminder for "${m ? m.title : 'this meeting'}" to everyone now? Save any changes first — this uses what's saved.`))) return;
+      start();
+      try {
+        const res = await fetch(`/api/admin/live-meetings/${id}/send-reminder`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { appAlert(data.error || 'Could not send the reminder.'); return; }
+        setTimeout(loadLiveMeetings, 4000);
+        return `Reminder going out to ${data.recipientCount} ${data.recipientCount === 1 ? 'person' : 'people'} now. Delivery shows in Reports → Email Log.`;
+      } catch(e) { appAlert('Something went wrong. Please try again.'); }
+    });
   }
   async function deleteLiveMeeting(id) {
-    if (!confirm('Remove this live meeting? This cannot be undone.')) return;
-    try { await fetch(`/api/admin/live-meetings/${id}`, { method: 'DELETE' }); await loadLiveMeetings(); }
-    catch(e) { document.getElementById('liveMeetingsErr').textContent = 'Could not delete — please try again.'; }
+    return runBusy('Deleting…', 'Meeting deleted.', async (start) => {
+      if (!(await appConfirm('Remove this live meeting? Its reminders stop too. This cannot be undone.'))) return;
+      start();
+      try {
+        const res = await fetch(`/api/admin/live-meetings/${id}`, { method: 'DELETE' });
+        if (!res.ok) { appAlert('Could not delete — please try again.'); return; }
+        await loadLiveMeetings();
+        return true;
+      } catch(e) { appAlert('Could not delete — please try again.'); }
+    });
   }
+  document.getElementById('newMeetingWeekday').innerHTML = lmDayOptions(4, true);
   loadLiveMeetings();
 
   // ── Splash Carousel speed (Per Bot 48) ──
@@ -573,19 +721,20 @@
     } catch(e) { /* leave the default shown in the input */ }
   }
   async function saveCarouselSpeed() {
+    return runBusy('Saving…', 'Carousel speed saved.', async (start) => {
     const input = document.getElementById('carouselSpeedInput');
     const errEl = document.getElementById('carouselSpeedErr');
     const val = parseFloat(input.value);
     if (!val || val < 1 || val > 30) { errEl.textContent = 'Enter a number of seconds between 1 and 30.'; return; }
     errEl.textContent = '';
+    start();
     try {
       const res = await fetch('/api/admin/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carouselSpeedSeconds: val }) });
       const data = await res.json();
       if (!res.ok) { errEl.textContent = data.error || 'Could not save.'; return; }
-      errEl.style.color = 'rgba(180,230,200,0.85)';
-      errEl.textContent = 'Saved.';
-      setTimeout(() => { errEl.textContent = ''; errEl.style.color = ''; }, 2000);
+      return true;
     } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  });
   }
   loadCarouselSpeed();
   </script>
@@ -810,8 +959,10 @@
       } catch (e) { /* leave fields blank — Save still works, will just start from scratch */ }
     }
     async function savePreviewConfig(mediaType) {
+    return runBusy('Saving…', 'Preview settings saved.', async (start) => {
       const unit = PREVIEW_UNIT[mediaType];
       const feedback = document.getElementById(previewFieldId(mediaType, 'Feedback'));
+      start();
       feedback.textContent = 'Saving…';
       feedback.style.color = 'rgba(255,255,255,0.5)';
       const rawValue = parseFloat(document.getElementById(previewFieldId(mediaType, unit.field)).value);
@@ -829,11 +980,13 @@
         if (!res.ok) throw new Error('Save failed.');
         feedback.textContent = 'Saved.';
         feedback.style.color = 'rgba(140,220,160,0.9)';
+        return true;
       } catch (e) {
         feedback.textContent = 'Could not save: ' + e.message;
         feedback.style.color = 'rgba(255,140,120,0.9)';
       }
-    }
+    });
+  }
     loadPreviewConfig('audio');
     loadPreviewConfig('video');
     loadPreviewConfig('pdf');
@@ -1032,24 +1185,24 @@
     if (!body.contactEmail || !body.contactEmail.includes('@')) { err.textContent = 'A valid contact email is required.'; return; }
 
     err.textContent = '';
-    btn.disabled = true; btn.textContent = 'Saving…';
+    setBtnLoading(btn, true, 'Saving…');
     try {
       const res  = await fetch('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
       if (data.ok) {
         if (_alreadySetUp) {
-          btn.disabled = false; btn.textContent = 'Saved ✓';
-          setTimeout(() => { btn.textContent = 'Save changes'; }, 2000);
+          setBtnLoading(btn, false);
+          appAlert('Settings saved.');
         } else {
           window.location.href = '/admin/';
         }
       } else {
         err.textContent = data.error || 'Something went wrong. Please try again.';
-        btn.disabled = false; btn.textContent = _alreadySetUp ? 'Save changes' : 'Save and continue';
+        setBtnLoading(btn, false);
       }
     } catch(e) {
       err.textContent = 'Something went wrong. Please try again.';
-      btn.disabled = false; btn.textContent = _alreadySetUp ? 'Save changes' : 'Save and continue';
+      setBtnLoading(btn, false);
     }
   }
 
@@ -1078,11 +1231,13 @@
     `).join('');
   }
   async function createSkin() {
+    return runBusy('Adding…', 'Skin added.', async (start) => {
     const nameEl = document.getElementById('newSkinName');
     const errEl = document.getElementById('skinsErr');
     const name = nameEl.value.trim();
     if (!name) { errEl.textContent = 'Enter a name first.'; return; }
     errEl.textContent = '';
+    start();
     try {
       const res = await fetch('/api/admin/skins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
       const data = await res.json();
@@ -1090,7 +1245,9 @@
       nameEl.value = '';
       await loadSkins();
       openSkinEditor(data.id);
+      return true;
     } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  });
   }
   function openSkinEditor(id) {
     const s = _skinsData.find(x => x.id === id);
@@ -1135,8 +1292,10 @@
   document.getElementById('skinColor').addEventListener('input', function() { document.getElementById('skinColorHex').value = this.value; });
   document.getElementById('skinColorHex').addEventListener('input', function() { if (/^#[0-9a-fA-F]{6}$/.test(this.value)) document.getElementById('skinColor').value = this.value; });
   async function saveSkinDetails() {
+    return runBusy('Saving…', 'Skin saved.', async (start) => {
     if (!_editingSkinId) return;
     const errEl = document.getElementById('skinEditorErr');
+    start();
     try {
       const res = await fetch(`/api/admin/skins/${_editingSkinId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -1151,7 +1310,9 @@
       errEl.textContent = '';
       await loadSkins();
       openSkinEditor(_editingSkinId);
+      return true;
     } catch(e) { errEl.textContent = 'Something went wrong. Please try again.'; }
+  });
   }
   async function uploadSkinAsset(kind) {
     if (!_editingSkinId) return;
@@ -1178,19 +1339,29 @@
     input.value = '';
   }
   async function removeSkinBackground(url) {
+    return runBusy('Removing…', 'Background removed.', async (start) => {
     if (!_editingSkinId) return;
-    await fetch(`/api/admin/skins/${_editingSkinId}/background`, {
+    start();
+    const res = await fetch(`/api/admin/skins/${_editingSkinId}/background`, {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
-    });
+    }).catch(() => null);
     await loadSkins();
     openSkinEditor(_editingSkinId);
+    if (!res || !res.ok) { appAlert('Could not remove that background — please try again.'); return; }
+    return true;
+  });
   }
   async function deleteSkinFromEditor() {
+    return runBusy('Deleting…', 'Skin deleted.', async (start) => {
     if (!_editingSkinId) return;
     if (!(await appConfirm(`Delete the "${document.getElementById('skinEditorTitle').textContent}" skin? Accounts already using it just fall back to standard branding — nothing about their access changes.`))) return;
-    await fetch(`/api/admin/skins/${_editingSkinId}`, { method: 'DELETE' });
+    start();
+    const res = await fetch(`/api/admin/skins/${_editingSkinId}`, { method: 'DELETE' }).catch(() => null);
+    if (!res || !res.ok) { appAlert('Could not delete the skin — please try again.'); return; }
     closeSkinEditor();
     await loadSkins();
+    return true;
+  });
   }
 
   // ══ Legal documents (Per Bot 15h) ══
@@ -1269,6 +1440,7 @@
   }
 
   async function saveLegalDocument() {
+    return runBusy('Saving…', 'Saved as a draft.', async (start) => {
     const title = document.getElementById('legalDocTitle').value.trim();
     const content = document.getElementById('legalDocContent').value.trim();
     const consent = document.getElementById('legalDocConsent').checked;
@@ -1278,19 +1450,26 @@
     if (!title) { err.textContent = 'Title required.'; return; }
     if (!content) { err.textContent = 'Content required.'; return; }
     if (!slug) slug = title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    start();
     const res = await fetch('/api/admin/legal', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug, title, content, requiresConsent: consent, skinId: skinId || null })
     });
     const data = await res.json();
-    if (data.id) { closeLegalEditor(); loadLegalDocs(); }
-    else err.textContent = data.error || 'Could not save.';
+    if (data.id) { closeLegalEditor(); loadLegalDocs(); return true; }
+    err.textContent = data.error || 'Could not save.';
+  });
   }
 
   async function publishLegalDocument(id) {
+    return runBusy('Publishing…', 'Published.', async (start) => {
     if (!(await appConfirm('Publish this document? It will be visible immediately to everyone it applies to.'))) return;
-    await fetch(`/api/admin/legal/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'publish' }) });
+    start();
+    const res = await fetch(`/api/admin/legal/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'publish' }) }).catch(() => null);
     loadLegalDocs();
+    if (!res || !res.ok) { appAlert('Could not publish — please try again.'); return; }
+    return true;
+  });
   }
 
   loadCurrentConfig();
