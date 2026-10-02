@@ -1135,6 +1135,9 @@
     .pt-go { margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
     .pt-btn { background:#fff; color:#0a0f0d; border:none; border-radius:999px; padding:9px 18px; font-size:13px; cursor:pointer; font-family:inherit; text-shadow:none; }
     .pt-btn.ghost { background:rgba(255,255,255,0.08); color:#fff; border:1px solid rgba(255,255,255,0.25); }
+    .pt-btn.small { padding:7px 14px; font-size:12px; }
+    /* Per App 36 — a status, not a button: the timer is already armed. */
+    .pt-set { margin-top:12px; padding:9px 12px; border-radius:12px; background:rgba(180,230,200,0.14); border:1px solid rgba(180,230,200,0.35); color:#fff; font-size:13px; line-height:1.5; text-align:center; }
     .pt-count { font-size:54px; font-weight:300; text-align:center; color:#fff; font-variant-numeric:tabular-nums; letter-spacing:0.02em; line-height:1.1; }
     .pt-sub { text-align:center; font-size:13px; color:rgba(180,230,200,0.95); margin-top:4px; }
     /* Per Bot 46 — chapter list, only ever rendered for files that
@@ -4410,10 +4413,14 @@
           </select>
           <button class="pt-btn ghost" style="padding:6px 12px" onclick="ptUnlockAudio(); ptRingBell();">Hear it</button>
         </div>
-        <div class="pt-note">${_pt.auto
-          ? `When this track finishes, a ${_pt.minutes}-minute silent practice begins by itself and a bell marks the end. Remembered for this track.`
-          : `Press Start timer when you're ready. Remembered for this track.`}</div>
-        <div class="pt-go"><button class="pt-btn" onclick="ptUnlockAudio(); ptStart(true);">Start timer now</button></div>
+        ${_pt.auto ? `
+          <div class="pt-set">✓ Timer is set — ${_pt.minutes} min of silence will begin when the track ends, with a bell at the end</div>
+          <div class="pt-go"><button class="pt-btn ghost small" onclick="ptUnlockAudio(); ptStart(true);">Start the timer now instead</button></div>
+        ` : `
+          <div class="pt-note">Start the ${_pt.minutes}-minute timer whenever you're ready.</div>
+          <div class="pt-go"><button class="pt-btn" onclick="ptUnlockAudio(); ptStart(true);">Start timer</button></div>
+        `}
+        <div class="pt-note" style="font-size:11px;opacity:0.8">Remembered for this track.</div>
       ` : `<div class="pt-note">If the track asks you to sit in silence for a while, choose the minutes here — the timer starts by itself when the track ends.</div>`}`;
   }
 
