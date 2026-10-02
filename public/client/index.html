@@ -1114,6 +1114,29 @@
     .np-progress { flex:1; height:5px; border-radius:3px; background:rgba(255,255,255,0.15); cursor:pointer; position:relative; }
     .np-progress-fill { height:100%; border-radius:3px; background:rgba(180,230,200,0.8); width:0%; }
     .np-time { font-size:11px; color:rgba(255,255,255,0.76); min-width:34px; text-align:right; }
+    /* Per App 36 — full player: times, skip, speed, silent-practice timer */
+    .np-title-line { font-size:15px; color:rgba(255,255,255,0.95); text-align:center; max-width:360px; }
+    .np-times { display:flex; justify-content:space-between; width:100%; max-width:360px; font-size:12.5px; color:rgba(255,255,255,0.88); font-variant-numeric:tabular-nums; margin-top:-8px; }
+    .np-times .np-remain { color:rgba(180,230,200,0.95); }
+    .np-ctl-row { display:flex; align-items:center; justify-content:center; gap:14px; width:100%; max-width:360px; }
+    .np-btn.np-skip { width:auto; min-width:52px; padding:0 10px; border-radius:22px; font-size:13px; }
+    .np-btn.np-main { width:60px; height:60px; font-size:22px; border-color:rgba(255,255,255,0.45); }
+    .np-btn.np-speed { width:auto; min-width:50px; padding:0 10px; border-radius:22px; font-size:12.5px; }
+    .pt-panel { width:100%; max-width:380px; border:1px solid rgba(255,255,255,0.14); border-radius:16px; padding:14px 14px 12px; background:rgba(10,15,13,0.32); box-sizing:border-box; }
+    .pt-head { font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:rgba(180,230,200,0.92); margin-bottom:10px; text-align:center; }
+    .pt-chips { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; }
+    .pt-chip { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.18); color:rgba(255,255,255,0.92); border-radius:999px; padding:6px 11px; font-size:13px; cursor:pointer; font-family:inherit; min-width:40px; }
+    .pt-chip.active { background:rgba(180,230,200,0.2); border-color:rgba(180,230,200,0.6); color:#fff; }
+    .pt-row { display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:rgba(255,255,255,0.88); justify-content:center; flex-wrap:wrap; }
+    .pt-row input[type=range] { flex:1; min-width:140px; accent-color:rgba(180,230,200,0.95); }
+    .pt-row select { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.18); color:#fff; border-radius:8px; padding:6px 8px; font-family:inherit; font-size:13px; }
+    .pt-row select option { background:#1a2420; }
+    .pt-note { font-size:12px; color:rgba(255,255,255,0.75); text-align:center; margin-top:10px; line-height:1.5; }
+    .pt-go { margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+    .pt-btn { background:#fff; color:#0a0f0d; border:none; border-radius:999px; padding:9px 18px; font-size:13px; cursor:pointer; font-family:inherit; text-shadow:none; }
+    .pt-btn.ghost { background:rgba(255,255,255,0.08); color:#fff; border:1px solid rgba(255,255,255,0.25); }
+    .pt-count { font-size:54px; font-weight:300; text-align:center; color:#fff; font-variant-numeric:tabular-nums; letter-spacing:0.02em; line-height:1.1; }
+    .pt-sub { text-align:center; font-size:13px; color:rgba(180,230,200,0.95); margin-top:4px; }
     /* Per Bot 46 — chapter list, only ever rendered for files that
        actually have chapters (audiobooks combined via the admin
        audiobook-combine flow); everything else's now-playing card looks
@@ -3884,6 +3907,12 @@
     // with no explanation. Short-circuit with the same upgrade prompt used
     // everywhere else instead of a silent failure.
     if (file && file.accessible === false) { showUpgradeNotice(file.title); return; }
+    // Per App 36 — runs inside the tap that started playback, so the
+    // timer's bell and keep-alive sound are allowed to play later
+    // without another tap (iOS/Safari rule).
+    ptUnlockAudio();
+    if (!_currentAudioFile || _currentAudioFile.id !== file.id) ptStop();
+    else if (_pt.state === 'done') _pt.state = 'idle';
     const myToken = ++_mpToken;
     // Tapping the same file again while it's already playing should just
     // do nothing, rather than restart it from zero.
@@ -3974,8 +4003,10 @@
     // very start (nothing to resume) or right at the very end (almost
     // certainly means they finished it last time; starting over reads
     // better than reopening one second from the end).
+    mpAudio.playbackRate = npGetSpeed();
     mpAudio.addEventListener('loadedmetadata', () => {
       if (myToken !== _mpToken) return;
+      npRenderTimes();
       if (resumePosition > 5 && (!mpAudio.duration || resumePosition < mpAudio.duration - 15)) {
         mpAudio.currentTime = resumePosition;
       }
@@ -3987,7 +4018,8 @@
       const mpFillEl = document.getElementById('mpFill'); if (mpFillEl) mpFillEl.style.width = pct + '%';
       const mpTimeEl = document.getElementById('mpTime'); if (mpTimeEl) mpTimeEl.textContent = timeText;
       const npFillEl = document.getElementById('npFill'); if (npFillEl) npFillEl.style.width = pct + '%';
-      const npTimeEl = document.getElementById('npTime'); if (npTimeEl) npTimeEl.textContent = timeText;
+      npRenderTimes();
+      npUpdatePositionState();
       updateActiveChapterHighlight(mpAudio.currentTime);
       // Save roughly every 10 real seconds of playback — enough to
       // survive a crashed tab without turning every timeupdate tick
@@ -4027,18 +4059,362 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positionSeconds: 0 })
       }).catch(() => {});
-      handleAudioStopped();
+      // Per App 36 — a silent-practice timer armed for this track starts
+      // now, and the card stays put (going back to the lesson list would
+      // pull the person out of their practice). Otherwise as before.
+      if (ptShouldAutoStart(file)) ptStart(false);
+      else handleAudioStopped();
       // Per's request — this really was a free-preview grant (never
       // shown for a real member/client's own full playback), so this is
       // the moment to actually ask.
       if (previewInfo) showPreviewEndedPopup(previewInfo);
     });
     mpAudio.play();
+    npSetMediaSession(file);
     // Mark play button
     document.querySelectorAll('.play-btn').forEach(b => {
       b.classList.toggle('playing', b.dataset.fileId === file.id);
       b.textContent = b.dataset.fileId === file.id ? '⏸' : '▶';
     });
+  }
+
+  // ═══ Per App 36 — full audio player + built-in silent-practice timer ═══
+  // Retreat tracks guide someone in and then say "set a timer for N
+  // minutes and continue in silence". The player now shows the track's
+  // full length and time left, has skip/speed and lock-screen controls,
+  // and carries its own timer: choose the minutes once (remembered per
+  // track), and it starts by itself the moment the track ends — the card
+  // stays open, a big countdown runs, a bell sounds at the end.
+  //
+  // Works offline: the bell is fetched once as a blob (from the live
+  // file, or the offline cache), and if neither is reachable a bell tone
+  // generated right here in the browser is used, so the end of a
+  // practice is never silent. A looping silent sound keeps the audio
+  // session alive while the timer runs, so the bell still rings with the
+  // screen locked; the countdown is worked out from the clock, not by
+  // counting ticks, so it's right the moment the screen wakes.
+
+  // ── Times ──
+  function npRenderTimes() {
+    const elE = document.getElementById('npElapsed');
+    if (!elE) return;
+    const cur = mpAudio ? mpAudio.currentTime || 0 : 0;
+    const dur = mpAudio && isFinite(mpAudio.duration) ? mpAudio.duration : 0;
+    elE.textContent = fmtTime(cur);
+    document.getElementById('npTotal').textContent = dur ? `of ${fmtTime(dur)}` : '–:––';
+    document.getElementById('npRemain').textContent = dur ? `${fmtTime(Math.max(0, dur - cur))} left` : '–:–– left';
+  }
+  function npSkip(sec) {
+    if (!mpAudio) return;
+    const dur = isFinite(mpAudio.duration) ? mpAudio.duration : Infinity;
+    mpAudio.currentTime = Math.max(0, Math.min(dur - 0.25, (mpAudio.currentTime || 0) + sec));
+    npRenderTimes();
+  }
+  const NP_SPEEDS = [1, 1.25, 1.5, 0.75];
+  function npGetSpeed() { const v = parseFloat(localStorage.getItem('npSpeed') || '1'); return NP_SPEEDS.includes(v) ? v : 1; }
+  function npSpeedLabel() { return `${npGetSpeed()}×`; }
+  function npCycleSpeed() {
+    const next = NP_SPEEDS[(NP_SPEEDS.indexOf(npGetSpeed()) + 1) % NP_SPEEDS.length];
+    try { localStorage.setItem('npSpeed', String(next)); } catch (e) {}
+    if (mpAudio) mpAudio.playbackRate = next;
+    const b = document.getElementById('npSpeedBtn'); if (b) b.textContent = `${next}×`;
+  }
+
+  // ── Lock screen / headphone controls (Media Session) ──
+  let _npLastPosState = 0;
+  function npSetMediaSession(file) {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: file.title || '',
+        artist: (window.__brandName || document.title || 'Deeper Mindfulness').replace(/\s*[—-].*$/, ''),
+        artwork: [{ src: '/favicon-dynamic', sizes: '512x512' }],
+      });
+      const ms = navigator.mediaSession;
+      ms.setActionHandler('play', () => { if (_pt.state === 'paused') ptPauseResume(); else if (mpAudio && mpAudio.paused) mpToggle(); });
+      ms.setActionHandler('pause', () => { if (_pt.state === 'running') ptPauseResume(); else if (mpAudio && !mpAudio.paused) mpToggle(); });
+      ms.setActionHandler('seekbackward', () => npSkip(-15));
+      ms.setActionHandler('seekforward', () => npSkip(30));
+      try { ms.setActionHandler('seekto', (d) => { if (mpAudio && d.seekTime != null) { mpAudio.currentTime = d.seekTime; npRenderTimes(); } }); } catch (e) {}
+      const chapterJump = (dir) => {
+        if (!mpAudio || !_currentChapters.length) return;
+        const t = mpAudio.currentTime;
+        let idx = 0;
+        _currentChapters.forEach((c, i) => { if (c.start_seconds <= t) idx = i; });
+        if (dir < 0 && t - _currentChapters[idx].start_seconds > 3) return mpSeekToChapter(_currentChapters[idx].start_seconds);
+        const n = Math.max(0, Math.min(_currentChapters.length - 1, idx + dir));
+        mpSeekToChapter(_currentChapters[n].start_seconds);
+      };
+      try { ms.setActionHandler('previoustrack', _currentChapters.length ? () => chapterJump(-1) : null); } catch (e) {}
+      try { ms.setActionHandler('nexttrack', _currentChapters.length ? () => chapterJump(1) : null); } catch (e) {}
+    } catch (e) { /* not supported here — on-screen controls still work */ }
+  }
+  function npUpdatePositionState() {
+    if (!('mediaSession' in navigator) || !mpAudio || !isFinite(mpAudio.duration) || !mpAudio.duration) return;
+    const now = Date.now();
+    if (now - _npLastPosState < 2000) return;
+    _npLastPosState = now;
+    try { navigator.mediaSession.setPositionState({ duration: mpAudio.duration, playbackRate: mpAudio.playbackRate || 1, position: Math.min(mpAudio.currentTime, mpAudio.duration) }); } catch (e) {}
+  }
+
+  // ── Generated sounds (no network needed) ──
+  function _wavFromSamples(samples, rate, bits) {
+    const bytesPer = bits / 8, dataLen = samples.length * bytesPer;
+    const buf = new ArrayBuffer(44 + dataLen), v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * bytesPer, true); v.setUint16(32, bytesPer, true); v.setUint16(34, bits, true);
+    w(36, 'data'); v.setUint32(40, dataLen, true);
+    if (bits === 8) samples.forEach((x, i) => v.setUint8(44 + i, Math.max(0, Math.min(255, Math.round(128 + x * 127)))));
+    else samples.forEach((x, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 32767, true));
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  let _ptSilenceUrl = null, _ptSynthBellUrl = null;
+  function ptSilenceUrl() {
+    if (!_ptSilenceUrl) _ptSilenceUrl = _wavFromSamples(new Array(8000).fill(0), 8000, 8);
+    return _ptSilenceUrl;
+  }
+  // A soft singing-bowl-like tone: a few inharmonic partials, each
+  // fading at its own rate, with a gentle 15 ms attack. About 8 seconds.
+  function ptSynthBellUrl() {
+    if (_ptSynthBellUrl) return _ptSynthBellUrl;
+    const rate = 22050, secs = 8, n = rate * secs, out = new Array(n);
+    const base = 262;
+    const partials = [[1, 1.0, 0.9], [2.71, 0.45, 1.6], [5.13, 0.22, 2.6], [8.45, 0.1, 3.8]];
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      const attack = Math.min(1, t / 0.015);
+      let x = 0;
+      for (const [ratio, amp, decay] of partials) x += amp * Math.exp(-decay * t) * Math.sin(2 * Math.PI * base * ratio * t + ratio);
+      out[i] = 0.42 * attack * x * (1 + 0.04 * Math.sin(2 * Math.PI * 1.3 * t));
+    }
+    _ptSynthBellUrl = _wavFromSamples(out, rate, 16);
+    return _ptSynthBellUrl;
+  }
+
+  // ── Timer state ──
+  const _pt = { fileId: null, minutes: 0, auto: true, startBell: false, state: 'idle', endsAt: 0, remainingMs: 0, tick: null, bellUrl: null, bellId: '' };
+  let _ptKeepAlive = null, _ptBell = null, _ptUnlocked = false;
+  function _ptEls() {
+    if (!_ptKeepAlive) { _ptKeepAlive = new Audio(); _ptKeepAlive.loop = true; _ptKeepAlive.preload = 'auto'; }
+    if (!_ptBell) {
+      _ptBell = new Audio(); _ptBell.preload = 'auto';
+      // A bell can interrupt the silent keep-alive on iOS; pick it back
+      // up afterwards so a running timer stays alive with the screen off.
+      _ptBell.addEventListener('ended', () => { if (_pt.state === 'running') { try { _ptKeepAlive.play().catch(() => {}); } catch (e) {} } });
+    }
+  }
+  function ptUnlockAudio() {
+    _ptEls();
+    if (_ptUnlocked) return;
+    // Played muted and paused again in the same moment: enough for the
+    // browser to treat both as started by this tap, without ever
+    // sounding or competing with the track that's about to play (iOS
+    // only lets one sound play at a time).
+    try {
+      _ptKeepAlive.src = ptSilenceUrl();
+      _ptKeepAlive.muted = true; const p = _ptKeepAlive.play(); if (p && p.catch) p.catch(() => {}); _ptKeepAlive.pause(); _ptKeepAlive.muted = false;
+      _ptBell.src = _pt.bellUrl || ptSynthBellUrl();
+      _ptBell.muted = true; const q = _ptBell.play(); if (q && q.catch) q.catch(() => {}); _ptBell.pause(); _ptBell.muted = false;
+      _ptUnlocked = true;
+    } catch (e) {}
+  }
+  function ptPrefsFor(fileId) {
+    try { return JSON.parse(localStorage.getItem('ptTrack:' + fileId) || 'null') || {}; } catch (e) { return {}; }
+  }
+  function ptSavePrefs() {
+    if (!_pt.fileId) return;
+    try {
+      localStorage.setItem('ptTrack:' + _pt.fileId, JSON.stringify({ minutes: _pt.minutes, auto: _pt.auto }));
+      localStorage.setItem('ptBellId', _pt.bellId || '');
+      localStorage.setItem('ptStartBell', _pt.startBell ? '1' : '0');
+    } catch (e) {}
+  }
+  function ptShouldAutoStart(file) { return _pt.fileId === file.id && _pt.minutes > 0 && _pt.auto && _pt.state === 'idle'; }
+
+  // Bells: the account's chosen timer bell if reachable (live or the
+  // offline cache), otherwise the built-in tone. Fetched as a blob so
+  // once loaded it never needs the network again this session.
+  let _ptBellListCache = null;
+  async function ptLoadBellList() {
+    if (_ptBellListCache) return _ptBellListCache;
+    try {
+      const bells = (typeof timerSounds !== 'undefined' && timerSounds.bells && timerSounds.bells.length)
+        ? timerSounds.bells
+        : (await (await fetch('/api/client/content')).json()).filter(f => f.content_type === 'timer_bell');
+      _ptBellListCache = bells.map(b => ({ id: b.id, title: b.title }));
+      try { localStorage.setItem('ptBellList', JSON.stringify(_ptBellListCache)); } catch (e) {}
+    } catch (e) {
+      try { _ptBellListCache = JSON.parse(localStorage.getItem('ptBellList') || '[]'); } catch (e2) { _ptBellListCache = []; }
+    }
+    return _ptBellListCache;
+  }
+  async function ptResolveBell() {
+    const id = _pt.bellId;
+    if (!id) { _pt.bellUrl = ptSynthBellUrl(); return; }
+    const toBlobUrl = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error('bell ' + r.status); return URL.createObjectURL(await r.blob()); };
+    try {
+      const d = await (await fetch(`/api/content/library/${id}/playback-url`)).json();
+      if (!d.url) throw new Error('no url');
+      _pt.bellUrl = await toBlobUrl(d.url);
+      // Keep a copy in the offline cache so this bell still rings with no signal next time.
+      if (typeof cacheFileForOffline === 'function') cacheFileForOffline(id);
+      return;
+    } catch (e) {}
+    try { _pt.bellUrl = await toBlobUrl(`/api/content/library/${id}/offline-stream`); return; } catch (e) {}
+    _pt.bellUrl = ptSynthBellUrl();
+  }
+  function ptRingBell() {
+    _ptEls();
+    try {
+      _ptBell.muted = false;
+      if (_ptBell.src !== (_pt.bellUrl || ptSynthBellUrl())) _ptBell.src = _pt.bellUrl || ptSynthBellUrl();
+      _ptBell.currentTime = 0;
+      const p = _ptBell.play();
+      if (p && p.catch) p.catch(() => { try { _ptBell.src = ptSynthBellUrl(); _ptBell.play().catch(() => {}); } catch (e) {} });
+    } catch (e) {}
+  }
+
+  // ── Running the timer ──
+  function ptStart(fromButton) {
+    if (!_pt.minutes) return;
+    _ptEls();
+    if (mpAudio && !mpAudio.paused && fromButton) { mpAudio.pause(); setAllPlayBtns('▶'); }
+    _pt.state = 'running';
+    _pt.endsAt = Date.now() + _pt.minutes * 60000;
+    try { _ptKeepAlive.src = ptSilenceUrl(); _ptKeepAlive.loop = true; _ptKeepAlive.play().catch(() => {}); } catch (e) {}
+    if (_pt.startBell) ptRingBell();
+    clearInterval(_pt.tick);
+    _pt.tick = setInterval(ptTick, 500);
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: `Silent practice — ${_pt.minutes} min`, artist: (_currentAudioFile && _currentAudioFile.title) || '', artwork: [{ src: '/favicon-dynamic', sizes: '512x512' }] });
+        navigator.mediaSession.playbackState = 'playing';
+      } catch (e) {}
+    }
+    ptRender();
+  }
+  function ptTick() {
+    if (_pt.state !== 'running') return;
+    const left = _pt.endsAt - Date.now();
+    if (left <= 0) return ptFinish();
+    const c = document.getElementById('ptCount'); if (c) c.textContent = fmtTime(Math.ceil(left / 1000));
+  }
+  function ptPauseResume() {
+    if (_pt.state === 'running') {
+      _pt.state = 'paused'; _pt.remainingMs = Math.max(0, _pt.endsAt - Date.now());
+      clearInterval(_pt.tick); try { _ptKeepAlive.pause(); } catch (e) {}
+      try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+    } else if (_pt.state === 'paused') {
+      _pt.state = 'running'; _pt.endsAt = Date.now() + _pt.remainingMs;
+      try { _ptKeepAlive.play().catch(() => {}); } catch (e) {}
+      clearInterval(_pt.tick); _pt.tick = setInterval(ptTick, 500);
+      try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
+    }
+    ptRender();
+  }
+  function ptAddMinutes(m) {
+    if (_pt.state === 'running') _pt.endsAt += m * 60000;
+    else if (_pt.state === 'paused') _pt.remainingMs += m * 60000;
+    ptTick(); ptRender();
+  }
+  function ptFinish() {
+    clearInterval(_pt.tick); _pt.tick = null;
+    ptRingBell();
+    // Let the bell ring out before the keep-alive sound stops.
+    setTimeout(() => { try { if (_pt.state !== 'running') _ptKeepAlive.pause(); } catch (e) {} }, 9000);
+    _pt.state = 'done';
+    try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
+    ptRender();
+  }
+  function ptStop() {
+    clearInterval(_pt.tick); _pt.tick = null;
+    try { if (_ptKeepAlive) _ptKeepAlive.pause(); } catch (e) {}
+    if (_pt.state !== 'idle') _pt.state = 'idle';
+  }
+  // visibility: the countdown catches up the instant the screen wakes
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && _pt.state === 'running') ptTick(); });
+
+  // ── The panel inside the Now Playing card ──
+  const PT_CHOICES = [0, 5, 10, 15, 20, 30, 45, 60];
+  async function ptOnCardRendered(file) {
+    if (_pt.fileId !== file.id) {
+      const pr = ptPrefsFor(file.id);
+      _pt.fileId = file.id;
+      _pt.minutes = pr.minutes || 0;
+      _pt.auto = pr.auto !== false;
+      if (_pt.state !== 'running' && _pt.state !== 'paused') _pt.state = 'idle';
+    }
+    _pt.bellId = localStorage.getItem('ptBellId') || '';
+    _pt.startBell = localStorage.getItem('ptStartBell') === '1';
+    ptRender();
+    await ptLoadBellList();
+    if (_pt.state === 'idle') ptRender();
+    if (!_pt.bellUrl) ptResolveBell();
+  }
+  function ptSetMinutes(m) {
+    ptUnlockAudio();
+    _pt.minutes = Math.max(0, Math.min(180, Math.round(m)));
+    if (_pt.state === 'done') _pt.state = 'idle';
+    ptSavePrefs(); ptRender();
+  }
+  function ptRender() {
+    const el = document.getElementById('ptPanel');
+    if (!el) return;
+    if (_pt.state === 'running' || _pt.state === 'paused') {
+      const left = _pt.state === 'running' ? Math.max(0, _pt.endsAt - Date.now()) : _pt.remainingMs;
+      el.innerHTML = `
+        <div class="pt-head">Silent practice</div>
+        <div class="pt-count" id="ptCount">${fmtTime(Math.ceil(left / 1000))}</div>
+        <div class="pt-sub">${_pt.state === 'paused' ? 'Paused' : 'A bell will sound at the end'}</div>
+        <div class="pt-go">
+          <button class="pt-btn ghost" onclick="ptPauseResume()">${_pt.state === 'paused' ? 'Resume' : 'Pause'}</button>
+          <button class="pt-btn ghost" onclick="ptAddMinutes(5)">+5 min</button>
+          <button class="pt-btn ghost" onclick="ptStop(); ptRender();">End</button>
+        </div>`;
+      return;
+    }
+    if (_pt.state === 'done') {
+      el.innerHTML = `
+        <div class="pt-head">Silent practice</div>
+        <div class="pt-count" style="font-size:30px">Complete</div>
+        <div class="pt-sub">${_pt.minutes} minutes</div>
+        <div class="pt-go">
+          ${(typeof _lessonCtx !== 'undefined' && _lessonCtx) ? '<button class="pt-btn" onclick="_pt.state=\'idle\'; handleAudioStopped();">Back to the lesson</button>' : ''}
+          <button class="pt-btn ghost" onclick="_pt.state='idle'; ptStart(true);">Again</button>
+        </div>`;
+      return;
+    }
+    const custom = _pt.minutes && !PT_CHOICES.includes(_pt.minutes);
+    const bells = _ptBellListCache || [];
+    el.innerHTML = `
+      <div class="pt-head">Timer for the silent practice</div>
+      <div class="pt-chips">
+        ${PT_CHOICES.map(m => `<button class="pt-chip ${(_pt.minutes === m) ? 'active' : ''}" onclick="ptSetMinutes(${m})">${m === 0 ? 'Off' : m}</button>`).join('')}
+      </div>
+      <div class="pt-row">
+        <input type="range" min="1" max="90" step="1" value="${_pt.minutes || 20}" oninput="document.getElementById('ptCustomLbl').textContent=this.value+' min'" onchange="ptSetMinutes(+this.value)" aria-label="Exact minutes"/>
+        <span id="ptCustomLbl" style="min-width:52px">${custom ? _pt.minutes : (_pt.minutes || 20)} min</span>
+      </div>
+      ${_pt.minutes ? `
+        <div class="pt-row">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${_pt.auto ? 'checked' : ''} onchange="_pt.auto=this.checked; ptSavePrefs(); ptRender();"/> Start when the track ends</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${_pt.startBell ? 'checked' : ''} onchange="_pt.startBell=this.checked; ptSavePrefs();"/> Bell at start</label>
+        </div>
+        <div class="pt-row">
+          <span>Bell</span>
+          <select onchange="_pt.bellId=this.value; _pt.bellUrl=null; ptSavePrefs(); ptResolveBell();">
+            <option value="" ${!_pt.bellId ? 'selected' : ''}>Built-in bell</option>
+            ${bells.map(b => `<option value="${b.id}" ${_pt.bellId === b.id ? 'selected' : ''}>${escapeHtml(b.title)}</option>`).join('')}
+          </select>
+          <button class="pt-btn ghost" style="padding:6px 12px" onclick="ptUnlockAudio(); ptRingBell();">Hear it</button>
+        </div>
+        <div class="pt-note">${_pt.auto
+          ? `When this track finishes, a ${_pt.minutes}-minute silent practice begins by itself and a bell marks the end. Remembered for this track.`
+          : `Press Start timer when you're ready. Remembered for this track.`}</div>
+        <div class="pt-go"><button class="pt-btn" onclick="ptUnlockAudio(); ptStart(true);">Start timer now</button></div>
+      ` : `<div class="pt-note">If the track asks you to sit in silence for a while, choose the minutes here — the timer starts by itself when the track ends.</div>`}`;
   }
 
   // Keeps the bottom mini-player's button and the in-overlay "Now Playing"
@@ -4068,6 +4444,7 @@
     document.getElementById('miniPlayer').classList.remove('visible');
   }
   function mpRestart() {
+    if (_pt.state === 'done' || _pt.state === 'running' || _pt.state === 'paused') { ptStop(); ptRender(); }
     if (!mpAudio) return;
     mpAudio.currentTime = 0;
     mpAudio.play();
@@ -4107,6 +4484,7 @@
   }
 
   function mpClose() {
+    ptStop();
     _mpToken++; // invalidate any play request still in flight
     if (mpAudio) { mpAudio.pause(); mpAudio = null; }
     document.getElementById('miniPlayer').classList.remove('visible');
@@ -5663,6 +6041,7 @@
     // Stop audio too, specifically when what's closing is the Now Playing
     // card (not some other file type) — closing it is a clear "I'm done
     // with this" signal, same as video.
+    if (_showingNowPlaying) ptStop();
     if (_showingNowPlaying && mpAudio) {
       mpAudio.pause(); mpAudio = null;
       _currentAudioFile = null;
@@ -9462,19 +9841,31 @@
     document.getElementById('playerMedia').innerHTML = `
       <div class="now-playing-card">
         <div class="now-playing-icon">🎧</div>
-        <div class="now-playing-controls">
-          <button class="np-btn" onclick="mpRestart()" title="Restart">⟲</button>
-          <button class="np-btn" id="npPlayBtn" onclick="mpToggle()">⏸</button>
-        </div>
         <div class="np-progress-wrap">
           <div class="np-progress" id="npProgress" onclick="mpSeek(event)" ontouchstart="mpSeek(event)">
             <div class="np-progress-fill" id="npFill"></div>
           </div>
-          <span class="np-time" id="npTime">0:00</span>
+        </div>
+        <div class="np-times">
+          <span id="npElapsed">0:00</span>
+          <span id="npTotal">–:––</span>
+          <span class="np-remain" id="npRemain">–:–– left</span>
+        </div>
+        <div class="np-ctl-row">
+          <button class="np-btn np-skip" onclick="npSkip(-15)" title="Back 15 seconds" aria-label="Back 15 seconds">↺ 15</button>
+          <button class="np-btn np-main" id="npPlayBtn" onclick="mpToggle()" aria-label="Play or pause">⏸</button>
+          <button class="np-btn np-skip" onclick="npSkip(30)" title="Forward 30 seconds" aria-label="Forward 30 seconds">30 ↻</button>
+        </div>
+        <div class="np-ctl-row" style="gap:10px">
+          <button class="np-btn np-speed" onclick="mpRestart()" title="Start again" aria-label="Start again">⟲ Start</button>
+          <button class="np-btn np-speed" id="npSpeedBtn" onclick="npCycleSpeed()" title="Playback speed" aria-label="Playback speed">${npSpeedLabel()}</button>
         </div>
         ${chapterListHtml}
+        <div class="pt-panel" id="ptPanel"></div>
       </div>
     `;
+    ptOnCardRendered(file);
+    npRenderTimes();
     pushPlayerHistoryState();
     document.getElementById('playerOverlay').classList.add('visible');
     document.getElementById('fullscreenBtn').style.display = 'none';
