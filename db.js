@@ -10924,7 +10924,11 @@ const MESSAGE_TYPE_REGISTRY = {
   // existed before this feature) — same situation as
   // savers_failure_resolved just above, so they simply start with zero
   // versions and run on their built-in defaults until/unless edited.
-  enrolment_confirmed:    { label: 'Course enrolment confirmed',       subjectCol: 'enrolment_confirmed_subject',    bodyCol: 'enrolment_confirmed_body',    formatCol: 'enrolment_confirmed_format',    extraCols: {} },
+  enrolment_confirmed:    { label: 'Course enrolment confirmed \u2014 live course (cohort with dates)', subjectCol: 'enrolment_confirmed_subject',    bodyCol: 'enrolment_confirmed_body',    formatCol: 'enrolment_confirmed_format',    extraCols: {} },
+  // Per App 36 — its own message for self-paced instances: no start date,
+  // no session reminders, so the live wording ("reminders as your first
+  // session gets closer") was simply wrong for them.
+  enrolment_confirmed_self_paced: { label: 'Course enrolment confirmed \u2014 self-paced', subjectCol: 'enrolment_confirmed_self_paced_subject', bodyCol: 'enrolment_confirmed_self_paced_body', formatCol: 'enrolment_confirmed_self_paced_format', extraCols: {} },
   // Per's request — the interval itself (how long before the session
   // this fires) is now admin-editable per type via hours_before, same
   // generic extra-field mechanism 'reminder'/'renewal' already use for
@@ -11118,6 +11122,15 @@ function seedDefaultCourseMessageVersions() {
       body: `You're all set for {{course_title}} — {{instance_title}}.
 
 We'll send a couple of reminders as your first session gets closer, so you don't need to keep the date in your head. In the meantime, everything's already waiting for you in the app whenever you want a look.`,
+    },
+    enrolment_confirmed_self_paced: {
+      label: 'Default',
+      subject: `Welcome — {{course_title}} is ready for you`,
+      body: `You're in. {{course_title}} is open in the app now, ready whenever you are.
+
+There's no start date and nothing to catch up on. Begin today or next week. Take one lesson at a sitting, or a few. Pause whenever life asks you to — the app remembers where you left off.
+
+When you're ready, open it and start with the first lesson.`,
     },
     session_reminder_3day: {
       label: 'Default',

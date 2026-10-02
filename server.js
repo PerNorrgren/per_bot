@@ -1567,6 +1567,18 @@ async function sendCourseEmail(user, type, defaultSubject, defaultBody, extraTok
   );
 }
 function emailEnrolmentConfirmed(user, courseTitle, instanceTitle, courseInstanceId, override) {
+  // Per App 36 — self-paced instances get their own message (no dates,
+  // no reminders coming); cohort instances keep the live-course one.
+  const inst = courseInstanceId ? db.getCourseInstance(courseInstanceId) : null;
+  if (inst && inst.mode !== 'cohort') {
+    return sendCourseEmail(user, 'enrolment_confirmed_self_paced', `Welcome — {{course_title}} is ready for you`,
+      `You're in. {{course_title}} is open in the app now, ready whenever you are.
+
+There's no start date and nothing to catch up on. Begin today or next week. Take one lesson at a sitting, or a few. Pause whenever life asks you to — the app remembers where you left off.
+
+When you're ready, open it and start with the first lesson.`,
+      { course_title: courseTitle, instance_title: instanceTitle }, courseInstanceId, override);
+  }
   return sendCourseEmail(user, 'enrolment_confirmed', `You're confirmed — {{course_title}}`,
     `You're all set for {{course_title}} — {{instance_title}}.
 

@@ -460,8 +460,9 @@
        person per session, however many times the check re-runs. -->
   <div>
     <div class="section-label">Course Messages</div>
-    <div style="padding:0 0 4px" class="modal-note">Enrolment confirmation fires immediately on a successful free enrolment. The three reminders fire automatically as each cohort session's own scheduled date/time (set by the facilitator, in the course's Sessions tab) gets close — 3 days before, 1 day before, and 1 hour before. {{course_link}} in any of these opens the app straight to that course, signing in first if needed.</div>
+    <div style="padding:0 0 4px" class="modal-note">Enrolment confirmation fires immediately on a successful free enrolment — the live-course version for a cohort instance (with dates), the self-paced version for a self-paced one. The three reminders fire automatically as each cohort session's own scheduled date/time (set by the facilitator, in the course's Sessions tab) gets close — 3 days before, 1 day before, and 1 hour before. {{course_link}} in any of these opens the app straight to that course, signing in first if needed.</div>
     <div id="sec_enrolment_confirmed" style="margin-top:12px"></div>
+    <div id="sec_enrolment_confirmed_self_paced" style="margin-top:12px"></div>
     <div id="sec_session_reminder_3day" style="margin-top:12px"></div>
     <div id="sec_session_reminder_1day" style="margin-top:12px"></div>
     <div id="sec_session_reminder_1hour" style="margin-top:12px"></div>
@@ -2512,6 +2513,7 @@
   // extraToken on all four rather than assumed available.
   const COURSE_MESSAGE_TYPES = {
     enrolment_confirmed:    [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{instance_title}}', label: 'This intake/instance name' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
+    enrolment_confirmed_self_paced: [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{instance_title}}', label: 'This intake/instance name' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
     session_reminder_3day:  [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
     session_reminder_1day:  [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
     session_reminder_1hour: [{ value: '{{course_title}}', label: 'Course title' }, { value: '{{session_title}}', label: 'Session title' }, { value: '{{session_date}}', label: 'Session date & time' }, { value: '{{course_link}}', label: "Link that opens the course in the app" }],
