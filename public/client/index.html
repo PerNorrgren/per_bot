@@ -4210,6 +4210,7 @@
   }
   function ptUnlockAudio() {
     _ptEls();
+    bgUnlock();
     if (_ptUnlocked) return;
     // Played muted and paused again in the same moment: enough for the
     // browser to treat both as started by this tap, without ever
@@ -4248,8 +4249,14 @@
         : (await (await fetch('/api/client/content')).json()).filter(f => f.content_type === 'timer_bell');
       _ptBellListCache = bells.map(b => ({ id: b.id, title: b.title }));
       try { localStorage.setItem('ptBellList', JSON.stringify(_ptBellListCache)); } catch (e) {}
+      const music = (typeof timerSounds !== 'undefined' && timerSounds.music && timerSounds.music.length)
+        ? timerSounds.music
+        : (await (await fetch('/api/client/content')).json()).filter(f => f.content_type === 'timer_music');
+      _ptMusicListCache = music.map(m => ({ id: m.id, title: m.title }));
+      try { localStorage.setItem('ptMusicList', JSON.stringify(_ptMusicListCache)); } catch (e) {}
     } catch (e) {
       try { _ptBellListCache = JSON.parse(localStorage.getItem('ptBellList') || '[]'); } catch (e2) { _ptBellListCache = []; }
+      try { _ptMusicListCache = JSON.parse(localStorage.getItem('ptMusicList') || '[]'); } catch (e2) { _ptMusicListCache = []; }
     }
     return _ptBellListCache;
   }
@@ -4279,6 +4286,168 @@
     } catch (e) {}
   }
 
+  // ── Background sound for the silent practice (Per App 36) ──
+  // Generated sounds cost no download and always work offline. Recorded
+  // loops (the account's "timer music" files) are fetched once, kept in
+  // memory, and saved for offline use the first time they're played
+  // with a signal. Both run through the browser's audio engine with a
+  // seamless loop (no gap at the join), and play out through a normal
+  // media element so phones treat it as media and keep it going with the
+  // screen locked. Fades in as the silence begins, fades out under the
+  // closing bell.
+  const BG_GENERATED = [
+    { id: 'gen:brown', title: 'Soft brown noise' },
+    { id: 'gen:ocean', title: 'Ocean-like swells' },
+    { id: 'gen:rain',  title: 'Gentle rain' },
+  ];
+  let _ptMusicListCache = null;
+  let _bgCtx = null, _bgMaster = null, _bgOutEl = null, _bgNodes = [], _bgBuffers = {}, _bgPreviewTimer = null;
+  function bgTargetGain() { return Math.pow((_pt.bgVol ?? 50) / 100, 1.6) * 0.9; }
+  function bgUnlock() {
+    try {
+      if (!_bgCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        _bgCtx = new AC();
+        _bgMaster = _bgCtx.createGain();
+        _bgMaster.gain.value = 0;
+        if (_bgCtx.createMediaStreamDestination) {
+          const dest = _bgCtx.createMediaStreamDestination();
+          _bgMaster.connect(dest);
+          _bgOutEl = new Audio();
+          _bgOutEl.srcObject = dest.stream;
+        } else {
+          _bgMaster.connect(_bgCtx.destination);
+        }
+      }
+      if (_bgCtx.state === 'suspended') _bgCtx.resume().catch(() => {});
+      // Unlock only (muted play, paused at once) — it must not keep
+      // playing alongside the guided track: iOS lets one sound play at a time.
+      if (_bgOutEl && _bgOutEl.paused) { _bgOutEl.muted = true; const p = _bgOutEl.play(); if (p && p.catch) p.catch(() => {}); _bgOutEl.pause(); _bgOutEl.muted = false; }
+    } catch (e) {}
+  }
+  // Noise buffer whose end blends into its start, so it loops with no click.
+  function _bgLoopBuffer(kind, seconds) {
+    const key = kind + seconds;
+    if (_bgBuffers[key]) return _bgBuffers[key];
+    const rate = _bgCtx.sampleRate, L = Math.floor(rate * seconds), N = Math.floor(rate * 0.5);
+    const raw = new Float32Array(L + N);
+    let last = 0;
+    for (let i = 0; i < L + N; i++) {
+      const w = Math.random() * 2 - 1;
+      if (kind === 'brown') { last = (last + 0.02 * w) / 1.02; raw[i] = last * 3.5; }
+      else raw[i] = w;
+    }
+    const buf = _bgCtx.createBuffer(1, L, rate), out = buf.getChannelData(0);
+    for (let i = 0; i < L; i++) out[i] = raw[i];
+    for (let i = 0; i < N; i++) { const t = i / N; out[i] = raw[i] * t + raw[L + i] * (1 - t); }
+    _bgBuffers[key] = buf;
+    return buf;
+  }
+  function _bgSource(buffer) {
+    const src = _bgCtx.createBufferSource();
+    src.buffer = buffer; src.loop = true; _bgNodes.push(src);
+    return src;
+  }
+  function _bgBuildGenerated(id) {
+    const c = _bgCtx;
+    if (id === 'gen:brown') {
+      const src = _bgSource(_bgLoopBuffer('brown', 12));
+      const g = c.createGain(); g.gain.value = 0.8;
+      src.connect(g).connect(_bgMaster); src.start();
+    } else if (id === 'gen:ocean') {
+      const src = _bgSource(_bgLoopBuffer('brown', 12));
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650; lp.Q.value = 0.4;
+      const g = c.createGain(); g.gain.value = 0.55;
+      // One slow swell every ~9 s: opens the filter and lifts the level together.
+      const lfo = c.createOscillator(); lfo.frequency.value = 0.11; _bgNodes.push(lfo);
+      const lfoToGain = c.createGain(); lfoToGain.gain.value = 0.42;
+      const lfoToFreq = c.createGain(); lfoToFreq.gain.value = 480;
+      lfo.connect(lfoToGain).connect(g.gain);
+      lfo.connect(lfoToFreq).connect(lp.frequency);
+      src.connect(lp).connect(g).connect(_bgMaster);
+      src.start(); lfo.start();
+    } else if (id === 'gen:rain') {
+      const white = _bgSource(_bgLoopBuffer('white', 9));
+      const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6500;
+      const gw = c.createGain(); gw.gain.value = 0.16;
+      white.connect(hp).connect(lp).connect(gw).connect(_bgMaster);
+      const body = _bgSource(_bgLoopBuffer('brown', 11));
+      const gb = c.createGain(); gb.gain.value = 0.35;
+      body.connect(gb).connect(_bgMaster);
+      white.start(); body.start();
+    }
+  }
+  async function _bgLoadRecording(id) {
+    if (_bgBuffers['file:' + id]) return _bgBuffers['file:' + id];
+    const getBytes = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error('bg ' + r.status); return r.arrayBuffer(); };
+    let bytes = null;
+    try {
+      const d = await (await fetch(`/api/content/library/${id}/playback-url`)).json();
+      if (!d.url) throw new Error('no url');
+      bytes = await getBytes(d.url);
+      if (typeof cacheFileForOffline === 'function') cacheFileForOffline(id);
+    } catch (e) {
+      bytes = await getBytes(`/api/content/library/${id}/offline-stream`);
+    }
+    const buf = await new Promise((res, rej) => _bgCtx.decodeAudioData(bytes, res, rej));
+    _bgBuffers['file:' + id] = buf;
+    return buf;
+  }
+  function bgStopNow() {
+    clearTimeout(_bgPreviewTimer); _bgPreviewTimer = null;
+    _bgNodes.forEach(n => { try { n.stop(); } catch (e) {} try { n.disconnect(); } catch (e) {} });
+    _bgNodes = [];
+    if (_bgOutEl && !_bgOutEl.paused) { try { _bgOutEl.pause(); } catch (e) {} }
+    if (_bgMaster && _bgCtx) { try { _bgMaster.gain.cancelScheduledValues(_bgCtx.currentTime); _bgMaster.gain.value = 0; } catch (e) {} }
+  }
+  function bgFade(target, seconds, stopAfter) {
+    if (!_bgCtx || !_bgMaster) return;
+    const now = _bgCtx.currentTime, g = _bgMaster.gain;
+    try { g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(target, now + seconds); } catch (e) {}
+    if (stopAfter) setTimeout(() => { if (_pt.state !== 'running') bgStopNow(); }, seconds * 1000 + 200);
+  }
+  async function bgStart(previewSeconds) {
+    bgStopNow();
+    if (!_pt.bgId) return;
+    bgUnlock();
+    if (!_bgCtx) return;
+    try { if (_bgCtx.state !== 'running') await _bgCtx.resume(); } catch (e) {}
+    if (_bgOutEl && _bgOutEl.paused) { try { _bgOutEl.play().catch(() => {}); } catch (e) {} }
+    try {
+      if (_pt.bgId.startsWith('gen:')) _bgBuildGenerated(_pt.bgId);
+      else {
+        const buf = await _bgLoadRecording(_pt.bgId);
+        if (!previewSeconds && _pt.state !== 'running') return; // timer ended/stopped while it loaded
+        const src = _bgSource(buf); src.connect(_bgMaster); src.start();
+      }
+      bgFade(bgTargetGain(), previewSeconds ? 1 : 4);
+      if (previewSeconds) _bgPreviewTimer = setTimeout(() => { if (_pt.state !== 'running') bgFade(0, 1.5, true); }, previewSeconds * 1000);
+    } catch (e) {
+      // A recording that can't be reached (no signal, never saved) falls
+      // back to a generated sound rather than leaving silence by surprise.
+      if (!_pt.bgId.startsWith('gen:')) { try { _bgBuildGenerated('gen:brown'); bgFade(bgTargetGain(), 4); } catch (e2) {} }
+    }
+  }
+  function bgPreview() {
+    ptUnlockAudio();
+    if (_pt.state === 'running') return;
+    bgStart(6);
+  }
+  function bgChoose(id) {
+    ptUnlockAudio();
+    _pt.bgId = id || '';
+    try { localStorage.setItem('ptBgId', _pt.bgId); } catch (e) {}
+    if (_pt.state === 'running') bgStart(); else bgStopNow();
+    ptRender();
+  }
+  function bgSetVolume(v) {
+    _pt.bgVol = v;
+    try { localStorage.setItem('ptBgVol', String(v)); } catch (e) {}
+    if (_bgCtx && _bgMaster && _bgNodes.length) { try { _bgMaster.gain.setTargetAtTime(bgTargetGain(), _bgCtx.currentTime, 0.1); } catch (e) {} }
+  }
+
   // ── Running the timer ──
   function ptStart(fromButton) {
     if (!_pt.minutes) return;
@@ -4288,6 +4457,7 @@
     _pt.endsAt = Date.now() + _pt.minutes * 60000;
     try { _ptKeepAlive.src = ptSilenceUrl(); _ptKeepAlive.loop = true; _ptKeepAlive.play().catch(() => {}); } catch (e) {}
     if (_pt.startBell) ptRingBell();
+    bgStart();
     clearInterval(_pt.tick);
     _pt.tick = setInterval(ptTick, 500);
     if ('mediaSession' in navigator) {
@@ -4308,11 +4478,13 @@
     if (_pt.state === 'running') {
       _pt.state = 'paused'; _pt.remainingMs = Math.max(0, _pt.endsAt - Date.now());
       clearInterval(_pt.tick); try { _ptKeepAlive.pause(); } catch (e) {}
+      bgFade(0, 1.5);
       try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
     } else if (_pt.state === 'paused') {
       _pt.state = 'running'; _pt.endsAt = Date.now() + _pt.remainingMs;
       try { _ptKeepAlive.play().catch(() => {}); } catch (e) {}
       clearInterval(_pt.tick); _pt.tick = setInterval(ptTick, 500);
+      bgFade(bgTargetGain(), 2);
       try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
     }
     ptRender();
@@ -4325,6 +4497,7 @@
   function ptFinish() {
     clearInterval(_pt.tick); _pt.tick = null;
     ptRingBell();
+    bgFade(0, 7, true);
     // Let the bell ring out before the keep-alive sound stops.
     setTimeout(() => { try { if (_pt.state !== 'running') _ptKeepAlive.pause(); } catch (e) {} }, 9000);
     _pt.state = 'done';
@@ -4333,6 +4506,7 @@
   }
   function ptStop() {
     clearInterval(_pt.tick); _pt.tick = null;
+    bgStopNow();
     try { if (_ptKeepAlive) _ptKeepAlive.pause(); } catch (e) {}
     if (_pt.state !== 'idle') _pt.state = 'idle';
   }
@@ -4350,6 +4524,8 @@
       if (_pt.state !== 'running' && _pt.state !== 'paused') _pt.state = 'idle';
     }
     _pt.bellId = localStorage.getItem('ptBellId') || '';
+    _pt.bgId = localStorage.getItem('ptBgId') || '';
+    _pt.bgVol = Math.max(0, Math.min(100, parseInt(localStorage.getItem('ptBgVol') || '50', 10)));
     // Per App 36 — no start bell: the track has just guided them in, so a
     // bell at the start of the silence only startles. End bell only.
     _pt.startBell = false;
@@ -4373,6 +4549,7 @@
         <div class="pt-head">Silent practice</div>
         <div class="pt-count" id="ptCount">${fmtTime(Math.ceil(left / 1000))}</div>
         <div class="pt-sub">${_pt.state === 'paused' ? 'Paused' : 'A bell will sound at the end'}</div>
+        ${_pt.bgId ? `<div class="pt-row"><span style="font-size:12px">Background volume</span><input type="range" min="0" max="100" step="1" value="${_pt.bgVol}" oninput="bgSetVolume(+this.value)" aria-label="Background volume"/></div>` : ''}
         <div class="pt-go">
           <button class="pt-btn ghost" onclick="ptPauseResume()">${_pt.state === 'paused' ? 'Resume' : 'Pause'}</button>
           <button class="pt-btn ghost" onclick="ptAddMinutes(5)">+5 min</button>
@@ -4414,8 +4591,26 @@
           </select>
           <button class="pt-btn ghost" style="padding:6px 12px" onclick="ptUnlockAudio(); ptRingBell();">Hear it</button>
         </div>
+        <div class="pt-row">
+          <span>Background</span>
+          <select onchange="bgChoose(this.value)">
+            <option value="" ${!_pt.bgId ? 'selected' : ''}>None — silence</option>
+            <optgroup label="Made in the app (no download)">
+              ${BG_GENERATED.map(g => `<option value="${g.id}" ${_pt.bgId === g.id ? 'selected' : ''}>${g.title}</option>`).join('')}
+            </optgroup>
+            ${(_ptMusicListCache || []).length ? `<optgroup label="Recordings">
+              ${(_ptMusicListCache || []).map(m => `<option value="${m.id}" ${_pt.bgId === m.id ? 'selected' : ''}>${escapeHtml(m.title)}</option>`).join('')}
+            </optgroup>` : ''}
+          </select>
+          ${_pt.bgId ? `<button class="pt-btn ghost" style="padding:6px 12px" id="bgHearBtn" onclick="bgPreview()">Hear it</button>` : ''}
+        </div>
+        ${_pt.bgId ? `
+        <div class="pt-row">
+          <span style="min-width:52px">Volume</span>
+          <input type="range" min="0" max="100" step="1" value="${_pt.bgVol}" oninput="bgSetVolume(+this.value)" aria-label="Background volume"/>
+        </div>` : ''}
         ${_pt.auto ? `
-          <div class="pt-set">✓ Timer is set — ${_pt.minutes} min of silence will begin when the track ends, with a bell at the end</div>
+          <div class="pt-set">✓ Timer is set — ${_pt.minutes} min of ${_pt.bgId ? 'practice with a soft background sound' : 'silence'} will begin when the track ends, with a bell at the end</div>
           <div class="pt-go"><button class="pt-btn ghost small" onclick="ptUnlockAudio(); ptStart(true);">Start the timer now instead</button></div>
         ` : `
           <div class="pt-note">Start the ${_pt.minutes}-minute timer whenever you're ready.</div>
