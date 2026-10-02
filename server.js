@@ -13911,7 +13911,14 @@ app.post('/api/content/lessons', auth.requireAuthApi(['admin']), (req, res) => {
       // sort keeps files of the same rank — e.g. two files that both
       // fell through to "unrecognised" — in their original relative
       // order rather than shuffling them.
-      const ranked = fileIds.map((fid, i) => ({ fid, i, rank: inferFileOrderRank((db.getLibraryFile(fid) || {}).title) }));
+      const titles = fileIds.map(fid => (db.getLibraryFile(fid) || {}).title || '');
+      // Per App 36 — when every file is numbered at the front ("01 Day One
+      // Arriving", "02 …"), that numbering IS the order; the keyword
+      // ranking below would otherwise pull e.g. a "… practice" track
+      // ahead of the rest of the day's timetable.
+      const leadNums = titles.map(t => { const m = /^\s*(\d+)/.exec(t); return m ? parseInt(m[1], 10) : null; });
+      const allNumbered = leadNums.every(n => n !== null);
+      const ranked = fileIds.map((fid, i) => ({ fid, i, rank: allNumbered ? leadNums[i] : inferFileOrderRank(titles[i]) }));
       ranked.sort((a, b) => a.rank - b.rank || a.i - b.i);
       ranked.forEach((r, i) => db.addLessonFileRef(uuidv4(), lessonId, r.fid, i));
     }
