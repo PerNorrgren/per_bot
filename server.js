@@ -9126,7 +9126,7 @@ app.delete('/api/client/offline-marks', auth.requireAuthApi(['client']), (req, r
 app.post('/api/client/offline-marks/lesson/:lessonId', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const files = db.getFilesForLesson(req.params.lessonId);
-    files.forEach(f => db.addOfflineMark(uuidv4(), req.user.id, f.id));
+    db.addOfflineMarksBatch(req.user.id, files.map(f => f.id), uuidv4);
     res.json({ ok: true, marked: files.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -9153,7 +9153,7 @@ app.post('/api/client/courses/:instanceId/offline-mark-all', auth.requireAuthApi
     const enrolment = db.getEnrolmentForUserAndInstance(req.user.id, req.params.instanceId);
     if (!enrolment) return res.status(403).json({ error: 'You are not enrolled in this course.' });
     const files = db.getFilesForCourse(instance.course_id);
-    files.forEach(f => db.addOfflineMark(uuidv4(), req.user.id, f.id));
+    db.addOfflineMarksBatch(req.user.id, files.map(f => f.id), uuidv4);
     res.json({ ok: true, marked: files.length, fileIds: files.map(f => f.id) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

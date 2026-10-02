@@ -8076,6 +8076,13 @@ function getFavourites(clientId) {
 function addOfflineMark(id, clientId, fileId) {
   try { getDbSync().run('INSERT OR IGNORE INTO user_offline_marks (id,client_id,file_id) VALUES (?,?,?)', [id, clientId, fileId]); save(); } catch(e) {}
 }
+// Per App 36 — one save for a whole lesson/course instead of one full
+// database write per file (same slowness fixed for session shifts).
+function addOfflineMarksBatch(clientId, fileIds, makeId) {
+  const d = getDbSync();
+  fileIds.forEach(fid => { try { d.run('INSERT OR IGNORE INTO user_offline_marks (id,client_id,file_id) VALUES (?,?,?)', [makeId(), clientId, fid]); } catch (e) {} });
+  save();
+}
 function removeOfflineMark(clientId, fileId) {
   getDbSync().run('DELETE FROM user_offline_marks WHERE client_id=? AND file_id=?', [clientId, fileId]); save();
 }
@@ -8115,7 +8122,20 @@ function getCourseOfflineSummary(courseId, clientId) {
     SELECT COALESCE(SUM(lf.file_size), 0) as bytes, COUNT(*) as count
     FROM library_files lf JOIN user_offline_marks om ON lf.id = om.file_id
     WHERE om.client_id=?`, [clientId]);
+  // Per App 36 — how many of THIS course's files are already marked, so
+  // the "Take the whole course offline" box can show as ticked when it is.
+  const courseMarked = queryOne(`
+    SELECT COUNT(DISTINCT r.file_id) as count
+    FROM lessons l JOIN lesson_file_refs r ON r.lesson_id = l.id
+    JOIN user_offline_marks om ON om.file_id = r.file_id AND om.client_id = ?
+    WHERE l.course_id=? AND l.access_status != 'hidden'`, [clientId, courseId]);
+  const courseDistinct = queryOne(`
+    SELECT COUNT(DISTINCT r.file_id) as count
+    FROM lessons l JOIN lesson_file_refs r ON r.lesson_id = l.id
+    WHERE l.course_id=? AND l.access_status != 'hidden'`, [courseId]);
   return {
+    courseMarkedCount: courseMarked?.count || 0,
+    courseDistinctFileCount: courseDistinct?.count || 0,
     courseBytes: courseTotal?.bytes || 0,
     courseFileCount: courseTotal?.count || 0,
     alreadyOfflineBytes: alreadyOffline?.bytes || 0,
@@ -11477,6 +11497,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
+  addOfflineMarksBatch,
   getLiveMeeting, getLiveMeetingReminderRecipients, claimLiveMeetingReminderSlot, setLiveMeetingReminderCount, getRecentLiveMeetingReminders,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,
   addFileTag, removeFileTag, getFileTags, getAllFileTagRows, getAllTags, getFilesByTag, getFilesBySamuraiTags,

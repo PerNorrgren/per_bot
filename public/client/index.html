@@ -4694,7 +4694,7 @@
         (data.fileIds || []).forEach(id => cacheFileForOffline(id));
         // Per's request — the checkbox alone gave no sign anything had
         // actually happened.
-        if (feedback) { feedback.textContent = 'All course material is now available for offline view.'; feedback.style.display = ''; }
+        if (feedback) { feedback.textContent = `Saving ${(data.fileIds || []).length} files for offline use. Keep the app open for a minute while they download.`; feedback.style.display = ''; }
       } else {
         const unmarkRes = await fetch(`/api/client/courses/${instanceId}/offline-unmark-all`, { method: 'POST' });
         const data = await unmarkRes.json();
@@ -9277,18 +9277,17 @@
         ? `<div style="margin-top:10px"><a href="${data.instance.zoom_link}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 20px;border-radius:10px;background:rgba(180,230,200,0.12);border:1px solid rgba(180,230,200,0.3);color:rgba(180,230,200,0.9);text-decoration:none;font-size:13px">Join Zoom session →</a></div>`
         : '';
       // Per's request — "take all course material offline," cohort only.
-      // A self-paced course's full video library is usually too large
-      // for this to make sense as a single action, so this option is
-      // deliberately scoped to live cohort courses.
-      const offlineAllLine = isCohort
-        ? `<div style="margin-top:12px">
+      // Per App 36 — now for self-paced courses too (Per's audio retreat:
+      // file-by-file was the only way). The size is shown before ticking,
+      // and the large-download warning in onCourseOfflineAllToggled still
+      // guards big video courses.
+      const offlineAllLine = `<div style="margin-top:12px">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.84)">
               <input type="checkbox" id="courseOfflineAllChk" onchange="onCourseOfflineAllToggled('${instanceId}', this)"/>
-              Take all course material offline
+              Take the whole course offline <span id="courseOfflineAllSize" style="color:rgba(255,255,255,0.7)"></span>
             </label>
             <div id="courseOfflineAllFeedback" style="font-size:12px;color:rgba(140,220,170,0.85);margin-top:6px;margin-left:26px;display:none"></div>
-          </div>`
-        : '';
+          </div>`;
       document.getElementById('courseDetailHeader').innerHTML = `
         <div class="courses-section-label" style="margin-bottom:4px">${data.instance.title}</div>
         ${data.course?.description ? `<div class="lesson-item-desc" style="margin-bottom:10px">${data.course.description}</div>` : ''}
@@ -9312,6 +9311,13 @@
         </div>
         ` : ''}
       `;
+      fetch(`/api/client/courses/${instanceId}/offline-summary`).then(r => r.ok ? r.json() : null).then(sum => {
+        if (!sum) return;
+        const sz = document.getElementById('courseOfflineAllSize');
+        if (sz && sum.courseBytes) sz.textContent = `(${formatOfflineBytes(sum.courseBytes)})`;
+        const chk = document.getElementById('courseOfflineAllChk');
+        if (chk && sum.courseDistinctFileCount && sum.courseMarkedCount >= sum.courseDistinctFileCount) chk.checked = true;
+      }).catch(() => {});
       // Per's request — pre-fill from the account's own phone number
       // (not returned by the course-detail endpoint itself) so the field
       // isn't blank for someone who already has one on file elsewhere in
