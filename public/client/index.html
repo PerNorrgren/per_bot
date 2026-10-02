@@ -4350,7 +4350,9 @@
       if (_pt.state !== 'running' && _pt.state !== 'paused') _pt.state = 'idle';
     }
     _pt.bellId = localStorage.getItem('ptBellId') || '';
-    _pt.startBell = localStorage.getItem('ptStartBell') === '1';
+    // Per App 36 — no start bell: the track has just guided them in, so a
+    // bell at the start of the silence only startles. End bell only.
+    _pt.startBell = false;
     ptRender();
     await ptLoadBellList();
     if (_pt.state === 'idle') ptRender();
@@ -4403,7 +4405,6 @@
       ${_pt.minutes ? `
         <div class="pt-row">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${_pt.auto ? 'checked' : ''} onchange="_pt.auto=this.checked; ptSavePrefs(); ptRender();"/> Start when the track ends</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${_pt.startBell ? 'checked' : ''} onchange="_pt.startBell=this.checked; ptSavePrefs();"/> Bell at start</label>
         </div>
         <div class="pt-row">
           <span>Bell</span>
