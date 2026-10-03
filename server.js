@@ -10316,7 +10316,7 @@ app.post('/api/admin/course-instances/:id/send-email', auth.requireAuthApi(['adm
     if (!recipients.length) return res.status(400).json({ error: 'No one is actively enrolled in this instance yet — nothing to send to.' });
 
     const newsletterId = uuidv4();
-    db.addNewsletter(newsletterId, subject, body, `instance:${req.params.id}`, 'html', null, 'course-instance-email', null, recipients.map(r => r.id));
+    db.addNewsletter(newsletterId, subject, body, `instance:${req.params.id}`, 'rich', null, 'course-instance-email', null, recipients.map(r => r.id)); // Per App 36 — was 'html', a format nothing else knows: duplicating it opened the HTML as plain text
     const newsletter = db.getNewsletter(newsletterId);
     const logRowsByUserId = {};
     const pendingLogRows = recipients.map(user => {
@@ -16628,7 +16628,44 @@ const { bulkPublishRequest, uploadMediaFromUrl } = publishers.PROVIDERS.bulkpubl
 app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
     const channels = await publishers.listAllChannels();
-    res.json({ ok: true, channels });
+    // Per App 36 — the saved per-platform choice, and every visible
+    // channel that ISN'T chosen (the warning: this key could post there).
+    const choices = db.getBulkPublishChannelChoices();
+    const chosenIds = new Set(Object.values(choices).map(String));
+    const bp = channels.filter(c => c.provider === 'bulkpublish');
+    const missing = Object.entries(choices).filter(([pl, id]) => !bp.some(c => String(c.id) === String(id))).map(([platform, id]) => ({ platform, id }));
+    res.json({
+      ok: true,
+      channels,
+      choices,
+      platforms: Object.keys(publishers.PLATFORM_PROVIDERS).filter(p => publishers.PLATFORM_PROVIDERS[p] === 'bulkpublish'),
+      unchosenVisible: bp.filter(c => !chosenIds.has(String(c.id))),
+      chosenNotVisible: missing,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// Per App 36 — save which channel each platform posts to. Body:
+// {platform, channelId|null}. The id must be a channel this key can see,
+// of that platform; null clears it (that platform then refuses to post).
+app.put('/api/admin/bulkpublish/channel-choice', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const platform = String((req.body && req.body.platform) || '').toLowerCase();
+    const channelId = req.body ? req.body.channelId : undefined;
+    if (publishers.PLATFORM_PROVIDERS[platform] !== 'bulkpublish') return res.status(400).json({ error: 'Unknown platform.' });
+    const choices = db.getBulkPublishChannelChoices();
+    if (channelId === null || channelId === '' || channelId === undefined) {
+      delete choices[platform];
+    } else {
+      const channels = await publishers.PROVIDERS.bulkpublish.listChannels();
+      const ch = channels.find(c => String(c.id) === String(channelId));
+      if (!ch) return res.status(400).json({ error: "That channel isn't visible to this BulkPublish key." });
+      if (ch.platform !== platform) return res.status(400).json({ error: `That's a ${ch.platform} channel, not ${platform}.` });
+      choices[platform] = ch.id;
+    }
+    db.setBulkPublishChannelChoices(choices);
+    res.json({ ok: true, choices });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -115,6 +115,12 @@ async function getDb() {
   // {weekday, time} — the UK-time moments a reminder email goes out
   // each week. reminders_enabled lets a meeting keep its slots on file
   // while reminders are paused.
+  // Per App 36 — course-instance emails (App 35) were saved with
+  // format 'html', which the rest of the app doesn't recognise (only
+  // 'plain'/'rich'): sent unstyled, and Duplicate opened them as raw
+  // <p> tags in the plain-text box. Their bodies are editor HTML, so
+  // 'rich' is what they always should have been.
+  try { db.run(`UPDATE newsletters SET format='rich' WHERE format='html'`); } catch(e) {}
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN weekday INTEGER`); } catch(e) {}
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN start_time TEXT`); } catch(e) {}
   try { db.run(`ALTER TABLE live_meetings ADD COLUMN duration_minutes INTEGER`); } catch(e) {}
@@ -3105,6 +3111,11 @@ async function getDb() {
     // Per App 36 — Display > Background: how much of the scene shows
     // through the glass, 0 (none) to 100 (full). NULL = never set = 100.
     "ALTER TABLE users ADD COLUMN a11y_scene_level INTEGER DEFAULT NULL",
+    // Per App 36 — which BulkPublish channel this app posts to, per
+    // platform: JSON {platform: channelId}. Needed now that Mare shares
+    // the BulkPublish Pro account — publish() used to take the first
+    // channel of the right platform the key could see.
+    "ALTER TABLE app_config ADD COLUMN bulkpublish_channels TEXT DEFAULT NULL",
     // Per Bot 48 — Per's follow-up: he'd set "What's New seconds per
     // item" (whats_new_seconds_per_item above) to 10, expecting it to
     // control the Practices shelf carousel's speed — a reasonable
@@ -11123,6 +11134,18 @@ function updateAppConfig(fields) {
   save();
 }
 
+function getBulkPublishChannelChoices() {
+  try {
+    const raw = (getAppConfig() || {}).bulkpublish_channels;
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch (e) { return {}; }
+}
+function setBulkPublishChannelChoices(map) {
+  getDbSync().run(`UPDATE app_config SET bulkpublish_channels=? WHERE id='default'`, [JSON.stringify(map || {})]);
+  save();
+}
+
 function isSetupComplete() {
   const config = getAppConfig();
   return !!(config && config.setup_completed);
@@ -11497,6 +11520,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
+  getBulkPublishChannelChoices, setBulkPublishChannelChoices,
   addOfflineMarksBatch,
   getLiveMeeting, getLiveMeetingReminderRecipients, claimLiveMeetingReminderSlot, setLiveMeetingReminderCount, getRecentLiveMeetingReminders,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,

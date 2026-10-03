@@ -459,8 +459,8 @@
     <div>
       <label>Body</label>
       <div class="format-toggle">
-        <button type="button" id="formatPlainBtn" class="active" onclick="setNewsletterFormat('plain')">Plain text</button>
-        <button type="button" id="formatRichBtn" onclick="setNewsletterFormat('rich')">Rich message</button>
+        <button type="button" id="formatPlainBtn" class="active" onclick="switchNewsletterFormat('plain')">Plain text</button>
+        <button type="button" id="formatRichBtn" onclick="switchNewsletterFormat('rich')">Rich message</button>
       </div>
       <textarea id="newsletterBody" style="min-height:220px" placeholder="Write it as it will appear in the email. Plain text — line breaks are kept."></textarea>
       <div id="newsletterRichEditor" style="display:none"></div>
@@ -1334,6 +1334,32 @@
     return MessageEditor.getInstance('newsletterRichEditor');
   }
 
+  // Per App 36 — the Plain/Rich buttons. Switching used to drop what was
+  // already written (the other editor just showed empty). Carries it
+  // across when the destination is empty: plain → rich keeps any HTML
+  // as-is or turns lines into paragraphs; rich → plain keeps the text.
+  // Only on a real click — opening/duplicating a newsletter still calls
+  // setNewsletterFormat directly with no carry-over.
+  function switchNewsletterFormat(format) {
+    const prevFormat = newsletterFormat;
+    if (prevFormat !== format) {
+      try {
+        const ta = document.getElementById('newsletterBody');
+        if (format === 'rich') {
+          const q = getQuill();
+          const txt = ta.value.trim();
+          if (txt && !q.getText().trim()) {
+            q.root.innerHTML = /<\/?(p|br|div|strong|em|a|ul|ol|li|h[1-6])\b/i.test(txt)
+              ? txt
+              : txt.split(/\n{2,}/).map(par => `<p>${par.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')}</p>`).join('');
+          }
+        } else if (!ta.value.trim() && MessageEditor.isMounted('newsletterRichEditor')) {
+          ta.value = getQuill().getText().replace(/\n{3,}/g, '\n\n').trim();
+        }
+      } catch (e) { /* carry-over is a convenience only */ }
+    }
+    setNewsletterFormat(format);
+  }
   function setNewsletterFormat(format) {
     newsletterFormat = format;
     document.getElementById('formatPlainBtn').classList.toggle('active', format === 'plain');
@@ -1403,8 +1429,8 @@
     document.getElementById('newsletterRecurringToggle').checked = false;
     toggleNewsletterRecurring(false);
     document.getElementById('newsletterSubject').value = n.subject;
-    setNewsletterFormat(n.format === 'rich' ? 'rich' : 'plain');
-    if (n.format === 'rich') { getQuill().root.innerHTML = n.body; document.getElementById('newsletterBody').value = ''; }
+    setNewsletterFormat((n.format === 'rich' || n.format === 'html') ? 'rich' : 'plain');
+    if ((n.format === 'rich' || n.format === 'html')) { getQuill().root.innerHTML = n.body; document.getElementById('newsletterBody').value = ''; }
     else { document.getElementById('newsletterBody').value = n.body; }
     document.getElementById('newsletterErr').textContent = '';
     document.getElementById('newsletterTestTo').value = '';
@@ -1421,7 +1447,7 @@
   async function viewSentNewsletter(id) {
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
-    if (n.format === 'rich') {
+    if ((n.format === 'rich' || n.format === 'html')) {
       const w = window.open('', '_blank');
       w.document.write(`<title>${n.subject}</title><body style="font-family:Georgia,serif;max-width:600px;margin:40px auto;padding:0 20px">${n.body}
 </body>`);
@@ -1455,8 +1481,8 @@
     openNewsletterModal();
     document.getElementById('newsletterModalTitle').textContent = 'New newsletter (from duplicate)';
     document.getElementById('newsletterSubject').value = n.subject;
-    setNewsletterFormat(n.format === 'rich' ? 'rich' : 'plain');
-    if (n.format === 'rich') { getQuill().root.innerHTML = n.body; }
+    setNewsletterFormat((n.format === 'rich' || n.format === 'html') ? 'rich' : 'plain');
+    if ((n.format === 'rich' || n.format === 'html')) { getQuill().root.innerHTML = n.body; }
     else { document.getElementById('newsletterBody').value = n.body; }
     setSelectedAudience(n.audience);
     applyExplicitStateFromNewsletter(n);
@@ -1579,8 +1605,8 @@
     document.getElementById('newsletterModalTitle').textContent = 'Edit scheduled message';
     document.getElementById('scheduledMessageEditId').value = id;
     document.getElementById('newsletterSubject').value = m.subject;
-    setNewsletterFormat(m.format === 'rich' ? 'rich' : 'plain');
-    if (m.format === 'rich') { getQuill().root.innerHTML = m.body; }
+    setNewsletterFormat((m.format === 'rich' || m.format === 'html') ? 'rich' : 'plain');
+    if ((m.format === 'rich' || m.format === 'html')) { getQuill().root.innerHTML = m.body; }
     else { document.getElementById('newsletterBody').value = m.body; }
     setSelectedAudience(m.audience);
     refreshAudienceCount();

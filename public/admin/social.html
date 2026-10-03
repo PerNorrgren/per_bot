@@ -129,6 +129,25 @@
   </div>
 
   <div class="page">
+  <!-- Per App 36 — exactly which BulkPublish channel each platform posts
+       to. Mare now shares the BulkPublish Pro account (its own
+       organization and key); posting used to take the first channel of
+       the right platform the key could see. -->
+  <div>
+    <div class="section-label">Channels</div>
+    <div class="card">
+      <div style="padding:18px 20px">
+        <div class="section-note" style="margin:0 0 12px">Choose the exact page or account each platform posts to. Everything that publishes — Message Builder, the Posting Queue, campaigns and the Postings Engine — uses only these. A platform with no channel chosen refuses to post (with a clear message) rather than guessing.</div>
+        <div id="bpChannelsBody" style="font-size:13px;color:rgba(255,255,255,0.7)">Loading…</div>
+        <div id="bpChannelsWarn" style="display:none;margin-top:12px"></div>
+        <div style="margin-top:14px;display:flex;gap:8px;align-items:center">
+          <button class="btn sm primary" id="bpSaveBtn" onclick="saveBpChannels()" style="display:none">Save channels</button>
+          <button class="btn sm" onclick="loadBpChannels()">Refresh list</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Message builder (Per Bot 17) ── -->
   <div>
     <div class="section-label">Message builder</div>
@@ -2254,6 +2273,84 @@
   mbLoadRecentPosts();
   checkLinkedinConnectResult();
   restoreMbDraftIfAny();
+
+  // ── Channels (Per App 36) ──
+  const BP_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn' };
+  let _bpData = null;
+  function bpEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+  async function loadBpChannels() {
+    const body = document.getElementById('bpChannelsBody');
+    body.textContent = 'Loading…';
+    try {
+      const res = await fetch('/api/admin/bulkpublish/channels');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not load channels.');
+      _bpData = data;
+      renderBpChannels();
+    } catch (e) {
+      body.innerHTML = `<span style="color:rgba(255,160,150,0.9)">${bpEsc(e.message)}</span>`;
+    }
+  }
+  function renderBpChannels() {
+    const d = _bpData, body = document.getElementById('bpChannelsBody');
+    const bp = (d.channels || []).filter(c => c.provider === 'bulkpublish');
+    body.innerHTML = (d.platforms || []).map(pl => {
+      const opts = bp.filter(c => c.platform === pl);
+      const chosen = d.choices[pl] != null ? String(d.choices[pl]) : '';
+      const status = !chosen
+        ? '<span style="color:rgba(255,190,140,0.95)">Not chosen — posts to this platform will be refused</span>'
+        : (opts.some(c => String(c.id) === chosen) ? '<span style="color:rgba(140,220,170,0.95)">✓ Posting here</span>'
+                                                   : '<span style="color:rgba(255,160,150,0.95)">Chosen channel no longer visible — posts refused</span>');
+      return `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,0.06);flex-wrap:wrap">
+        <div style="width:90px;color:#fff">${BP_LABELS[pl] || pl}</div>
+        <select data-bp-platform="${pl}" style="min-width:260px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;padding:7px 10px;font-family:inherit">
+          <option value="">— Not chosen —</option>
+          ${opts.map(c => `<option value="${bpEsc(c.id)}" ${String(c.id) === chosen ? 'selected' : ''}>${bpEsc(c.name)} (id ${bpEsc(c.id)})</option>`).join('')}
+        </select>
+        <div style="font-size:12px">${opts.length ? status : '<span style="color:rgba(255,255,255,0.5)">No channel of this platform visible to the key</span>'}</div>
+      </div>`;
+    }).join('') || 'No platforms use BulkPublish.';
+    document.getElementById('bpSaveBtn').style.display = '';
+    // Warnings: channels this key can see but nothing here posts to, and
+    // chosen channels that have disappeared from the key's view.
+    const warn = document.getElementById('bpChannelsWarn');
+    const lines = [];
+    if ((d.unchosenVisible || []).length) {
+      lines.push(`<div style="font-weight:bold;margin-bottom:4px">⚠ This BulkPublish key can also see ${d.unchosenVisible.length} channel${d.unchosenVisible.length === 1 ? '' : 's'} that ${d.unchosenVisible.length === 1 ? "isn't" : "aren't"} chosen here:</div>
+        <div>${d.unchosenVisible.map(c => `${BP_LABELS[c.platform] || c.platform} · ${bpEsc(c.name)} (id ${bpEsc(c.id)})`).join('<br>')}</div>
+        <div style="margin-top:6px">This app will never post to them. But the key itself has access — if any belong to Mare, give each BulkPublish organization its own key that only sees its own channels.</div>`);
+    }
+    if ((d.chosenNotVisible || []).length) {
+      lines.push(`<div style="margin-top:${lines.length ? 10 : 0}px">⚠ Chosen but no longer visible to the key: ${d.chosenNotVisible.map(c => `${BP_LABELS[c.platform] || c.platform} (id ${bpEsc(c.id)})`).join(', ')} — posts there are refused until re-chosen.</div>`);
+    }
+    warn.style.display = lines.length ? '' : 'none';
+    warn.innerHTML = lines.length ? `<div style="padding:12px 14px;border-radius:10px;background:rgba(255,190,140,0.08);border:1px solid rgba(255,190,140,0.35);font-size:12.5px;line-height:1.6;color:rgba(255,225,200,0.95)">${lines.join('')}</div>` : '';
+  }
+  async function saveBpChannels() {
+    const btn = document.getElementById('bpSaveBtn');
+    const sels = [...document.querySelectorAll('[data-bp-platform]')];
+    const changes = sels.filter(sel => String(_bpData.choices[sel.dataset.bpPlatform] ?? '') !== sel.value);
+    if (!changes.length) { appAlert('Nothing to save — no channel was changed.'); return; }
+    setBtnLoading(btn, true, 'Saving…');
+    try {
+      for (const sel of changes) {
+        const res = await fetch('/api/admin/bulkpublish/channel-choice', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ platform: sel.dataset.bpPlatform, channelId: sel.value || null }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`${BP_LABELS[sel.dataset.bpPlatform] || sel.dataset.bpPlatform}: ${data.error || 'could not save'}`);
+      }
+      await loadBpChannels();
+      appAlert('Channels saved. Everything that publishes now posts only to these.');
+    } catch (e) {
+      appAlert(e.message);
+    } finally {
+      setBtnLoading(btn, false);
+    }
+  }
+
+  loadBpChannels();
   loadSchedule();
   loadSocialQueue();
 </script>

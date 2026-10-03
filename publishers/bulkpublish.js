@@ -124,10 +124,34 @@ const PLATFORM_MEDIA_POST_TYPES = {
   instagram: { image: 'feed_photo', video: 'feed_video' },
   threads:   { image: 'image', video: 'video' },
 };
+// Per App 36 — posts ONLY to the channel chosen for this app in Social →
+// Channels (app_config.bulkpublish_channels, platform → channel id).
+// Before, it took the first channel of the right platform the API key
+// could see; with Mare sharing the BulkPublish Pro account, that could
+// have been one of Mare's pages. No choice = refuse, never guess. A
+// chosen channel the key can no longer see = refuse too.
+const PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn' };
+function chosenChannelId(platform) {
+  // Required lazily so this module never loads the database at startup order-sensitively.
+  const db = require('../db');
+  const choices = db.getBulkPublishChannelChoices ? db.getBulkPublishChannelChoices() : {};
+  return choices[(platform || '').toLowerCase()] || null;
+}
 async function publish(platform, { content, mediaUrl, mediaType } = {}) {
+  const key = (platform || '').toLowerCase();
+  const label = PLATFORM_LABELS[key] || platform;
+  const chosenId = chosenChannelId(key);
+  if (!chosenId) {
+    throw new Error(`No ${label} channel is chosen for this app — nothing was posted. Pick the exact ${label} page/account in Social → Channels first.`);
+  }
   const { channels } = await bulkPublishRequest('GET', '/channels');
-  const channel = (channels || []).find(c => (c.platform || '').toLowerCase() === platform.toLowerCase());
-  if (!channel) throw new Error(`${platform} isn't connected in BulkPublish yet — connect it in the Channels page first.`);
+  const channel = (channels || []).find(c => String(c.id) === String(chosenId));
+  if (!channel) {
+    throw new Error(`The ${label} channel chosen for this app (id ${chosenId}) isn't visible to this BulkPublish key any more — nothing was posted. Check Social → Channels.`);
+  }
+  if ((channel.platform || '').toLowerCase() !== key) {
+    throw new Error(`The channel chosen for ${label} is actually a channel on ${PLATFORM_LABELS[(channel.platform || "").toLowerCase()] || channel.platform} — nothing was posted. Re-pick it in Social → Channels.`);
+  }
   const publishBody = {
     content,
     channels: [{ channelId: channel.id, platform: channel.platform }],
