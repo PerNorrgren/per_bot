@@ -52,7 +52,7 @@ async function listChannels(opts = {}) {
   const { channels } = await bulkPublishRequest('GET', '/channels');
   return (channels || []).map(c => {
     const out = {
-      platform: (c.platform || '').toLowerCase(),
+      platform: normPlatform(c.platform),
       id: c.id,
       // Per App 36 — BulkPublish's list returned only the platform as the
       // name on Per's account; try the usual account-name fields first.
@@ -138,7 +138,10 @@ const PLATFORM_MEDIA_POST_TYPES = {
 // could see; with Mare sharing the BulkPublish Pro account, that could
 // have been one of Mare's pages. No choice = refuse, never guess. A
 // chosen channel the key can no longer see = refuse too.
-const PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn', x: 'X' };
+const PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky' };
+// BulkPublish's own platform names, normalised to the keys this app uses.
+const PLATFORM_ALIASES = { twitter: 'x', bsky: 'bluesky', 'blue sky': 'bluesky' };
+function normPlatform(p) { const k = (p || '').toLowerCase().trim(); return PLATFORM_ALIASES[k] || k; }
 function chosenChannelId(platform) {
   // Required lazily so this module never loads the database at startup order-sensitively.
   const db = require('../db');
@@ -146,7 +149,7 @@ function chosenChannelId(platform) {
   return choices[(platform || '').toLowerCase()] || null;
 }
 async function publish(platform, { content, mediaUrl, mediaType } = {}) {
-  const key = (platform || '').toLowerCase();
+  const key = normPlatform(platform);
   const label = PLATFORM_LABELS[key] || platform;
   const chosenId = chosenChannelId(key);
   if (!chosenId) {
@@ -157,7 +160,7 @@ async function publish(platform, { content, mediaUrl, mediaType } = {}) {
   if (!channel) {
     throw new Error(`The ${label} channel chosen for this app (id ${chosenId}) isn't visible to this BulkPublish key any more — nothing was posted. Check Social → Channels.`);
   }
-  if ((channel.platform || '').toLowerCase() !== key) {
+  if (normPlatform(channel.platform) !== key) {
     throw new Error(`The channel chosen for ${label} is actually a channel on ${PLATFORM_LABELS[(channel.platform || "").toLowerCase()] || channel.platform} — nothing was posted. Re-pick it in Social → Channels.`);
   }
   const publishBody = {

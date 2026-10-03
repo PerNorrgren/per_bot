@@ -28,13 +28,22 @@ const PLATFORM_PROVIDERS = {
   // Per App 36 — X (Premium account DeeperMind2024). BulkPublish's own
   // platform key is 'x'.
   x:         'bulkpublish',
+  // Per App 36 — Bluesky (deepermindfulness.bsky.social).
+  bluesky:   'bulkpublish',
 };
 
 const PROVIDERS = { bulkpublish, linkedin, meta };
 
+// Per App 36 — any platform not listed above is assumed to go through
+// BulkPublish (the only provider that can list a platform we haven't
+// named), so a newly connected BulkPublish channel can be chosen and
+// posted to without a code change. The strict channel choice still
+// applies: nothing posts until a channel is chosen in Social → Channels.
 function providerFor(platform) {
-  const key = PLATFORM_PROVIDERS[(platform || '').toLowerCase()];
-  return key ? PROVIDERS[key] : null;
+  const p = (platform || '').toLowerCase();
+  if (!p) return null;
+  const key = PLATFORM_PROVIDERS[p] || 'bulkpublish';
+  return PROVIDERS[key] || null;
 }
 
 // Per App 31 — Facebook already auto-labels AI-generated images with

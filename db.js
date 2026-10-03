@@ -1335,6 +1335,8 @@ async function getDb() {
   db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('threads', '[2,3,4]', '["09:00"]')`);
   // Per App 36 — X. Weekday mornings + lunchtime to start; edit freely in the Social tab.
   db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('x', '[1,2,3,4]', '["08:00","12:00"]')`);
+  // Per App 36 — Bluesky. Weekday mid-morning to start; edit in the Social tab.
+  db.run(`INSERT OR IGNORE INTO social_schedule_config (platform,days,times) VALUES ('bluesky', '[1,3,5]', '["10:00"]')`);
 
   // Per App 31 — "B" of the streamlining plan: which Messages of the Day
   // have already been used to auto-fill each platform's queue. Tracked

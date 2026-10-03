@@ -176,6 +176,7 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformInstagram" checked/> Instagram</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformThreads"/> Threads</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformX"/> X</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:rgba(255,255,255,0.65)"><input type="checkbox" id="mbPlatformBluesky"/> Bluesky</label>
         </div>
       </div>
       <div class="config-row" style="flex-direction:column;align-items:stretch;gap:8px">
@@ -446,6 +447,7 @@
         <option value="linkedin">LinkedIn</option>
         <option value="threads">Threads</option>
         <option value="x">X</option>
+        <option value="bluesky">Bluesky</option>
       </select>
     </div>
     <div>
@@ -550,8 +552,8 @@
   // (message-editor.js's existing upload flow) instead of pasting a URL
   // in by hand; video is untouched, Quill's own built-in format, same as
   // it always was here.
-  const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads', 'x'];
-  const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X' };
+  const MB_PLATFORMS = ['facebook', 'linkedin', 'instagram', 'threads', 'x', 'bluesky'];
+  const MB_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X', bluesky: 'Bluesky' };
   const mbQuillInstances = {}; // platform -> Quill instance, rebuilt every generate/duplicate
   let mbCurrentPostId = null; // Per App 30 — social_posts row id for whatever's currently in the builder, so Publish can record against it
 
@@ -1969,6 +1971,7 @@
     { key: 'instagram', label: 'Instagram' },
     { key: 'threads',   label: 'Threads' },
     { key: 'x',         label: 'X' },
+    { key: 'bluesky',   label: 'Bluesky' },
   ];
   const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   let scheduleState = {}; // platform -> { days:Set, times:[], cooldownDays }
@@ -2122,7 +2125,7 @@
     }
   }
 
-  const PLATFORM_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X' };
+  const PLATFORM_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X', bluesky: 'Bluesky' };
   async function runPostingsEngineNow() {
     const btn = document.getElementById('runEngineBtn');
     const out = document.getElementById('runEngineReport');
@@ -2180,7 +2183,7 @@
     }
   }
 
-  const SQ_PLATFORM_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X' };
+  const SQ_PLATFORM_LABELS = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X', bluesky: 'Bluesky' };
   const WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   let socialQueueData = [];
   let queueEditingId = null;
@@ -2332,7 +2335,7 @@
   restoreMbDraftIfAny();
 
   // ── Channels (Per App 36) ──
-  const BP_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn', x: 'X' };
+  const BP_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky' };
   let _bpData = null;
   function bpEsc(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
   async function loadBpChannels() {
