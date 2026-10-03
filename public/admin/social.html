@@ -143,6 +143,7 @@
         <div style="margin-top:14px;display:flex;gap:8px;align-items:center">
           <button class="btn sm primary" id="bpSaveBtn" onclick="saveBpChannels()" style="display:none">Save channels</button>
           <button class="btn sm" onclick="loadBpChannels()">Refresh list</button>
+          <button class="btn sm" id="bpHealthBtn" onclick="runBpHealthCheck()" title="Checks every channel now. Also runs by itself every hour, and emails you when a chosen channel goes down or comes back.">Check health now</button>
         </div>
       </div>
     </div>
@@ -1981,6 +1982,7 @@
         days: new Set(existing ? existing.days : []),
         times: existing ? [...existing.times] : [],
         cooldownDays: existing && existing.cooldown_days != null ? existing.cooldown_days : 3,
+        daySlots: existing && Array.isArray(existing.day_slots) ? existing.day_slots.map(x => ({ ...x })) : [],
       };
     });
     renderSchedule();
@@ -1989,6 +1991,7 @@
   function renderSchedule() {
     document.getElementById('scheduleCard').innerHTML = PLATFORMS.map(p => {
       const s = scheduleState[p.key];
+      if (s.daySlots && s.daySlots.length) return renderDaySlotsRow(p, s);
       return `
       <div class="config-row">
         <div>
@@ -2010,14 +2013,60 @@
             <label style="font-size:11px;color:rgba(255,255,255,0.5)">Min. days before the same posting repeats here:</label>
             <input class="inline-input" type="number" min="0" id="scheduleCooldown_${p.key}" value="${s.cooldownDays}" style="width:60px" onchange="scheduleState['${p.key}'].cooldownDays = parseInt(this.value,10)||0"/>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;margin-top:2px">
+          <div style="display:flex;align-items:center;gap:10px;margin-top:2px;flex-wrap:wrap">
             <button class="btn sm primary" onclick="saveSchedule('${p.key}')">Save ${p.label}</button>
+            <button class="btn sm" onclick="startDaySlots('${p.key}')" title="Different times on different days, in UK time, each with a content theme">Use per-day times (UK)</button>
             <div class="feedback" id="scheduleFeedback_${p.key}"></div>
           </div>
         </div>
       </div>`;
     }).join('');
     PLATFORMS.forEach(p => updateScheduleDesc(p.key));
+  }
+
+  // ── Per-day slots (Per App 36) — UK time, each with a content theme ──
+  const SLOT_DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  function renderDaySlotsRow(p, s) {
+    const rows = s.daySlots.map((slot, i) => `
+      <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap">
+        <select class="inline-input" style="width:80px" onchange="scheduleState['${p.key}'].daySlots[${i}].day=+this.value">
+          ${SLOT_DAY_ORDER.map(d => `<option value="${d}" ${Number(slot.day) === d ? 'selected' : ''}>${DAY_LABELS[d]}</option>`).join('')}
+        </select>
+        <input class="inline-input" type="time" value="${slot.time || ''}" style="width:100px" onchange="scheduleState['${p.key}'].daySlots[${i}].time=this.value"/>
+        <textarea class="inline-input" rows="2" style="flex:1;min-width:220px;resize:vertical" placeholder="What this slot's posts should be about" onchange="scheduleState['${p.key}'].daySlots[${i}].theme=this.value">${(slot.theme || '').replace(/</g, '&lt;')}</textarea>
+        <button class="btn sm" onclick="scheduleState['${p.key}'].daySlots.splice(${i},1); renderSchedule();" title="Remove this slot">×</button>
+      </div>`).join('');
+    return `
+      <div class="config-row">
+        <div>
+          <div class="config-label">${p.label}</div>
+          <div class="config-desc">${s.daySlots.length} slot${s.daySlots.length === 1 ? '' : 's'} a week · UK time · ${s.cooldownDays}-day min. repeat gap</div>
+          <div class="config-desc" style="margin-top:6px;max-width:240px">To route a posting to a day's theme, tick that day under the posting's "Preferred days" in Sales &amp; Marketing.</div>
+        </div>
+        <div class="config-val">
+          ${rows}
+          <div style="display:flex;gap:8px;margin:4px 0 8px;flex-wrap:wrap">
+            <button class="btn sm" onclick="scheduleState['${p.key}'].daySlots.push({day:1,time:'09:00',theme:''}); renderSchedule();">+ Add slot</button>
+            <button class="btn sm" onclick="if(confirm('Go back to the simple days × times grid (UTC) for ${p.label}? The per-day slots and their themes will be removed when you save.')){scheduleState['${p.key}'].daySlots=[]; scheduleState['${p.key}']._clearSlots=true; renderSchedule();}">Use simple days × times</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:6px">
+            <label style="font-size:11px;color:rgba(255,255,255,0.5)">Min. days before the same posting repeats here:</label>
+            <input class="inline-input" type="number" min="0" value="${s.cooldownDays}" style="width:60px" onchange="scheduleState['${p.key}'].cooldownDays = parseInt(this.value,10)||0"/>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+            <button class="btn sm primary" onclick="saveSchedule('${p.key}')">Save ${p.label}</button>
+            <div class="feedback" id="scheduleFeedback_${p.key}"></div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function startDaySlots(platform) {
+    const s = scheduleState[platform];
+    const days = s.days.size ? [...s.days] : [1, 2, 3, 4];
+    const times = s.times.length ? s.times : ['09:00'];
+    s.daySlots = [];
+    days.forEach(d => times.forEach(t => s.daySlots.push({ day: d, time: t, theme: '' })));
+    renderSchedule();
   }
 
   function updateScheduleDesc(platform) {
@@ -2049,16 +2098,21 @@
 
   async function saveSchedule(platform) {
     const s = scheduleState[platform];
-    const days = [...s.days];
-    const times = [...s.times];
+    const usingSlots = s.daySlots && s.daySlots.length;
+    if (usingSlots && s.daySlots.some(x => !x.time)) { showFeedback(`scheduleFeedback_${platform}`, 'Every slot needs a time.', 'err'); return; }
+    // With per-day slots, the grid fields are derived from them (kept so
+    // anything still reading days/times sees a sensible summary).
+    const days = usingSlots ? [...new Set(s.daySlots.map(x => Number(x.day)))] : [...s.days];
+    const times = usingSlots ? [...new Set(s.daySlots.map(x => x.time))] : [...s.times];
     if (!days.length) { showFeedback(`scheduleFeedback_${platform}`, 'Pick at least one day first.', 'err'); return; }
     if (!times.length) { showFeedback(`scheduleFeedback_${platform}`, 'Add at least one time first.', 'err'); return; }
     try {
       const res = await fetch(`/api/admin/social-schedule/${platform}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days, times, cooldownDays: s.cooldownDays })
+        body: JSON.stringify({ days, times, cooldownDays: s.cooldownDays, ...(usingSlots ? { daySlots: s.daySlots } : (s._clearSlots ? { daySlots: [] } : {})) })
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || 'Could not save.');
+      s._clearSlots = false;
       showFeedback(`scheduleFeedback_${platform}`, 'Saved.', 'ok');
     } catch (e) {
       showFeedback(`scheduleFeedback_${platform}`, e.message, 'err');
@@ -2297,6 +2351,8 @@
     body.innerHTML = (d.platforms || []).map(pl => {
       const opts = bp.filter(c => c.platform === pl);
       const chosen = d.choices[pl] != null ? String(d.choices[pl]) : '';
+      const hs = (d.health || {})[chosen];
+      const healthNote = chosen && hs && hs.down ? `<div style="font-size:12px;color:rgba(255,160,150,0.95);width:100%;padding-left:102px">⚠ BulkPublish reports this channel as ${bpEsc(hs.reason || 'down')} — reconnect it in BulkPublish.</div>` : '';
       const status = !chosen
         ? '<span style="color:rgba(255,190,140,0.95)">Not chosen — posts to this platform will be refused</span>'
         : (opts.some(c => String(c.id) === chosen) ? '<span style="color:rgba(140,220,170,0.95)">✓ Posting here</span>'
@@ -2308,6 +2364,7 @@
           ${opts.map(c => `<option value="${bpEsc(c.id)}" ${String(c.id) === chosen ? 'selected' : ''}>${bpEsc(c.name)} (id ${bpEsc(c.id)})</option>`).join('')}
         </select>
         <div style="font-size:12px">${opts.length ? status : '<span style="color:rgba(255,255,255,0.5)">No channel of this platform visible to the key</span>'}</div>
+        ${healthNote}
       </div>`;
     }).join('') || 'No platforms use BulkPublish.';
     document.getElementById('bpSaveBtn').style.display = '';
@@ -2325,6 +2382,25 @@
     }
     warn.style.display = lines.length ? '' : 'none';
     warn.innerHTML = lines.length ? `<div style="padding:12px 14px;border-radius:10px;background:rgba(255,190,140,0.08);border:1px solid rgba(255,190,140,0.35);font-size:12.5px;line-height:1.6;color:rgba(255,225,200,0.95)">${lines.join('')}</div>` : '';
+  }
+  async function runBpHealthCheck() {
+    const btn = document.getElementById('bpHealthBtn');
+    setBtnLoading(btn, true, 'Checking…');
+    try {
+      const res = await fetch('/api/admin/bulkpublish/health-check', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not check.');
+      await loadBpChannels();
+      if (data.apiDown) appAlert(`Couldn't reach BulkPublish: ${data.error}. You've been emailed.`);
+      else if ((data.wentDown || []).length) appAlert(`Needs attention:\n${data.wentDown.join('\n')}\n\nYou've been emailed too.`);
+      else {
+        const downAny = Object.entries(data.state || {}).filter(([k, v]) => k !== '__api' && v && v.down);
+        appAlert(downAny.length
+          ? `Checked. Still down (you were already emailed):\n${downAny.map(([k, v]) => `${v.name || k} — ${v.reason}`).join('\n')}`
+          : `Checked ${data.checked || 0} channel${data.checked === 1 ? '' : 's'} — all connected.`);
+      }
+    } catch (e) { appAlert(e.message); }
+    finally { setBtnLoading(btn, false); }
   }
   async function saveBpChannels() {
     const btn = document.getElementById('bpSaveBtn');

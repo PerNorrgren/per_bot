@@ -1712,6 +1712,20 @@ async function getDb() {
   // answer — a minimum gap before the same posting can be picked again
   // for that channel specifically.
   try { db.run(`ALTER TABLE social_schedule_config ADD COLUMN cooldown_days INTEGER NOT NULL DEFAULT 3`); } catch(e) {}
+  // Per App 36 — per-day slots, each with its own UK time and a content
+  // theme: [{day:0-6, time:'HH:MM', theme:'…'}]. When set, the Postings
+  // Engine uses these (UK time, so BST/GMT is handled) instead of the
+  // days × times grid. Themes guide what to write; postings are routed to
+  // a day with their existing "preferred days".
+  try { db.run(`ALTER TABLE social_schedule_config ADD COLUMN day_slots TEXT`); } catch(e) {}
+  try { db.run(`ALTER TABLE social_schedule_config ADD COLUMN day_slots_seeded INTEGER NOT NULL DEFAULT 0`); } catch(e) {}
+  // Per App 36 — Per's Threads plan. Applied once (day_slots_seeded),
+  // never over anything edited later in the Social tab.
+  try {
+    db.run(`UPDATE social_schedule_config SET day_slots=?, days=?, times=?, day_slots_seeded=1
+            WHERE platform='threads' AND day_slots IS NULL AND day_slots_seeded=0`,
+      ['[{"day": 1, "time": "08:00", "theme": "Intentional week setup \\u2014 morning intentions, commuter-hour reflections, easing early-week anxiety"}, {"day": 2, "time": "08:00", "theme": "Intentional week setup \\u2014 morning intentions, commuter-hour reflections, easing early-week anxiety"}, {"day": 3, "time": "07:30", "theme": "Mid-week reset \\u2014 stress relief, short breathing practices, micro-mindfulness for work"}, {"day": 3, "time": "12:30", "theme": "Mid-week reset \\u2014 stress relief, short breathing practices, micro-mindfulness for work"}, {"day": 4, "time": "09:00", "theme": "Learning mode \\u2014 actionable insights, how to use the app, the science behind the courses"}, {"day": 0, "time": "10:30", "theme": "Weekly review \\u2014 relaxed Sunday-morning reflection, a calm week ahead"}, {"day": 0, "time": "21:00", "theme": "Sunday wind-down \\u2014 easing the Sunday-night worries before the week"}]', '[0,1,2,3,4]', '["07:30","08:00","09:00","10:30","12:30","21:00"]']);
+  } catch(e) { console.error('[schedule] Threads plan seed failed:', e.message); }
   // Seed: email gets Monday (newsletter slot) and Thursday (practice
   // reminder slot) at 07:00 UTC by default — editable from admin like
   // every other channel. A posting with no preferred_days floats to
@@ -3116,6 +3130,9 @@ async function getDb() {
     // the BulkPublish Pro account — publish() used to take the first
     // channel of the right platform the key could see.
     "ALTER TABLE app_config ADD COLUMN bulkpublish_channels TEXT DEFAULT NULL",
+    // Per App 36 — last known health per BulkPublish channel, so an alert
+    // email goes out once when a channel drops and once when it's back.
+    "ALTER TABLE app_config ADD COLUMN bulkpublish_health TEXT DEFAULT NULL",
     // Per Bot 48 — Per's follow-up: he'd set "What's New seconds per
     // item" (whats_new_seconds_per_item above) to 10, expecting it to
     // control the Practices shelf carousel's speed — a reasonable
@@ -9097,13 +9114,21 @@ function updateSocialPostMedia(id, platform, media) {
 // independently rather than the whole table at once.
 function getSocialScheduleConfig() {
   return queryAll('SELECT * FROM social_schedule_config ORDER BY platform ASC')
-    .map(r => ({ platform: r.platform, days: JSON.parse(r.days), times: JSON.parse(r.times), cooldown_days: r.cooldown_days, updated_at: r.updated_at }));
+    .map(r => {
+      let daySlots = null;
+      try { daySlots = r.day_slots ? JSON.parse(r.day_slots) : null; } catch (e) { daySlots = null; }
+      return { platform: r.platform, days: JSON.parse(r.days), times: JSON.parse(r.times), cooldown_days: r.cooldown_days, updated_at: r.updated_at, day_slots: daySlots };
+    });
 }
 // Per App 33 — now a thin wrapper over setChannelSchedule so there's one
 // real implementation of "save a channel's days/times/cooldown," not two
 // that could drift apart. cooldownDays defaults to whatever's already
 // stored (falls back to 3) when a caller — like the existing per-platform
 // Social tab, which doesn't have a cooldown field in its UI yet — omits it.
+function setChannelDaySlots(platform, slots) {
+  getDbSync().run(`UPDATE social_schedule_config SET day_slots=?, day_slots_seeded=1 WHERE platform=?`, [slots && slots.length ? JSON.stringify(slots) : null, platform]);
+  save();
+}
 function updateSocialScheduleConfig(platform, days, times, cooldownDays) {
   if (cooldownDays == null) {
     const existing = queryOne('SELECT cooldown_days FROM social_schedule_config WHERE platform=?', [platform]);
@@ -11141,6 +11166,13 @@ function getBulkPublishChannelChoices() {
     return obj && typeof obj === 'object' ? obj : {};
   } catch (e) { return {}; }
 }
+function getBulkPublishHealthState() {
+  try { const raw = (getAppConfig() || {}).bulkpublish_health; return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; }
+}
+function setBulkPublishHealthState(obj) {
+  getDbSync().run(`UPDATE app_config SET bulkpublish_health=? WHERE id='default'`, [JSON.stringify(obj || {})]);
+  save();
+}
 function setBulkPublishChannelChoices(map) {
   getDbSync().run(`UPDATE app_config SET bulkpublish_channels=? WHERE id='default'`, [JSON.stringify(map || {})]);
   save();
@@ -11520,7 +11552,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
-  getBulkPublishChannelChoices, setBulkPublishChannelChoices,
+  getBulkPublishChannelChoices, setBulkPublishChannelChoices, getBulkPublishHealthState, setBulkPublishHealthState, setChannelDaySlots,
   addOfflineMarksBatch,
   getLiveMeeting, getLiveMeetingReminderRecipients, claimLiveMeetingReminderSlot, setLiveMeetingReminderCount, getRecentLiveMeetingReminders,
   getPopularPractices, getAllPracticesWithPlayCounts, setPracticePinned, getFilesByTag,

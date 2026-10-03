@@ -22,7 +22,7 @@
 
 const cron = require('node-cron');
 
-function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
+function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, checkBulkPublishHealth, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, verifyDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder }) {
 
   // Records a run to cron_log without ever letting a logging failure
   // affect the job itself — this is a health log, not core functionality.
@@ -363,6 +363,22 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     } catch (e) {
       console.error('[cron] session reminders failed:', e.message);
       record('session_reminders', 'failed', null, e.message, t0);
+    }
+  });
+
+  // ── BulkPublish channel health (Per App 36) — hourly at :17 ──
+  // Emails Per once when a chosen channel drops (expired/disconnected) or
+  // BulkPublish can't be reached, and once when it's back.
+  cron.schedule('17 * * * *', async () => {
+    const t0 = Date.now();
+    try {
+      const r = await checkBulkPublishHealth({ notify: true });
+      if (r && ((r.wentDown && r.wentDown.length) || (r.cameBack && r.cameBack.length) || r.apiDown)) {
+        record('bulkpublish_health', r.apiDown ? 'failed' : 'ok', JSON.stringify(r), r.error || null, t0);
+      }
+    } catch (e) {
+      console.error('[cron] bulkpublish health failed:', e.message);
+      record('bulkpublish_health', 'failed', null, e.message, t0);
     }
   });
 

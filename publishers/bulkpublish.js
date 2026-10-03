@@ -47,16 +47,22 @@ function configured() {
 // every provider's listChannels() returns, so publishers/index.js can
 // merge results from several providers into one flat list without
 // needing to know which provider each channel came from.
-async function listChannels() {
+async function listChannels(opts = {}) {
   if (!configured()) return [];
   const { channels } = await bulkPublishRequest('GET', '/channels');
-  return (channels || []).map(c => ({
-    platform: (c.platform || '').toLowerCase(),
-    id: c.id,
-    name: c.name || c.platform,
-    connected: true,
-    provider: 'bulkpublish',
-  }));
+  return (channels || []).map(c => {
+    const out = {
+      platform: (c.platform || '').toLowerCase(),
+      id: c.id,
+      name: c.name || c.username || c.platform,
+      connected: true,
+      provider: 'bulkpublish',
+    };
+    // Per App 36 — health check needs BulkPublish's own state fields
+    // (status, active, expired …). Kept off the default shape.
+    if (opts.withRaw) out.raw = c;
+    return out;
+  });
 }
 
 // Bug fix (Per App 30, round 3) — media was silently dropped entirely.

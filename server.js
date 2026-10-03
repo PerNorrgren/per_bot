@@ -15744,7 +15744,33 @@ async function fireDuePostings() {
   const currentMinuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
   const schedules = db.getAllChannelSchedules();
   const fired = [], gaps = [], failed = [];
+  const uk = londonNowParts(now);
   for (const sched of schedules) {
+    // Per App 36 — per-day slots (UK time) take over when set: each slot
+    // fires once that UK day once its time has passed, same rules as
+    // below otherwise. The posting is chosen for the UK weekday, so a
+    // posting's "preferred days" routes it to that day's theme.
+    let daySlots = null;
+    try { daySlots = sched.day_slots ? JSON.parse(sched.day_slots) : null; } catch (e) { daySlots = null; }
+    if (Array.isArray(daySlots) && daySlots.length) {
+      for (const slot of daySlots.filter(x => Number(x.day) === uk.weekday)) {
+        const [sh, sm] = String(slot.time || '').split(':').map(Number);
+        if (!Number.isFinite(sh) || uk.minutes < sh * 60 + (sm || 0)) continue;
+        const slotTime = `${uk.dateStr} ${slot.time} UK`;
+        if (db.hasFiredSlotToday(sched.platform, slotTime)) continue;
+        const posting = db.getEligiblePostingForSlot(sched.platform, uk.dateStr, uk.weekday, sched.cooldown_days);
+        if (!posting) { gaps.push({ channel: sched.platform, slot: slotTime, theme: slot.theme || null }); continue; }
+        try {
+          const result = sched.platform === 'email' ? await firePostingEmail(posting, slotTime) : await firePostingSocial(posting, slotTime);
+          if (result.ok === false) failed.push({ channel: sched.platform, slot: slotTime, postingId: posting.id, error: result.error });
+          else fired.push({ channel: sched.platform, slot: slotTime, postingId: posting.id });
+        } catch (e) {
+          db.recordPostingSend(uuidv4(), posting.id, sched.platform, slotTime, 'failed', { error: e.message });
+          failed.push({ channel: sched.platform, slot: slotTime, postingId: posting.id, error: e.message });
+        }
+      }
+      continue;
+    }
     let days, times;
     try { days = JSON.parse(sched.days); times = JSON.parse(sched.times); } catch (e) { continue; }
     if (!days.includes(weekday)) continue;
@@ -16641,11 +16667,99 @@ app.get('/api/admin/bulkpublish/channels', auth.requireAuthApi(['admin']), async
       platforms: Object.keys(publishers.PLATFORM_PROVIDERS).filter(p => publishers.PLATFORM_PROVIDERS[p] === 'bulkpublish'),
       unchosenVisible: bp.filter(c => !chosenIds.has(String(c.id))),
       chosenNotVisible: missing,
+      health: db.getBulkPublishHealthState(),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+// ── BulkPublish channel health (Per App 36) ──
+// Hourly (cron.js) and on demand from Social → Channels. Emails Per once
+// when a channel goes down (expired/disconnected/error, or a CHOSEN
+// channel has vanished from the key's view, or the BulkPublish API
+// itself can't be reached), and once when it's back — never every hour.
+// Field names for a channel's state aren't in BulkPublish's public docs,
+// so health is read from whichever of the usual ones they return
+// (status, connectionStatus, active/isActive, expired/tokenExpired,
+// needsReconnect/requiresReauth); the raw values are kept in `rawState`
+// so the Channels card can show exactly what BulkPublish said.
+function bulkPublishChannelHealth(c) {
+  const raw = c.raw || {};
+  const statusText = [raw.status, raw.connectionStatus, raw.connection_status, raw.state, raw.health].filter(v => typeof v === 'string').join(' ');
+  const flagsBad = [raw.tokenExpired, raw.token_expired, raw.expired, raw.needsReconnect, raw.needs_reconnect, raw.requiresReauth, raw.requires_reauth, raw.hasError, raw.error === true].some(v => v === true);
+  const inactive = raw.isActive === false || raw.active === false || raw.connected === false || raw.enabled === false;
+  const badText = /expired|disconnect|error|revoked|invalid|reauth|reconnect|inactive|failed|suspended/i.test(statusText);
+  const down = flagsBad || inactive || badText;
+  let reason = null;
+  if (down) reason = statusText || (inactive ? 'inactive' : 'needs reconnecting');
+  return { down, reason };
+}
+async function checkBulkPublishHealth({ notify = true } = {}) {
+  const bp = publishers.PROVIDERS.bulkpublish;
+  if (!bp.configured()) return { skipped: 'no key' };
+  const prev = db.getBulkPublishHealthState();
+  const next = {};
+  const wentDown = [], cameBack = [];
+  const label = (c) => `${(c.platform || '').charAt(0).toUpperCase() + (c.platform || '').slice(1)} · ${c.name}`;
+  let channels;
+  try {
+    channels = await bp.listChannels({ withRaw: true });
+    next.__api = { down: false };
+    if (prev.__api && prev.__api.down) cameBack.push('The BulkPublish connection itself is working again.');
+  } catch (e) {
+    next.__api = { down: true, reason: e.message };
+    for (const k of Object.keys(prev)) if (k !== '__api') next[k] = prev[k];
+    if (!(prev.__api && prev.__api.down)) wentDown.push(`Couldn't reach BulkPublish at all: ${e.message}`);
+    db.setBulkPublishHealthState(next);
+    if (notify && wentDown.length) await sendBulkPublishHealthEmail(wentDown, cameBack);
+    return { apiDown: true, error: e.message };
+  }
+  const choices = db.getBulkPublishChannelChoices();
+  const chosenIds = new Set(Object.values(choices).map(String));
+  for (const c of channels) {
+    const h = bulkPublishChannelHealth(c);
+    const id = String(c.id);
+    next[id] = { down: h.down, reason: h.reason, name: label(c) };
+    const was = prev[id];
+    // Only channels this app actually uses raise an alert; others are
+    // still tracked and shown in the Channels card.
+    if (!chosenIds.has(id)) continue;
+    if (h.down && !(was && was.down)) wentDown.push(`${label(c)} — ${h.reason}`);
+    if (!h.down && was && was.down) cameBack.push(`${label(c)} is connected again.`);
+  }
+  for (const [platform, id] of Object.entries(choices)) {
+    const key = 'missing:' + id;
+    const visible = channels.some(c => String(c.id) === String(id));
+    if (!visible) {
+      next[key] = { down: true, reason: 'chosen channel no longer visible to the key', name: platform };
+      if (!(prev[key] && prev[key].down)) wentDown.push(`The ${platform} channel chosen for this app (id ${id}) has disappeared from BulkPublish — posts to ${platform} are being refused.`);
+    } else if (prev[key] && prev[key].down) {
+      cameBack.push(`The chosen ${platform} channel is visible again.`);
+    }
+  }
+  db.setBulkPublishHealthState(next);
+  if (notify && (wentDown.length || cameBack.length)) await sendBulkPublishHealthEmail(wentDown, cameBack);
+  return { checked: channels.length, wentDown, cameBack };
+}
+async function sendBulkPublishHealthEmail(wentDown, cameBack) {
+  try {
+    const b = brand();
+    const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+    const esc = (t) => String(t).replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+    const subject = wentDown.length ? `⚠ ${b.name}: a BulkPublish channel needs attention` : `✓ ${b.name}: BulkPublish channel back to normal`;
+    const html = `<div style="font-family:Georgia,serif;max-width:560px;padding:24px;color:#2a2a2a;line-height:1.7">
+      ${wentDown.length ? `<p><strong>Needs attention:</strong></p><ul>${wentDown.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+      <p>Posts to an affected channel will fail until it's reconnected. In BulkPublish, open Channels and reconnect it, then check Social → Channels in the app.</p>` : ''}
+      ${cameBack.length ? `<p><strong>Back to normal:</strong></p><ul>${cameBack.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
+      <p style="font-size:12px;color:#888">Checked automatically every hour. You'll only hear again when something changes.</p></div>`;
+    await sendEmail(adminEmail, subject, html, { kind: 'bulkpublish-health' });
+  } catch (e) { console.error('[bulkpublish health] email failed:', e.message); }
+}
+app.post('/api/admin/bulkpublish/health-check', auth.requireAuthApi(['admin']), async (req, res) => {
+  try { res.json({ ok: true, ...(await checkBulkPublishHealth({ notify: true })), state: db.getBulkPublishHealthState() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Per App 36 — save which channel each platform posts to. Body:
 // {platform, channelId|null}. The id must be a channel this key can see,
 // of that platform; null clears it (that platform then refuses to post).
@@ -16905,6 +17019,15 @@ app.post('/api/admin/social-schedule/:platform', auth.requireAuthApi(['admin']),
     // channel-schedule admin section always sends it explicitly.
     const cooldownDays = req.body.cooldownDays != null ? Math.max(0, parseInt(req.body.cooldownDays, 10) || 0) : undefined;
     db.updateSocialScheduleConfig(platform, [...new Set(days)].sort((a, b) => a - b), [...new Set(times)].sort(), cooldownDays);
+    // Per App 36 — optional per-day slots (UK time + theme). [] clears
+    // them, returning this channel to the days × times grid.
+    if (Array.isArray(req.body.daySlots)) {
+      const slots = req.body.daySlots
+        .map(x => ({ day: Number(x.day), time: String(x.time || ''), theme: String(x.theme || '').trim().slice(0, 300) }))
+        .filter(x => Number.isInteger(x.day) && x.day >= 0 && x.day <= 6 && SOCIAL_SCHEDULE_TIME_RE.test(x.time))
+        .sort((a, b) => ((a.day + 6) % 7) - ((b.day + 6) % 7) || a.time.localeCompare(b.time));
+      db.setChannelDaySlots(platform, slots);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -18742,7 +18865,7 @@ async function runPostDbBootTasks() {
   if (IS_STAGING) {
     console.log('[staging] cron jobs NOT started — no scheduled email/SMS can fire from this environment.');
   } else {
-    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
+    startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, emailTrialDay10, emailTrialDay14, sendInactivityReminders, sendCustomReminders, sendRenewalReminders, sendBirthdayMessages, sweepStaleChatSessions, sendDueCampaignEmailSteps, sendDueCampaignSocialSteps, sendDueSaversEmails, processDueSaversDowngrades, emailSaversCancelGrace0, sendDueScheduledMessages, sendDueSessionReminders, sendDueLiveMeetingReminders, checkBulkPublishHealth, sendDueQueuedPublishes, topUpSocialQueue, fireDuePostings, cleanupExpiredFormResponses: db.cleanupExpiredFormResponses, pollEmailDeliveryStatus, sendNewsletterWinbackEmails, refreshTrendingContext, runDailyBackup, checkDatabaseHealth, sendDailyIssuesReminder });
   }
 }
 
