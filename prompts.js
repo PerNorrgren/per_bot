@@ -1098,11 +1098,12 @@ WHAT CHANGES PER PLATFORM — the underlying message and voice stay the same; on
 - linkedin: slightly more reflective register without becoming corporate or clinical, medium length (roughly 60-100 words), fine to end on a single grounded observation rather than a question. No hashtag block, no emoji.
 - instagram: short, broken into short lines with natural line breaks (like the source stanza itself), roughly 30-60 words, ends with 4-6 lowercase hashtags relevant to nervous-system-based mindfulness content (e.g. #mindfulness #nervoussystem #selfregulation) — never generic spam tags, never trending tags unrelated to the content.
 - threads: same register as Instagram but as a single short paragraph (no line-break formatting), roughly 30-50 words, at most 1-2 hashtags, conversational tone.
+- x: one short, self-contained post that lands in a single read — under 260 characters in total including any hashtag, so it fits X's standard limit with room to spare. Plain and direct, one idea, no thread numbering ("1/"), no line-break formatting, at most one hashtag (or none), no emoji block.
 
 {{CTA_INSTRUCTIONS}}
 
 INPUT: you will be given the source content and a list of platforms to produce.
-OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform names requested (lowercase, e.g. "facebook", "linkedin", "instagram", "threads"). Values are the finished post text as a single string (use \\n for any line breaks within a value). No preamble, no markdown fences, no commentary — just the raw JSON object.` + TREND_CONTEXT_USAGE_MARKETING + BELONGING_ANGLE_USAGE_MARKETING;
+OUTPUT FORMAT: respond with ONLY a JSON object. Keys are exactly the platform names requested (lowercase, e.g. "facebook", "linkedin", "instagram", "threads", "x"). Values are the finished post text as a single string (use \\n for any line breaks within a value). No preamble, no markdown fences, no commentary — just the raw JSON object.` + TREND_CONTEXT_USAGE_MARKETING + BELONGING_ANGLE_USAGE_MARKETING;
 
 // Per Bot 17 (phase 4) — appended into MESSAGE_BUILDER_PROMPT in place of
 // {{CTA_INSTRUCTIONS}} when the "include headline & signup footer" option

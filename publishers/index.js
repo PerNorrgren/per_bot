@@ -25,6 +25,9 @@ const PLATFORM_PROVIDERS = {
   facebook:  'bulkpublish',
   instagram: 'bulkpublish',
   threads:   'bulkpublish',
+  // Per App 36 — X (Premium account DeeperMind2024). BulkPublish's own
+  // platform key is 'x'.
+  x:         'bulkpublish',
 };
 
 const PROVIDERS = { bulkpublish, linkedin, meta };

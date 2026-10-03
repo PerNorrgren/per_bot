@@ -638,6 +638,7 @@
           <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="linkedin"/> LinkedIn</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="instagram"/> Instagram</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="threads"/> Threads</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-new-channel-chk" value="x"/> X</label>
         </div>
       </div>
       <div>
@@ -723,6 +724,7 @@
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="linkedin" onchange="saveCampaignGoal()"/> LinkedIn</label>
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="instagram" onchange="saveCampaignGoal()"/> Instagram</label>
             <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="threads" onchange="saveCampaignGoal()"/> Threads</label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" class="camp-detail-channel-chk" value="x" onchange="saveCampaignGoal()"/> X</label>
           </div>
         </div>
         <div id="campGoalSaveStatus" style="font-size:12px;margin-top:6px"></div>
@@ -798,6 +800,7 @@
                 <option value="linkedin">LinkedIn</option>
                 <option value="instagram">Instagram</option>
                 <option value="threads">Threads</option>
+                <option value="x">X</option>
               </select>
             </div>
             <div style="flex:0 0 130px">
@@ -854,6 +857,7 @@
               <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="linkedin" checked/>LinkedIn</label>
               <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="instagram" checked/>Instagram</label>
               <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="threads"/>Threads</label>
+              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" class="autogen-channel-chk" value="x"/>X</label>
             </div>
           </div>
           <div style="display:flex;gap:8px">
@@ -1746,7 +1750,7 @@
   }
 
   // ── Campaigns (Per Bot 18) ──
-  const CAMP_CHANNEL_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads' };
+  const CAMP_CHANNEL_LABELS = { email: 'Email', facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', threads: 'Threads', x: 'X' };
   const AUDIENCE_LABELS = { newsletter_only: 'Newsletter-only', explorer: 'Explorer', member1: 'Member 1', member2: 'Member 2', member3: 'Member 3' };
   function formatAudience(audience) {
     if (!audience || audience === 'all') return 'everyone opted in';

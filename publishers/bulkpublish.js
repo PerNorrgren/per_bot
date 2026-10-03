@@ -54,7 +54,9 @@ async function listChannels(opts = {}) {
     const out = {
       platform: (c.platform || '').toLowerCase(),
       id: c.id,
-      name: c.name || c.username || c.platform,
+      // Per App 36 — BulkPublish's list returned only the platform as the
+      // name on Per's account; try the usual account-name fields first.
+      name: c.name || c.accountName || c.account_name || c.displayName || c.display_name || c.username || c.handle || c.pageName || c.page_name || c.platform,
       connected: true,
       provider: 'bulkpublish',
     };
@@ -136,7 +138,7 @@ const PLATFORM_MEDIA_POST_TYPES = {
 // could see; with Mare sharing the BulkPublish Pro account, that could
 // have been one of Mare's pages. No choice = refuse, never guess. A
 // chosen channel the key can no longer see = refuse too.
-const PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn' };
+const PLATFORM_LABELS = { facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedin: 'LinkedIn', x: 'X' };
 function chosenChannelId(platform) {
   // Required lazily so this module never loads the database at startup order-sensitively.
   const db = require('../db');

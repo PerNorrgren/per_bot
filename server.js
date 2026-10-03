@@ -15268,7 +15268,7 @@ app.post('/api/admin/campaigns/:id/steps', auth.requireAuthApi(['admin']), async
     if (campaign.status !== 'draft') return res.status(400).json({ error: 'Only draft campaigns can have steps added.' });
     const { offsetDays, type, channel, brief, campaignVideoId } = req.body;
     if (!['calming', 'sales'].includes(type)) return res.status(400).json({ error: 'type must be calming or sales.' });
-    if (!['email', 'facebook', 'linkedin', 'instagram', 'threads'].includes(channel)) return res.status(400).json({ error: 'Unknown channel.' });
+    if (!['email', 'facebook', 'linkedin', 'instagram', 'threads', 'x'].includes(channel)) return res.status(400).json({ error: 'Unknown channel.' });
     const id = uuidv4();
     const stub = { offset_days: Number.isFinite(offsetDays) ? offsetDays : 0, type, channel };
 
@@ -16999,7 +16999,7 @@ app.post('/api/admin/social-posts/:id/media', auth.requireAuthApi(['admin']), (r
 // tab. This is deliberately just the config store for now — the
 // automation that actually reads it to auto-schedule posts ("B") is the
 // next piece to build on top of this.
-const SOCIAL_SCHEDULE_PLATFORMS = ['email', 'facebook', 'linkedin', 'instagram', 'threads'];
+const SOCIAL_SCHEDULE_PLATFORMS = ['email', 'facebook', 'linkedin', 'instagram', 'threads', 'x'];
 const SOCIAL_SCHEDULE_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 app.get('/api/admin/social-schedule', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json(db.getSocialScheduleConfig()); }
