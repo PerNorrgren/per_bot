@@ -5,3 +5,6 @@ db/
 per_bot_backup_*/
 per_bot_BACKUP_*
 .DS_Store
+
+# Per App 36 — the live database lives only on the Railway volume
+db/*.db

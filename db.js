@@ -90,7 +90,10 @@ async function loadOrRefuseDb(SQL) {
       throw new Error('Railway volume not mounted at the database folder.');
     }
   }
+  try { if (fs.existsSync(DB_PATH + '.tmp')) { fs.unlinkSync(DB_PATH + '.tmp'); console.error('db.js: removed a leftover half-written .tmp from an interrupted save (the live file was untouched).'); } } catch (e) {}
   if (fs.existsSync(DB_PATH)) {
+    const size = fs.statSync(DB_PATH).size;
+    console.error(`db.js: opening ${DB_PATH} (${(size / 1048576).toFixed(1)} MB).`);
     return new SQL.Database(fs.readFileSync(DB_PATH));
   }
 
@@ -4032,8 +4035,38 @@ function save() {
     return;
   }
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+  // Per App 36 — ATOMIC save. writeFileSync(DB_PATH) first truncates the
+  // live file to 0 bytes, then writes ~40 MB. If the container is stopped
+  // in between (Railway sends SIGTERM on every redeploy, and with no
+  // handler Node exits at once), the real database is left empty or cut
+  // short — and the next boot opens it, finds no tables, seeds a fresh
+  // app_config and admin, and runs with 0 users. That matches the 4 Oct
+  // deploy log exactly (no 'file not found' lines: the file existed, it
+  // was just emptied). Now the bytes go to a temp file in the same folder
+  // and are renamed over the live file in one step: a stop mid-write
+  // leaves the old database whole, never a half-written one.
+  const tmp = DB_PATH + '.tmp';
+  const bytes = Buffer.from(db.export());
+  const fd = fs.openSync(tmp, 'w');
+  try { fs.writeSync(fd, bytes, 0, bytes.length); fs.fsyncSync(fd); }
+  finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, DB_PATH);
 }
+
+// Per App 36 — on Railway's stop signal, let any work in progress finish
+// (saves are synchronous, so a signal handler can never interrupt one),
+// write one last clean copy, then exit. Without a handler, Node is killed
+// instantly — possibly mid-save, which is how the live file got emptied.
+let _shuttingDown = false;
+function gracefulShutdown(sig) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.error(`db.js: ${sig} received — saving the database cleanly before exit.`);
+  try { if (db) save(); } catch (e) { console.error('db.js: final save failed:', e.message); }
+  process.exit(0);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Per Bot 25 — for the admin "Download database backup" feature. Same
 // underlying db.export() save() already uses, just handed straight back
