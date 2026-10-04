@@ -1,0 +1,7 @@
+# Per App 36 — never bake a database into the image. The live DB lives
+# only on the Railway volume mounted at /app/db.
+db/*.db
+db/*.db-*
+node_modules
+.git
+.DS_Store

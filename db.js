@@ -39,7 +39,57 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ── Per App 36 — the 4 Oct 2026 reset, and the real root cause ──
+// The repo has always contained an old db/perbot.db (1 July, 0 users),
+// and the Dockerfile's `COPY . .` put it into every image at
+// /app/db/perbot.db. Normally the Railway volume is mounted over /app/db
+// and hides it. On 4 Oct the container started without the volume over
+// /app/db, so the file-exists check above passed instantly on the
+// IMAGE's stale copy: no retry, no maintenance mode — the app seeded
+// app_config, created the admin, ran with 0 users, and every save()
+// wrote that empty database to disk. The missing-file guard could never
+// catch this, because the file was never missing.
+//
+// Two guards now, both only on Railway (where the volume is expected):
+//   1. volumeMounted(): /app/db must be a different filesystem from the
+//      app itself (a real mount). Retried like the missing-file case;
+//      still not mounted → refuse → maintenance mode, never a stale or
+//      empty database.
+//   2. save() refuses to write while the volume isn't mounted, so a
+//      database opened from the image can never be written over the
+//      real one if the volume appears later.
+// The stale file is also removed from the repo and kept out of the
+// image (.dockerignore), so there's nothing for this to find any more.
+const ON_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID);
+function volumeMounted() {
+  if (!ON_RAILWAY || process.env.ALLOW_FRESH_DB_INIT === 'true') return true;
+  const dbDir = path.resolve(path.dirname(DB_PATH));
+  // Most reliable: the kernel's own mount table lists /app/db as a mount
+  // point when the volume is attached (Railway volumes are bind mounts).
+  try {
+    const info = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+    if (info.split('\n').some(line => (line.split(' ')[4] || '') === dbDir)) return true;
+  } catch (e) { /* no /proc — fall through to the device check */ }
+  // Fallback: a mounted folder sits on a different device from the app.
+  try {
+    if (!fs.existsSync(dbDir)) return false;
+    return fs.statSync(dbDir).dev !== fs.statSync(__dirname).dev;
+  } catch (e) { return false; }
+}
+
 async function loadOrRefuseDb(SQL) {
+  if (!volumeMounted()) {
+    console.error(`db.js: ${path.dirname(DB_PATH)} is NOT a mounted volume yet (same filesystem as the app). Waiting for the Railway volume before opening any database...`);
+    let mounted = false;
+    for (let i = 0; i < DB_INIT_RETRY_DELAYS_MS.length; i++) {
+      await delay(DB_INIT_RETRY_DELAYS_MS[i]);
+      if (volumeMounted()) { mounted = true; console.error('db.js: volume is mounted now — continuing.'); break; }
+    }
+    if (!mounted) {
+      console.error(`db.js: FATAL — the Railway volume is not mounted at ${path.dirname(DB_PATH)} after 23s. Refusing to open any database (a file here would be the image's stale copy). Starting in maintenance mode instead.`);
+      throw new Error('Railway volume not mounted at the database folder.');
+    }
+  }
   if (fs.existsSync(DB_PATH)) {
     return new SQL.Database(fs.readFileSync(DB_PATH));
   }
@@ -3969,8 +4019,18 @@ function toSqliteDatetime(input) {
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+let _saveRefusedLogged = 0;
 function save() {
   if (!db) return;
+  // Per App 36 — never write the database anywhere but the mounted
+  // volume (see volumeMounted above). Logged at most once a minute.
+  if (!volumeMounted()) {
+    if (Date.now() - _saveRefusedLogged > 60000) {
+      _saveRefusedLogged = Date.now();
+      console.error(`db.js: save() REFUSED — ${path.dirname(DB_PATH)} is not the mounted volume. Nothing written.`);
+    }
+    return;
+  }
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
 }
