@@ -15758,8 +15758,11 @@ async function fireDuePostings() {
         if (!Number.isFinite(sh) || uk.minutes < sh * 60 + (sm || 0)) continue;
         const slotTime = `${uk.dateStr} ${slot.time} UK`;
         if (db.hasFiredSlotToday(sched.platform, slotTime)) continue;
-        const posting = db.getEligiblePostingForSlot(sched.platform, uk.dateStr, uk.weekday, sched.cooldown_days);
-        if (!posting) { gaps.push({ channel: sched.platform, slot: slotTime, theme: slot.theme || null }); continue; }
+        const slotType = slot.type === 'sales' || slot.type === 'calming' ? slot.type : null;
+        const posting = db.getEligiblePostingForSlot(sched.platform, uk.dateStr, uk.weekday, sched.cooldown_days, slotType);
+        // A sales-only slot with nothing to sell (no launch running) is
+        // simply skipped — not reported as a gap.
+        if (!posting) { if (slotType !== 'sales') gaps.push({ channel: sched.platform, slot: slotTime, theme: slot.theme || null }); continue; }
         try {
           const result = sched.platform === 'email' ? await firePostingEmail(posting, slotTime) : await firePostingSocial(posting, slotTime);
           if (result.ok === false) failed.push({ channel: sched.platform, slot: slotTime, postingId: posting.id, error: result.error });
@@ -17025,7 +17028,7 @@ app.post('/api/admin/social-schedule/:platform', auth.requireAuthApi(['admin']),
     // them, returning this channel to the days × times grid.
     if (Array.isArray(req.body.daySlots)) {
       const slots = req.body.daySlots
-        .map(x => ({ day: Number(x.day), time: String(x.time || ''), theme: String(x.theme || '').trim().slice(0, 300) }))
+        .map(x => ({ day: Number(x.day), time: String(x.time || ''), theme: String(x.theme || '').trim().slice(0, 300), ...((x.type === 'sales' || x.type === 'calming') ? { type: x.type } : {}) }))
         .filter(x => Number.isInteger(x.day) && x.day >= 0 && x.day <= 6 && SOCIAL_SCHEDULE_TIME_RE.test(x.time))
         .sort((a, b) => ((a.day + 6) % 7) - ((b.day + 6) % 7) || a.time.localeCompare(b.time));
       db.setChannelDaySlots(platform, slots);

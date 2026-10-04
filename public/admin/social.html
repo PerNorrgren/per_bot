@@ -2039,6 +2039,11 @@
           ${SLOT_DAY_ORDER.map(d => `<option value="${d}" ${Number(slot.day) === d ? 'selected' : ''}>${DAY_LABELS[d]}</option>`).join('')}
         </select>
         <input class="inline-input" type="time" value="${slot.time || ''}" style="width:100px" onchange="scheduleState['${p.key}'].daySlots[${i}].time=this.value"/>
+        <select class="inline-input" style="width:110px" title="Which postings this slot uses" onchange="scheduleState['${p.key}'].daySlots[${i}].type=this.value||undefined">
+          <option value="" ${!slot.type ? 'selected' : ''}>Any posting</option>
+          <option value="calming" ${slot.type === 'calming' ? 'selected' : ''}>Calming only</option>
+          <option value="sales" ${slot.type === 'sales' ? 'selected' : ''}>Sales only</option>
+        </select>
         <textarea class="inline-input" rows="2" style="flex:1;min-width:220px;resize:vertical" placeholder="What this slot's posts should be about" onchange="scheduleState['${p.key}'].daySlots[${i}].theme=this.value">${(slot.theme || '').replace(/</g, '&lt;')}</textarea>
         <button class="btn sm" onclick="scheduleState['${p.key}'].daySlots.splice(${i},1); renderSchedule();" title="Remove this slot">×</button>
       </div>`).join('');

@@ -1759,6 +1759,14 @@ async function getDb() {
             WHERE platform='x' AND day_slots IS NULL AND day_slots_seeded=0`,
       ["[{\"day\": 1, \"time\": \"08:30\", \"theme\": \"Intentional week kickoff — a clear-headed prompt or morning intention\"}, {\"day\": 2, \"time\": \"09:30\", \"theme\": \"The workday routine — a snackable tip on workflow anxiety or desk micro-meditation (best day)\"}, {\"day\": 2, \"time\": \"12:30\", \"theme\": \"The workday routine — lunchtime tip worth bookmarking\"}, {\"day\": 3, \"time\": \"09:00\", \"theme\": \"Midweek mental check — a quick breathing technique or a 'how stressed are you' question\"}, {\"day\": 3, \"time\": \"13:00\", \"theme\": \"Midweek mental check — afternoon slump\"}, {\"day\": 4, \"time\": \"10:00\", \"theme\": \"Education — a piece of mindfulness science from the courses\"}, {\"day\": 4, \"time\": \"16:00\", \"theme\": \"Education — late-afternoon scroll-and-react: one sharp insight\"}, {\"day\": 5, \"time\": \"16:00\", \"theme\": \"Low-friction wind-down — unplug from screens, leave work brain behind; no promotions\"}]", '[1, 2, 3, 4, 5]', '["08:30", "09:00", "09:30", "10:00", "12:30", "13:00", "16:00"]']);
   } catch(e) { console.error('[schedule] x plan seed failed:', e.message); }
+  // Per App 36 — Per's email plan (UK time): newsletter Tue 10:30, Thu
+  // 20:00, Sun 20:00 (calming postings only); launch slots Tue–Thu 13:30
+  // + Fri 18:00 (sales postings only — skip silently with no launch on).
+  try {
+    db.run(`UPDATE social_schedule_config SET day_slots=?, days=?, times=?, day_slots_seeded=1
+            WHERE platform='email' AND day_slots IS NULL AND day_slots_seeded=0`,
+      ["[{\"day\": 2, \"time\": \"10:30\", \"type\": \"calming\", \"theme\": \"Newsletter — tips & micro-practices; mid-morning reset, just after the urgent tasks are cleared (opens peak 9–11)\"}, {\"day\": 4, \"time\": \"20:00\", \"type\": \"calming\", \"theme\": \"Newsletter — evening read: a fuller piece or course insight; clicks peak 6–9pm\"}, {\"day\": 0, \"time\": \"20:00\", \"type\": \"calming\", \"theme\": \"Sunday Scaries — calm for the week ahead\"}, {\"day\": 2, \"time\": \"13:30\", \"type\": \"sales\", \"theme\": \"Course launch — post-lunch decision window (only when a sales campaign is running)\"}, {\"day\": 3, \"time\": \"13:30\", \"type\": \"sales\", \"theme\": \"Course launch — post-lunch decision window\"}, {\"day\": 4, \"time\": \"13:30\", \"type\": \"sales\", \"theme\": \"Course launch — post-lunch decision window\"}, {\"day\": 5, \"time\": \"18:00\", \"type\": \"sales\", \"theme\": \"Course launch — closing email, Friday 6pm\"}]", '[0, 2, 3, 4, 5]', '["10:30", "13:30", "18:00", "20:00"]']);
+  } catch(e) { console.error('[schedule] email plan seed failed:', e.message); }
   // Seed: email gets Monday (newsletter slot) and Thursday (practice
   // reminder slot) at 07:00 UTC by default — editable from admin like
   // every other channel. A posting with no preferred_days floats to
@@ -8631,7 +8639,11 @@ function recordPostingSend(id, postingId, channel, slotTime, status, fields = {}
 // last-sent — never sent — sorts first via the CASE, so brand-new
 // postings get first priority over ones already in rotation). Returns
 // at most one row — one posting fills one slot.
-function getEligiblePostingForSlot(channel, todayStr, weekday, cooldownDays) {
+// Per App 36 — optional postingType ('calming' | 'sales'): a slot can be
+// reserved for one kind, e.g. sales emails only in the post-lunch launch
+// slots, calming tips only in the newsletter slots.
+function getEligiblePostingForSlot(channel, todayStr, weekday, cooldownDays, postingType) {
+  const typeClause = postingType ? 'AND p.type = ?' : '';
   return queryOne(`
     SELECT p.*, MAX(ps.sent_at) as last_sent
     FROM postings p
@@ -8641,11 +8653,14 @@ function getEligiblePostingForSlot(channel, todayStr, weekday, cooldownDays) {
       AND (p.expiry_date IS NULL OR p.expiry_date >= ?)
       AND (c.end_date IS NULL OR c.end_date >= ?)
       AND (p.preferred_days IS NULL OR p.preferred_days LIKE '%' || ? || '%')
+      ${typeClause}
     GROUP BY p.id
     HAVING last_sent IS NULL OR julianday(?) - julianday(last_sent) >= ?
     ORDER BY CASE WHEN last_sent IS NULL THEN 0 ELSE 1 END, last_sent ASC
     LIMIT 1
-  `, [channel, todayStr, todayStr, String(weekday), todayStr, cooldownDays]);
+  `, postingType
+    ? [channel, todayStr, todayStr, String(weekday), postingType, todayStr, cooldownDays]
+    : [channel, todayStr, todayStr, String(weekday), todayStr, cooldownDays]);
 }
 function getChannelSchedule(channel) {
   return queryOne('SELECT * FROM social_schedule_config WHERE platform=?', [channel]);

@@ -197,8 +197,10 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
     }
   });
 
-  // ── Trial email sequence — 07:10 UTC ──
-  cron.schedule('10 7 * * *', async () => {
+  // ── Trial email sequence — 07:00 UK time (Per App 36; was 07:10 UTC) ──
+  // Onboarding tips land early in the morning to encourage a morning
+  // practice habit; Europe/London keeps it at 07:00 through BST and GMT.
+  cron.schedule('0 7 * * *', async () => {
     const t0 = Date.now();
     try {
       const day3 = db.getTrialEmailCandidates(3, 'trial_email_day3_sent');
@@ -232,7 +234,7 @@ function startCronJobs({ db, sendScheduledMotd, emailTrialDay3, emailTrialDay7, 
       console.error('[cron] trial email sequence failed:', e.message);
       record('trial_email_sequence', 'failed', null, e.message, t0);
     }
-  });
+  }, { timezone: 'Europe/London' });
 
   // ── Inactivity reminders — hourly, :15 past ──
   // Per Bot 24 (activity/engagement, group 1) — was a single fixed
