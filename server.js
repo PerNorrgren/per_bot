@@ -5418,6 +5418,14 @@ app.get('/api/admin/backup/daily/:filename', auth.requireAuthApi(['admin']), asy
 // outbound alerts, not the UI.
 const LOW_USER_COUNT_THRESHOLD = 10;
 async function checkDatabaseHealth() {
+  // Per App 36 — keep the alert contacts on the volume, so the boot alert
+  // (which can't read the database) still knows who to text.
+  try {
+    const adminEmail0 = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
+    const admin0 = db.getFacilitatorByEmail(adminEmail0);
+    const phone0 = process.env.ADMIN_PHONE || (admin0 && admin0.phone) || null;
+    fs.writeFileSync(path.join(db.DB_DIR, 'alert-contacts.json'), JSON.stringify({ email: adminEmail0, phone: phone0 }));
+  } catch (e) { /* best effort */ }
   const count = db.getUserCount();
   const state = db.getLowUserAlertState();
   const b = brand();
@@ -5432,7 +5440,8 @@ async function checkDatabaseHealth() {
       try {
         if (sms.isConfigured()) {
           const admin = db.getFacilitatorByEmail(adminEmail);
-          if (admin && admin.phone) await sms.sendSms(admin.phone, `${b.name}: user count dropped to ${count} — possible database reset. Check the app now.`);
+          const phone = process.env.ADMIN_PHONE || (admin && admin.phone);
+          if (phone) await sms.sendSms(phone, `${b.name}: user count dropped to ${count} — possible database reset. Check the app now.`);
         }
       } catch (e) { console.error('[health check] alert SMS failed:', e.message); }
     }
@@ -18886,9 +18895,71 @@ async function runPostDbBootTasks() {
 // fully live again with no redeploy needed. Nothing here ever creates a
 // fresh empty database on its own; that still only ever happens via the
 // explicit ALLOW_FRESH_DB_INIT=true environment variable.
+// ── Per App 36 — database-free alerts and automatic recovery ──
+// When the database itself is the problem, sendEmail() can't be used (it
+// logs every send into the database). These go straight to Scaleway and
+// Twilio. The phone number comes from ADMIN_PHONE, or from the copy the
+// health check keeps on the volume (alert-contacts.json) — so it still
+// works when the database has nothing in it.
+function alertContacts() {
+  let cached = {};
+  try { cached = JSON.parse(fs.readFileSync(path.join(db.DB_DIR, 'alert-contacts.json'), 'utf8')); } catch (e) {}
+  return {
+    email: process.env.ADMIN_EMAIL || cached.email || 'per@deepermindfulness.org',
+    phone: process.env.ADMIN_PHONE || cached.phone || null,
+  };
+}
+async function sendBootAlert(subject, text) {
+  const { email, phone } = alertContacts();
+  try {
+    if (SCW_SECRET_KEY && SCW_PROJECT_ID) {
+      await fetch(`https://api.scaleway.com/transactional-email/v1alpha1/regions/${SCW_TEM_REGION}/emails`, {
+        method: 'POST',
+        headers: { 'X-Auth-Token': SCW_SECRET_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: { name: 'Deeper Mindfulness', email: EMAIL_FROM }, to: [{ email }], subject, text, project_id: SCW_PROJECT_ID }),
+      });
+    }
+  } catch (e) { console.error('[boot alert] email failed:', e.message); }
+  try {
+    if (phone && sms.isConfigured()) await sms.sendSms(phone, `${subject}. ${text}`.slice(0, 320));
+    else if (!phone) console.error('[boot alert] no phone number known — set ADMIN_PHONE in Railway to get texts.');
+  } catch (e) { console.error('[boot alert] SMS failed:', e.message); }
+}
+// Newest nightly backup that really has settings and members, written
+// over the empty file (kept aside) and opened normally.
+async function autoRestoreFromLatestBackup() {
+  if (!media.isConfigured()) throw new Error('R2 not configured — no backups reachable.');
+  const objs = (await media.listObjects(BACKUP_R2_PREFIX))
+    .filter(o => /perbot-backup-\d{4}-\d{2}-\d{2}\.db$/.test(o.key))
+    .sort((a, b) => (a.key < b.key ? 1 : -1));
+  for (const o of objs.slice(0, 7)) {
+    try {
+      const obj = await media.getPublicObject(o.key);
+      const chunks = [];
+      for await (const c of obj.Body) chunks.push(c);
+      await db.replaceLiveFileFromBuffer(Buffer.concat(chunks));
+      return o.key.slice(BACKUP_R2_PREFIX.length);
+    } catch (e) { console.error(`[auto-restore] ${o.key} not usable:`, e.message); }
+  }
+  throw new Error('No usable backup found in the newest 7.');
+}
+
 (async () => {
   try {
-    await db.getDb();
+    try {
+      await db.getDb();
+    } catch (e0) {
+      if (e0.code !== 'DB_EMPTY') throw e0;
+      console.error('[auto-restore] live database is empty — restoring the newest good nightly backup...');
+      let used;
+      try { used = await autoRestoreFromLatestBackup(); }
+      catch (e1) {
+        await sendBootAlert('URGENT: Deeper Mindfulness is in maintenance mode', `The live database opened empty and no backup could be restored automatically (${e1.message}). Visitors see the maintenance page; nothing has been overwritten. Restore needed by hand.`);
+        throw e0;
+      }
+      console.error(`[auto-restore] restored from ${used}.`);
+      await sendBootAlert('Deeper Mindfulness: database restored automatically', `At startup the live database was empty. The app refused to run on it and restored the nightly backup ${used} instead (the empty file is kept on the volume). Anything changed since that backup was taken is missing — please check the app.`);
+    }
     await runPostDbBootTasks();
     DB_READY = true;
     server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));

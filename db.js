@@ -118,10 +118,54 @@ async function loadOrRefuseDb(SQL) {
   throw new Error(`Database file not found at ${DB_PATH} after 23s of retries.`);
 }
 
+// Per App 36 — a live database always has its settings and members
+// tables. One that doesn't (a 0-byte or cut-short file, an old blank
+// copy) is never opened as if it were fine: on 4 Oct the app did exactly
+// that, "seeded app_config with defaults", created a fresh admin and ran
+// with 0 users. Now it's refused with code DB_EMPTY, and server.js
+// restores the newest good backup automatically and texts/emails Per.
+function looksLikeRealDatabase(candidate) {
+  try {
+    const t = candidate.exec("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('app_config','users')");
+    const names = t.length ? t[0].values.map(r => r[0]) : [];
+    if (!names.includes('app_config') || !names.includes('users')) return false;
+    const c = candidate.exec('SELECT COUNT(*) FROM users');
+    return !!(c.length && c[0].values[0][0] > 0);
+  } catch (e) { return false; }
+}
+
+// Writes a verified backup over the live file (keeping the bad file
+// aside), then opens it through the normal getDb() path so every
+// migration and seed runs on it.
+async function replaceLiveFileFromBuffer(buffer) {
+  if (!buffer || buffer.length < 100 || buffer.toString('utf8', 0, 15) !== 'SQLite format 3') throw new Error('Not a valid SQLite file.');
+  const SQL = await initSqlJs();
+  const probe = new SQL.Database(buffer);
+  const ok = looksLikeRealDatabase(probe);
+  probe.close();
+  if (!ok) throw new Error('That backup has no members or no settings — not used.');
+  if (!volumeMounted()) throw new Error('Volume not mounted — refusing to write.');
+  try { if (fs.existsSync(DB_PATH)) fs.renameSync(DB_PATH, DB_PATH.replace(/\.db$/, `.empty-${Date.now()}.db`)); } catch (e) {}
+  const tmp = DB_PATH + '.tmp';
+  const fd = fs.openSync(tmp, 'w');
+  try { fs.writeSync(fd, buffer, 0, buffer.length); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  fs.renameSync(tmp, DB_PATH);
+  db = null;
+  return getDb();
+}
+
 async function getDb() {
   if (db) return db;
   const SQL = await initSqlJs();
-  db = await loadOrRefuseDb(SQL);
+  const loaded = await loadOrRefuseDb(SQL);
+  if (process.env.ALLOW_FRESH_DB_INIT !== 'true' && !looksLikeRealDatabase(loaded)) {
+    try { loaded.close(); } catch (e) {}
+    console.error(`db.js: REFUSED — ${DB_PATH} opened but has no settings or no members (empty, cut short, or a blank copy). Not starting on it.`);
+    const err = new Error('The database file is empty or has no members.');
+    err.code = 'DB_EMPTY';
+    throw err;
+  }
+  db = loaded;
 
   // ── App configuration (Path A: one deployment per facilitator/org) ──
   // Single-row settings for THIS deployment's brand identity and business
@@ -11693,6 +11737,7 @@ module.exports = {
   getAdminScriptStates, upsertAdminScriptState, setAdminScriptDismissed,
   getCustomRemindersForUser, createCustomReminder, updateCustomReminder, deleteCustomReminder, markCustomReminderSent, getAllActiveCustomReminders,
   getShelfCounts,
+  replaceLiveFileFromBuffer, DB_DIR: path.dirname(DB_PATH),
   getBulkPublishChannelChoices, setBulkPublishChannelChoices, getBulkPublishHealthState, setBulkPublishHealthState, setChannelDaySlots,
   addOfflineMarksBatch,
   getLiveMeeting, getLiveMeetingReminderRecipients, claimLiveMeetingReminderSlot, setLiveMeetingReminderCount, getRecentLiveMeetingReminders,
