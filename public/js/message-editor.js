@@ -538,24 +538,67 @@
     if (!url || !url.trim()) return;
     const label = text.trim();
     const linkUrl = url.trim();
-    // Native OS color picker rather than a custom modal — click() on a
-    // hidden <input type="color"> opens it immediately. Defaults to
-    // today's green, so leaving it alone (or just closing the picker)
-    // reproduces the exact old behaviour with nothing to configure.
-    const colorInput = document.createElement('input');
-    colorInput.type = 'color';
-    colorInput.value = '#2d6a4f';
-    colorInput.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
-    document.body.appendChild(colorInput);
-    let done = false;
-    const finish = () => {
-      if (done) return; done = true;
-      insertNewsletterButtonWithColor(q, label, linkUrl, colorInput.value);
-      colorInput.remove();
-    };
-    colorInput.addEventListener('change', finish, { once: true });
-    colorInput.addEventListener('blur', () => setTimeout(finish, 150), { once: true });
-    colorInput.click();
+    // Per App 36 — our own colour step. The old way clicked a hidden
+    // native <input type=color> and waited for 'change' or 'blur'. Chrome
+    // fires 'change' only if the colour actually changed, and the hidden
+    // input never had focus so 'blur' never fired — keep the default
+    // green, or just click away, and the button was silently never
+    // inserted. Now: a small dialog with a live preview, brand swatches,
+    // an optional custom colour, and explicit Insert / Cancel.
+    const color = await chooseButtonColor(label);
+    if (!color) return;
+    insertNewsletterButtonWithColor(q, label, linkUrl, color);
+  }
+  function chooseButtonColor(label) {
+    return new Promise(resolve => {
+      const SWATCHES = [
+        ['#2d6a4f', 'Forest green'], ['#40916c', 'Leaf green'], ['#1d3557', 'Deep blue'],
+        ['#457b9d', 'Sea blue'], ['#8a5a44', 'Earth'], ['#b5651d', 'Amber'], ['#6d597a', 'Heather'], ['#222222', 'Charcoal'],
+      ];
+      let chosen = SWATCHES[0][0];
+      const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      const overlay = document.createElement('div');
+      overlay.className = 'app-dialog-overlay';
+      // Styled inline as well, so it looks right even if the shared
+      // dialog stylesheet hasn't been injected yet on this page.
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px';
+      overlay.innerHTML = `
+        <div class="app-dialog" role="dialog" aria-modal="true" aria-label="Button colour" style="background:#12181a;border:1px solid rgba(255,255,255,0.14);border-radius:14px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.5);font-family:Georgia,serif;overflow:hidden">
+          <div class="app-dialog-title" style="padding:16px 20px 2px;font-size:12px;letter-spacing:0.08em;color:rgba(255,255,255,0.5);text-transform:uppercase">Button colour</div>
+          <div class="app-dialog-body" style="white-space:normal;padding:8px 20px 18px;color:rgba(255,255,255,0.85)">
+            <div style="text-align:center;margin:6px 0 16px">
+              <span id="nlBtnPreview" style="display:inline-block;padding:12px 24px;border-radius:999px;color:#fff;font-size:15px;background:${chosen}">${esc(label)}</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center">
+              ${SWATCHES.map(([c, n], i) => `<button type="button" data-c="${c}" title="${n}" aria-label="${n}" style="width:34px;height:34px;border-radius:50%;background:${c};cursor:pointer;border:3px solid ${i === 0 ? '#fff' : 'transparent'};padding:0"></button>`).join('')}
+            </div>
+            <label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:13px;color:rgba(255,255,255,0.75)">
+              Or any colour: <input type="color" id="nlBtnCustom" value="${chosen}" style="width:44px;height:30px;border:none;background:none;cursor:pointer;padding:0">
+            </label>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:10px;padding:12px 20px 16px;border-top:1px solid rgba(255,255,255,0.1)">
+            <button type="button" data-act="cancel" style="padding:9px 18px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.06);color:#fff;font-family:Georgia,serif;cursor:pointer">Cancel</button>
+            <button type="button" data-act="ok" style="padding:9px 18px;border-radius:10px;border:1px solid rgba(180,230,200,0.5);background:rgba(180,230,200,0.18);color:#fff;font-family:Georgia,serif;cursor:pointer">Insert button</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const preview = overlay.querySelector('#nlBtnPreview');
+      const custom = overlay.querySelector('#nlBtnCustom');
+      const pick = (c) => {
+        chosen = c;
+        preview.style.background = c;
+        overlay.querySelectorAll('[data-c]').forEach(b => { b.style.borderColor = b.dataset.c === c ? '#fff' : 'transparent'; });
+      };
+      overlay.querySelectorAll('[data-c]').forEach(b => b.addEventListener('click', () => { pick(b.dataset.c); custom.value = b.dataset.c; }));
+      custom.addEventListener('input', () => pick(custom.value));
+      const close = (val) => { document.removeEventListener('keydown', onKey, true); overlay.remove(); resolve(val); };
+      const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(null); } if (e.key === 'Enter' && e.target.tagName !== 'INPUT') { e.preventDefault(); close(chosen); } };
+      document.addEventListener('keydown', onKey, true);
+      overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => close(null));
+      overlay.querySelector('[data-act="ok"]').addEventListener('click', () => close(chosen));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      setTimeout(() => overlay.querySelector('[data-act="ok"]').focus(), 0);
+    });
   }
   function insertNewsletterButtonWithColor(q, label, linkUrl, color) {
     const target = getInsertionTarget(q);
