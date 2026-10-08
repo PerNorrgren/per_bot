@@ -115,7 +115,11 @@ async function loadOrRefuseDb(SQL) {
   }
 
   console.error(`db.js: FATAL — ${DB_PATH} was not found after 3s + 5s + 15s of retries (23s total). Refusing to start with a fresh empty database, since that file should already exist in production. If this really is a brand-new deployment that needs an empty database, set ALLOW_FRESH_DB_INIT=true explicitly and redeploy — this is never done automatically.`);
-  throw new Error(`Database file not found at ${DB_PATH} after 23s of retries.`);
+  // Per App 37 — coded so server.js restores the newest good backup (the
+  // volume is mounted by this point, so the file really is gone).
+  const err = new Error(`Database file not found at ${DB_PATH} after 23s of retries.`);
+  err.code = 'DB_MISSING';
+  throw err;
 }
 
 // Per App 36 — a live database always has its settings and members

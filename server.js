@@ -18951,13 +18951,20 @@ async function autoRestoreFromLatestBackup() {
 async function sendRestoredAlert(used) {
   console.error(`[auto-restore] restored from ${used}.`);
   await sendBootAlert('Deeper Mindfulness: database restored automatically',
-    `At startup the live database was empty or cut short. The app refused to run on it and restored the nightly backup ${used} instead. The bad file is kept on the volume, nothing was deleted.\n\nWhat to do:\n1. Open the admin and check the People count looks right.\n2. Anything changed after that backup was taken (new sign-ups, edits) is missing. Check Stripe for payments since then and add those people back by hand.`,
+    `At startup the live database was empty, cut short or missing. The app refused to run without it and restored the nightly backup ${used} instead. The bad file is kept on the volume, nothing was deleted.\n\nWhat to do:\n1. Open the admin and check the People count looks right.\n2. Anything changed after that backup was taken (new sign-ups, edits) is missing. Check Stripe for payments since then and add those people back by hand.`,
     `Deeper Mindfulness: database restored automatically from ${used}. App is running. Check your email for what to check.`);
 }
 async function sendRestoreFailedAlert(reason) {
   await sendBootAlert('URGENT: Deeper Mindfulness is in maintenance mode',
     `The live database opened empty and no backup could be restored automatically (${reason}). Visitors see the maintenance page. Nothing has been overwritten.\n\nThe app tries the restore again by itself every 10 minutes, so if R2 was only briefly unreachable it will recover on its own and send a "restored automatically" message.\n\nIf no such message arrives within 30 minutes:\n1. Open Railway, the per_bot service, then the Volume, then Backups.\n2. Restore the newest backup from before the problem.\n3. Redeploy the service. The app opens the restored file at startup.`,
     `URGENT: Deeper Mindfulness in maintenance mode, auto-restore failed. It retries every 10 min. Check your email for the steps.`);
+}
+// Per App 37 — any other reason for maintenance mode (most likely the
+// volume not mounted, the 4 Oct cause) used to send nothing at all.
+async function sendMaintenanceAlert(reason) {
+  await sendBootAlert('URGENT: Deeper Mindfulness is in maintenance mode',
+    `The app could not open its database at startup (${reason}). Visitors see the maintenance page. Nothing has been overwritten, and no blank database was created.\n\nThe app keeps trying every 60 seconds and recovers by itself if the volume appears.\n\nIf it is still down in 10 minutes:\n1. Open Railway, then the per_bot service, then Settings, and check a Volume is attached at /app/db.\n2. If it is attached, press Redeploy on the latest deployment.\n3. If it is missing, attach the per_bot volume at /app/db and redeploy.`,
+    `URGENT: Deeper Mindfulness in maintenance mode, database could not be opened (${reason}). Check your email for the steps.`.slice(0, 300));
 }
 const RESTORE_RETRY_MS = 10 * 60 * 1000;
 let _restoreFailedAt = 0;
@@ -18967,8 +18974,8 @@ let _restoreFailedAt = 0;
     try {
       await db.getDb();
     } catch (e0) {
-      if (e0.code !== 'DB_EMPTY') throw e0;
-      console.error('[auto-restore] live database is empty — restoring the newest good nightly backup...');
+      if (e0.code !== 'DB_EMPTY' && e0.code !== 'DB_MISSING') throw e0;
+      console.error(`[auto-restore] live database is ${e0.code === 'DB_MISSING' ? 'missing' : 'empty'} — restoring the newest good nightly backup...`);
       let used;
       try { used = await autoRestoreFromLatestBackup(); }
       catch (e1) {
@@ -18983,6 +18990,7 @@ let _restoreFailedAt = 0;
     server.listen(PORT, () => console.log(`Per Bot running on port ${PORT}`));
   } catch (e) {
     console.error('FATAL at boot — database could not be loaded:', e.message);
+    if (!_restoreFailedAt) sendMaintenanceAlert(e.message); // the restore-failed alert covers the other case
     console.error('Starting in MAINTENANCE MODE. Every visitor will see the maintenance page until the database becomes available. Retrying in the background every 60 seconds. No fresh/empty database will ever be created automatically — see ALLOW_FRESH_DB_INIT in db.js if this really is meant to be a brand-new deployment.');
     server.listen(PORT, () => console.log(`Per Bot running on port ${PORT} in MAINTENANCE MODE (database unavailable)`));
 
@@ -18996,7 +19004,7 @@ let _restoreFailedAt = 0;
           // too (every 10 minutes, not every minute: each try downloads
           // up to 7 x ~45 MB), so a brief R2 outage at boot no longer
           // leaves the app in maintenance mode for good.
-          if (e3.code !== 'DB_EMPTY' || Date.now() - _restoreFailedAt < RESTORE_RETRY_MS) throw e3;
+          if ((e3.code !== 'DB_EMPTY' && e3.code !== 'DB_MISSING') || Date.now() - _restoreFailedAt < RESTORE_RETRY_MS) throw e3;
           console.error('Maintenance mode: database still empty — trying the backups again...');
           let used;
           try { used = await autoRestoreFromLatestBackup(); }
