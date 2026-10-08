@@ -18909,7 +18909,7 @@ function alertContacts() {
     phone: process.env.ADMIN_PHONE || cached.phone || null,
   };
 }
-async function sendBootAlert(subject, text) {
+async function sendBootAlert(subject, text, smsText) {
   const { email, phone } = alertContacts();
   try {
     if (SCW_SECRET_KEY && SCW_PROJECT_ID) {
@@ -18921,7 +18921,9 @@ async function sendBootAlert(subject, text) {
     }
   } catch (e) { console.error('[boot alert] email failed:', e.message); }
   try {
-    if (phone && sms.isConfigured()) await sms.sendSms(phone, `${subject}. ${text}`.slice(0, 320));
+    // Per App 37 — a short text of its own when given, so the SMS never
+    // stops mid-sentence; the email carries the full steps.
+    if (phone && sms.isConfigured()) await sms.sendSms(phone, (smsText || `${subject}. ${text}`).slice(0, 320));
     else if (!phone) console.error('[boot alert] no phone number known — set ADMIN_PHONE in Railway to get texts.');
   } catch (e) { console.error('[boot alert] SMS failed:', e.message); }
 }
@@ -18944,6 +18946,22 @@ async function autoRestoreFromLatestBackup() {
   throw new Error('No usable backup found in the newest 7.');
 }
 
+// Per App 37 — found in the auto-restore dry run: the two boot alerts, in
+// one place, and the "failed" one now says exactly what to do.
+async function sendRestoredAlert(used) {
+  console.error(`[auto-restore] restored from ${used}.`);
+  await sendBootAlert('Deeper Mindfulness: database restored automatically',
+    `At startup the live database was empty or cut short. The app refused to run on it and restored the nightly backup ${used} instead. The bad file is kept on the volume, nothing was deleted.\n\nWhat to do:\n1. Open the admin and check the People count looks right.\n2. Anything changed after that backup was taken (new sign-ups, edits) is missing. Check Stripe for payments since then and add those people back by hand.`,
+    `Deeper Mindfulness: database restored automatically from ${used}. App is running. Check your email for what to check.`);
+}
+async function sendRestoreFailedAlert(reason) {
+  await sendBootAlert('URGENT: Deeper Mindfulness is in maintenance mode',
+    `The live database opened empty and no backup could be restored automatically (${reason}). Visitors see the maintenance page. Nothing has been overwritten.\n\nThe app tries the restore again by itself every 10 minutes, so if R2 was only briefly unreachable it will recover on its own and send a "restored automatically" message.\n\nIf no such message arrives within 30 minutes:\n1. Open Railway, the per_bot service, then the Volume, then Backups.\n2. Restore the newest backup from before the problem.\n3. Redeploy the service. The app opens the restored file at startup.`,
+    `URGENT: Deeper Mindfulness in maintenance mode, auto-restore failed. It retries every 10 min. Check your email for the steps.`);
+}
+const RESTORE_RETRY_MS = 10 * 60 * 1000;
+let _restoreFailedAt = 0;
+
 (async () => {
   try {
     try {
@@ -18954,11 +18972,11 @@ async function autoRestoreFromLatestBackup() {
       let used;
       try { used = await autoRestoreFromLatestBackup(); }
       catch (e1) {
-        await sendBootAlert('URGENT: Deeper Mindfulness is in maintenance mode', `The live database opened empty and no backup could be restored automatically (${e1.message}). Visitors see the maintenance page; nothing has been overwritten. Restore needed by hand.`);
+        _restoreFailedAt = Date.now();
+        await sendRestoreFailedAlert(e1.message);
         throw e0;
       }
-      console.error(`[auto-restore] restored from ${used}.`);
-      await sendBootAlert('Deeper Mindfulness: database restored automatically', `At startup the live database was empty. The app refused to run on it and restored the nightly backup ${used} instead (the empty file is kept on the volume). Anything changed since that backup was taken is missing — please check the app.`);
+      await sendRestoredAlert(used);
     }
     await runPostDbBootTasks();
     DB_READY = true;
@@ -18971,7 +18989,20 @@ async function autoRestoreFromLatestBackup() {
     const retryInterval = setInterval(async () => {
       console.log('Maintenance mode: retrying database load...');
       try {
-        await db.getDb();
+        try {
+          await db.getDb();
+        } catch (e3) {
+          // Per App 37 — an empty database is retried from the backups
+          // too (every 10 minutes, not every minute: each try downloads
+          // up to 7 x ~45 MB), so a brief R2 outage at boot no longer
+          // leaves the app in maintenance mode for good.
+          if (e3.code !== 'DB_EMPTY' || Date.now() - _restoreFailedAt < RESTORE_RETRY_MS) throw e3;
+          console.error('Maintenance mode: database still empty — trying the backups again...');
+          let used;
+          try { used = await autoRestoreFromLatestBackup(); }
+          catch (e4) { _restoreFailedAt = Date.now(); throw e4; }
+          await sendRestoredAlert(used);
+        }
         await runPostDbBootTasks();
         DB_READY = true;
         clearInterval(retryInterval);
