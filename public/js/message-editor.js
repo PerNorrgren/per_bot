@@ -1605,7 +1605,7 @@
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <input type="text" id="${containerId}_aiTopic" placeholder="What should this be about? (optional)" style="flex:1;font-size:12px"
                  onkeydown="if(event.key==='Enter'){event.preventDefault();MessageEditor.retryAiGenerate('${containerId}');}"/>
-          <button type="button" class="btn sm" onclick="MessageEditor.retryAiGenerate('${containerId}')">Generate</button>
+          <button type="button" class="btn sm primary" id="${containerId}_aiGo" onclick="MessageEditor.retryAiGenerate('${containerId}')">Generate</button>
         </div>
         <div class="me-ai-body" id="${containerId}_aiBody"></div>
         <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
@@ -1629,11 +1629,31 @@
     st.target = q ? getInsertionTarget(q) : null;
     document.getElementById(`${containerId}_aiPanel`).style.display = 'block';
     document.getElementById(`${containerId}_aiTitle`).textContent = AI_LABELS[type] || 'Generating';
-    startAiJob(containerId, type);
+    // Per App 37 — choosing a type no longer starts the AI call. Per
+    // usually wants to seed it first, so the panel opens, waits, and
+    // nothing runs until Generate is pressed (or Enter in the topic box).
+    document.getElementById(`${containerId}_aiRetry`).style.display = 'none';
+    document.getElementById(`${containerId}_aiInsert`).style.display = 'none';
+    document.getElementById(`${containerId}_aiBody`).innerHTML =
+      `<span style="color:rgba(255,255,255,0.45);font-style:italic">Type what it should be about above, if you like, then press Generate.</span>`;
+    const topicEl = document.getElementById(`${containerId}_aiTopic`);
+    if (topicEl) topicEl.focus();
+  }
+
+  // Spinner on the Generate button while a job runs. Uses the page's own
+  // setBtnLoading (yin/yang) where the page has one; plain disable otherwise.
+  function setAiGoBusy(containerId, busy) {
+    const btn = document.getElementById(`${containerId}_aiGo`);
+    if (!btn) return;
+    const st = aiState[containerId];
+    if (st) st.running = busy;
+    if (typeof window.setBtnLoading === 'function') window.setBtnLoading(btn, busy, 'Generating…');
+    else { btn.disabled = busy; btn.textContent = busy ? 'Generating…' : 'Generate'; }
   }
 
   async function startAiJob(containerId, type) {
     const st = aiState[containerId];
+    setAiGoBusy(containerId, true);
     document.getElementById(`${containerId}_aiRetry`).style.display = 'none';
     document.getElementById(`${containerId}_aiInsert`).style.display = 'none';
     document.getElementById(`${containerId}_aiBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">Generating${type === 'sumie' ? ' — this can take up to two minutes' : ''}…</span>`;
@@ -1680,6 +1700,7 @@
     if (!res.ok) { showAiError(containerId, data.error || 'That job could not be found — please try again.'); return; }
     if (data.status === 'pending') { st.pollTimer = setTimeout(() => pollAiJob(containerId), 2000); return; }
     if (data.status === 'error') { showAiError(containerId, data.error || 'Could not generate that right now.'); return; }
+    setAiGoBusy(containerId, false);
     st.result = st.type === 'sumie' ? { imageUrl: data.imageUrl } : { html: data.html };
     const bodyEl = document.getElementById(`${containerId}_aiBody`);
     bodyEl.innerHTML = st.type === 'sumie' ? `<img src="${st.result.imageUrl}" style="max-width:100%;display:block;border-radius:4px"/>` : st.result.html;
@@ -1705,6 +1726,7 @@
   });
 
   function showAiError(containerId, message) {
+    setAiGoBusy(containerId, false);
     document.getElementById(`${containerId}_aiBody`).innerHTML = `<span style="color:rgba(255,120,100,0.85)">${message}</span>`;
     document.getElementById(`${containerId}_aiRetry`).style.display = '';
     document.getElementById(`${containerId}_aiInsert`).style.display = 'none';
@@ -1712,7 +1734,8 @@
 
   function retryAiGenerate(containerId) {
     const st = aiState[containerId];
-    if (!st) return;
+    if (!st || !st.type) return;
+    if (st.running) return; // already running — ignore a double press
     document.getElementById(`${containerId}_aiTitle`).textContent = AI_LABELS[st.type] || 'Generating';
     startAiJob(containerId, st.type);
   }
@@ -1720,6 +1743,7 @@
   function closeAiPreview(containerId) {
     const st = aiState[containerId];
     if (st && st.pollTimer) clearTimeout(st.pollTimer);
+    setAiGoBusy(containerId, false);
     delete aiState[containerId];
     const panel = document.getElementById(`${containerId}_aiPanel`);
     if (panel) panel.style.display = 'none';

@@ -4648,9 +4648,11 @@ function getLibraryFiles(filters = {}) {
 }
 function updateLibraryFile(id, fields) {
   const allowed = ['title','description','category_id','subcategory_id','visibility','content_type','external_link','assigned_client_id','featured','talk_practice','epub_opf_path','full_version_id'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
-  if (!sets) return;
-  getDbSync().run(`UPDATE library_files SET ${sets} WHERE id=?`, [...Object.values(fields).filter((v,i) => allowed.includes(Object.keys(fields)[i])), id]);
+  // Per App 37 — keys and values from the same filtered list, and a key
+  // sent as undefined is skipped (sql.js throws on binding undefined).
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
+  if (!keys.length) return;
+  getDbSync().run(`UPDATE library_files SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
   save();
 }
 function renameLibraryFile(id, filename) {
@@ -5066,7 +5068,7 @@ function addKnowledgeLevel(id, name, sortOrder, description) {
 }
 function updateKnowledgeLevel(id, fields) {
   const allowed = ['name', 'sort_order', 'description'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!sets.length) return;
   const params = sets.map(k => fields[k]);
   params.push(id);
@@ -5113,7 +5115,7 @@ function createKnowledgeTopic(id, documentId, title, menuLine, skinId, facilitat
 }
 function updateKnowledgeTopic(id, fields) {
   const allowed = ['title', 'menu_line', 'skin_id', 'facilitator_id', 'archived'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!sets.length) return;
   const params = sets.map(k => fields[k]);
   params.push(id);
@@ -5719,7 +5721,7 @@ function getAllCourseInstances(filters = {}) {
 }
 function updateCourseInstance(id, fields) {
   const allowed = ['mode','title','start_date','end_date','capacity','price_cents','stripe_price_id','status','schedule_day','schedule_time','schedule_end_time','grants_membership_months','zoom_link'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!sets.length) return;
   getDbSync().run(
     `UPDATE course_instances SET ${sets.map(k=>`${k}=?`).join(',')} WHERE id=?`,
@@ -6422,7 +6424,7 @@ function clearSessionRemindersSent(sessionId) {
 }
 function updateInstanceSession(id, fields) {
   const allowed = ['title','scheduled_at','facilitator_notes','handout'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!sets.length) return;
   getDbSync().run(`UPDATE instance_sessions SET ${sets.map(k=>`${k}=?`).join(',')} WHERE id=?`, [...sets.map(k=>fields[k]), id]);
   save();
@@ -8526,10 +8528,10 @@ function getMembershipPlans(activeOnly = true) {
 }
 function updateMembershipPlan(id, fields) {
   const allowed = ['name','price_pence','trial_days','stripe_price_id','active'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k)).map(k => `${k}=?`).join(', ');
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined).map(k => `${k}=?`).join(', ');
   if (!sets) return;
   getDbSync().run(`UPDATE membership_plans SET ${sets} WHERE id=?`,
-    [...Object.keys(fields).filter(k => allowed.includes(k)).map(k => fields[k]), id]);
+    [...Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined).map(k => fields[k]), id]);
   save();
 }
 
@@ -8582,7 +8584,7 @@ function createOffer(fields) {
 }
 function updateOffer(id, fields) {
   const allowed = ['name','code','headline','description','trial_days','launch_date','expiry_date','is_default','active','showcase_file_id','skin_id'];
-  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   if (fields.is_default) getDbSync().run('UPDATE offers SET is_default=0 WHERE is_default=1 AND id!=?', [id]);
   const sets = keys.map(k => `${k}=?`).join(', ');
@@ -8715,7 +8717,7 @@ function addCampaignStep(id, campaignId, offsetDays, type, channel, subject, con
 }
 function updateCampaignStep(id, fields) {
   const allowed = ['offset_days', 'type', 'channel', 'subject', 'content', 'line_id', 'format', 'media_url', 'media_type', 'campaign_video_id'];
-  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
   getDbSync().run(`UPDATE campaign_steps SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
@@ -8938,7 +8940,7 @@ function createCampaignVideo(id, campaignId, title, script) {
 }
 function updateCampaignVideo(id, fields) {
   const allowed = ['title', 'script', 'sort_order'];
-  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
   getDbSync().run(`UPDATE campaign_videos SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
@@ -9225,7 +9227,7 @@ function createSignalLine(fields) {
 }
 function updateSignalLine(id, fields) {
   const allowed = ['text', 'prior_tag', 'status'];
-  const keys = Object.keys(fields).filter(k => allowed.includes(k));
+  const keys = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!keys.length) return;
   const sets = keys.map(k => `${k}=?`).join(', ');
   getDbSync().run(`UPDATE signal_lines SET ${sets} WHERE id=?`, [...keys.map(k => fields[k]), id]);
@@ -10149,7 +10151,8 @@ function getRingingCallForClient(clientId) {
 }
 function updateCallStatus(id, status, extraFields) {
   const fields = { status, ...(extraFields || {}) };
-  const keys = Object.keys(fields);
+  const keys = Object.keys(fields).filter(k => fields[k] !== undefined);
+  if (!keys.length) return;
   getDbSync().run(`UPDATE calls SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map(k => fields[k]), id]);
   save();
 }
@@ -11312,7 +11315,7 @@ function createSkin(slug, fields) {
 }
 function updateSkin(slug, fields) {
   const allowed = ['name','logo_url','favicon_url','primary_color','contact_name','contact_email'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   const params = sets.map(k => fields[k]);
   if (fields.background_images !== undefined) { sets.push('background_images'); params.push(JSON.stringify(fields.background_images)); }
   if (!sets.length) return getSkin(slug);
@@ -11335,7 +11338,7 @@ function setUserSkin(userId, skinSlug) {
 
 function updateAppConfig(fields) {
   const allowed = ['brand_name','tagline','primary_color','logo_url','contact_email','currency','legal_entity_name','legal_jurisdiction','payments_enabled','setup_completed','reminder_days','reminder_subject','reminder_body','reminder_sms_body','reminder_format','newsletter_footer','renewal_reminder_days','renewal_reminder_subject','renewal_reminder_body','renewal_reminder_sms_body','renewal_reminder_format','test_email','test_phone','birthday_email_subject','birthday_email_body','birthday_sms_body','birthday_email_format','tomte_nl_image_filename','app_name','favicon_url','use_calm_landing','talk_persona_name','talk_persona_photo_url','allow_custom_voice','default_showcase_file_id','trial_day3_subject','trial_day3_body','trial_day3_format','trial_day7_subject','trial_day7_body','trial_day7_format','trial_day10_subject','trial_day10_body','trial_day10_format','trial_day14_subject','trial_day14_body','trial_day14_format','savers_cancel_day0_subject','savers_cancel_day0_body','savers_cancel_day0_format','savers_cancel_grace0_subject','savers_cancel_grace0_body','savers_cancel_grace0_format','savers_cancel_mid_subject','savers_cancel_mid_body','savers_cancel_mid_format','savers_cancel_final_subject','savers_cancel_final_body','savers_cancel_final_format','savers_failure_day0_subject','savers_failure_day0_body','savers_failure_day0_format','savers_failure_mid_subject','savers_failure_mid_body','savers_failure_mid_format','savers_failure_final_subject','savers_failure_final_body','savers_failure_final_format','newsletter_welcome_subject','newsletter_welcome_body','newsletter_welcome_format','trial_extended_subject','trial_extended_body','trial_extended_format','default_lesson_visibility','whats_new_enabled','whats_new_body','whats_new_link_type','whats_new_link_id','whats_new_seconds_per_item','next_action_default_file_id','carousel_speed_seconds','join_link_url'];
-  const sets = Object.keys(fields).filter(k => allowed.includes(k));
+  const sets = Object.keys(fields).filter(k => allowed.includes(k) && fields[k] !== undefined);
   if (!sets.length) return;
   getDbSync().run(
     `UPDATE app_config SET ${sets.map(k=>`${k}=?`).join(',')} WHERE id='default'`,

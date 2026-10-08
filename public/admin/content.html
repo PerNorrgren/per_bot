@@ -3995,6 +3995,11 @@ async function confirmAutoCourse(){
   const maxNumberedThisBatch = _acGroups.filter(g => g.num !== 'reference').reduce((m,g) => Math.max(m, g.num), 0);
   const refLessonNumber = Math.max(maxLessonNumber, maxNumberedThisBatch) + 1;
 
+  // Per App 37 — the done popup names the lesson(s) the files went into.
+  // "placed into 1 lesson" read as Lesson 1 when they went into Lesson 2.
+  const placed = [];
+  const notePlaced = (num, title, n) => placed.push({num, title: (title||'').trim(), n});
+
   for (const g of _acGroups) {
     const fileIds = g.items.map(it=>it.fileId).filter(Boolean);
     if (!fileIds.length) continue;
@@ -4005,9 +4010,11 @@ async function confirmAutoCourse(){
           await fetch('/api/content/lesson-file-refs', {method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({lessonId: existingRefLesson.id, fileId: fid})});
         }
+        notePlaced(existingRefLesson.lesson_number, existingRefLesson.title, fileIds.length);
       } else {
         await fetch('/api/content/lessons', {method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({courseId, lessonNumber:refLessonNumber, title:g.titleGuess || 'Reference', visibility:_defaultLessonVisibility||'client', accessStatus:'visible', fileIds})});
+        notePlaced(refLessonNumber, g.titleGuess || 'Reference', fileIds.length);
       }
       continue;
     }
@@ -4018,19 +4025,31 @@ async function confirmAutoCourse(){
         await fetch('/api/content/lesson-file-refs', {method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({lessonId: existing.id, fileId: fid})});
       }
+      notePlaced(existing.lesson_number, existing.title, fileIds.length);
     } else {
       await fetch('/api/content/lessons', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({courseId, lessonNumber:g.num, title:g.titleGuess, visibility:_defaultLessonVisibility||'client', accessStatus:'visible', fileIds})});
+      notePlaced(g.num, g.titleGuess, fileIds.length);
     }
   }
   closeModal('autoCourseModal');
   closeModal('uploadModal');
   closeModal('libToLessonsModal');
   _acTarget = null;
-  const nLessons = _acGroups.length, nFiles = _acGroups.reduce((n, g) => n + g.items.length, 0);
+  const nFiles = placed.reduce((n, p) => n + p.n, 0);
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const lessonName = p => `Lesson ${p.num}` + (p.title && p.title.toLowerCase() !== `lesson ${p.num}` ? ` — ${p.title}` : '');
+  placed.sort((a, b) => a.num - b.num);
   loadAll();
   openCourseDetail(courseId);
-  appAlert(`Done — ${nFiles} file${nFiles === 1 ? '' : 's'} placed into ${nLessons} lesson${nLessons === 1 ? '' : 's'}.`);
+  if (!placed.length) {
+    appAlert('No files were placed. The upload may not have finished.\n\nWhat to do:\n1. Open the Library tab and check the files are there.\n2. Press "Add Library files as lessons" again on this course.');
+  } else if (placed.length === 1) {
+    appAlert(`Done — ${plural(nFiles, 'file')} placed into ${lessonName(placed[0])}.`);
+  } else {
+    appAlert(`Done — ${plural(nFiles, 'file')} placed into ${placed.length} lessons:\n\n` +
+      placed.map(p => `• ${lessonName(p)}: ${plural(p.n, 'file')}`).join('\n'));
+  }
   } finally {
     setBtnLoading(btn, false);
   }
