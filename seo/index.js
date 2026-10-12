@@ -322,6 +322,9 @@ function mountSeo(app, opts) {
   function friendlyError(engineId, e) {
     const E = ENGINES[engineId];
     const msg = String(e && e.message || e);
+    // Per App 38 (4) — prepaid accounts (Perplexity) block the key when the
+    // credit runs out, which would otherwise read as a bad key.
+    if (e && (e.status === 402 || /credit|balance|insufficient|quota|billing/i.test(msg))) return `${E.label} has no credit left. Open the ${E.label} API billing page, add credit, then run the check again.`;
     if (e && (e.status === 401 || e.status === 403)) return `${E.label} refused the API key. In Railway, open this app's Variables, check ${E.envName}, save, then run the check again.`;
     if (e && e.status === 404 || /model/i.test(msg) && /not.?found|does not exist|invalid/i.test(msg)) return `${E.label} does not know the model "${settings().models[engineId]}". Open Settings on this page, enter a model your ${E.label} account has, save, then run the check again.`;
     if (e && e.status === 429) return `${E.label} said too many requests or no credit left. Check the account's billing page, then run the check again later.`;

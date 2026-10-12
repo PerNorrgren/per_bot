@@ -84,12 +84,34 @@ const ENGINES = {
     label: 'Perplexity',
     keyName: 'perplexity',
     envName: 'PERPLEXITY_API_KEY',
+    // Per App 38 (4) — Perplexity's Agent API (POST /v1/agent). Their docs
+    // now treat Sonar chat completions as legacy. The "model" setting takes
+    // a preset name (fast, low, medium, high — presets include web search)
+    // or a provider/model id; the old default "sonar" maps to "fast".
     async ask(question, key, model) {
-      const d = await postJson('https://api.perplexity.ai/chat/completions',
-        { Authorization: `Bearer ${key}` },
-        { model, messages: [{ role: 'user', content: question }] });
-      const text = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '';
-      const urls = (d.citations || []).concat((d.search_results || []).map(s => s.url)).filter(Boolean);
+      const m = !model || model === 'sonar' ? 'fast' : String(model);
+      const body = { input: question };
+      if (m.includes('/')) {
+        body.model = m;
+        body.tools = [{ type: 'web_search' }];
+        body.max_output_tokens = 4000; // required for anthropic/* models
+      } else {
+        body.preset = m;
+      }
+      const d = await postJson('https://api.perplexity.ai/v1/agent', { Authorization: `Bearer ${key}` }, body);
+      let text = ''; const urls = [];
+      for (const item of d.output || []) {
+        if (item.type === 'message') {
+          for (const c of item.content || []) {
+            if (c.type !== 'output_text') continue;
+            text += c.text || '';
+            for (const a of c.annotations || []) if (a.url) urls.push(a.url);
+          }
+        } else if (item.type === 'search_results') {
+          for (const r of item.results || []) if (r.url) urls.push(r.url);
+        }
+      }
+      if (!text && d.output_text) text = d.output_text;
       return { text, urls };
     },
   },
@@ -119,7 +141,7 @@ const ENGINES = {
 const DEFAULT_MODELS = {
   claude: 'claude-sonnet-5',
   chatgpt: 'gpt-5.5',
-  perplexity: 'sonar',
+  perplexity: 'fast',
   gemini: 'gemini-3.8-flash',
 };
 
