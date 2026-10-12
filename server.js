@@ -18997,7 +18997,34 @@ app.use((err, req, res, next) => {
 // database. Split out from the boot sequence below so it can run either
 // immediately (normal boot) or later, the moment a background retry
 // successfully loads the database after starting in maintenance mode.
+// Per App 38 (3) — Per's request: typos that now show on the public home
+// page, and the Tuesday meeting's stored time (11:30) not matching its
+// title and its course (19:00). Each fix changes only the exact text and
+// runs only while that text is still there, so it does nothing once
+// fixed, and nothing at all if Per has since edited the text himself.
+// email_log keeps its copies of emails already sent, as history.
+function fixPublicTextOnce() {
+  const fixes = [
+    ['courses', 'description', 'Neroscience', 'Neuroscience'],
+    ['courses', 'description', 'courrse', 'course'],
+    ['live_meetings', 'description', 'briges', 'bridges'],
+    ['live_meetings', 'description', 'MBSR. MBCT', 'MBSR, MBCT'],
+  ];
+  let n = 0;
+  for (const [table, col, from, to] of fixes) {
+    const hit = db.rawAll(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} LIKE ?`, ['%' + from + '%'])[0].c;
+    if (hit) { db.rawRun(`UPDATE ${table} SET ${col} = REPLACE(${col}, ?, ?) WHERE ${col} LIKE ?`, [from, to, '%' + from + '%']); n += hit; }
+  }
+  const tue = db.rawAll(`SELECT id FROM live_meetings WHERE weekday = 2 AND start_time = '11:30' AND title LIKE 'Tuesday evening 19:00%'`);
+  for (const r of tue) {
+    db.rawRun(`UPDATE live_meetings SET start_time = '19:00', schedule_text = 'Every Tuesday · 19:00 UK time' WHERE id = ?`, [r.id]);
+    n++;
+  }
+  if (n) console.log(`[boot] public text fixes: ${n} change(s) (typos in course/meeting descriptions, Tuesday meeting time 11:30 → 19:00).`);
+}
+
 async function runPostDbBootTasks() {
+  try { fixPublicTextOnce(); } catch (e) { console.error('[boot] public text fixes failed:', e.message); }
   try { seedSearchVisibilityOnce(); } catch (e) { console.error('[seo] seed failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
