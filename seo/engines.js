@@ -56,17 +56,32 @@ const ENGINES = {
     label: 'ChatGPT',
     keyName: 'openai',
     envName: 'OPENAI_API_KEY',
+    // Per App 38 (5) — OpenAI renames models often (gpt-5.5 is in their web
+    // search guide but already off their pricing page), so an unknown model
+    // falls through to the next one here instead of failing the check.
     async ask(question, key, model) {
-      const call = (toolType) => postJson('https://api.openai.com/v1/responses',
+      const tryModels = Array.from(new Set([model, ...CHATGPT_FALLBACKS].filter(Boolean)));
+      const call = (m, toolType) => postJson('https://api.openai.com/v1/responses',
         { Authorization: `Bearer ${key}` },
-        { model, tools: [{ type: toolType }], input: question });
-      let d;
-      try { d = await call('web_search'); }
-      catch (e) {
-        // Older accounts/models only know the preview tool name.
-        if (e.status === 400 && /web_search/.test(e.message)) d = await call('web_search_preview');
-        else throw e;
+        { model: m, tools: [{ type: toolType }], input: question });
+      const callModel = async (m) => {
+        try { return await call(m, 'web_search'); }
+        catch (e) {
+          // Older accounts/models only know the preview tool name.
+          if (e.status === 400 && /web_search/.test(e.message) && !/model/i.test(e.message)) return call(m, 'web_search_preview');
+          throw e;
+        }
+      };
+      let d, lastErr;
+      for (const m of tryModels) {
+        try { d = await callModel(m); break; }
+        catch (e) {
+          lastErr = e;
+          const unknownModel = (e.status === 404 || e.status === 400) && /model/i.test(e.message) && /not.?found|does not exist|invalid|unsupported|not supported/i.test(e.message);
+          if (!unknownModel) throw e;
+        }
       }
+      if (!d) throw lastErr;
       let text = ''; const urls = [];
       for (const item of d.output || []) {
         if (item.type !== 'message') continue;
@@ -136,11 +151,12 @@ const ENGINES = {
 
 // Per App 38 (2) — checked 12 Oct 2026: Google limits the 2.5 models to
 // accounts that already used them and recommends 3.8 Flash for new
-// projects; OpenAI's web search guide recommends gpt-5.5 and doesn't
-// confirm gpt-5-mini. Any of these can be changed in Search → Settings.
+// projects. ChatGPT (38 (5)): gpt-6.1-sol, current on OpenAI's pricing
+// page at $2/$10 per 1M tokens, with CHATGPT_FALLBACKS tried in turn. Any of these can be changed in Search → Settings.
+const CHATGPT_FALLBACKS = ['gpt-6.1-sol', 'gpt-5.5', 'gpt-6-astra'];
 const DEFAULT_MODELS = {
   claude: 'claude-sonnet-5',
-  chatgpt: 'gpt-5.5',
+  chatgpt: 'gpt-6.1-sol',
   perplexity: 'fast',
   gemini: 'gemini-3.8-flash',
 };
