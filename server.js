@@ -655,7 +655,7 @@ app.use(cookieParser());
 // whichever have keys). Mounted here, ahead of every page route, because
 // its head injection must sit in front of the routes that send pages.
 // Admin at /admin/seo. See seo/README.md.
-require('./seo').mountSeo(app, {
+const seoApi = require('./seo').mountSeo(app, {
   store: { run: db.rawRun, all: db.rawAll },
   requireAdminApi: auth.requireAuthApi(['admin']),
   requireAdminPage: auth.requireAuth(['admin']),
@@ -676,6 +676,108 @@ require('./seo').mountSeo(app, {
     robotsDisallow: ['/admin', '/api/', '/setup', '/client', '/facilitator', '/account', '/staff-account', '/change-password', '/reset-password'],
   },
 });
+// Per App 38 (2) — Search Visibility filled in and switched on, once. Runs
+// after the database is open (runPostDbBootTasks). Never overwrites: a
+// setting already saved in admin is left alone, a page already listed is
+// left alone, and questions are only added if there are none yet. The
+// 'perAppSeed' marker stops it running again, so anything deleted in admin
+// stays deleted.
+const SEO_SITE = process.env.SEO_SITE_URL || 'https://www.deepermindfulness.org';
+const SEO_HERO_IMG = 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?w=1200&h=630&fit=crop&q=70';
+const SEO_SEED = {
+  settings: {
+    checkEnabled: true,
+    checkWeekday: 1,
+    maxPromptsPerRun: 25,
+    engines: { claude: true, chatgpt: true, perplexity: true, gemini: true },
+    logoUrl: SEO_SITE + '/assets/certificate/logo.png',
+    sameAs: [
+      'https://www.instagram.com/deepermindfulness',
+      'https://www.threads.net/@deepermindfulness',
+      'https://x.com/DeeperMind2024',
+      'https://bsky.app/profile/deepermindfulness.bsky.social',
+    ],
+    competitorTerms: [
+      'Headspace', 'Calm | Calm app', 'Insight Timer', 'Waking Up', 'Ten Percent Happier',
+      'Palouse Mindfulness', 'Breathworks', 'Be Mindful', 'Mindfulness-Based Stress Reduction | MBSR',
+      'Healthy Minds', 'Balance app',
+    ],
+    blockAiTraining: false,
+  },
+  pages: [
+    { path: '/', priority: 1.0, image_url: SEO_HERO_IMG,
+      title: 'Body-based mindfulness courses | Deeper Mindfulness',
+      description: 'Short guided practices, live Zoom courses and books by Per Norrgren that help an over-alert nervous system settle. Try the app free, no card needed.' },
+    { path: '/courses', priority: 0.9, schema_type: 'CollectionPage',
+      title: 'Mindfulness courses, live on Zoom and self-paced',
+      description: 'Live group mindfulness courses on Zoom and self-paced courses in the app. Body-based practice built on the FELT·FIBRE framework, taught by Per Norrgren.',
+      schema: { '@type': 'CollectionPage', name: 'Mindfulness courses', url: SEO_SITE + '/courses', about: 'Mindfulness courses, live and self-paced', publisher: { '@id': SEO_SITE + '/#organization' } } },
+    { path: '/membership', priority: 0.8, schema_type: 'Service',
+      title: 'Membership: guided practices, courses and daily messages',
+      description: 'Full access to the practice library, self-paced courses, an AI companion and a daily message from Per. Monthly, yearly or lifetime membership.',
+      schema: { '@type': 'Service', name: 'Deeper Mindfulness membership', serviceType: 'Online mindfulness practice', url: SEO_SITE + '/membership', provider: { '@id': SEO_SITE + '/#organization' }, areaServed: 'Worldwide' } },
+    { path: '/wired-heart', priority: 0.8, og_type: 'book', schema_type: 'Book',
+      title: 'The Wired Heart: when love activates fear | Per Norrgren',
+      description: 'Why the person you trust most can be the one your nervous system treats as a threat, and the body-level practices that change it. A book by Per Norrgren.',
+      schema: { '@type': 'Book', name: 'The Wired Heart', alternativeHeadline: 'When love activates fear, and how the body heals it', author: { '@id': SEO_SITE + '/#person' }, publisher: { '@id': SEO_SITE + '/#organization' }, url: SEO_SITE + '/wired-heart', inLanguage: 'en', about: ['Relationships', 'Nervous system', 'Attachment'] } },
+    { path: '/alarm', priority: 0.8, og_type: 'book', schema_type: 'Book',
+      title: 'The Alarm That Would Not Stop | Per Norrgren',
+      description: 'Still waking at 3am with your heart racing after doing everything right? This book explains why the nervous system stays on alert, and what reaches it.',
+      schema: { '@type': 'Book', name: 'The Alarm That Would Not Stop', alternativeHeadline: 'How your nervous system got hijacked, and how to take it back', author: { '@id': SEO_SITE + '/#person' }, publisher: { '@id': SEO_SITE + '/#organization' }, url: SEO_SITE + '/alarm', inLanguage: 'en', bookFormat: ['https://schema.org/EBook', 'https://schema.org/AudiobookFormat'], about: ['Chronic stress', 'Anxiety', 'Nervous system'] } },
+    { path: '/welcome', priority: 0.7, image_url: SEO_HERO_IMG,
+      title: 'Why the nervous system calms through the body',
+      description: "Your nervous system doesn't calm down because you decided to think differently. Short guided practices, live groups and a companion. Free to explore.",
+      schema: { '@type': 'WebPage', name: 'Why the body', url: SEO_SITE + '/welcome', about: 'Body-based mindfulness and nervous system regulation', publisher: { '@id': SEO_SITE + '/#organization' } } },
+    { path: '/teaching-the-felt-way', priority: 0.6, schema_type: 'Service',
+      title: 'Teach mindfulness courses the FELT way',
+      description: 'For experienced practitioners who want to teach: the reasoning behind every session, a live thinking partner while you teach, and student progress in one place.',
+      schema: { '@type': 'Service', name: 'Teaching the FELT Way', serviceType: 'Mindfulness teacher programme', url: SEO_SITE + '/teaching-the-felt-way', provider: { '@id': SEO_SITE + '/#organization' }, audience: { '@type': 'Audience', audienceType: 'Mindfulness teachers and facilitators' } } },
+    { path: '/samurai', priority: 0.5, image_url: SEO_SITE + '/assets/samurai/hero.png',
+      title: 'The Modern Samurai: patience, clarity, courage',
+      description: 'Before you fight the world, face yourself first. Patience, clarity and courage, in that order, and each one can be trained. A practice path from Deeper Mindfulness.' },
+  ],
+  prompts: [
+    'What is a good online mindfulness course for anxiety?',
+    'How do I calm my nervous system when I can\'t switch off?',
+    'Why do I wake up at 3am with my heart racing even though nothing is wrong?',
+    'What are body-based practices for nervous system regulation?',
+    'Is there a mindfulness app with live group sessions, not just recordings?',
+    'Best online MBSR or MBCT style course in the UK',
+    'Is there a book about why love can trigger fear in a relationship?',
+    'How do I stop feeling on edge all the time?',
+    'Mindfulness course that helps with loneliness',
+    'How can I train to teach mindfulness courses online?',
+    'Short guided practices for stress I can do during the workday',
+    'How do I do a self-guided mindfulness retreat at home?',
+    'Good books on chronic stress and the nervous system for non-scientists',
+    'Mindfulness teachers who combine meditation with neuroscience',
+    'What is the FELT FIBRE framework?',
+    'Who is Per Norrgren?',
+  ],
+};
+function seedSearchVisibilityOnce() {
+  const store = seoApi.store;
+  store.ensure();
+  const saved = new Set(db.rawAll('SELECT key FROM seo_settings').map(r => r.key));
+  if (saved.has('perAppSeed')) return;
+  const settings = {};
+  for (const [k, v] of Object.entries(SEO_SEED.settings)) if (!saved.has(k)) settings[k] = v;
+  store.saveSettings(settings);
+  const have = new Set(store.listPages().map(p => p.path));
+  let pages = 0;
+  for (const p of SEO_SEED.pages) {
+    if (have.has(p.path)) continue;
+    const row = { path: p.path, title: p.title, description: p.description, priority: p.priority, og_type: p.og_type || 'website', in_sitemap: 1, in_llms: 1 };
+    if (p.image_url) row.image_url = p.image_url;
+    if (p.schema) { row.schema_type = p.schema_type || p.schema['@type']; row.schema_json = JSON.stringify(p.schema); }
+    store.savePage(row); pages++;
+  }
+  let prompts = 0;
+  if (!store.listPrompts().length) for (const q of SEO_SEED.prompts) { store.addPrompt(q); prompts++; }
+  store.saveSettings({ perAppSeed: new Date().toISOString() });
+  seoApi.invalidate();
+  console.log(`[seo] filled in: ${Object.keys(settings).length} settings, ${pages} pages, ${prompts} questions (weekly check on, Mondays)`);
+}
 function SEO_ADMIN_NAV_HTML() {
   const links = [['/admin/', 'People'], ['/admin/content', 'Content'], ['/admin/talk', 'Talk &amp; Tomte'], ['/admin/comms', 'Comms 1'],
     ['/admin/comms2', 'Comms 2'], ['/admin/sales', 'Sales &amp; Marketing'], ['/admin/reports', 'Reports'], ['/admin/pages', 'Pages'],
@@ -2587,7 +2689,33 @@ app.get('/service-worker.js', (req, res) => {
 // one small request per page load — worth it for a file that changes
 // this often right now.
 app.get('/js/message-editor.js', (req, res) => { res.set('Cache-Control', 'no-store'); res.sendFile(path.join(__dirname, 'public', 'js', 'message-editor.js')); });
-app.get('/',                (req, res) => res.redirect('/login'));
+// Per App 38 (2) — "/" is now the public home page (public-home.js),
+// rendered on the server from live data so search engines and AI crawlers
+// see everything on it. It used to redirect to /login, which made the
+// home page a login form to every crawler. Someone already signed in still
+// goes straight into their part of the app, so installed apps (start_url
+// "/") open where they always did.
+const publicHome = require('./public-home');
+app.get('/', (req, res) => {
+  try {
+    const token = req.cookies && req.cookies.perbot_session;
+    const who = token ? auth.verifyToken(token) : null;
+    if (who) return res.redirect({ client: '/client/', admin: '/admin/', facilitator: '/facilitator/' }[who.role] || '/login');
+  } catch (e) { /* treat as signed out */ }
+  const safe = (fn, fallback) => { try { return fn(); } catch (e) { console.error('[home] data:', e.message); return fallback; } };
+  const cfg = safe(() => db.getAppConfig(), {}) || {};
+  const html = publicHome.render({
+    siteUrl: process.env.SEO_SITE_URL || 'https://www.deepermindfulness.org',
+    brandName: cfg.brand_name || 'Deeper Mindfulness',
+    contactEmail: cfg.contact_email || '',
+    schedule: safe(() => db.getPublicSchedule(), []),
+    selfPaced: safe(() => db.getPublicSelfPacedCourses(), []),
+    meetings: safe(() => db.getLiveMeetings(true), []),
+    plans: safe(() => db.getMembershipPlans(true).filter(p => p.stripe_price_id && p.tier === 1), []),
+  });
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+});
 
 function roleRouter(allowedRoles, file) {
   return (req, res) => {
@@ -18870,6 +18998,7 @@ app.use((err, req, res, next) => {
 // immediately (normal boot) or later, the moment a background retry
 // successfully loads the database after starting in maintenance mode.
 async function runPostDbBootTasks() {
+  try { seedSearchVisibilityOnce(); } catch (e) { console.error('[seo] seed failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';

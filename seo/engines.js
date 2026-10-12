@@ -112,11 +112,15 @@ const ENGINES = {
   },
 };
 
+// Per App 38 (2) — checked 12 Oct 2026: Google limits the 2.5 models to
+// accounts that already used them and recommends 3.8 Flash for new
+// projects; OpenAI's web search guide recommends gpt-5.5 and doesn't
+// confirm gpt-5-mini. Any of these can be changed in Search → Settings.
 const DEFAULT_MODELS = {
   claude: 'claude-sonnet-5',
-  chatgpt: 'gpt-5-mini',
+  chatgpt: 'gpt-5.5',
   perplexity: 'sonar',
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.8-flash',
 };
 
 // ── Mention detection ──
