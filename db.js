@@ -4071,6 +4071,24 @@ function toSqliteDatetime(input) {
 }
 
 let _saveRefusedLogged = 0;
+// Per App 38 — generic run/all for self-contained modules that own their
+// own tables (first user: seo/, the Search Visibility module, which is
+// built to move between apps unchanged and so can't call app-specific
+// db functions). Same save-after-write as every other write here.
+function rawRun(sql, params = []) {
+  db.run(sql, params);
+  save();
+}
+function rawAll(sql, params = []) {
+  const stmt = db.prepare(sql);
+  try {
+    stmt.bind(params);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    return rows;
+  } finally { stmt.free(); }
+}
+
 function save() {
   if (!db) return;
   // Per App 36 — never write the database anywhere but the mounted
@@ -11709,6 +11727,7 @@ function getUserConsentHistory(userId) {
 
 module.exports = {
   exportDbBytes, restoreFromBuffer,
+  rawRun, rawAll,
   getUserCount, getLowUserAlertState, setLowUserAlertState,
   getAppConfig, updateAppConfig, isSetupComplete, regenerateLegalDocumentsFromConfig, getUserTierCounts,
   migrateNewsletterOnlyToRawTier, backfillNewsletterMigrationFromLog,

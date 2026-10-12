@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Search Visibility</title>
+<style>
+  :root {
+    --bg: #0f1412; --panel: rgba(255,255,255,0.04); --panel2: rgba(255,255,255,0.07);
+    --line: rgba(255,255,255,0.10); --text: rgba(255,255,255,0.88); --muted: rgba(255,255,255,0.55);
+    --accent: rgba(180,230,200,0.9); --accentInk: #141a17; --good: #7fd6a4; --warn: #e8c46a; --bad: #e88a7a;
+    --input: rgba(0,0,0,0.25);
+  }
+  body.light {
+    --bg: #f4f7fb; --panel: #ffffff; --panel2: #eef3f8; --line: #d9e1ea; --text: #1d2b3a; --muted: #5d6b7a;
+    --accent: #2d7873; --accentInk: #ffffff; --good: #2f8f5b; --warn: #a77a12; --bad: #b4473a; --input: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  .topnav { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .topnav .btn { margin: 2px 4px 2px 0; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 80px; }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 24px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 18px; flex-wrap: wrap; }
+  .tab { background: none; border: none; color: var(--muted); padding: 10px 14px; cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+         border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; text-decoration: none; white-space: nowrap; }
+  .btn.primary { background: var(--accent); color: var(--accentInk); border-color: transparent; font-weight: 600; }
+  .btn.danger { color: var(--bad); }
+  .btn:disabled { opacity: 0.7; cursor: default; }
+  .btn-spinner { width: 16px; height: 16px; animation: spin 1.1s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+  input[type=text], input[type=url], input[type=number], textarea, select {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  textarea { min-height: 80px; resize: vertical; }
+  textarea.code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-height: 180px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .count { font-size: 11px; color: var(--muted); float: right; }
+  .count.over { color: var(--warn); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  .pagesgrid { grid-template-columns: 320px 1fr; align-items: start; }
+  @media (max-width: 720px) { .grid2, .pagesgrid { grid-template-columns: 1fr; } }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .card .k { font-size: 12px; color: var(--muted); }
+  .card .v { font-size: 26px; font-weight: 600; margin: 2px 0; }
+  .card .s { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  td.c, th.c { text-align: center; width: 90px; }
+  .cell { cursor: pointer; display: inline-block; min-width: 34px; padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+  .cell.yes { background: rgba(127,214,164,0.18); color: var(--good); }
+  .cell.no { color: var(--muted); }
+  .cell.err { color: var(--warn); }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); margin: 1px 2px; }
+  .pill.good { color: var(--good); } .pill.bad { color: var(--bad); }
+  .progress { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; width: 220px; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .list-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .list-item .t { flex: 1; }
+  .pagelist .list-item { cursor: pointer; }
+  .pagelist .list-item:hover { background: var(--panel2); }
+  .pagelist .list-item.on { background: var(--panel2); }
+  .empty { color: var(--muted); padding: 14px 0; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 20px; max-width: 760px; width: 100%; max-height: 86vh; overflow: auto; }
+  .modal h3 { margin: 0 0 10px; font-size: 16px; }
+  .modal pre { white-space: pre-wrap; word-break: break-word; background: var(--panel); padding: 12px; border-radius: 8px; font-size: 12px; max-height: 50vh; overflow: auto; }
+  .answer { white-space: pre-wrap; background: var(--panel); padding: 12px; border-radius: 8px; font-size: 13px; max-height: 46vh; overflow: auto; }
+  mark { background: rgba(232,196,106,0.35); color: inherit; padding: 0 2px; border-radius: 3px; }
+  .msg { padding: 10px 12px; border-radius: 8px; background: var(--panel2); margin: 10px 0; }
+  .msg.err { color: var(--bad); }
+  svg.trend { width: 100%; height: 120px; }
+  .langsw { font-size: 12px; }
+  .langsw button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px 6px; }
+  .langsw button.on { color: var(--text); text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="topnav"><!--SEO_NAV--></div>
+<div class="wrap">
+  <div class="row">
+    <div>
+      <h1 data-t="title"></h1>
+      <p class="sub" data-t="subtitle"></p>
+    </div>
+    <div class="spacer"></div>
+    <div class="langsw" id="langsw"></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-tab="vis" data-t="tabVis"></button>
+    <button class="tab" data-tab="questions" data-t="tabQuestions"></button>
+    <button class="tab" data-tab="pages" data-t="tabPages"></button>
+    <button class="tab" data-tab="settings" data-t="tabSettings"></button>
+  </div>
+
+  <!-- ═══ Visibility ═══ -->
+  <section id="tab-vis">
+    <div class="panel row">
+      <button class="btn primary" id="runBtn" data-t="runNow"></button>
+      <div id="runProgress" style="display:none" class="row"><div class="progress"><div id="runBar"></div></div><span id="runText" class="hint"></span></div>
+      <div class="spacer"></div>
+      <span class="hint" id="schedLine"></span>
+    </div>
+    <div id="visSetupMsg"></div>
+    <div class="cards" id="engineCards"></div>
+    <h2 data-t="trendTitle"></h2>
+    <div class="panel"><div id="trend"></div></div>
+    <h2 data-t="gridTitle"></h2>
+    <div class="panel" style="overflow-x:auto"><div id="grid"></div></div>
+    <h2 data-t="compTitle"></h2>
+    <div class="panel"><div id="comp"></div></div>
+  </section>
+
+  <!-- ═══ Questions ═══ -->
+  <section id="tab-questions" style="display:none">
+    <div class="panel">
+      <p class="hint" style="margin-top:0" data-t="qHelp"></p>
+      <label data-t="qAddLabel"></label>
+      <textarea id="qNew"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="qAddBtn" data-t="add"></button>
+        <button class="btn" id="qSuggestBtn" data-t="qSuggest"></button>
+      </div>
+      <div id="qSuggestions"></div>
+    </div>
+    <div class="panel"><div id="qList"></div></div>
+  </section>
+
+  <!-- ═══ Pages ═══ -->
+  <section id="tab-pages" style="display:none">
+    <div class="grid2 pagesgrid">
+      <div class="panel pagelist">
+        <div class="row"><strong data-t="pagesList"></strong><div class="spacer"></div><button class="btn" id="pNewBtn" data-t="pNew"></button></div>
+        <div id="pList" style="margin-top:8px"></div>
+      </div>
+      <div class="panel" id="pForm">
+        <p class="hint" style="margin-top:0" data-t="pHelp"></p>
+        <label data-t="pPath"></label>
+        <input type="text" id="p_path" placeholder="/courses">
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="pSuggestBtn" data-t="pSuggest"></button>
+          <a class="btn" id="pOpen" target="_blank" rel="noopener" data-t="pOpenLive"></a>
+        </div>
+        <label><span data-t="pTitle"></span> <span class="count" id="c_title"></span></label>
+        <input type="text" id="p_title">
+        <label><span data-t="pDesc"></span> <span class="count" id="c_desc"></span></label>
+        <textarea id="p_description" style="min-height:60px"></textarea>
+        <div class="grid2">
+          <div><label data-t="pImage"></label><input type="url" id="p_image_url" placeholder="https://…/image.jpg"></div>
+          <div><label data-t="pCanonical"></label><input type="url" id="p_canonical"></div>
+        </div>
+        <div class="grid2">
+          <div><label data-t="pSchemaType"></label>
+            <select id="p_schema_type"><option value="">—</option><option>WebPage</option><option>Course</option><option>Book</option><option>Event</option><option>Article</option><option>FAQPage</option><option>Product</option><option>Service</option></select>
+            <div class="hint" data-t="pSchemaTypeHint"></div>
+          </div>
+          <div><label data-t="pOgType"></label>
+            <select id="p_og_type"><option>website</option><option>article</option><option>book</option><option>product</option></select>
+          </div>
+        </div>
+        <label data-t="pSchemaJson"></label>
+        <textarea id="p_schema_json" class="code" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:8px">
+          <label style="margin:0"><input type="checkbox" id="p_in_sitemap"> <span data-t="pInSitemap"></span></label>
+          <label style="margin:0"><input type="checkbox" id="p_in_llms"> <span data-t="pInLlms"></span></label>
+          <label style="margin:0"><span data-t="pPriority"></span> <input type="number" id="p_priority" min="0" max="1" step="0.1" style="width:70px"></label>
+        </div>
+        <div class="row" style="margin-top:16px">
+          <button class="btn primary" id="pSaveBtn" data-t="save"></button>
+          <div class="spacer"></div>
+          <button class="btn danger" id="pDeleteBtn" data-t="remove"></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Settings ═══ -->
+  <section id="tab-settings" style="display:none">
+    <div class="panel">
+      <h2 style="margin-top:0" data-t="sWho"></h2>
+      <div class="grid2">
+        <div><label data-t="sSiteUrl"></label><input type="url" id="s_siteUrl" placeholder="https://www.example.org"></div>
+        <div><label data-t="sSiteName"></label><input type="text" id="s_siteName"></div>
+        <div><label data-t="sOrgName"></label><input type="text" id="s_orgName"></div>
+        <div><label data-t="sLogo"></label><input type="url" id="s_logoUrl"></div>
+        <div><label data-t="sPerson"></label><input type="text" id="s_personName"></div>
+        <div><label data-t="sJob"></label><input type="text" id="s_personJobTitle"></div>
+      </div>
+      <label data-t="sOrgDesc"></label><textarea id="s_orgDescription"></textarea>
+      <label data-t="sSameAs"></label><textarea id="s_sameAs" placeholder="https://www.linkedin.com/in/…"></textarea>
+      <label style="margin-top:10px"><input type="checkbox" id="s_includeSiteSchema"> <span data-t="sSiteSchema"></span></label>
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0" data-t="sTracking"></h2>
+      <div class="grid2">
+        <div><label data-t="sBrand"></label><textarea id="s_brandTerms"></textarea><div class="hint" data-t="sBrandHint"></div></div>
+        <div><label data-t="sComp"></label><textarea id="s_competitorTerms"></textarea><div class="hint" data-t="sCompHint"></div></div>
+      </div>
+      <label data-t="sEngines"></label>
+      <div id="s_engines"></div>
+      <div class="row" style="margin-top:12px">
+        <label style="margin:0"><input type="checkbox" id="s_checkEnabled"> <span data-t="sWeekly"></span></label>
+        <select id="s_checkWeekday" style="width:auto"></select>
+        <span class="hint" data-t="sWeeklyHint"></span>
+      </div>
+      <label data-t="sMax"></label><input type="number" id="s_maxPromptsPerRun" min="1" max="50" style="width:90px">
+    </div>
+
+    <div class="panel">
+      <h2 style="margin-top:0" data-t="sFiles"></h2>
+      <div class="grid2">
+        <div><label data-t="sDisallow"></label><textarea id="s_robotsDisallow"></textarea></div>
+        <div><label data-t="sRobotsExtra"></label><textarea id="s_robotsExtra" class="code" style="min-height:80px"></textarea></div>
+      </div>
+      <label style="margin-top:10px"><input type="checkbox" id="s_blockAiTraining"> <span data-t="sBlockTrain"></span></label>
+      <div class="hint" data-t="sBlockTrainHint"></div>
+      <label data-t="sLlmsSummary"></label><textarea id="s_llmsSummary"></textarea>
+      <label data-t="sLlmsExtra"></label><textarea id="s_llmsExtra" class="code"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" data-preview="robots">robots.txt</button>
+        <button class="btn" data-preview="sitemap">sitemap.xml</button>
+        <button class="btn" data-preview="llms">llms.txt</button>
+      </div>
+    </div>
+    <div class="row"><button class="btn primary" id="sSaveBtn" data-t="save"></button></div>
+  </section>
+</div>
+
+<div class="modal-bg" id="modal"><div class="modal">
+  <h3 id="mTitle"></h3>
+  <div id="mBody"></div>
+  <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn primary" id="mOk">OK</button></div>
+</div></div>
+
+<script>
+const CFG = __SEO_CONFIG__;
+if (CFG.theme === 'light') document.body.classList.add('light');
+
+const T = {
+  en: {
+    title: 'Search Visibility', subtitle: 'How the site shows up in Google and in AI assistants, and what it tells them.',
+    tabVis: 'AI visibility', tabQuestions: 'Questions', tabPages: 'Pages & schema', tabSettings: 'Settings',
+    runNow: 'Run check now', running: 'Checking…', runDone: 'Check finished.', runDoneBody: (n) => `${n} answers recorded. The results below are updated.`,
+    progress: (d, t) => `${d} of ${t} answers`,
+    schedOn: (day) => `Weekly check: every ${day}, early morning (UK).`, schedOff: 'Weekly check is off — turn it on in Settings.',
+    lastRun: (d) => `Last check: ${d}`,
+    trendTitle: 'Mentioned in answers, over time', gridTitle: 'Latest check, question by question', compTitle: 'Who else the assistants named (latest check)',
+    noRuns: 'No checks yet. Add a few questions, then press "Run check now".',
+    mentioned: 'mentioned', cited: 'site cited', avgPos: 'average place', ofAnswers: (n) => `of ${n} answers`,
+    noKey: 'no key', keyFound: 'key found', off: 'off',
+    setupNeeded: 'Before the first check:', setupBrand: 'Fill in "Brand names to look for" in Settings.', setupQ: 'Add questions in the Questions tab.', setupKeys: 'At least one AI engine needs an API key in Railway Variables.',
+    question: 'Question', legend: '✓ = mentioned, ◎ = also links to the site, – = not mentioned, ! = engine error. Tap a cell for the full answer.',
+    qHelp: 'Write questions the way a stranger would type them into ChatGPT — without naming you. The check shows whether the assistant finds you on its own.',
+    qAddLabel: 'New questions (one per line)', add: 'Add', qSuggest: 'Suggest questions with AI', addSelected: 'Add selected',
+    qNone: 'No questions yet.', active: 'active', remove: 'Remove', save: 'Save', saved: 'Saved.', added: (n) => `${n} question(s) added.`,
+    confirmRemoveQ: 'Remove this question? Its past results stay in the history.',
+    pagesList: 'Pages', pNew: 'New page', pNone: 'No pages yet. Add the public pages people should find: home, courses, books.',
+    pHelp: 'These tags are added to the page as it is sent, so Google and AI crawlers see them without running any script. Only public pages belong here.',
+    pPath: 'Page address (the part after the domain)', pSuggest: 'Suggest with AI', pOpenLive: 'Open page',
+    pTitle: 'Title', pDesc: 'Description', pImage: 'Share image URL', pCanonical: 'Canonical URL (leave empty for the normal address)',
+    pSchemaType: 'Schema type', pSchemaTypeHint: 'Choosing a type fills in a starting template if the box below is empty.', pOgType: 'Share type',
+    pSchemaJson: 'Schema (JSON-LD) — facts only, never invented prices, ratings or reviews',
+    pInSitemap: 'In sitemap', pInLlms: 'In llms.txt', pPriority: 'Priority',
+    pSuggested: 'Suggestion filled in', pSuggestedBody: 'Check every field — especially the schema facts — then press Save. Nothing is live until you save.',
+    pSavedBody: 'The page now carries these tags. Open the page and use your browser\'s "View source" to see them.',
+    confirmRemoveP: 'Remove this page from the list? Its tags stop being added straight away.',
+    removed: 'Removed.',
+    sWho: 'Who you are', sSiteUrl: 'Site address', sSiteName: 'Site name', sOrgName: 'Organisation name', sLogo: 'Logo URL',
+    sPerson: 'Founder / teacher name', sJob: 'Their role', sOrgDesc: 'What the organisation does (two or three plain sentences — used for schema, llms.txt and question ideas)',
+    sSameAs: 'Profiles elsewhere (one link per line — LinkedIn, Amazon author page, Instagram…)', sSiteSchema: 'Add organisation, person and website schema to every listed page',
+    sTracking: 'AI visibility check', sBrand: 'Brand names to look for (one per line)', sBrandHint: 'Names, people, book titles, the domain. Spelling variants with · or - match automatically.',
+    sComp: 'Others to count (one per line)', sCompHint: 'Format: Name | other spelling | other spelling',
+    sEngines: 'Engines', sWeekly: 'Run the check every', sWeeklyHint: 'Each answer costs a few pence in API fees.',
+    sMax: 'Most questions per check', model: 'model',
+    sFiles: 'robots.txt and llms.txt', sDisallow: 'Paths crawlers should stay out of (one per line)', sRobotsExtra: 'Extra robots.txt lines (advanced)',
+    sBlockTrain: 'Block AI training crawlers', sBlockTrainHint: 'Stops GPTBot, ClaudeBot, Google-Extended and CCBot from using pages for training. The search crawlers that make you citable (OAI-SearchBot, Claude-SearchBot, PerplexityBot) stay allowed.',
+    sLlmsSummary: 'llms.txt summary (leave empty to use the description above)', sLlmsExtra: 'llms.txt extra section (Markdown, optional)',
+    days: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
+    errTitle: 'That didn\'t work', doneTitle: 'Done', answerTitle: 'Answer', brandsFound: 'Matched', compsFound: 'Others named', sources: 'Sources cited',
+    noAnswer: 'No answer text.', networkErr: 'The app did not answer. Check your internet connection, reload this page, then try again.',
+  },
+  nl: {
+    title: 'Zichtbaarheid in zoekmachines', subtitle: 'Hoe de site verschijnt in Google en in AI-assistenten, en wat de site hun vertelt.',
+    tabVis: 'AI-zichtbaarheid', tabQuestions: 'Vragen', tabPages: 'Pagina\'s & schema', tabSettings: 'Instellingen',
+    runNow: 'Nu controleren', running: 'Bezig…', runDone: 'Controle klaar.', runDoneBody: (n) => `${n} antwoorden opgeslagen. De resultaten hieronder zijn bijgewerkt.`,
+    progress: (d, t) => `${d} van ${t} antwoorden`,
+    schedOn: (day) => `Wekelijkse controle: elke ${day}, vroeg in de ochtend.`, schedOff: 'Wekelijkse controle staat uit — zet hem aan bij Instellingen.',
+    lastRun: (d) => `Laatste controle: ${d}`,
+    trendTitle: 'Genoemd in antwoorden, door de tijd', gridTitle: 'Laatste controle, per vraag', compTitle: 'Wie de assistenten verder noemden (laatste controle)',
+    noRuns: 'Nog geen controles. Voeg een paar vragen toe en druk op "Nu controleren".',
+    mentioned: 'genoemd', cited: 'site als bron', avgPos: 'gemiddelde plek', ofAnswers: (n) => `van ${n} antwoorden`,
+    noKey: 'geen sleutel', keyFound: 'sleutel gevonden', off: 'uit',
+    setupNeeded: 'Voor de eerste controle:', setupBrand: 'Vul "Merknamen om te zoeken" in bij Instellingen.', setupQ: 'Voeg vragen toe bij het tabblad Vragen.', setupKeys: 'Minstens één AI-dienst heeft een API-sleutel nodig in de Railway-variabelen.',
+    question: 'Vraag', legend: '✓ = genoemd, ◎ = linkt ook naar de site, – = niet genoemd, ! = fout bij de dienst. Tik op een vakje voor het hele antwoord.',
+    qHelp: 'Schrijf vragen zoals een onbekende ze in ChatGPT zou typen — zonder jullie naam. De controle laat zien of de assistent jullie zelf vindt.',
+    qAddLabel: 'Nieuwe vragen (één per regel)', add: 'Toevoegen', qSuggest: 'Vragen laten voorstellen door AI', addSelected: 'Geselecteerde toevoegen',
+    qNone: 'Nog geen vragen.', active: 'actief', remove: 'Verwijderen', save: 'Opslaan', saved: 'Opgeslagen.', added: (n) => `${n} vraag/vragen toegevoegd.`,
+    confirmRemoveQ: 'Deze vraag verwijderen? Eerdere resultaten blijven bewaard.',
+    pagesList: 'Pagina\'s', pNew: 'Nieuwe pagina', pNone: 'Nog geen pagina\'s. Voeg de openbare pagina\'s toe die mensen moeten vinden: home, cursussen, boeken.',
+    pHelp: 'Deze tags worden aan de pagina toegevoegd terwijl hij verstuurd wordt, zodat Google en AI-crawlers ze zien zonder script. Alleen openbare pagina\'s horen hier.',
+    pPath: 'Paginaadres (het deel na de domeinnaam)', pSuggest: 'Laten voorstellen door AI', pOpenLive: 'Pagina openen',
+    pTitle: 'Titel', pDesc: 'Beschrijving', pImage: 'URL van deelafbeelding', pCanonical: 'Canonieke URL (leeg laten voor het gewone adres)',
+    pSchemaType: 'Schematype', pSchemaTypeHint: 'Een type kiezen vult een startsjabloon in als het vak hieronder leeg is.', pOgType: 'Deeltype',
+    pSchemaJson: 'Schema (JSON-LD) — alleen feiten, nooit verzonnen prijzen, beoordelingen of recensies',
+    pInSitemap: 'In sitemap', pInLlms: 'In llms.txt', pPriority: 'Prioriteit',
+    pSuggested: 'Voorstel ingevuld', pSuggestedBody: 'Controleer elk veld — vooral de feiten in het schema — en druk dan op Opslaan. Niets staat live tot je opslaat.',
+    pSavedBody: 'De pagina heeft nu deze tags. Open de pagina en kies "Paginabron bekijken" in je browser om ze te zien.',
+    confirmRemoveP: 'Deze pagina uit de lijst halen? De tags worden direct niet meer toegevoegd.',
+    removed: 'Verwijderd.',
+    sWho: 'Wie jullie zijn', sSiteUrl: 'Siteadres', sSiteName: 'Sitenaam', sOrgName: 'Naam organisatie', sLogo: 'Logo-URL',
+    sPerson: 'Naam oprichter / docent', sJob: 'Diens rol', sOrgDesc: 'Wat de organisatie doet (twee of drie eenvoudige zinnen — voor schema, llms.txt en vraagideeën)',
+    sSameAs: 'Profielen elders (één link per regel — LinkedIn, Amazon-auteurspagina, Instagram…)', sSiteSchema: 'Organisatie-, persoon- en websiteschema toevoegen aan elke pagina in de lijst',
+    sTracking: 'Controle AI-zichtbaarheid', sBrand: 'Merknamen om te zoeken (één per regel)', sBrandHint: 'Namen, personen, boektitels, het domein. Varianten met · of - tellen automatisch mee.',
+    sComp: 'Anderen om te tellen (één per regel)', sCompHint: 'Vorm: Naam | andere spelling | andere spelling',
+    sEngines: 'Diensten', sWeekly: 'Controle uitvoeren elke', sWeeklyHint: 'Elk antwoord kost een paar cent aan API-kosten.',
+    sMax: 'Maximaal aantal vragen per controle', model: 'model',
+    sFiles: 'robots.txt en llms.txt', sDisallow: 'Paden waar crawlers weg moeten blijven (één per regel)', sRobotsExtra: 'Extra regels robots.txt (gevorderd)',
+    sBlockTrain: 'AI-trainingscrawlers blokkeren', sBlockTrainHint: 'Houdt GPTBot, ClaudeBot, Google-Extended en CCBot weg voor training. De zoekcrawlers die ervoor zorgen dat jullie geciteerd worden (OAI-SearchBot, Claude-SearchBot, PerplexityBot) blijven toegestaan.',
+    sLlmsSummary: 'Samenvatting llms.txt (leeg laten om de beschrijving hierboven te gebruiken)', sLlmsExtra: 'Extra deel llms.txt (Markdown, optioneel)',
+    days: ['zondag','maandag','dinsdag','woensdag','donderdag','vrijdag','zaterdag'],
+    errTitle: 'Dat lukte niet', doneTitle: 'Klaar', answerTitle: 'Antwoord', brandsFound: 'Gevonden', compsFound: 'Anderen genoemd', sources: 'Geciteerde bronnen',
+    noAnswer: 'Geen antwoordtekst.', networkErr: 'De app gaf geen antwoord. Controleer je internetverbinding, herlaad deze pagina en probeer het opnieuw.',
+  },
+};
+let LANG = CFG.lang in T ? CFG.lang : 'en';
+try { const l = localStorage.getItem('seoAdminLang'); if (l && T[l]) LANG = l; } catch (e) {}
+const t = (k, ...a) => { const v = (T[LANG] && T[LANG][k] !== undefined) ? T[LANG][k] : T.en[k]; return typeof v === 'function' ? v(...a) : v; };
+function applyLang() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll('[data-t]').forEach(el => { el.textContent = t(el.dataset.t); });
+  const sw = document.getElementById('langsw');
+  sw.innerHTML = (CFG.languages || ['en']).filter(l => T[l]).map(l => `<button class="${l === LANG ? 'on' : ''}" data-lang="${l}">${l.toUpperCase()}</button>`).join('');
+  sw.querySelectorAll('button').forEach(b => b.onclick = () => { LANG = b.dataset.lang; try { localStorage.setItem('seoAdminLang', LANG); } catch (e) {} applyLang(); render(); });
+  const wd = document.getElementById('s_checkWeekday'); const cur = wd.value;
+  wd.innerHTML = t('days').map((d, i) => `<option value="${i}">${d}</option>`).join(''); if (cur) wd.value = cur;
+}
+
+// ── Helpers ──
+const YY = `<svg class="btn-spinner" viewBox="0 0 100 100"><circle cx="50" cy="50" r="46" fill="rgba(180,230,200,0.9)"/><path d="M50,4 A46,46 0 0,1 50,96 A23,23 0 0,1 50,50 A23,23 0 0,0 50,4 Z" fill="#141a17"/><circle cx="50" cy="27" r="7" fill="#141a17"/><circle cx="50" cy="73" r="7" fill="rgba(180,230,200,0.9)"/></svg>`;
+function busy(btn, on, label) {
+  if (!btn) return;
+  if (on) { if (btn.dataset.orig === undefined) btn.dataset.orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = YY + (label || t('running')); }
+  else { btn.disabled = false; if (btn.dataset.orig !== undefined) { btn.innerHTML = btn.dataset.orig; delete btn.dataset.orig; } }
+}
+const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function popup(title, html, isErr) {
+  document.getElementById('mTitle').textContent = title;
+  document.getElementById('mBody').innerHTML = isErr ? `<div class="msg err">${esc(html)}</div>` : html;
+  document.getElementById('modal').classList.add('open');
+}
+document.getElementById('mOk').onclick = () => document.getElementById('modal').classList.remove('open');
+document.getElementById('modal').onclick = (e) => { if (e.target.id === 'modal') e.target.classList.remove('open'); };
+async function api(method, path, body) {
+  let r;
+  try {
+    r = await fetch(CFG.apiBase + path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
+  } catch (e) { throw new Error(t('networkErr')); }
+  if (r.status === 401 || r.status === 403) throw new Error(LANG === 'nl' ? 'Je bent uitgelogd. Log opnieuw in als beheerder en open deze pagina opnieuw.' : 'You have been logged out. Log in again as admin, then open this page again.');
+  let d; try { d = await r.json(); } catch (e) { throw new Error(t('networkErr')); }
+  if (!r.ok) throw new Error(d.error || t('networkErr'));
+  return d;
+}
+// Run a server action with spinner + popup on finish.
+async function action(btn, fn, doneMsg) {
+  busy(btn, true);
+  try { const out = await fn(); if (doneMsg) popup(t('doneTitle'), `<p>${esc(typeof doneMsg === 'function' ? doneMsg(out) : doneMsg)}</p>`); return out; }
+  catch (e) { popup(t('errTitle'), e.message, true); }
+  finally { busy(btn, false); }
+}
+const fmtDate = (s) => { if (!s) return '—'; try { return new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString(LANG === 'nl' ? 'nl-NL' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return s; } };
+const pct = (x) => Math.round((x || 0) * 100) + '%';
+const parseJ = (s) => { try { return JSON.parse(s || '[]'); } catch (e) { return []; } };
+
+// ── State ──
+let S = null;
+async function load() {
+  try { S = await api('GET', '/state'); render(); }
+  catch (e) { popup(t('errTitle'), e.message, true); }
+}
+
+function render() {
+  if (!S) return;
+  renderVis(); renderQuestions(); renderPageList(); fillSettings();
+}
+
+// ═══ Visibility ═══
+function engineLabel(id) { const e = S.engines.find(x => x.id === id); return e ? e.label : id; }
+function renderVis() {
+  const s = S.settings;
+  const day = t('days')[Number(s.checkWeekday) || 0];
+  const last = S.latest ? t('lastRun', fmtDate(S.latest.run.started_at)) + ' · ' : '';
+  document.getElementById('schedLine').textContent = last + (s.checkEnabled ? t('schedOn', day) : t('schedOff'));
+
+  const need = [];
+  if (!(s.brandTerms || []).length) need.push(t('setupBrand'));
+  if (!S.prompts.some(p => p.active)) need.push(t('setupQ'));
+  if (!S.engines.some(e => e.hasKey && e.enabled)) need.push(t('setupKeys'));
+  document.getElementById('visSetupMsg').innerHTML = need.length ? `<div class="msg"><strong>${t('setupNeeded')}</strong><br>${need.map(esc).join('<br>')}</div>` : '';
+
+  const latestSum = S.trend.length ? S.trend[S.trend.length - 1] : null;
+  document.getElementById('engineCards').innerHTML = S.engines.map(e => {
+    const st = !e.hasKey ? `<span class="pill bad">${t('noKey')}</span>` : !e.enabled ? `<span class="pill">${t('off')}</span>` : '';
+    const m = latestSum && latestSum.engines[e.id];
+    return `<div class="card"><div class="k">${esc(e.label)} ${st}</div>` + (m
+      ? `<div class="v">${pct(m.mentionRate)}</div><div class="s">${t('mentioned')} · ${t('ofAnswers', m.n)}</div><div class="s">${pct(m.citeRate)} ${t('cited')}${m.avgPos ? ` · ${t('avgPos')} ${m.avgPos.toFixed(1)}` : ''}</div>`
+      : `<div class="v">—</div><div class="s">&nbsp;</div>`) + `</div>`;
+  }).join('');
+
+  // Trend line (overall mention rate per run)
+  const tr = S.trend;
+  const el = document.getElementById('trend');
+  if (!tr.length) { el.innerHTML = `<div class="empty">${t('noRuns')}</div>`; }
+  else {
+    const W = 600, H = 110, P = 24; const n = tr.length;
+    const x = (i) => n === 1 ? W / 2 : P + i * (W - 2 * P) / (n - 1);
+    const y = (v) => H - 14 - v * (H - 28);
+    const line = (key) => tr.map((r, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(' ');
+    el.innerHTML = `<svg class="trend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <line x1="${P}" x2="${W - P}" y1="${y(0)}" y2="${y(0)}" stroke="currentColor" opacity=".15"/>
+      <line x1="${P}" x2="${W - P}" y1="${y(1)}" y2="${y(1)}" stroke="currentColor" opacity=".08"/>
+      <path d="${line('citeRate')}" fill="none" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <path d="${line('mentionRate')}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+      ${tr.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.mentionRate)}" r="3.5" fill="var(--accent)"><title>${fmtDate(r.date)}: ${pct(r.mentionRate)}</title></circle>`).join('')}
+    </svg><div class="hint"><span style="color:var(--accent)">━</span> ${t('mentioned')} &nbsp; <span style="color:var(--warn)">┅</span> ${t('cited')} · ${fmtDate(tr[0].date)} → ${fmtDate(tr[n - 1].date)}</div>`;
+  }
+
+  // Grid
+  const g = document.getElementById('grid');
+  if (!S.latest || !S.latest.checks.length) { g.innerHTML = `<div class="empty">${t('noRuns')}</div>`; }
+  else {
+    const checks = S.latest.checks;
+    const present = new Set(checks.map(c => c.engine));
+    const engines = S.engines.map(e => e.id).filter(id => present.has(id));
+    const byPrompt = new Map();
+    for (const c of checks) { if (!byPrompt.has(c.prompt_id)) byPrompt.set(c.prompt_id, { text: c.prompt_text, cells: {} }); byPrompt.get(c.prompt_id).cells[c.engine] = c; }
+    g.innerHTML = `<table><tr><th>${t('question')}</th>${engines.map(e => `<th class="c">${esc(engineLabel(e))}</th>`).join('')}</tr>` +
+      Array.from(byPrompt.values()).map(r => `<tr><td>${esc(r.text)}</td>${engines.map(e => {
+        const c = r.cells[e]; if (!c) return '<td class="c"></td>';
+        const cls = c.error ? 'err' : c.mentioned ? 'yes' : 'no';
+        const sym = c.error ? '!' : c.mentioned ? (c.domain_cited ? '✓◎' : '✓') + (c.position ? ' #' + c.position : '') : (c.domain_cited ? '◎' : '–');
+        return `<td class="c"><span class="cell ${cls}" data-check="${c.id}">${sym}</span></td>`;
+      }).join('')}</tr>`).join('') + `</table><div class="hint" style="margin-top:8px">${t('legend')}</div>`;
+    g.querySelectorAll('[data-check]').forEach(el => el.onclick = () => showCheck(el.dataset.check));
+
+    const tally = {};
+    for (const c of checks) for (const n of parseJ(c.competitors_found)) tally[n] = (tally[n] || 0) + 1;
+    const ours = checks.filter(c => c.mentioned).length;
+    const rows = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    document.getElementById('comp').innerHTML = (!(S.settings.competitorTerms || []).length && !rows.length)
+      ? `<div class="hint">${esc(t('sCompHint'))} — ${esc(t('tabSettings'))}.</div>`
+      : `<table><tr><td><strong>${esc(S.settings.orgName || S.settings.siteName || 'You')}</strong></td><td class="c"><strong>${ours}</strong></td></tr>` +
+        rows.map(([n, k]) => `<tr><td>${esc(n)}</td><td class="c">${k}</td></tr>`).join('') + `</table>`;
+  }
+}
+async function showCheck(id) {
+  try {
+    const c = await api('GET', '/checks/' + id);
+    let ans = esc(c.answer || t('noAnswer'));
+    const terms = parseJ(c.brands_found).concat(parseJ(c.competitors_found));
+    for (const term of terms) { const re = new RegExp(esc(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'); ans = ans.replace(re, (m) => `<mark>${m}</mark>`); }
+    const urls = parseJ(c.cited_urls);
+    popup(`${engineLabel(c.engine)} — ${c.prompt_text}`,
+      (c.error ? `<div class="msg err">${esc(c.error)}</div>` : '') +
+      `<p><span class="hint">${t('brandsFound')}:</span> ${parseJ(c.brands_found).map(b => `<span class="pill good">${esc(b)}</span>`).join('') || '—'}
+       <br><span class="hint">${t('compsFound')}:</span> ${parseJ(c.competitors_found).map(b => `<span class="pill">${esc(b)}</span>`).join('') || '—'}</p>
+       <div class="answer">${ans}</div>` +
+      (urls.length ? `<p class="hint">${t('sources')}:</p><ul style="font-size:12px">${urls.map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a></li>`).join('')}</ul>` : ''));
+  } catch (e) { popup(t('errTitle'), e.message, true); }
+}
+
+document.getElementById('runBtn').onclick = async () => {
+  const btn = document.getElementById('runBtn');
+  busy(btn, true);
+  try {
+    const { jobId } = await api('POST', '/run');
+    await pollJob(jobId);
+  } catch (e) { popup(t('errTitle'), e.message, true); }
+  finally { busy(btn, false); document.getElementById('runProgress').style.display = 'none'; }
+};
+async function pollJob(jobId) {
+  document.getElementById('runProgress').style.display = 'flex';
+  for (;;) {
+    await new Promise(r => setTimeout(r, 2000));
+    const j = await api('GET', '/jobs/' + jobId);
+    document.getElementById('runBar').style.width = j.total ? (100 * j.done / j.total) + '%' : '3%';
+    document.getElementById('runText').textContent = j.total ? t('progress', j.done, j.total) : '';
+    if (j.status === 'done') { await load(); popup(t('runDone'), `<p>${esc(t('runDoneBody', j.total))}</p>`); return; }
+    if (j.status === 'failed') throw new Error(j.error);
+  }
+}
+
+// ═══ Questions ═══
+function renderQuestions() {
+  const el = document.getElementById('qList');
+  if (!S.prompts.length) { el.innerHTML = `<div class="empty">${t('qNone')}</div>`; return; }
+  el.innerHTML = S.prompts.map(p => `<div class="list-item">
+    <label style="margin:0;white-space:nowrap"><input type="checkbox" data-qact="${p.id}" ${p.active ? 'checked' : ''}> ${t('active')}</label>
+    <div class="t">${esc(p.text)}</div>
+    <button class="btn danger" data-qdel="${p.id}">${t('remove')}</button></div>`).join('');
+  el.querySelectorAll('[data-qact]').forEach(cb => cb.onchange = async () => {
+    cb.disabled = true;
+    try { await api('PUT', '/prompts/' + cb.dataset.qact, { active: cb.checked }); const p = S.prompts.find(x => x.id == cb.dataset.qact); if (p) p.active = cb.checked ? 1 : 0; renderVis(); }
+    catch (e) { cb.checked = !cb.checked; popup(t('errTitle'), e.message, true); }
+    finally { cb.disabled = false; }
+  });
+  el.querySelectorAll('[data-qdel]').forEach(b => b.onclick = async () => {
+    if (!confirm(t('confirmRemoveQ'))) return;
+    await action(b, () => api('DELETE', '/prompts/' + b.dataset.qdel), t('removed'));
+    load();
+  });
+}
+document.getElementById('qAddBtn').onclick = async (ev) => {
+  const ta = document.getElementById('qNew');
+  const out = await action(ev.currentTarget, () => api('POST', '/prompts', { text: ta.value }), (o) => t('added', o.added));
+  if (out) { ta.value = ''; load(); }
+};
+document.getElementById('qSuggestBtn').onclick = async (ev) => {
+  const out = await action(ev.currentTarget, () => api('POST', '/prompts/suggest', { language: LANG === 'nl' ? 'Dutch' : '' }));
+  if (!out) return;
+  const box = document.getElementById('qSuggestions');
+  box.innerHTML = `<div style="margin-top:14px">${out.suggestions.map((q, i) => `<label style="color:var(--text);font-size:13px"><input type="checkbox" checked data-sug="${i}"> ${esc(q)}</label>`).join('')}
+    <button class="btn primary" id="qAddSelBtn" style="margin-top:10px">${t('addSelected')}</button></div>`;
+  document.getElementById('qAddSelBtn').onclick = async (e2) => {
+    const picked = Array.from(box.querySelectorAll('[data-sug]:checked')).map(cb => out.suggestions[cb.dataset.sug]);
+    const r = await action(e2.currentTarget, () => api('POST', '/prompts', { text: picked.join('\n') }), (o) => t('added', o.added));
+    if (r) { box.innerHTML = ''; load(); }
+  };
+};
+
+// ═══ Pages ═══
+let editingId = null;
+const PF = ['path', 'title', 'description', 'canonical', 'image_url', 'og_type', 'schema_type', 'schema_json', 'priority'];
+function renderPageList() {
+  const el = document.getElementById('pList');
+  if (!S.pages.length) { el.innerHTML = `<div class="empty">${t('pNone')}</div>`; if (editingId === null) fillPage(null); return; }
+  el.innerHTML = S.pages.map(p => `<div class="list-item ${p.id === editingId ? 'on' : ''}" data-pid="${p.id}"><div class="t"><strong>${esc(p.path)}</strong><br><span class="hint">${esc(p.title || '—')}</span><br>
+    ${p.schema_type ? `<span class="pill">${esc(p.schema_type)}</span>` : ''}${p.in_sitemap ? '<span class="pill">sitemap</span>' : ''}${p.in_llms ? '<span class="pill">llms</span>' : ''}</div></div>`).join('');
+  el.querySelectorAll('[data-pid]').forEach(d => d.onclick = () => { editingId = Number(d.dataset.pid); fillPage(S.pages.find(p => p.id === editingId)); renderPageList(); });
+  if (editingId !== null && !S.pages.some(p => p.id === editingId)) editingId = null;
+  if (editingId === null) fillPage(null);
+}
+function fillPage(p) {
+  for (const k of PF) { const el = document.getElementById('p_' + k); if (el) el.value = p ? (p[k] == null ? '' : p[k]) : ''; }
+  if (!p) { document.getElementById('p_og_type').value = 'website'; document.getElementById('p_priority').value = '0.5'; }
+  document.getElementById('p_in_sitemap').checked = p ? !!p.in_sitemap : true;
+  document.getElementById('p_in_llms').checked = p ? !!p.in_llms : true;
+  document.getElementById('pDeleteBtn').style.display = p ? '' : 'none';
+  updateCounts(); updateOpenLink();
+}
+function updateCounts() {
+  const tl = document.getElementById('p_title').value.length, dl = document.getElementById('p_description').value.length;
+  const ct = document.getElementById('c_title'), cd = document.getElementById('c_desc');
+  ct.textContent = tl + ' / 60'; ct.className = 'count' + (tl > 60 ? ' over' : '');
+  cd.textContent = dl + ' / 160'; cd.className = 'count' + (dl > 160 ? ' over' : '');
+}
+function updateOpenLink() {
+  const p = document.getElementById('p_path').value.trim();
+  const a = document.getElementById('pOpen');
+  a.href = p ? (S && S.siteUrl ? S.siteUrl : '') + (p.startsWith('/') ? p : '/' + p) : '#';
+}
+['p_title', 'p_description'].forEach(id => document.getElementById(id).oninput = updateCounts);
+document.getElementById('p_path').oninput = updateOpenLink;
+document.getElementById('pNewBtn').onclick = () => { editingId = null; fillPage(null); renderPageList(); document.getElementById('p_path').focus(); };
+
+const SCHEMA_TEMPLATES = {
+  WebPage: () => ({ '@type': 'WebPage', name: '', description: '', url: '' }),
+  Course: () => ({ '@type': 'Course', name: '', description: '', provider: { '@id': (S.siteUrl || '') + '/#organization' }, instructor: { '@id': (S.siteUrl || '') + '/#person' }, inLanguage: 'en', hasCourseInstance: { '@type': 'CourseInstance', courseMode: 'online' } }),
+  Book: () => ({ '@type': 'Book', name: '', author: { '@id': (S.siteUrl || '') + '/#person' }, isbn: '', bookFormat: 'https://schema.org/Paperback', inLanguage: 'en', url: '' }),
+  Event: () => ({ '@type': 'Event', name: '', startDate: '', eventAttendanceMode: 'https://schema.org/OnlineEventAttendanceMode', location: { '@type': 'VirtualLocation', url: '' }, organizer: { '@id': (S.siteUrl || '') + '/#organization' } }),
+  Article: () => ({ '@type': 'Article', headline: '', author: { '@id': (S.siteUrl || '') + '/#person' }, datePublished: '' }),
+  FAQPage: () => ({ '@type': 'FAQPage', mainEntity: [{ '@type': 'Question', name: '', acceptedAnswer: { '@type': 'Answer', text: '' } }] }),
+  Product: () => ({ '@type': 'Product', name: '', description: '', image: '', brand: { '@id': (S.siteUrl || '') + '/#organization' } }),
+  Service: () => ({ '@type': 'Service', name: '', description: '', provider: { '@id': (S.siteUrl || '') + '/#organization' } }),
+};
+document.getElementById('p_schema_type').onchange = (e) => {
+  const box = document.getElementById('p_schema_json');
+  if (!box.value.trim() && SCHEMA_TEMPLATES[e.target.value]) box.value = JSON.stringify(SCHEMA_TEMPLATES[e.target.value](), null, 2);
+};
+function pageForm() {
+  const b = {};
+  for (const k of PF) b[k] = document.getElementById('p_' + k).value;
+  b.in_sitemap = document.getElementById('p_in_sitemap').checked;
+  b.in_llms = document.getElementById('p_in_llms').checked;
+  return b;
+}
+document.getElementById('pSuggestBtn').onclick = async (ev) => {
+  const path = document.getElementById('p_path').value.trim();
+  const out = await action(ev.currentTarget, () => api('POST', '/pages/suggest', { path }));
+  if (!out) return;
+  const sg = out.suggestion;
+  document.getElementById('p_title').value = sg.title;
+  document.getElementById('p_description').value = sg.description;
+  if (sg.schema_type) document.getElementById('p_schema_type').value = sg.schema_type;
+  document.getElementById('p_schema_json').value = sg.schema_json;
+  updateCounts();
+  popup(t('pSuggested'), `<p>${esc(t('pSuggestedBody'))}</p>`);
+};
+document.getElementById('pSaveBtn').onclick = async (ev) => {
+  const body = pageForm();
+  const out = await action(ev.currentTarget, () => editingId ? api('PUT', '/pages/' + editingId, body) : api('POST', '/pages', body), t('pSavedBody'));
+  if (out) { editingId = out.id; await load(); fillPage(S.pages.find(p => p.id === editingId)); }
+};
+document.getElementById('pDeleteBtn').onclick = async (ev) => {
+  if (!editingId || !confirm(t('confirmRemoveP'))) return;
+  const out = await action(ev.currentTarget, () => api('DELETE', '/pages/' + editingId), t('removed'));
+  if (out) { editingId = null; load(); }
+};
+
+// ═══ Settings ═══
+const SF_TEXT = ['siteUrl', 'siteName', 'orgName', 'logoUrl', 'personName', 'personJobTitle', 'orgDescription', 'robotsExtra', 'llmsSummary', 'llmsExtra', 'maxPromptsPerRun', 'checkWeekday'];
+const SF_LIST = ['sameAs', 'brandTerms', 'competitorTerms', 'robotsDisallow'];
+const SF_BOOL = ['includeSiteSchema', 'blockAiTraining', 'checkEnabled'];
+let settingsDirty = false;
+function fillSettings() {
+  if (settingsDirty) return; // don't overwrite unsaved typing on a background reload
+  const s = S.settings;
+  for (const k of SF_TEXT) document.getElementById('s_' + k).value = s[k] == null ? '' : s[k];
+  for (const k of SF_LIST) document.getElementById('s_' + k).value = (s[k] || []).join('\n');
+  for (const k of SF_BOOL) document.getElementById('s_' + k).checked = !!s[k];
+  document.getElementById('s_engines').innerHTML = S.engines.map(e => `<div class="row" style="margin:6px 0">
+    <label style="margin:0;color:var(--text);min-width:140px"><input type="checkbox" data-eng="${e.id}" ${e.enabled ? 'checked' : ''}> ${esc(e.label)}</label>
+    <span class="pill ${e.hasKey ? 'good' : 'bad'}">${e.hasKey ? t('keyFound') : t('noKey') + ' — ' + esc(e.envName)}</span>
+    <span class="hint">${t('model')}</span><input type="text" data-model="${e.id}" value="${esc(e.model)}" style="width:200px"></div>`).join('');
+}
+document.getElementById('tab-settings').addEventListener('input', () => { settingsDirty = true; });
+document.getElementById('sSaveBtn').onclick = async (ev) => {
+  const b = {};
+  for (const k of SF_TEXT) b[k] = document.getElementById('s_' + k).value;
+  for (const k of SF_LIST) b[k] = document.getElementById('s_' + k).value;
+  for (const k of SF_BOOL) b[k] = document.getElementById('s_' + k).checked;
+  b.engines = {}; b.models = {};
+  document.querySelectorAll('[data-eng]').forEach(cb => b.engines[cb.dataset.eng] = cb.checked);
+  document.querySelectorAll('[data-model]').forEach(inp => b.models[inp.dataset.model] = inp.value.trim());
+  const out = await action(ev.currentTarget, () => api('PUT', '/settings', b), t('saved'));
+  if (out) { settingsDirty = false; load(); }
+};
+document.querySelectorAll('[data-preview]').forEach(b => b.onclick = async () => {
+  const out = await action(b, () => api('GET', '/preview/' + b.dataset.preview));
+  if (out) popup(b.textContent, `<pre>${esc(out.body)}</pre>` + (S.siteUrl ? `<p><a href="${esc(S.siteUrl)}/${b.textContent}" target="_blank" rel="noopener">${esc(S.siteUrl)}/${b.textContent}</a></p>` : ''));
+});
+
+// ── Tabs ──
+document.querySelectorAll('#tabs .tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs .tab').forEach(x => x.classList.toggle('on', x === b));
+  for (const id of ['vis', 'questions', 'pages', 'settings']) document.getElementById('tab-' + id).style.display = id === b.dataset.tab ? '' : 'none';
+});
+
+applyLang();
+load();
+</script>
+</body>
+</html>

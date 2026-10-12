@@ -647,6 +647,41 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
 app.use(express.json());
 app.use(cookieParser());
+
+// ── Search Visibility (Per App 38) ──
+// Self-contained module in seo/ (also going into the Mare App): page meta +
+// JSON-LD added server-side, /robots.txt, /sitemap.xml, /llms.txt, and the
+// weekly AI-visibility check (Claude / ChatGPT / Perplexity / Gemini —
+// whichever have keys). Mounted here, ahead of every page route, because
+// its head injection must sit in front of the routes that send pages.
+// Admin at /admin/seo. See seo/README.md.
+require('./seo').mountSeo(app, {
+  store: { run: db.rawRun, all: db.rawAll },
+  requireAdminApi: auth.requireAuthApi(['admin']),
+  requireAdminPage: auth.requireAuth(['admin']),
+  siteUrl: process.env.SEO_SITE_URL || 'https://www.deepermindfulness.org',
+  appName: 'Per App',
+  theme: 'dark',
+  lang: 'en',
+  enableCron: (process.env.APP_ENV || '').toLowerCase() !== 'staging',
+  adminNavHtml: SEO_ADMIN_NAV_HTML(),
+  defaults: {
+    siteName: 'Deeper Mindfulness',
+    orgName: 'Deeper Mindfulness',
+    personName: 'Per Norrgren',
+    personJobTitle: 'Meditation teacher and author',
+    orgDescription: 'Deeper Mindfulness, founded by Per Norrgren, teaches body-based practices that help an over-alert nervous system settle, built on the FELT·FIBRE framework. It offers online mindfulness courses, live practice sessions, an app with guided practices, and books including The Wired Heart and The Alarm That Would Not Stop.',
+    brandTerms: ['Deeper Mindfulness', 'deepermindfulness.org', 'Per Norrgren', 'FELT FIBRE', 'The Wired Heart', 'The Alarm That Would Not Stop'],
+    models: { claude: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5' },
+    robotsDisallow: ['/admin', '/api/', '/setup', '/client', '/facilitator', '/account', '/staff-account', '/change-password', '/reset-password'],
+  },
+});
+function SEO_ADMIN_NAV_HTML() {
+  const links = [['/admin/', 'People'], ['/admin/content', 'Content'], ['/admin/talk', 'Talk &amp; Tomte'], ['/admin/comms', 'Comms 1'],
+    ['/admin/comms2', 'Comms 2'], ['/admin/sales', 'Sales &amp; Marketing'], ['/admin/reports', 'Reports'], ['/admin/pages', 'Pages'],
+    ['/admin/social', 'Social'], ['/admin/seo', 'Search'], ['/admin/forms', 'Forms'], ['/setup', 'Settings']];
+  return links.map(([h, l]) => `<a href="${h}" class="btn${h === '/admin/seo' ? ' primary' : ''}">${l}</a>`).join('');
+}
 // NOTE: uploads are served exclusively via the auth-checked /uploads/:filename route below.
 // (Previously this also had an unguarded express.static('/uploads') line ahead of that route,
 // which meant any file could be fetched by anyone who knew or guessed the filename, regardless
