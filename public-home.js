@@ -248,6 +248,7 @@ function render(data) {
     <a href="#live">Live practice</a>
     <a href="#books">Books</a>
     <a href="#app">The app</a>
+    <a href="/learn">Learn</a>
     <a href="#teach">Teach</a>
     <a href="#questions">Questions</a>
   </nav>
@@ -312,6 +313,7 @@ function render(data) {
         <span class="more">Read more →</span>
       </a>
     </div>
+    <p class="center" style="margin-top:28px">From the book: <a href="/learn/waking-at-3am-heart-racing">Why do I wake up at 3am with my heart racing?</a></p>
   </section>
 
   <section id="app" aria-labelledby="app-h">
@@ -354,6 +356,7 @@ function render(data) {
 <footer>
   <nav aria-label="Site">
     <a href="/courses">Courses</a>
+    <a href="/learn">Learn</a>
     <a href="/membership">Membership</a>
     <a href="/wired-heart">The Wired Heart</a>
     <a href="/alarm">The Alarm That Would Not Stop</a>

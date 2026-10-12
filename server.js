@@ -778,6 +778,31 @@ function seedSearchVisibilityOnce() {
   seoApi.invalidate();
   console.log(`[seo] filled in: ${Object.keys(settings).length} settings, ${pages} pages, ${prompts} questions (weekly check on, Mondays)`);
 }
+// Per App 38 (6) — each Learn article gets its Search entry (title,
+// description, Article schema) once, the first boot after it is added.
+// Remembered per path in 'learnSeeded', so a page removed in admin stays
+// removed and an entry edited in admin is never overwritten.
+function seedLearnPagesOnce() {
+  const store = seoApi.store;
+  store.ensure();
+  const done = new Set(store.getSettings().learnSeeded || []);
+  const have = new Set(store.listPages().map(p => p.path));
+  let added = 0;
+  for (const p of learn.seoPages(SEO_SITE)) {
+    if (done.has(p.path)) continue;
+    if (!have.has(p.path)) {
+      store.savePage({ path: p.path, title: p.title, description: p.description, priority: p.priority, og_type: p.og_type || 'website',
+        in_sitemap: 1, in_llms: 1, schema_type: p.schema['@type'], schema_json: JSON.stringify(p.schema) });
+      added++;
+    }
+    done.add(p.path);
+  }
+  if (added || done.size !== (store.getSettings().learnSeeded || []).length) {
+    store.saveSettings({ learnSeeded: Array.from(done) });
+    seoApi.invalidate();
+  }
+  if (added) console.log(`[seo] Learn: ${added} page(s) added to Search`);
+}
 function SEO_ADMIN_NAV_HTML() {
   const links = [['/admin/', 'People'], ['/admin/content', 'Content'], ['/admin/talk', 'Talk &amp; Tomte'], ['/admin/comms', 'Comms 1'],
     ['/admin/comms2', 'Comms 2'], ['/admin/sales', 'Sales &amp; Marketing'], ['/admin/reports', 'Reports'], ['/admin/pages', 'Pages'],
@@ -2696,6 +2721,9 @@ app.get('/js/message-editor.js', (req, res) => { res.set('Cache-Control', 'no-st
 // goes straight into their part of the app, so installed apps (start_url
 // "/") open where they always did.
 const publicHome = require('./public-home');
+// Per App 38 (6) — public Learn articles (learn.js), /learn and /learn/:slug.
+const learn = require('./learn');
+learn.mount(app);
 app.get('/', (req, res) => {
   try {
     const token = req.cookies && req.cookies.perbot_session;
@@ -19026,6 +19054,7 @@ function fixPublicTextOnce() {
 async function runPostDbBootTasks() {
   try { fixPublicTextOnce(); } catch (e) { console.error('[boot] public text fixes failed:', e.message); }
   try { seedSearchVisibilityOnce(); } catch (e) { console.error('[seo] seed failed:', e.message); }
+  try { seedLearnPagesOnce(); } catch (e) { console.error('[seo] Learn seed failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';
