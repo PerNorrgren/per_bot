@@ -803,6 +803,26 @@ function seedLearnPagesOnce() {
   }
   if (added) console.log(`[seo] Learn: ${added} page(s) added to Search`);
 }
+// Per App 38 (8) — tracking questions added after the first seed, each
+// added once (remembered in 'promptsAdded'), never re-added if deleted in
+// admin. Add a line here when a new article's topic needs tracking.
+const SEO_EXTRA_PROMPTS = [
+  'How do I live with chronic pain without the worry taking over?',
+];
+function seedExtraPromptsOnce() {
+  const store = seoApi.store;
+  store.ensure();
+  const done = new Set(store.getSettings().promptsAdded || []);
+  const have = new Set(store.listPrompts().map(p => p.text.trim().toLowerCase()));
+  let added = 0;
+  for (const q of SEO_EXTRA_PROMPTS) {
+    if (done.has(q)) continue;
+    if (!have.has(q.trim().toLowerCase())) { store.addPrompt(q); added++; }
+    done.add(q);
+  }
+  if (added || done.size !== (store.getSettings().promptsAdded || []).length) store.saveSettings({ promptsAdded: Array.from(done) });
+  if (added) console.log(`[seo] ${added} tracking question(s) added`);
+}
 function SEO_ADMIN_NAV_HTML() {
   const links = [['/admin/', 'People'], ['/admin/content', 'Content'], ['/admin/talk', 'Talk &amp; Tomte'], ['/admin/comms', 'Comms 1'],
     ['/admin/comms2', 'Comms 2'], ['/admin/sales', 'Sales &amp; Marketing'], ['/admin/reports', 'Reports'], ['/admin/pages', 'Pages'],
@@ -19055,6 +19075,8 @@ async function runPostDbBootTasks() {
   try { fixPublicTextOnce(); } catch (e) { console.error('[boot] public text fixes failed:', e.message); }
   try { seedSearchVisibilityOnce(); } catch (e) { console.error('[seo] seed failed:', e.message); }
   try { seedLearnPagesOnce(); } catch (e) { console.error('[seo] Learn seed failed:', e.message); }
+  try { seedExtraPromptsOnce(); } catch (e) { console.error('[seo] extra questions failed:', e.message); }
+  try { await require('./fix_blog_list').cleanupBlogList(db, media); } catch (e) { console.error('[content] blog list tidy failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';
