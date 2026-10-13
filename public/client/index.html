@@ -2268,9 +2268,7 @@
   // whatever loadContent()/loadPractices() fetch afterward just re-renders
   // on top of this same tab/mode state once the data actually arrives.
   if (urlParams.get('view') === 'my-practices') {
-    switchTab('library');
-    switchLibrarySub('practices');
-    setPracticesGroupMode('mine');
+    setTimeout(() => { switchTab('library'); switchLibrarySub('practices'); setPracticesGroupMode('mine'); }, 0);
   }
 
   // Per's request — a registration/enrolment redirect or a reminder
@@ -2280,9 +2278,12 @@
   // already handles a not-enrolled/not-found error gracefully rather
   // than crashing (shows the error in place of the course, not a blank
   // screen), so this needs no extra guard here for that case.
+  // Per App 38 (18) — run once the rest of this script has loaded. Called
+  // straight away it reached variables declared further down (e.g.
+  // _facMenuOpen) before they existed, which stopped the whole script and
+  // left a blank app — what a reminder email's "Open your course" link did.
   if (urlParams.get('course')) {
-    switchTab('courses');
-    openCourseDetail(urlParams.get('course'));
+    setTimeout(() => { switchTab('courses'); openCourseDetail(urlParams.get('course')); }, 0);
   }
 
   // Per App 38 (10) — links inside the blog posts imported from the old

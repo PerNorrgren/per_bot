@@ -1734,15 +1734,26 @@ If you already went looking for somewhere to update a card, sorry for the runaro
 // differs (a link straight to the course, not a membership-options link).
 async function sendCourseEmail(user, type, defaultSubject, defaultBody, extraTokens, courseInstanceId, override) {
   const b = brand();
-  const tokens = buildMessageTokens(user, { extra: extraTokens, courseInstanceId });
+  // Per App 38 (18) — Per's request: a live course's session reminders
+  // lead with the Zoom link (people need to join, not log in), with the
+  // course in the app as a second link. {{zoom_link}} is also available in
+  // the Comms text.
+  const inst = courseInstanceId ? db.getCourseInstance(courseInstanceId) : null;
+  const zoom = inst && inst.mode === 'cohort' && inst.zoom_link && /^session_reminder/.test(type) ? inst.zoom_link : null;
+  const tokens = buildMessageTokens(user, { extra: Object.assign({}, extraTokens, zoom ? { zoom_link: zoom } : {}), courseInstanceId });
   const content = resolveMessageContent(type, { subject: defaultSubject, body: defaultBody }, override);
   const subject = fillTemplate(content.subject, tokens);
   const body = fillTemplate(content.body, tokens);
+  const links = zoom
+    ? `<p style="margin:22px 0 10px"><a href="${zoom}" style="display:inline-block;padding:13px 26px;border-radius:8px;background:#2d6a4f;color:#fff;text-decoration:none;font-size:15px">Join the session on Zoom →</a></p>
+      <p style="font-size:13px;line-height:1.7;color:#666;margin:0 0 6px">Or copy this link: <a href="${zoom}" style="color:#2d6a4f">${zoom}</a></p>
+      <p style="font-size:13px;line-height:1.7"><a href="${tokens.course_link}" style="color:#2d6a4f">Course notes and practices in the app →</a></p>`
+    : `<p style="font-size:14px;line-height:1.7"><a href="${tokens.course_link}" style="color:#2d6a4f">Open your course →</a></p>`;
   return sendEmail(user.email, subject,
     `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
       <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:8px">${b.name}</div>
       ${renderMessageBody(body, content.format)}
-      <p style="font-size:14px;line-height:1.7"><a href="${tokens.course_link}" style="color:#2d6a4f">Open your course →</a></p>
+      ${links}
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
       <p style="font-size:12px;color:#aaa">${b.name}</p>
     </div>`
