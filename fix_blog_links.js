@@ -38,6 +38,7 @@ const APP_URL = 'https://deepermindfulness.org/';
 function classify(href) {
   const h = (href || '').trim();
   if (!h || h.startsWith('#') || h.startsWith('/client') || h.startsWith('mailto:')) return { kind: 'keep' };
+  if (/^https?:\/\/(www\.)?deepermindfulness\.org\/client\b/i.test(h)) return { kind: 'keep' };
   let u;
   try { u = new URL(h); } catch (e) { return { kind: 'keep' }; }
   const host = u.hostname;
@@ -180,7 +181,7 @@ function transformBlogHtml(html, resolve, opts = {}) {
     if (c.kind === 'post') {
       const hit = resolve(c.slug) || resolve(textOf(a).toLowerCase().replace(/[^a-z0-9]+/g, '-'), true);
       if (hit) {
-        a.setAttribute('href', `/client/?file=${hit.id}`);
+        a.setAttribute('href', `${APP_URL}client/?file=${hit.id}`);
         a.removeAttribute('target');
         if (/^https?:\/\//i.test(textOf(a))) a.set_content(hit.title.replace(/^(Blog|Poem)\s*[-–]?\s*/i, ''));
         stats.mapped++;
@@ -250,8 +251,8 @@ function transformBlogHtml(html, resolve, opts = {}) {
 
   // 6. New footer.
   const more = kind === 'poem'
-    ? '<a href="/client/?view=poems">More poems</a>'
-    : '<a href="/client/?view=posts">More blogs</a>';
+    ? `<a href="${APP_URL}client/?view=poems">More poems</a>`
+    : `<a href="${APP_URL}client/?view=posts">More blogs</a>`;
   article.insertAdjacentHTML('beforeend',
     `\n<hr />\n<p class="${FOOTER_CLASS}">${more}<br /><a href="${APP_URL}">The Deeper Mindfulness app: courses, live sessions and practices</a></p>\n`);
   stats.footerAdded = true;
@@ -301,7 +302,7 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
   const all = db.getLibraryFiles({ includeArchived: true }) || [];
   const isMaterial = f => /^course_material/.test(f.content_type || '');
   const blogs = all.filter(f => (['blog', 'poem', 'whitepaper'].includes(f.content_type) || isMaterial(f)) && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
-  if (!blogs.length) return { changed: 0 };
+  if (!blogs.length) return fixRelativeAppLinks({ db, media, store, log, skip: new Set() });
   const resolve = makeResolver(all);
   let headings = 0;
   const total = { changed: 0, unchanged: 0, failed: 0, mapped: 0, unwrapped: 0, removedLinks: 0, images: 0 };
@@ -327,8 +328,37 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
     }
   }
   store.saveSettings({ blogLinksFixed2: Array.from(done) });
+  await fixRelativeAppLinks({ db, media, store, log, skip: new Set(blogs.map(f => f.id)) });
   log(`[content] blog/poem/document links: ${total.changed} file(s) updated (${headings} heading(s) restored from the title, ${total.removedLinks} old links removed, ${total.mapped} now open the post in the app, ${total.unwrapped} dead links kept as plain words, ${total.images} old images removed); ${total.unchanged} had nothing to change; ${total.failed} failed (tried again at the next restart). Originals kept under library-backup/blog-links/.`);
   return total;
+}
+
+// Per App 38 (12) — the first two rounds wrote the in-app links as
+// /client/?…, which only works inside the app. Opened any other way (the
+// admin Open button shows the raw file from storage) they pointed at the
+// storage address and failed. Files changed in this round are already
+// written with the full address; this rewrites the earlier ones, once.
+async function fixRelativeAppLinks({ db, media, store, log, skip }) {
+  const done = new Set(store.getSettings().appLinksAbsolute || []);
+  for (const id of skip) done.add(id);
+  const files = (db.getLibraryFiles({ includeArchived: true }) || []).filter(f =>
+    ['blog', 'poem', 'whitepaper'].includes(f.content_type) && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
+  let fixed = 0, failed = 0;
+  for (const f of files) {
+    try {
+      const html = (await streamToBuffer((await media.getPublicObject(f.filename)).Body)).toString('utf8');
+      if (html.includes('href="/client/')) {
+        const buf = Buffer.from(html.split('href="/client/').join(`href="${APP_URL}client/`), 'utf8');
+        await media.putObject(f.filename, buf, 'text/html');
+        db.replaceLibraryFileContent(f.id, f.filename, 'text/html', buf.length, f.original_name, 'r2', f.original_pdf_filename || null);
+        fixed++;
+      }
+      done.add(f.id);
+    } catch (e) { failed++; }
+  }
+  store.saveSettings({ appLinksAbsolute: Array.from(done) });
+  if (fixed || failed) log(`[content] in-app links made full addresses in ${fixed} file(s)${failed ? `; ${failed} could not be read (tried again at the next restart)` : ''}.`);
+  return { fixed, failed };
 }
 
 module.exports = { fixBlogLinks, transformBlogHtml, makeResolver, classify };

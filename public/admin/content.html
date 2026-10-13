@@ -99,6 +99,24 @@
     .file-list-header .flr-meta { width:90px; }
     .file-list-header .flr-cat { width:140px; }
     .file-list-header .flr-vis { width:130px; }
+    /* Per App 38 (12) — the library list: columns line up between the
+       header and the rows, can be made wider or narrower by dragging the
+       edge of a column heading, and Uploaded / Category / Sub-category /
+       Visibility / Type can each be hidden (Columns button). Widths and
+       hidden columns are remembered in this browser. */
+    #libList { overflow-x:auto; }
+    #libList .file-list-row, #libList .file-list-header { display:grid; grid-template-columns:var(--lib-cols); column-gap:12px; min-width:max-content; }
+    #libList .file-list-row > *, #libList .file-list-header > * { width:auto; min-width:0; }
+    #libList .flr-title, #libList .flr-cat, #libList .flr-sub, #libList .flr-meta { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #libList .flr-sub { color:rgba(255,255,255,0.35); }
+    #libList .file-list-header > span { position:relative; overflow:visible; }
+    #libList .col-grip { position:absolute; top:-4px; right:-9px; width:12px; height:calc(100% + 8px); cursor:col-resize; z-index:3; }
+    #libList .col-grip::after { content:''; position:absolute; left:5px; top:3px; bottom:3px; width:1px; background:rgba(255,255,255,0.12); }
+    #libList .col-grip:hover::after { background:rgba(180,230,200,0.7); }
+    #libList.lib-hide-meta .flr-meta, #libList.lib-hide-cat .flr-cat, #libList.lib-hide-sub .flr-sub,
+    #libList.lib-hide-vis .flr-vis, #libList.lib-hide-type .flr-type { display:none; }
+    .lib-cols-menu { position:absolute; z-index:50; background:#141816; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:10px 14px; display:flex; flex-direction:column; gap:7px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.5); }
+    .lib-cols-menu label { display:flex; gap:8px; align-items:center; cursor:pointer; color:rgba(255,255,255,0.8); }
     .item-list { display:flex; flex-direction:column; gap:10px; max-height:820px; overflow-y:auto; }
     .item-row { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:11px; padding:16px 18px; display:flex; align-items:center; gap:14px; }
     .item-row-info { flex:1; }
@@ -291,6 +309,7 @@
             <button id="viewBtnCards" onclick="setLibView('cards')">Cards</button>
             <button id="viewBtnList" class="active" onclick="setLibView('list')">List</button>
           </div>
+          <button class="btn" id="libColsBtn" onclick="toggleLibColsMenu(event)" title="Choose which columns the list shows">Columns</button>
           <button class="btn" onclick="openContentSettings()" title="Default visibility for newly-created lessons, and other content-wide settings">⚙ Settings</button>
           <button class="btn" onclick="openPopularPracticesModal()" title="See real play counts for every practice, and pin any of them to override the automatic popularity ranking">⭐ Popular Practices</button>
           <button class="btn" onclick="openMojibakeScan()">Scan for encoding issues</button>
@@ -2027,18 +2046,83 @@ function renderLibCards(files){
   `).join('');
 }
 
+// ── Library list columns (Per App 38 (12)) ──
+const LIB_COLS = [
+  { key: 'title', label: 'Title',        w: 340, min: 120 },
+  { key: 'meta',  label: 'Uploaded',     w: 110, min: 60 },
+  { key: 'cat',   label: 'Category',     w: 110, min: 60 },
+  { key: 'sub',   label: 'Sub-category', w: 120, min: 60 },
+  { key: 'vis',   label: 'Visibility',   w: 120, min: 80 },
+  { key: 'type',  label: 'Type',         w: 110, min: 60 },
+];
+let _libCols = { widths: {}, hidden: [] };
+try { Object.assign(_libCols, JSON.parse(localStorage.getItem('libListCols') || '{}')); } catch (e) { /* defaults */ }
+function saveLibCols() { try { localStorage.setItem('libListCols', JSON.stringify(_libCols)); } catch (e) { /* not kept */ } }
+function libColWidth(c) { return _libCols.widths[c.key] || c.w; }
+function applyLibCols() {
+  const el = document.getElementById('libList');
+  if (!el) return;
+  const shown = LIB_COLS.filter(c => !_libCols.hidden.includes(c.key));
+  el.style.setProperty('--lib-cols', ['16px', '18px'].concat(shown.map(c => libColWidth(c) + 'px'), ['max-content']).join(' '));
+  LIB_COLS.forEach(c => el.classList.toggle('lib-hide-' + c.key, _libCols.hidden.includes(c.key)));
+}
+function libColGrip(key) {
+  return `<span class="col-grip" title="Drag to change the width · double-click to reset" onpointerdown="startLibColResize(event,'${key}')" ondblclick="event.stopPropagation();resetLibColWidth('${key}')" onclick="event.stopPropagation()"></span>`;
+}
+function startLibColResize(e, key) {
+  e.preventDefault(); e.stopPropagation();
+  const col = LIB_COLS.find(c => c.key === key);
+  const startX = e.clientX, startW = libColWidth(col);
+  const move = ev => { _libCols.widths[key] = Math.max(col.min, Math.round(startW + ev.clientX - startX)); applyLibCols(); };
+  const up = () => {
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); saveLibCols();
+    // The release after a drag must not also count as a click on the
+    // heading (which would re-sort the list).
+    const eat = ev => { ev.stopPropagation(); ev.preventDefault(); };
+    document.addEventListener('click', eat, true);
+    setTimeout(() => document.removeEventListener('click', eat, true), 0);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+}
+function resetLibColWidth(key) { delete _libCols.widths[key]; applyLibCols(); saveLibCols(); }
+function toggleLibColsMenu(ev) {
+  ev.stopPropagation();
+  const old = document.getElementById('libColsMenu');
+  if (old) { old.remove(); return; }
+  const btn = document.getElementById('libColsBtn');
+  const r = btn.getBoundingClientRect();
+  const m = document.createElement('div');
+  m.id = 'libColsMenu'; m.className = 'lib-cols-menu';
+  m.style.left = (r.left + window.scrollX) + 'px';
+  m.style.top = (r.bottom + window.scrollY + 6) + 'px';
+  m.innerHTML = LIB_COLS.filter(c => c.key !== 'title').map(c =>
+    `<label><input type="checkbox" ${_libCols.hidden.includes(c.key) ? '' : 'checked'} onchange="setLibColShown('${c.key}',this.checked)"> ${c.label}</label>`).join('')
+    + `<button class="btn sm" style="margin-top:4px" onclick="_libCols.widths={};applyLibCols();saveLibCols()">Reset widths</button>`;
+  m.addEventListener('click', e => e.stopPropagation());
+  document.body.appendChild(m);
+  setTimeout(() => document.addEventListener('click', function close() { m.remove(); document.removeEventListener('click', close); }), 0);
+}
+function setLibColShown(key, shown) {
+  _libCols.hidden = _libCols.hidden.filter(k => k !== key);
+  if (!shown) _libCols.hidden.push(key);
+  applyLibCols(); saveLibCols();
+}
+
 function renderLibList(files){
   const el=document.getElementById('libList');
   if(!files.length){el.innerHTML='<div class="empty">No files yet. Upload to get started.</div>';return;}
+  applyLibCols();
   const header = `
     <div class="file-list-header">
       <span class="flr-cb"></span>
       <span class="flr-icon"></span>
-      <span class="flr-title" style="cursor:pointer" onclick="setLibSort('title')" title="Sort by title">Title${libSortIndicator('title')}</span>
-      <span class="flr-meta" style="cursor:pointer" onclick="setLibSort('created_at')" title="Sort by upload date">Uploaded${libSortIndicator('created_at')}</span>
-      <span class="flr-cat">Category</span>
-      <span class="flr-vis">Visibility</span>
-      <span class="flr-vis">Type</span>
+      <span class="flr-title" style="cursor:pointer" onclick="setLibSort('title')" title="Sort by title">Title${libSortIndicator('title')}${libColGrip('title')}</span>
+      <span class="flr-meta" style="cursor:pointer" onclick="setLibSort('created_at')" title="Sort by upload date">Uploaded${libSortIndicator('created_at')}${libColGrip('meta')}</span>
+      <span class="flr-cat">Category${libColGrip('cat')}</span>
+      <span class="flr-sub">Sub-category${libColGrip('sub')}</span>
+      <span class="flr-vis">Visibility${libColGrip('vis')}</span>
+      <span class="flr-type">Type${libColGrip('type')}</span>
       <span class="flr-actions"></span>
     </div>`;
   el.innerHTML = header + files.map(f=>`
@@ -2047,7 +2131,8 @@ function renderLibList(files){
       <span class="flr-icon">${ficon(f.file_type)}</span>
       <span class="flr-title" title="${f.title}">${f.title}${f.use_count>0?` <span class="tag uses" style="margin-left:4px">×${f.use_count}</span>`:''}${(f.tags||[]).map(t=>` <span class="tag" style="background:rgba(180,230,200,0.12);color:rgba(180,230,200,0.85);margin-left:4px">${t}</span>`).join('')}</span>
       <span class="flr-meta" title="${f.created_at||''}">${(f.created_at||'').slice(0,10)} · ${fsize(f.file_size)}</span>
-      <span class="flr-cat" title="${f.category_name||''} ${f.subcategory_name?'/ '+f.subcategory_name:''}">${f.category_name||'—'}${f.subcategory_name?' / '+f.subcategory_name:''}</span>
+      <span class="flr-cat" title="${f.category_name||''}">${f.category_name||'—'}</span>
+      <span class="flr-sub" title="${f.subcategory_name||''}">${f.subcategory_name||'—'}</span>
       <span class="flr-vis">
         ${f.assigned_client_id
           ? `<span style="font-size:11px;color:rgba(255,180,120,0.7);white-space:nowrap" title="Visibility tier is ignored for one-to-one files">My</span>`
@@ -2059,7 +2144,7 @@ function renderLibList(files){
           <option value="admin"      ${f.visibility==='admin'     ?'selected':''}>Admin</option>
         </select>`}
       </span>
-      <span class="flr-vis">${kbadge(f.content_type)}${onebadge(f)}</span>
+      <span class="flr-type">${kbadge(f.content_type)}${onebadge(f)}</span>
       <span class="flr-actions">
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>

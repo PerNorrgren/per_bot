@@ -3938,9 +3938,10 @@
     const a = e.target.closest && e.target.closest('.text-doc-reader a[href]');
     if (!a) return;
     const href = a.getAttribute('href') || '';
-    const m = href.match(/^\/client\/\?(?:.*&)?file=([\w-]+)/);
+    const local = href.replace(/^https?:\/\/(www\.)?deepermindfulness\.org(?=\/client\/)/i, '');
+    const m = local.match(/^\/client\/\?(?:.*&)?file=([\w-]+)/);
     if (m) { e.preventDefault(); openFileFromLink(m[1]); return; }
-    const v = href.match(/^\/client\/\?view=(posts|poems)/);
+    const v = local.match(/^\/client\/\?view=(posts|poems)/);
     if (v) { e.preventDefault(); openThemeDetail(v[1], 0); return; }
     if (/^https?:\/\//i.test(href) && !a.target) { a.target = '_blank'; a.rel = 'noopener'; }
   });
