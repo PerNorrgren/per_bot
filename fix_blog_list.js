@@ -322,6 +322,15 @@ const LESSON_NOTES = ["ed6e82af-55fb-44ef-b812-57d63c1142d2", "96bf8ee5-176d-42c
 const BOOK_ID = "f2663a68-6eef-4c60-a740-bf4a952347a2";
 const POEM_ID = "d633d5b0-dc01-42a8-9981-28a916516aeb";
 
+// Per App 38 (12) — white papers: their own prefix instead of "Blog -",
+// and the Deeper Mindfulness Lesson 1 handout (a lesson PDF filed as a
+// white paper) moved to Course Material, where the other lesson files are.
+const WHITEPAPER_TITLES = [
+  ["4c7b89e0-19fa-498b-bddb-6a993263f85d", "Blog - Micro Manage your Mind White Papers", "Whitepaper - Micro Manage your Mind"],
+  ["2add6168-7e43-4bbd-95d6-4e925bf664ea", "Blog -  Whitepaper Recalibrating Primitive Threat Responses", "Whitepaper - Recalibrating Primitive Threat Responses"],
+];
+const HANDOUT_ID = "e67f9e5a-7f1b-42b0-bbe7-745439a240dd";
+
 async function cleanupBlogList(db, media, log = console.log) {
   let renamed = 0, moved = 0, book = 0, removed = 0;
   for (const [id, from, to] of TITLES) {
@@ -336,6 +345,12 @@ async function cleanupBlogList(db, media, log = console.log) {
       if (f && f.content_type === 'blog') { db.updateLibraryFile(id, { content_type: material.value }); moved++; }
     }
   }
+  for (const [id, from, to] of WHITEPAPER_TITLES) {
+    const f = db.getLibraryFile(id);
+    if (f && f.title === from) { db.updateLibraryFile(id, { title: to }); renamed++; }
+  }
+  const h = db.getLibraryFile(HANDOUT_ID);
+  if (h && h.content_type === 'whitepaper' && material) { db.updateLibraryFile(HANDOUT_ID, { content_type: material.value }); moved++; }
   const b = db.getLibraryFile(BOOK_ID);
   if (b && b.content_type === 'blog' && kinds.some(k => k.value === 'book')) { db.updateLibraryFile(BOOK_ID, { content_type: 'book' }); book++; }
 

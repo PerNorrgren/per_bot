@@ -20,6 +20,10 @@
 // is done once (remembered by id), and a post that already has the new
 // footer is never changed again.
 //
+// Per App 38 (12): white papers too (cleaner headings, dead "read the
+// white papers" lines removed), and course material pages such as the
+// lesson notes (old links and images only, no footer).
+//
 // Per App 38 (11): poems get the same treatment, with a "More poems" link,
 // and a poem whose heading was removed by an earlier clean-up gets its
 // title back as the heading.
@@ -40,6 +44,8 @@ function classify(href) {
   if (/apps\.apple\.com$/i.test(host) || /play\.google\.com$/i.test(host)) return { kind: 'store' };
   if (/sibforms\.com$/i.test(host)) return { kind: 'mailing' };
   if (/zoom\.us$/i.test(host)) return { kind: 'dead' };
+  // The old WordPress staging copy is gone too.
+  if (/wpcomstaging\.com$/i.test(host)) return { kind: 'dead' };
   if (!OLD_HOSTS.test(host)) return { kind: 'external' };
   const p = u.pathname.replace(/\/+$/, '');
   if (!p || p === '') return { kind: 'home' };
@@ -97,7 +103,9 @@ const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').re
 // resolve(slug) → { id, title } or null. opts.kind is 'blog' or 'poem';
 // opts.title is the library title, used when the file has no heading.
 function transformBlogHtml(html, resolve, opts = {}) {
-  const kind = opts.kind === 'poem' ? 'poem' : 'blog';
+  // 'material' (course lesson notes): links and old images only — no
+  // footer, no heading, and only changed if something was actually found.
+  const kind = ['poem', 'whitepaper', 'material'].includes(opts.kind) ? opts.kind : 'blog';
   const root = parse(html, { comment: false });
   const article = root.querySelector('article') || root.querySelector('body') || root;
   const stats = { removedLinks: 0, mapped: 0, unwrapped: 0, retargeted: 0, images: 0, sections: 0, footerAdded: false };
@@ -202,6 +210,38 @@ function transformBlogHtml(html, resolve, opts = {}) {
   let last = article.lastElementChild;
   while (last && last.tagName === 'HR') { const prev = last.previousElementSibling; last.remove(); last = prev; }
 
+  // 4b. White papers: "Blog - Whitepaper" left in the headings, a heading
+  // repeated, and "Read the white papers HERE / click the links below"
+  // lines whose links went to old pages that no longer exist.
+  if (kind === 'whitepaper') {
+    const seen = new Set();
+    for (const h of article.querySelectorAll('h1, h2, h3')) {
+      const clean = textOf(h).replace(/^blog\s*[-–:]?\s*/i, '').replace(/^white\s*paper\s*[-–:]?\s*/i, '').trim();
+      const key = clean.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (seen.has(key)) { h.remove(); stats.sections++; continue; }
+      seen.add(key);
+      if (clean !== textOf(h)) { h.set_content(esc(clean)); stats.sections++; }
+    }
+    for (const p of article.querySelectorAll('p')) {
+      // The papers themselves were never moved over, so drop the
+      // "click the links below" lead-in and the claim they can be
+      // downloaded here; the papers' names stay as plain text.
+      const before = p.innerHTML;
+      const after = before
+        .replace(/Read the white papers now\.?\s*Click the links below:?\s*(<br\s*\/?>)?/i, '')
+        .replace(/(^|<br\s*\/?>)\s*-\s*(White Paper \d)/gi, '$1$2')
+        .replace(/These two white papers are available to read or download\s*[—–-]\s*together, they form/i, 'Together, these two white papers form');
+      if (after !== before) { p.set_content(after); stats.sections++; }
+      if (p.querySelector('a')) continue;
+      if (/^(read the white papers?( now)?\.?\s*(here|click the links below:?)?|read white paper \d+\b.*)$/i.test(textOf(p))) { p.remove(); stats.sections++; }
+    }
+  }
+
+  if (kind === 'material') {
+    const changed = stats.removedLinks + stats.mapped + stats.unwrapped + stats.retargeted + stats.images + stats.sections > 0;
+    return { html: changed ? root.toString().replace(/\n\s*\n(\s*\n)+/g, '\n\n') : html, stats, changed };
+  }
+
   // 5. A file whose heading was removed gets its title back as a heading.
   if (!article.querySelector('h1, h2, h3') && opts.title) {
     const heading = String(opts.title).replace(/^(blog|poem)\s*[-–:]?\s*/i, '').trim();
@@ -259,7 +299,8 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
   const settings = store.getSettings();
   const done = new Set(settings.blogLinksFixed2 || []);
   const all = db.getLibraryFiles({ includeArchived: true }) || [];
-  const blogs = all.filter(f => ['blog', 'poem'].includes(f.content_type) && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
+  const isMaterial = f => /^course_material/.test(f.content_type || '');
+  const blogs = all.filter(f => (['blog', 'poem', 'whitepaper'].includes(f.content_type) || isMaterial(f)) && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
   if (!blogs.length) return { changed: 0 };
   const resolve = makeResolver(all);
   let headings = 0;
@@ -268,7 +309,7 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
     try {
       const obj = await media.getPublicObject(f.filename);
       const original = await streamToBuffer(obj.Body);
-      const out = transformBlogHtml(original.toString('utf8'), resolve, { kind: f.content_type, title: f.title });
+      const out = transformBlogHtml(original.toString('utf8'), resolve, { kind: isMaterial(f) ? 'material' : f.content_type, title: f.title });
       if (out.changed) {
         const backupKey = 'library-backup/blog-links/' + f.filename.replace(/^.*\//, '');
         if (!(await media.objectExists(backupKey))) await media.putObject(backupKey, original, 'text/html');
@@ -286,7 +327,7 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
     }
   }
   store.saveSettings({ blogLinksFixed2: Array.from(done) });
-  log(`[content] blog/poem links: ${total.changed} file(s) updated (${headings} heading(s) restored from the title, ${total.removedLinks} old links removed, ${total.mapped} now open the post in the app, ${total.unwrapped} dead links kept as plain words, ${total.images} old images removed); ${total.unchanged} already done; ${total.failed} failed. Originals kept under library-backup/blog-links/.`);
+  log(`[content] blog/poem/document links: ${total.changed} file(s) updated (${headings} heading(s) restored from the title, ${total.removedLinks} old links removed, ${total.mapped} now open the post in the app, ${total.unwrapped} dead links kept as plain words, ${total.images} old images removed); ${total.unchanged} had nothing to change; ${total.failed} failed (tried again at the next restart). Originals kept under library-backup/blog-links/.`);
   return total;
 }
 
