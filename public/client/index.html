@@ -2285,6 +2285,13 @@
     openCourseDetail(urlParams.get('course'));
   }
 
+  // Per App 38 (10) — links inside the blog posts imported from the old
+  // site now point here: ?file=<id> opens that post or poem, and
+  // ?view=posts opens the full list of posts. Run after the rest of this
+  // script has loaded, since both use lists declared further down.
+  if (urlParams.get('file')) setTimeout(() => openFileFromLink(urlParams.get('file')), 0);
+  if (urlParams.get('view') === 'posts') setTimeout(() => openThemeDetail('posts', 0), 0);
+
   // Per's request — Tomte opens automatically right after a fresh login
   // or signup (see the redirect: '/client/?justLoggedIn=1' in
   // /api/login and /api/register). tomte-widget.js runs as a fully
@@ -3882,6 +3889,36 @@
     const f = _contentData.find(x => x.id === id) || _featuredContentData.find(x => x.id === id);
     if (f) openContentFile(f);
   }
+
+  // Per App 38 (10) — open a post or poem from a link inside another post.
+  // It may not be in any list loaded yet, so look it up in the full post
+  // and poem lists (the same ones "More posts →" uses, already limited to
+  // what this person can see).
+  async function openFileFromLink(id) {
+    const known = _contentData.find(x => x.id === id) || _featuredContentData.find(x => x.id === id);
+    if (known) return openContentFile(known);
+    for (const type of ['blog', 'poem']) {
+      try {
+        const res = await fetch(`/api/client/library/${type}`);
+        const items = await res.json();
+        const f = Array.isArray(items) && items.find(x => x.id === id);
+        if (f) { _featuredContentData.push(f); return openContentFile(f); }
+      } catch (e) { /* try the next list */ }
+    }
+    appAlert('This piece is not available on your account.', 'Not found');
+  }
+  // Links inside a post: other posts open here in the reader, "More blogs"
+  // opens the list, and links to other websites open in a new tab so the
+  // app stays where it was.
+  document.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('.text-doc-reader a[href]');
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/^\/client\/\?(?:.*&)?file=([\w-]+)/);
+    if (m) { e.preventDefault(); openFileFromLink(m[1]); return; }
+    if (/^\/client\/\?view=posts/.test(href)) { e.preventDefault(); openThemeDetail('posts', 0); return; }
+    if (/^https?:\/\//i.test(href) && !a.target) { a.target = '_blank'; a.rel = 'noopener'; }
+  });
 
   function fmtTime(s) {
     s = Math.floor(s||0);

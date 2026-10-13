@@ -19077,6 +19077,8 @@ async function runPostDbBootTasks() {
   try { seedLearnPagesOnce(); } catch (e) { console.error('[seo] Learn seed failed:', e.message); }
   try { seedExtraPromptsOnce(); } catch (e) { console.error('[seo] extra questions failed:', e.message); }
   try { await require('./fix_blog_list').cleanupBlogList(db, media); } catch (e) { console.error('[content] blog list tidy failed:', e.message); }
+  // Per App 38 (10) — old-site links in the imported blog posts (see fix_blog_links.js). Runs in the background.
+  require('./fix_blog_links').fixBlogLinks({ db, media, store: seoApi.store }).catch(e => console.error('[content] blog links failed:', e.message));
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';
