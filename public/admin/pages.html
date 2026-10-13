@@ -39,6 +39,19 @@
     .page-row-tag { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; padding:3px 8px; border-radius:5px; white-space:nowrap; }
     .page-row-tag.public { background:rgba(180,230,200,0.1); color:rgba(180,230,200,0.75); }
     .page-row-tag.auth { background:rgba(255,180,60,0.1); color:rgba(255,180,60,0.75); }
+    /* Per App 38 (18) — groups that fold open into a list about ten rows tall. */
+    .pgroup { border-bottom:1px solid rgba(255,255,255,0.06); }
+    .pgroup:last-child { border-bottom:none; }
+    .pgroup > summary { cursor:pointer; list-style:none; padding:14px 20px; display:flex; align-items:center; gap:10px; font-size:14px; color:rgba(255,255,255,0.8); }
+    .pgroup > summary::-webkit-details-marker { display:none; }
+    .pgroup > summary::before { content:'▸'; color:rgba(180,230,200,0.7); transition:transform .15s; }
+    .pgroup[open] > summary::before { transform:rotate(90deg); }
+    .pgroup .count { color:rgba(255,255,255,0.35); font-size:12px; }
+    .pgroup .pg-note { color:rgba(255,255,255,0.35); font-size:12px; margin-left:auto; }
+    .pgroup .pg-scroll { max-height:520px; overflow-y:auto; border-top:1px solid rgba(255,255,255,0.05); }
+    .pgroup .page-row { padding:10px 20px; }
+    .pgroup .page-row-name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .pgroup .page-row-desc { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 </style>
 </head>
 <body>
@@ -113,8 +126,7 @@
     { name: 'Membership', path: '/membership', desc: 'Membership tiers and pricing.' },
     { name: 'Become a Facilitator', path: '/become-a-facilitator', desc: 'Request form for existing members.' },
     { name: 'Teaching The FELT Way', path: '/teaching-the-felt-way', desc: 'The facilitator recruiting/marketing page.' },
-    { name: 'Courses', path: '/courses', desc: 'Public schedule — every open course instance.' },
-    { name: 'Course Overview', path: '/courses/COURSE_ID', desc: 'One course\'s public page. Needs a real course id in the link to actually load anything.' },
+    { name: 'Course Overview (by id)', path: '/courses/COURSE_ID', desc: 'The older page for one course by its id. Needs a real course id in the link to actually load anything.' },
     { name: 'Course Instance', path: '/course-instance/INSTANCE_ID', desc: 'One specific instance\'s public page — dates, facilitators, enrol. Needs a real instance id.' },
     { name: 'Facilitator Bio', path: '/facilitators/FACILITATOR_ID', desc: 'A facilitator\'s public profile, if they\'ve opted in. Needs a real facilitator id.' },
     { name: 'Reset Password', path: '/reset-password', desc: 'Password reset flow, reached from an emailed link.' },
@@ -148,7 +160,48 @@
       </div>
     `).join('');
   }
-  renderPages(EXTERNAL_PAGES, 'externalPagesCard');
+  // Per App 38 (18) — Per's request: the external pages grouped by what
+  // they are, each group folding open into a scrolling list about ten rows
+  // tall. The fixed pages above are joined by every public page the Search
+  // module knows about (blog posts, poems, courses, Learn articles…), so
+  // the new public pages show up here by themselves.
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const EXT_GROUPS = [
+    { key: 'access', name: 'Signing in and joining', note: 'Login, register, membership', test: p => /^\/(login|register|join|reset-password|membership)(\/|$)/.test(p) },
+    { key: 'main', name: 'Main pages', note: 'Home, books, teaching, legal', test: () => true },
+    { key: 'courses', name: 'Courses', note: 'Course pages and booking pages', test: p => /^\/(courses|course-instance)(\/|$)/.test(p) },
+    { key: 'blog', name: 'Blog', note: 'Public blog posts', test: p => /^\/blog(\/|$)/.test(p) },
+    { key: 'poems', name: 'Poems', note: 'Public poems', test: p => /^\/poems(\/|$)/.test(p) },
+    { key: 'learn', name: 'Learn articles', note: 'Articles answering search questions', test: p => /^\/learn(\/|$)/.test(p) },
+    { key: 'people', name: 'Facilitators', note: 'Public profiles', test: p => /^\/facilitators(\/|$)/.test(p) },
+  ];
+  const groupOf = path => (EXT_GROUPS.find(g => g.key !== 'main' && g.test(path)) || EXT_GROUPS[1]).key;
+  function row(p) {
+    return `<div class="page-row">
+        <div class="page-row-name" title="${esc(p.name)}">${esc(p.name)}</div>
+        <div class="page-row-desc" title="${esc(p.desc)}">${esc(p.desc)}</div>
+        <div class="page-row-path">${esc(p.path)}</div>
+        <a class="btn sm" href="${esc(p.path)}" target="_blank">View</a>
+      </div>`;
+  }
+  function renderExternal(list) {
+    const el = document.getElementById('externalPagesCard');
+    const open = new Set([...el.querySelectorAll('details.pgroup[open]')].map(d => d.dataset.group));
+    el.innerHTML = EXT_GROUPS.map(g => {
+      const rows = list.filter(p => groupOf(p.path) === g.key);
+      if (!rows.length) return '';
+      return `<details class="pgroup" data-group="${g.key}" ${open.has(g.key) ? 'open' : ''}><summary>${esc(g.name)} <span class="count">(${rows.length})</span><span class="pg-note">${esc(g.note)}</span></summary><div class="pg-scroll">${rows.map(row).join('')}</div></details>`;
+    }).join('');
+  }
+  renderExternal(EXTERNAL_PAGES);
+  fetch('/api/admin/site-pages').then(r => r.json()).then(j => {
+    const known = new Set(EXTERNAL_PAGES.map(p => p.path));
+    const clean = t => String(t || '').replace(/\s*\|\s*(Per Norrgren|Deeper Mindfulness)$/, '').replace(/: a poem by Per Norrgren$/, '');
+    const extra = (j.pages || []).filter(p => !known.has(p.path)).map(p => ({
+      name: p.path === '/' ? 'Home' : clean(p.title) || p.path, path: p.path, desc: p.description || '',
+    })).sort((a, b) => (a.path.split('/').length - b.path.split('/').length) || a.name.localeCompare(b.name));
+    renderExternal(EXTERNAL_PAGES.concat(extra));
+  }).catch(() => {});
   renderPages(INTERNAL_PAGES, 'internalPagesCard');
 </script>
 </body>

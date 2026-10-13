@@ -2766,6 +2766,12 @@ app.post('/api/admin/campaign/draft-next', auth.requireAuthApi(['admin']), async
   try { const out = await campaign.draftWeek('by hand'); res.json({ ok: true, blog: !!out.blog, poem: !!out.poem }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+// Per App 38 (18) — every public page the Search module knows about
+// (home, Learn, blog posts, poems, courses…), for the admin Pages tab.
+app.get('/api/admin/site-pages', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json({ pages: seoApi.store.listPages().map(p => ({ path: p.path, title: p.title || '', description: p.description || '' })) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 app.get('/api/admin/public-items', auth.requireAuthApi(['admin']), (req, res) => {
   try { res.json({ items: publicPages.list() }); } catch (e) { res.status(500).json({ error: e.message }); }
 });

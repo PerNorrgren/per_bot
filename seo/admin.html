@@ -71,6 +71,15 @@
   .pagelist .list-item { cursor: pointer; }
   .pagelist .list-item:hover { background: var(--panel2); }
   .pagelist .list-item.on { background: var(--panel2); }
+  /* Per App 38 (17) — pages grouped by kind, each group folds open into a
+     scrolling list about ten entries tall. */
+  .pgroup { border-bottom: 1px solid var(--line); }
+  .pgroup > summary { cursor: pointer; padding: 10px 2px; font-weight: bold; list-style: none; display: flex; align-items: center; gap: 8px; }
+  .pgroup > summary::-webkit-details-marker { display: none; }
+  .pgroup > summary::before { content: '▸'; display: inline-block; width: 12px; transition: transform .15s; }
+  .pgroup[open] > summary::before { transform: rotate(90deg); }
+  .pgroup .count { font-weight: normal; opacity: .6; }
+  .pgroup .pg-scroll { max-height: 602px; overflow-y: auto; padding-right: 4px; }
   .empty { color: var(--muted); padding: 14px 0; }
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
   .modal-bg.open { display: flex; }
@@ -544,11 +553,31 @@ document.getElementById('qSuggestBtn').onclick = async (ev) => {
 // ═══ Pages ═══
 let editingId = null;
 const PF = ['path', 'title', 'description', 'canonical', 'image_url', 'og_type', 'schema_type', 'schema_json', 'priority'];
+// Per App 38 (17) — grouped by what the pages are; the groups that are
+// open stay open while you click around.
+const PAGE_GROUPS = [
+  { key: 'main', en: 'Main pages', nl: "Hoofdpagina's", test: p => true },
+  { key: 'courses', en: 'Courses', nl: 'Cursussen', test: p => /^\/courses(\/|$)/.test(p) },
+  { key: 'blog', en: 'Blog', nl: 'Blog', test: p => /^\/blog(\/|$)/.test(p) },
+  { key: 'poems', en: 'Poems', nl: 'Gedichten', test: p => /^\/poems(\/|$)/.test(p) },
+  { key: 'learn', en: 'Learn articles', nl: 'Leren', test: p => /^\/learn(\/|$)/.test(p) },
+];
+const openGroups = new Set();
+function pageGroupOf(path) { return (PAGE_GROUPS.slice(1).find(g => g.test(path || '')) || PAGE_GROUPS[0]).key; }
 function renderPageList() {
   const el = document.getElementById('pList');
   if (!S.pages.length) { el.innerHTML = `<div class="empty">${t('pNone')}</div>`; if (editingId === null) fillPage(null); return; }
-  el.innerHTML = S.pages.map(p => `<div class="list-item ${p.id === editingId ? 'on' : ''}" data-pid="${p.id}"><div class="t"><strong>${esc(p.path)}</strong><br><span class="hint">${esc(p.title || '—')}</span><br>
-    ${p.schema_type ? `<span class="pill">${esc(p.schema_type)}</span>` : ''}${p.in_sitemap ? '<span class="pill">sitemap</span>' : ''}${p.in_llms ? '<span class="pill">llms</span>' : ''}</div></div>`).join('');
+  const sel = S.pages.find(p => p.id === editingId);
+  if (sel) openGroups.add(pageGroupOf(sel.path));
+  // Two lines each (address, title) so about ten fit in an open group; the
+  // schema, sitemap and llms settings show in the editor on the right.
+  const item = p => `<div class="list-item ${p.id === editingId ? 'on' : ''}" data-pid="${p.id}" title="${esc([p.schema_type, p.in_sitemap ? 'sitemap' : '', p.in_llms ? 'llms' : ''].filter(Boolean).join(' · '))}"><div class="t" style="min-width:0"><strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.path)}</strong><span class="hint" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title || '—')}</span></div></div>`;
+  el.innerHTML = PAGE_GROUPS.map(g => {
+    const rows = S.pages.filter(p => pageGroupOf(p.path) === g.key);
+    if (!rows.length) return '';
+    return `<details class="pgroup" data-group="${g.key}" ${openGroups.has(g.key) ? 'open' : ''}><summary>${esc(LANG === 'nl' ? g.nl : g.en)} <span class="count">(${rows.length})</span></summary><div class="pg-scroll">${rows.map(item).join('')}</div></details>`;
+  }).join('');
+  el.querySelectorAll('details.pgroup').forEach(d => d.addEventListener('toggle', () => { if (d.open) openGroups.add(d.dataset.group); else openGroups.delete(d.dataset.group); }));
   el.querySelectorAll('[data-pid]').forEach(d => d.onclick = () => { editingId = Number(d.dataset.pid); fillPage(S.pages.find(p => p.id === editingId)); renderPageList(); });
   if (editingId !== null && !S.pages.some(p => p.id === editingId)) editingId = null;
   if (editingId === null) fillPage(null);
