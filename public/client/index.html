@@ -2291,6 +2291,7 @@
   // script has loaded, since both use lists declared further down.
   if (urlParams.get('file')) setTimeout(() => openFileFromLink(urlParams.get('file')), 0);
   if (urlParams.get('view') === 'posts') setTimeout(() => openThemeDetail('posts', 0), 0);
+  if (urlParams.get('view') === 'poems') setTimeout(() => openThemeDetail('poems', 0), 0);
 
   // Per's request — Tomte opens automatically right after a fresh login
   // or signup (see the redirect: '/client/?justLoggedIn=1' in
@@ -3907,6 +3908,29 @@
     }
     appAlert('This piece is not available on your account.', 'Not found');
   }
+  // Per App 38 (11) — poems can be downloaded (a clean PDF made by the
+  // server) and shared (the poem's words, Per's name and the app address,
+  // through the same share sheet the rest of the app uses).
+  function downloadPoem(id) {
+    window.location.href = `/api/client/poem/${id}/pdf`;
+  }
+  function sharePoem(btn) {
+    const body = document.getElementById('textDocReaderBody');
+    if (!body) return;
+    const copy = body.cloneNode(true);
+    copy.querySelectorAll('.dm-links, hr, audio, figure, img').forEach(el => el.remove());
+    const title = (btn.dataset.title || '').replace(/^poem\s*[-–:]?\s*/i, '');
+    copy.querySelectorAll('h1, h2, h3').forEach(h => { if (h.textContent.trim().toLowerCase().includes(title.toLowerCase())) h.remove(); });
+    // innerText needs the element in the page to keep line breaks.
+    copy.style.cssText = 'position:absolute;left:-9999px;top:0;white-space:normal';
+    document.body.appendChild(copy);
+    let words = copy.innerText.replace(/\n{3,}/g, '\n\n').trim();
+    copy.remove();
+    if (!/per norrgren/i.test(words)) words += '\n\n— Per Norrgren';
+    const url = 'https://deepermindfulness.org/';
+    appShareSheet(`${title}\n\n${words}\n\nMore poems and practices: ${url}`, url, title);
+  }
+
   // Links inside a post: other posts open here in the reader, "More blogs"
   // opens the list, and links to other websites open in a new tab so the
   // app stays where it was.
@@ -3916,7 +3940,8 @@
     const href = a.getAttribute('href') || '';
     const m = href.match(/^\/client\/\?(?:.*&)?file=([\w-]+)/);
     if (m) { e.preventDefault(); openFileFromLink(m[1]); return; }
-    if (/^\/client\/\?view=posts/.test(href)) { e.preventDefault(); openThemeDetail('posts', 0); return; }
+    const v = href.match(/^\/client\/\?view=(posts|poems)/);
+    if (v) { e.preventDefault(); openThemeDetail(v[1], 0); return; }
     if (/^https?:\/\//i.test(href) && !a.target) { a.target = '_blank'; a.rel = 'noopener'; }
   });
 
@@ -6131,6 +6156,7 @@
             <button class="reader-font-btn" onclick="textReaderFontSize(-1)" title="Smaller text">A-</button>
             <button class="reader-font-btn" onclick="textReaderFontSize(1)" title="Larger text">A+</button>
             ${listenBtn}
+            ${f.content_type === 'poem' ? `<button class="reader-font-btn" onclick="downloadPoem('${f.id}')" title="Download this poem as a PDF">⬇ Download</button><button class="reader-font-btn" onclick="sharePoem(this)" data-title="${String(f.title || '').replace(/"/g, '&quot;')}" title="Share this poem">↗ Share</button>` : ''}
           </div>
           <div class="text-doc-reader" id="textDocReaderBody" style="font-size:100%">${article.innerHTML}</div>
         `;

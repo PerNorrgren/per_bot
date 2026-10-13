@@ -19,10 +19,15 @@
 // library-backup/blog-links/ first, so any post can be put back. Each post
 // is done once (remembered by id), and a post that already has the new
 // footer is never changed again.
+//
+// Per App 38 (11): poems get the same treatment, with a "More poems" link,
+// and a poem whose heading was removed by an earlier clean-up gets its
+// title back as the heading.
 
 const { parse } = require('node-html-parser');
 
-const OLD_HOSTS = /^(www\.)?(deepermindfulness\.(org|net)|depermindfulness\.org)$/i;
+// Includes the misspelt addresses some posts used (depermindfulness, deepermidfulness).
+const OLD_HOSTS = /^(www\.)?de+perm[a-z]*fulness\.(org|net)$/i;
 const FOOTER_CLASS = 'dm-links';
 const APP_URL = 'https://deepermindfulness.org/';
 
@@ -59,12 +64,53 @@ function removeIfEmpty(el, stopAt) {
   }
 }
 
-// resolve(slug) → library file id or null
-function transformBlogHtml(html, resolve) {
+// The words in an element that are not inside a link.
+function ownText(el) {
+  let t = textOf(el);
+  for (const a of el.querySelectorAll('a')) t = t.replace(textOf(a), '');
+  return t.replace(/[\s|•·,.:;!–-]+/g, ' ').trim();
+}
+
+// Promo lines such as "Try Deeper Mindfulness Community HERE" / "FREE Live
+// and Recorded Mindfulness Courses HERE" that point to the site's front
+// page and stand on their own (no sentence around them): the new footer
+// already covers them.
+function sweepPromoLinks(article) {
+  let n = 0;
+  for (const a of article.querySelectorAll('a')) {
+    if (!a.parentNode || a.closest('.' + FOOTER_CLASS)) continue;
+    const c = classify(a.getAttribute('href') || '');
+    const toApp = c.kind === 'home' || (a.getAttribute('href') || '').trim().replace(/\/+$/, '') === APP_URL.replace(/\/+$/, '');
+    if (!toApp) continue;
+    const box = a.closest('p, li, div, figure') || a.parentNode;
+    if (ownText(box).length > 3) continue;
+    if (/^de+perm[a-z]*fulness\.(org|net)$/i.test(textOf(a))) continue;
+    const parent = a.parentNode;
+    a.remove(); n++;
+    removeIfEmpty(parent, article);
+  }
+  return n;
+}
+
+const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// resolve(slug) → { id, title } or null. opts.kind is 'blog' or 'poem';
+// opts.title is the library title, used when the file has no heading.
+function transformBlogHtml(html, resolve, opts = {}) {
+  const kind = opts.kind === 'poem' ? 'poem' : 'blog';
   const root = parse(html, { comment: false });
   const article = root.querySelector('article') || root.querySelector('body') || root;
   const stats = { removedLinks: 0, mapped: 0, unwrapped: 0, retargeted: 0, images: 0, sections: 0, footerAdded: false };
-  if (article.querySelector('.' + FOOTER_CLASS)) return { html, stats, changed: false };
+  // A file done by the first round (38 (10)) already has the footer; it
+  // only gets the promo-link sweep (step 0) that came later.
+  if (article.querySelector('.' + FOOTER_CLASS)) {
+    const n = sweepPromoLinks(article);
+    stats.removedLinks += n;
+    return n ? { html: root.toString(), stats, changed: true } : { html, stats, changed: false };
+  }
+
+  // 0. Stand-alone promo links to the front page.
+  stats.removedLinks += sweepPromoLinks(article);
 
   // 1. Old app download section: heading, its TOC entry, QR text.
   for (const h of article.querySelectorAll('h1,h2,h3,h4')) {
@@ -81,7 +127,7 @@ function transformBlogHtml(html, resolve) {
   }
 
   // 2. Images from the old site no longer load.
-  for (const img of article.querySelectorAll('img')) {
+  for (const img of article.querySelectorAll('img, audio, video, source')) {
     const src = img.getAttribute('src') || '';
     let host = '';
     try { host = new URL(src, 'https://x.invalid').hostname; } catch (e) { /* relative */ }
@@ -111,7 +157,7 @@ function transformBlogHtml(html, resolve) {
     if (c.kind === 'home') {
       // A sentence that sends the reader to the site keeps its link, now to
       // the app; a bare "Free courses" / "Try the app" footer link goes.
-      const sentence = textOf(parent).length > textOf(a).length + 25 && parent.tagName !== 'LI';
+      const sentence = ownText(parent).length > 25 && parent.tagName !== 'LI';
       const bareUrl = /de+permindfulness\.(org|net)/i.test(textOf(a));
       if (sentence || bareUrl) {
         a.setAttribute('href', APP_URL);
@@ -156,9 +202,18 @@ function transformBlogHtml(html, resolve) {
   let last = article.lastElementChild;
   while (last && last.tagName === 'HR') { const prev = last.previousElementSibling; last.remove(); last = prev; }
 
-  // 5. New footer.
+  // 5. A file whose heading was removed gets its title back as a heading.
+  if (!article.querySelector('h1, h2, h3') && opts.title) {
+    const heading = String(opts.title).replace(/^(blog|poem)\s*[-–:]?\s*/i, '').trim();
+    if (heading) { article.insertAdjacentHTML('afterbegin', `<h1>${esc(heading)}</h1>\n`); stats.headingAdded = true; }
+  }
+
+  // 6. New footer.
+  const more = kind === 'poem'
+    ? '<a href="/client/?view=poems">More poems</a>'
+    : '<a href="/client/?view=posts">More blogs</a>';
   article.insertAdjacentHTML('beforeend',
-    `\n<hr />\n<p class="${FOOTER_CLASS}"><a href="/client/?view=posts">More blogs</a><br /><a href="${APP_URL}">The Deeper Mindfulness app: courses, live sessions and practices</a></p>\n`);
+    `\n<hr />\n<p class="${FOOTER_CLASS}">${more}<br /><a href="${APP_URL}">The Deeper Mindfulness app: courses, live sessions and practices</a></p>\n`);
   stats.footerAdded = true;
 
   return { html: root.toString().replace(/\n\s*\n(\s*\n)+/g, '\n\n'), stats, changed: true };
@@ -202,17 +257,18 @@ async function streamToBuffer(body) {
 async function fixBlogLinks({ db, media, store, log = console.log }) {
   if (!media.isConfigured()) return { skipped: 'storage not configured' };
   const settings = store.getSettings();
-  const done = new Set(settings.blogLinksFixed || []);
+  const done = new Set(settings.blogLinksFixed2 || []);
   const all = db.getLibraryFiles({ includeArchived: true }) || [];
-  const blogs = all.filter(f => f.content_type === 'blog' && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
+  const blogs = all.filter(f => ['blog', 'poem'].includes(f.content_type) && f.file_type === 'text/html' && f.storage_type === 'r2' && !done.has(f.id));
   if (!blogs.length) return { changed: 0 };
   const resolve = makeResolver(all);
+  let headings = 0;
   const total = { changed: 0, unchanged: 0, failed: 0, mapped: 0, unwrapped: 0, removedLinks: 0, images: 0 };
   for (const f of blogs) {
     try {
       const obj = await media.getPublicObject(f.filename);
       const original = await streamToBuffer(obj.Body);
-      const out = transformBlogHtml(original.toString('utf8'), resolve);
+      const out = transformBlogHtml(original.toString('utf8'), resolve, { kind: f.content_type, title: f.title });
       if (out.changed) {
         const backupKey = 'library-backup/blog-links/' + f.filename.replace(/^.*\//, '');
         if (!(await media.objectExists(backupKey))) await media.putObject(backupKey, original, 'text/html');
@@ -220,6 +276,7 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
         await media.putObject(f.filename, buf, 'text/html');
         db.replaceLibraryFileContent(f.id, f.filename, 'text/html', buf.length, f.original_name, 'r2', f.original_pdf_filename || null);
         total.changed++;
+        if (out.stats.headingAdded) headings++;
         for (const k of ['mapped', 'unwrapped', 'removedLinks', 'images']) total[k] += out.stats[k];
       } else total.unchanged++;
       done.add(f.id);
@@ -228,8 +285,8 @@ async function fixBlogLinks({ db, media, store, log = console.log }) {
       log(`[content] blog links: could not update "${f.title}": ${e.message}`);
     }
   }
-  store.saveSettings({ blogLinksFixed: Array.from(done) });
-  log(`[content] blog links: ${total.changed} post(s) updated (${total.removedLinks} old links removed, ${total.mapped} now open the post in the app, ${total.unwrapped} dead links kept as plain words, ${total.images} old images removed); ${total.unchanged} already done; ${total.failed} failed. Originals kept under library-backup/blog-links/.`);
+  store.saveSettings({ blogLinksFixed2: Array.from(done) });
+  log(`[content] blog/poem links: ${total.changed} file(s) updated (${headings} heading(s) restored from the title, ${total.removedLinks} old links removed, ${total.mapped} now open the post in the app, ${total.unwrapped} dead links kept as plain words, ${total.images} old images removed); ${total.unchanged} already done; ${total.failed} failed. Originals kept under library-backup/blog-links/.`);
   return total;
 }
 

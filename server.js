@@ -4022,6 +4022,46 @@ app.get('/api/client/library/:type', auth.requireAuthApi(['client']), (req, res)
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Per App 38 (11) — Per's request: poems can be downloaded. Builds a
+// simple, clean PDF of the poem (title, the poem, Per's name and the app
+// address) from the same HTML the reader shows. Only for a poem this
+// person can already see — the same list the app's Poems shelf uses.
+app.get('/api/client/poem/:id/pdf', auth.requireAuthApi(['client']), async (req, res) => {
+  try {
+    const userFlags = db.userFlagsFromRecord(db.getUser(req.user.id), 'client');
+    const f = (db.getRecentStandaloneFiles('poem', null, userFlags, req.user.id) || []).find(x => x.id === req.params.id);
+    if (!f) return res.status(404).json({ error: 'This poem is not available on your account.' });
+    const obj = await media.getPublicObject(f.filename);
+    const chunks = []; for await (const c of obj.Body) chunks.push(Buffer.from(c));
+    const root = parseHtml(Buffer.concat(chunks).toString('utf8'), { comment: false });
+    const article = root.querySelector('article') || root.querySelector('body') || root;
+    article.querySelectorAll('.dm-links, hr, script, style, figure, audio, img').forEach(el => el.remove());
+    const title = String(f.title || 'Poem').replace(/^poem\s*[-–:]?\s*/i, '').trim();
+    const first = article.querySelector('h1, h2, h3');
+    const norm = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (first && (norm(first.text).includes(norm(title)) || norm(title).includes(norm(first.text)))) first.remove();
+    const blockEnd = /<\/(p|h[1-6]|div|li|blockquote)>/gi;
+    const text = parseHtml(article.innerHTML.replace(/<br\s*\/?>/gi, '\n').replace(blockEnd, '\n\n')).text
+      .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}️]/gu, '')
+      .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    const filename = (title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'poem') + '.pdf';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    const doc = new PDFDocument({ size: 'A5', margins: { top: 60, bottom: 60, left: 56, right: 56 } });
+    doc.pipe(res);
+    doc.font('Times-Bold').fontSize(18).fillColor('#222').text(title, { align: 'left' });
+    doc.moveDown(1.2);
+    doc.font('Times-Roman').fontSize(12).fillColor('#222').text(text, { lineGap: 3 });
+    doc.moveDown(2);
+    if (!/per norrgren/i.test(text)) doc.font('Times-Italic').fontSize(11).text('Per Norrgren');
+    doc.font('Times-Italic').fontSize(9).fillColor('#777').text('Deeper Mindfulness · deepermindfulness.org');
+    doc.end();
+  } catch (e) {
+    console.error('[poem pdf]', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Could not make the PDF just now.' });
+  }
+});
+
 // Per App 36 — the full "Popular Practices" list behind the home-screen
 // heading button. The shelf itself only shows the top 5; this returns a
 // longer ranked list (pinned first, then by real plays), dropping
