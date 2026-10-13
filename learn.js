@@ -146,13 +146,15 @@ function page(title, description, inner) {
     <a href="/#courses">Courses</a>
     <a href="/#books">Books</a>
     <a href="/learn">Learn</a>
+    <a href="/blog">Blog</a>
+    <a href="/poems">Poems</a>
     <a href="/#app">The app</a>
   </nav>
   <a class="login" href="/login">Log in</a>
 </header>
 ${inner}
 <footer>
-  <a href="/">Home</a><a href="/learn">Learn</a><a href="/courses">Courses</a><a href="/alarm">The Alarm That Would Not Stop</a><a href="/wired-heart">The Wired Heart</a><a href="/login">Log in</a>
+  <a href="/">Home</a><a href="/learn">Learn</a><a href="/blog">Blog</a><a href="/poems">Poems</a><a href="/courses">Courses</a><a href="/alarm">The Alarm That Would Not Stop</a><a href="/wired-heart">The Wired Heart</a><a href="/login">Log in</a>
   <p>© ${new Date().getUTCFullYear()} Deeper Mindfulness · Per Norrgren</p>
 </footer>
 </body>

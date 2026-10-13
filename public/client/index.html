@@ -3914,9 +3914,19 @@
   function downloadPoem(id) {
     window.location.href = `/api/client/poem/${id}/pdf`;
   }
-  function sharePoem(btn) {
+  // Per App 38 (14) — shares the piece's public page when it has one
+  // (deepermindfulness.org/poems/… or /blog/…), otherwise the home page.
+  // A poem shares its words; a blog shares its title and the link.
+  async function sharePoem(btn) {
     const body = document.getElementById('textDocReaderBody');
     if (!body) return;
+    let url = 'https://deepermindfulness.org/';
+    try { const r = await fetch('/api/public-link/' + encodeURIComponent(btn.dataset.id || '')); const j = await r.json(); if (j && j.url) url = j.url; } catch (e) { /* home page */ }
+    if (btn.dataset.kind !== 'poem') {
+      const t = (btn.dataset.title || '').replace(/^blog\s*[-–:]?\s*/i, '');
+      appShareSheet(`${t}\n\nby Per Norrgren\n${url}`, url, t);
+      return;
+    }
     const copy = body.cloneNode(true);
     copy.querySelectorAll('.dm-links, hr, audio, figure, img').forEach(el => el.remove());
     const title = (btn.dataset.title || '').replace(/^poem\s*[-–:]?\s*/i, '');
@@ -3927,7 +3937,6 @@
     let words = copy.innerText.replace(/\n{3,}/g, '\n\n').trim();
     copy.remove();
     if (!/per norrgren/i.test(words)) words += '\n\n— Per Norrgren';
-    const url = 'https://deepermindfulness.org/';
     appShareSheet(`${title}\n\n${words}\n\nMore poems and practices: ${url}`, url, title);
   }
 
@@ -6157,7 +6166,8 @@
             <button class="reader-font-btn" onclick="textReaderFontSize(-1)" title="Smaller text">A-</button>
             <button class="reader-font-btn" onclick="textReaderFontSize(1)" title="Larger text">A+</button>
             ${listenBtn}
-            ${f.content_type === 'poem' ? `<button class="reader-font-btn" onclick="downloadPoem('${f.id}')" title="Download this poem as a PDF">⬇ Download</button><button class="reader-font-btn" onclick="sharePoem(this)" data-title="${String(f.title || '').replace(/"/g, '&quot;')}" title="Share this poem">↗ Share</button>` : ''}
+            ${f.content_type === 'poem' ? `<button class="reader-font-btn" onclick="downloadPoem('${f.id}')" title="Download this poem as a PDF">⬇ Download</button>` : ''}
+            ${['poem', 'blog', 'whitepaper'].includes(f.content_type) ? `<button class="reader-font-btn" onclick="sharePoem(this)" data-id="${f.id}" data-kind="${f.content_type}" data-title="${String(f.title || '').replace(/"/g, '&quot;')}" title="Share this">↗ Share</button>` : ''}
           </div>
           <div class="text-doc-reader" id="textDocReaderBody" style="font-size:100%">${article.innerHTML}</div>
         `;

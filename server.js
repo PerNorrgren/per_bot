@@ -2744,6 +2744,34 @@ const publicHome = require('./public-home');
 // Per App 38 (6) — public Learn articles (learn.js), /learn and /learn/:slug.
 const learn = require('./learn');
 learn.mount(app);
+// Per App 38 (14) — public pages for poems (/poems/…) and blogs (/blog/…),
+// with old WordPress post addresses sent to them. See public_pages.js.
+const publicPages = require('./public_pages').mountPublicPages(app, {
+  db, media, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
+});
+// Per App 38 (14) — weekly re-publishing campaign (campaign.js): every
+// Monday a fresh opening for the next public blog and a social post for it
+// and for the next poem, emailed to Per to approve.
+const campaign = require('./campaign').mountCampaign(app, {
+  db, media, publicPages, store: seoApi.store, siteUrl: SEO_SITE,
+  callClaude: (system, messages, maxTokens) => callClaudeRaw(system, messages, maxTokens, true),
+  sendEmail: (to, subject, html, meta) => sendEmail(to, subject, html, meta),
+  adminEmail: process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+});
+app.post('/api/admin/campaign/draft-next', auth.requireAuthApi(['admin']), async (req, res) => {
+  try { const out = await campaign.draftWeek('by hand'); res.json({ ok: true, blog: !!out.blog, poem: !!out.poem }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/admin/public-items', auth.requireAuthApi(['admin']), (req, res) => {
+  try { res.json({ items: publicPages.list() }); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/public-items', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const { fileId, published } = req.body || {};
+    if (!fileId) return res.status(400).json({ error: 'fileId is required.' });
+    res.json({ item: await publicPages.setPublished(String(fileId), !!published) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
 app.get('/', (req, res) => {
   try {
     const token = req.cookies && req.cookies.perbot_session;
@@ -2769,7 +2797,10 @@ function roleRouter(allowedRoles, file) {
   return (req, res) => {
     const token = req.cookies?.[auth.COOKIE_NAME];
     const user  = token ? auth.verifyToken(token) : null;
-    if (!user) return res.redirect('/login');
+    // Per App 38 (14) — a link into the app (a post, a course) survives the
+    // login step: /login?next=… brings them back to it afterwards.
+    if (!user) return res.redirect(allowedRoles.includes('client') && req.originalUrl.includes('?')
+      ? '/login?next=' + encodeURIComponent(req.originalUrl) : '/login');
     if (!allowedRoles.includes(user.role)) {
       const map = { admin: '/admin/', facilitator: '/facilitator/', client: '/client/' };
       return res.redirect(map[user.role] || '/login');
@@ -19118,7 +19149,10 @@ async function runPostDbBootTasks() {
   try { seedExtraPromptsOnce(); } catch (e) { console.error('[seo] extra questions failed:', e.message); }
   try { await require('./fix_blog_list').cleanupBlogList(db, media); } catch (e) { console.error('[content] blog list tidy failed:', e.message); }
   // Per App 38 (10) — old-site links in the imported blog posts (see fix_blog_links.js). Runs in the background.
-  require('./fix_blog_links').fixBlogLinks({ db, media, store: seoApi.store }).catch(e => console.error('[content] blog links failed:', e.message));
+  // Per App 38 (14) — then the first release of public poem and blog pages (once).
+  require('./fix_blog_links').fixBlogLinks({ db, media, store: seoApi.store }).catch(e => console.error('[content] blog links failed:', e.message))
+    .then(() => (media.isConfigured() ? publicPages.seedOnce() : null)).catch(e => console.error('[public] first release failed:', e.message));
+  try { campaign.start(); } catch (e) { console.error('[campaign] start failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';

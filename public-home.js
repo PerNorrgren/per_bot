@@ -249,6 +249,8 @@ function render(data) {
     <a href="#books">Books</a>
     <a href="#app">The app</a>
     <a href="/learn">Learn</a>
+    <a href="/blog">Blog</a>
+    <a href="/poems">Poems</a>
     <a href="#teach">Teach</a>
     <a href="#questions">Questions</a>
   </nav>
@@ -357,6 +359,8 @@ function render(data) {
   <nav aria-label="Site">
     <a href="/courses">Courses</a>
     <a href="/learn">Learn</a>
+    <a href="/blog">Blog</a>
+    <a href="/poems">Poems</a>
     <a href="/membership">Membership</a>
     <a href="/wired-heart">The Wired Heart</a>
     <a href="/alarm">The Alarm That Would Not Stop</a>

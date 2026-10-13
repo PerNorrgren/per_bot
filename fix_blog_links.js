@@ -361,4 +361,4 @@ async function fixRelativeAppLinks({ db, media, store, log, skip }) {
   return { fixed, failed };
 }
 
-module.exports = { fixBlogLinks, transformBlogHtml, makeResolver, classify };
+module.exports = { fixBlogLinks, transformBlogHtml, makeResolver, classify, WP_SLUGS, sweepPromoLinks };

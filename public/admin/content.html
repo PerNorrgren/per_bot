@@ -2109,9 +2109,47 @@ function setLibColShown(key, shown) {
   applyLibCols(); saveLibCols();
 }
 
+// ── Public pages (Per App 38 (14)) — poems and blogs can have their own
+// public page on the website (/poems/… or /blog/…). The 🌐 button on each
+// poem or blog switches it on or off. ──
+let _publicMap = null, _publicLoading = false;
+async function loadPublicMap() {
+  try {
+    const r = await fetch('/api/admin/public-items');
+    const j = await r.json();
+    _publicMap = new Map((j.items || []).map(i => [i.file_id, i]));
+  } catch (e) { _publicMap = new Map(); }
+}
+function publicBtns(f) {
+  if (!['poem', 'blog', 'whitepaper'].includes(f.content_type)) return '';
+  const p = _publicMap && _publicMap.get(f.id);
+  if (p && p.published) {
+    return `<button class="btn sm" style="color:rgba(180,230,200,0.95);border-color:rgba(180,230,200,0.5)" title="Has a public page: ${p.url}. Click to take it off the website." onclick="togglePublic('${f.id}', false, this)">🌐 Public</button>`
+      + `<a class="btn sm" href="${p.url}" target="_blank" rel="noopener" title="Open the public page">↗</a>`;
+  }
+  return `<button class="btn sm" title="Give this its own public page on the website" onclick="togglePublic('${f.id}', true, this)">🌐 Make public</button>`;
+}
+async function togglePublic(fileId, on, btn) {
+  if (!on && !(await appConfirm('Take this off the website? The public page will stop working; it stays in the app as before.', 'Make private'))) return;
+  setBtnLoading(btn, true, on ? 'Publishing…' : 'Hiding…');
+  try {
+    const r = await fetch('/api/admin/public-items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId, published: on }) });
+    const j = await r.json();
+    if (!r.ok || j.error) { setBtnLoading(btn, false); appAlert(j.error || 'Could not change this just now.'); return; }
+    if (!_publicMap) _publicMap = new Map();
+    _publicMap.set(fileId, j.item);
+    setBtnLoading(btn, false);
+    if (_lastLibFiles) renderLibList(_lastLibFiles);
+    appAlert(on ? `Done. Its public page is live at:\n${j.item.url}` : 'Done. It is no longer on the website (still in the app).', on ? 'Published' : 'Made private');
+  } catch (e) { setBtnLoading(btn, false); appAlert('Could not reach the server — please try again.'); }
+}
+let _lastLibFiles = null;
+
 function renderLibList(files){
   const el=document.getElementById('libList');
+  _lastLibFiles = files;
   if(!files.length){el.innerHTML='<div class="empty">No files yet. Upload to get started.</div>';return;}
+  if (_publicMap === null && !_publicLoading) { _publicLoading = true; loadPublicMap().then(() => { _publicLoading = false; if (_lastLibFiles) renderLibList(_lastLibFiles); }); }
   applyLibCols();
   const header = `
     <div class="file-list-header">
@@ -2148,6 +2186,7 @@ function renderLibList(files){
       <span class="flr-actions">
         <button class="btn sm" onclick="toggleFileFeatured('${f.id}',${f.featured?'false':'true'})">${f.featured?'★':'☆'}</button>
         <button class="btn sm" onclick="toggleFileTalkPractice('${f.id}',${f.talk_practice?'false':'true'})" title="${f.talk_practice?'Remove from Talk':'Add to Talk'}">🗣️${f.talk_practice?'✓':''}</button>
+        ${publicBtns(f)}
         <button class="btn sm" onclick="openEditFile('${f.id}')">Edit</button>
         <button class="btn sm" onclick="replaceLibraryFile('${f.id}', this)" title="Swap the underlying file, keeping this same entry — id, title, visibility, tags, and every course/lesson link all stay put">Replace</button>
         ${f.content_type==='book' && f.file_type && f.file_type.startsWith('audio/') ? `<button class="btn sm" onclick="openEditChapters('${f.id}','${f.title.replace(/'/g,"\\'")}')">Chapters</button>` : ''}

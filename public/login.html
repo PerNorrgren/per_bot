@@ -270,7 +270,11 @@
         // for admin/facilitator, so a crafted link can't redirect someone
         // into a different area than their actual role.
         const next = new URLSearchParams(location.search).get('next');
-        if (next && data.redirect === '/client/') { window.location.href = decodeURIComponent(next); }
+        // Per App 38 (14) — the client redirect is '/client/?justLoggedIn=1',
+        // so this compared against '/client/' never matched and ?next= was
+        // ignored. Now: any client redirect, and only to a /client/ address.
+        const nextUrl = next ? decodeURIComponent(next) : '';
+        if (nextUrl && /^\/client\//.test(nextUrl) && /^\/client\//.test(data.redirect)) { window.location.href = nextUrl; }
         else { window.location.href = data.redirect; }
       } else {
         errorEl.textContent = data.error || 'Something went wrong.';
