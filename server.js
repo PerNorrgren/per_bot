@@ -16275,7 +16275,10 @@ app.get('/samurai', (req, res) => res.sendFile(path.join(__dirname, 'public', 's
 app.get('/samurai-flute', (req, res) => res.sendFile(path.join(__dirname, 'public', 'samurai-flute.html')));
 app.get('/join', (req, res) => {
   const config = db.getAppConfig();
-  res.redirect(302, config?.join_link_url || '/courses');
+  // Per App 38 (15) — keep a tracking tag (?src=…) on the way through.
+  const dest = config?.join_link_url || '/membership';
+  const q = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?') + 1) : '';
+  res.redirect(302, q ? dest + (dest.includes('?') ? '&' : '?') + q : dest);
 });
 app.get('/legal/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
 app.get('/legal/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'legal.html')));
@@ -19143,6 +19146,12 @@ function fixPublicTextOnce() {
     db.rawRun(`UPDATE live_meetings SET start_time = '19:00', schedule_text = 'Every Tuesday · 19:00 UK time' WHERE id = ?`, [r.id]);
     n++;
   }
+  // Per App 38 (15) — Per's request: the join link ("Subscribe to Get
+  // Access" on the at-your-own-pace courses) still pointed at the Finding
+  // Mindfulness live course that started on 15 September. Now the
+  // membership page. Only changed while it is still that old address.
+  const oldJoin = db.rawAll(`SELECT COUNT(*) AS c FROM app_config WHERE join_link_url LIKE '%/course-instance/71849f95-fb41-40d6-89aa-0e1639badbac%'`)[0].c;
+  if (oldJoin) { db.rawRun(`UPDATE app_config SET join_link_url='/membership' WHERE join_link_url LIKE '%/course-instance/71849f95-fb41-40d6-89aa-0e1639badbac%'`); n++; console.log('[boot] join link now goes to /membership (was the September live course).'); }
   if (n) console.log(`[boot] public text fixes: ${n} change(s) (typos in course/meeting descriptions, Tuesday meeting time 11:30 → 19:00).`);
 }
 
