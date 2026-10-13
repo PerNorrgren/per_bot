@@ -2749,11 +2749,15 @@ learn.mount(app);
 const publicPages = require('./public_pages').mountPublicPages(app, {
   db, media, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
 });
+// Per App 38 (15) — public course pages (/courses, /courses/<name>).
+const coursePages = require('./course_pages').mountCoursePages(app, {
+  db, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
+});
 // Per App 38 (14) — weekly re-publishing campaign (campaign.js): every
 // Monday a fresh opening for the next public blog and a social post for it
 // and for the next poem, emailed to Per to approve.
 const campaign = require('./campaign').mountCampaign(app, {
-  db, media, publicPages, store: seoApi.store, siteUrl: SEO_SITE,
+  db, media, publicPages, coursePages: coursePages.PAGES, store: seoApi.store, siteUrl: SEO_SITE,
   callClaude: (system, messages, maxTokens) => callClaudeRaw(system, messages, maxTokens, true),
   sendEmail: (to, subject, html, meta) => sendEmail(to, subject, html, meta),
   adminEmail: process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
@@ -19153,6 +19157,7 @@ async function runPostDbBootTasks() {
   require('./fix_blog_links').fixBlogLinks({ db, media, store: seoApi.store }).catch(e => console.error('[content] blog links failed:', e.message))
     .then(() => (media.isConfigured() ? publicPages.seedOnce() : null)).catch(e => console.error('[public] first release failed:', e.message));
   try { campaign.start(); } catch (e) { console.error('[campaign] start failed:', e.message); }
+  try { coursePages.syncSearch(); } catch (e) { console.error('[courses] search entries failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';

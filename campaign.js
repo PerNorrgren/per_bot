@@ -29,7 +29,7 @@ const VOICE = `You write as Per Norrgren: an experienced mindfulness practitione
 - Never: "It is worth noting", "Taken together", "In conclusion", "Let's dive in", "game-changer", "unlock", "journey", "transform your life".
 - British spelling.`;
 
-function mountCampaign(app, { db, media, publicPages, callClaude, sendEmail, adminEmail, store, siteUrl, log = console.log }) {
+function mountCampaign(app, { db, media, publicPages, coursePages = [], callClaude, sendEmail, adminEmail, store, siteUrl, log = console.log }) {
   const SITE = String(siteUrl || 'https://deepermindfulness.org').replace(/\/+$/, '');
   let ready = false;
   function ensure() {
@@ -122,7 +122,18 @@ What follows: ${following.join('\n')}` }], 900);
       const social = await poemPost(poem);
       out.poem = { row: poem, social, ...saveItem(poem.file_id, 'poem', { social }) };
     }
-    if (!out.blog && !out.poem) { log('[campaign] nothing left in the queue.'); return out; }
+    // Per App 38 (15) — every other week, a social post for the next course
+    // page in turn (the course pages themselves are not changed).
+    const st = store.getSettings();
+    const runs = (st.campaignRuns || 0) + 1;
+    if (coursePages.length && runs % 2 === 1) {
+      const idx = (st.campaignCourseIdx || 0) % coursePages.length;
+      const p = coursePages[idx];
+      out.course = { title: p.title, social: `${p.title}\n\n${p.intro.split(/(?<=[.!?])\s/).slice(0, 2).join(' ')}\n\n${SITE}/courses/${p.slug}` };
+      store.saveSettings({ campaignCourseIdx: idx + 1 });
+    }
+    store.saveSettings({ campaignRuns: runs });
+    if (!out.blog && !out.poem && !out.course) { log('[campaign] nothing left in the queue.'); return out; }
     await emailPer(out);
     log(`[campaign] ${trigger}: drafted ${out.blog ? '1 blog' : 'no blog'}${out.poem ? ' and 1 poem' : ''}, emailed for approval.`);
     return out;
@@ -146,6 +157,10 @@ What follows: ${following.join('\n')}` }], 900);
       const f = db.getLibraryFile(out.poem.row.file_id);
       html += `<h2 style="font-family:Georgia,serif;font-weight:normal;margin-top:34px">This week's poem: ${esc(cleanTitle(f.title))}</h2>
 <p>The poem itself stays as it is. Suggested social post:</p>${box(out.poem.social)}`;
+    }
+    if (out.course) {
+      html += `<h2 style="font-family:Georgia,serif;font-weight:normal;margin-top:34px">This fortnight's course: ${esc(out.course.title)}</h2>
+<p>Suggested social post:</p>${box(out.course.social)}`;
     }
     html += `<p style="color:#777;font-size:13px;margin-top:30px">Sent every Monday by the Deeper Mindfulness app. Nothing on the website changes until you press Approve.</p></div>`;
     await sendEmail(adminEmail, `This week's post${out.blog ? ': ' + cleanTitle(db.getLibraryFile(out.blog.row.file_id).title) : ''}`, html, { kind: 'other' });

@@ -274,7 +274,7 @@ ${extraHead}
 <header class="top">
   <a class="wordmark" href="/">Deeper Mindfulness</a>
   <nav class="links" aria-label="Main">
-    <a href="/#courses">Courses</a>
+    <a href="/courses">Courses</a>
     <a href="/blog">Blog</a>
     <a href="/poems">Poems</a>
     <a href="/learn">Learn</a>
@@ -438,7 +438,7 @@ ${inner}
   function markFreshened(fileId) { ensure(); db.rawRun(`UPDATE public_items SET freshened_at=date('now') WHERE file_id=?`, [fileId]); cache.delete(fileId); }
 
   return {
-    ensure, setPublished, seedOnce, syncIndexEntries, markFreshened,
+    ensure, setPublished, seedOnce, syncIndexEntries, markFreshened, shell,
     list: () => { ensure(); return db.rawAll(`SELECT * FROM public_items`).map(r => ({ ...r, url: r.published ? urlFor(r) : null })); },
   };
 }

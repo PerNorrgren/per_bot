@@ -223,9 +223,13 @@
       // the generic account-creation page — that's where the custom
       // fields Per adds get captured and payment actually happens.
       const isSelfPaced = i.mode === 'self_paced';
-      const joinHref = isSelfPaced ? '/join'
+      // Per App 38 (15) — keep the tracking tag from a public course page
+      // (?src=course-…) on the way to sign-up.
+      const srcTag = new URLSearchParams(location.search).get('src');
+      const srcQ = srcTag ? 'src=' + encodeURIComponent(srcTag) : '';
+      const joinHref = isSelfPaced ? '/join' + (srcQ ? '?' + srcQ : '')
         : i.registration_form_id ? `/forms/${i.registration_form_id}`
-        : `/register?instance=${selectedInstanceId}`;
+        : `/register?instance=${selectedInstanceId}${srcQ ? '&' + srcQ : ''}`;
       const joinLabel = isSelfPaced ? 'Subscribe to Get Access' : 'Register';
 
       el.innerHTML = `
@@ -292,7 +296,7 @@
   function onInstancePicked(id) {
     selectedInstanceId = id;
     document.querySelectorAll('.cta-register-btn').forEach(btn => {
-      if (btn.hasAttribute('href')) btn.href = `/register?instance=${id}`;
+      if (btn.hasAttribute('href')) { const st = new URLSearchParams(location.search).get('src'); btn.href = `/register?instance=${id}` + (st ? '&src=' + encodeURIComponent(st) : ''); }
     });
   }
   async function checkAlreadyLoggedIn() {
