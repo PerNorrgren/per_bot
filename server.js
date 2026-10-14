@@ -2763,6 +2763,7 @@ const publicPages = require('./public_pages').mountPublicPages(app, {
 // Per App 38 (15) — public course pages (/courses, /courses/<name>).
 const coursePages = require('./course_pages').mountCoursePages(app, {
   db, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
+  contactEmail: process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
 });
 // Per App 38 (14) — weekly re-publishing campaign (campaign.js): every
 // Monday a fresh opening for the next public blog and a social post for it

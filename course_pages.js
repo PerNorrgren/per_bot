@@ -74,7 +74,7 @@ function cleanLessonTitle(t) {
 }
 const isGeneric = t => /^(introduction|lesson\s*\d+|week\s*\d+|day\s*\d+|reference|before you begin)$/i.test(String(t || '').trim());
 
-function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {}, siteUrl, heroImg, log = console.log }) {
+function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {}, siteUrl, heroImg, contactEmail = 'per@deepermindfulness.org', log = console.log }) {
   const SITE = String(siteUrl || 'https://deepermindfulness.org').replace(/\/+$/, '');
   const clean = s => String(s || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -189,6 +189,35 @@ function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {
 </main>`);
   }
 
+  // ── Per App 38 (19) — Podcasts and talks: a page podcast hosts and
+  // editors can use (bio, topics, contact). Lives here because this module
+  // already keeps its Search entries in step at every start.
+  const PODCAST_TOPICS = [
+    ['Why do I wake at 3am with my heart racing?', 'What is going on in the body in that moment, why the thinking mind cannot solve it, and a small practice that helps you settle and get back to sleep.'],
+    ['The alarm that would not stop', 'Why the body stays on alert long after the danger has gone, how old experiences set that alarm, and how it can learn that it is safe again.'],
+    ['You cannot think your way calm', 'Working through the body instead of the mind: grounding, breath, touch and small precise movements (micro moves) that the nervous system actually listens to.'],
+    ['Poems as practice', 'How a short poem can meet a feeling that advice cannot reach, and how Per uses poetry alongside guided practice.'],
+    ['Girls who talk each other down', 'Co-rumination in teenage friendships: why talking a problem over and over can make it worse, and what helps instead. From Per\'s work with Professor Patricia Vuijk.'],
+  ];
+  function renderPodcasts() {
+    const topics = PODCAST_TOPICS.map(([t, d]) => `<li><span class="lt">${esc(t)}</span><span class="ld">${esc(d)}</span></li>`).join('');
+    return publicPages.shell('Podcasts and talks: Per Norrgren | Deeper Mindfulness',
+      'Per Norrgren, mindfulness teacher and creator of the FELT approach, is available for podcasts, interviews and talks on stress, sleep, anxiety and working through the body.', `<style>${CSS}</style><main>
+  <div class="crumbs"><a href="/">Home</a></div>
+  <h1>Podcasts and talks</h1>
+  <p class="intro">Per Norrgren is happy to join podcasts, interviews and live talks, on Zoom or in person.</p>
+  <h2>About Per</h2>
+  <p>Per Norrgren is the founder of Deeper Mindfulness and the creator of FELT, an approach that helps the nervous system settle by working through the body rather than the thinking mind. He is a long-term meditation practitioner and yoga teacher, teaches mindfulness courses rooted in MBSR and MBCT, works one to one with people, and supervises other mindfulness teachers and clinicians.</p>
+  <p>He is the author of <a href="/alarm">The Alarm That Would Not Stop</a> and <a href="/wired-heart">The Wired Heart</a>, and, with Professor Patricia Vuijk of Rotterdam University of Applied Sciences, of a book and school programme on teenage girls' friendships. He lives in North Norfolk.</p>
+  <h2>Topics</h2>
+  <ol class="lessons">${topics}</ol>
+  <p class="lessons-summary">Every conversation can include a short practice listeners can do along with you, or on their own afterwards.</p>
+  <div class="start"><a class="cta" href="mailto:${esc(contactEmail)}?subject=${encodeURIComponent('Podcast or talk invitation')}">Invite Per</a><p>Or write to ${esc(contactEmail)}. Per replies personally.</p></div>
+  <div class="more"><p>To get a feel for his voice: <a href="/learn">Learn</a> · <a href="/blog">Blog</a> · <a href="/poems">Poems</a> · <a href="/courses">Courses</a></p></div>
+</main>`);
+  }
+  app.get('/podcasts', (req, res) => { try { res.set('Cache-Control', 'no-cache'); res.type('html').send(renderPodcasts()); } catch (e) { log('[podcasts] page failed: ' + e.message); res.status(500).send('Sorry, this page could not be shown just now.'); } });
+
   app.get('/courses', (req, res) => { try { res.set('Cache-Control', 'no-cache'); res.type('html').send(renderIndex()); } catch (e) { log('[courses] index failed: ' + e.message); res.status(500).send('Sorry, this page could not be shown just now.'); } });
   app.get('/courses/', (req, res) => res.redirect(301, '/courses'));
   app.get('/courses/:slug', (req, res, next) => {
@@ -210,6 +239,10 @@ function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {
     upsert('/courses', { title: 'Mindfulness courses by Per Norrgren', description: 'Mindfulness courses by Per Norrgren, at your own pace in the app or live on Zoom: Mindfulness for Life, Finding Calm, Finding Joy and more.',
       og_type: 'website', schema_type: 'ItemList', priority: 0.9,
       schema_json: JSON.stringify({ '@type': 'ItemList', name: 'Courses', itemListElement: PAGES.map((p, i) => ({ '@type': 'ListItem', position: i + 1, url: `${SITE}/courses/${p.slug}`, name: p.title })) }) });
+    upsert('/podcasts', { title: 'Podcasts and talks: Per Norrgren', description: 'Per Norrgren, mindfulness teacher and creator of the FELT approach, is available for podcasts, interviews and talks on stress, sleep, anxiety and working through the body.',
+      og_type: 'profile', schema_type: 'ProfilePage', priority: 0.6,
+      schema_json: JSON.stringify({ '@type': 'ProfilePage', url: `${SITE}/podcasts`, mainEntity: { '@type': 'Person', name: 'Per Norrgren', jobTitle: 'Mindfulness teacher', url: SITE,
+        knowsAbout: ['mindfulness', 'MBSR', 'MBCT', 'nervous system regulation', 'sleep', 'anxiety', 'poetry'] } }) });
     for (const p of PAGES) {
       const desc = p.intro.length > 158 ? p.intro.slice(0, 155).replace(/\s+\S*$/, '') + '…' : p.intro;
       upsert(`/courses/${p.slug}`, { title: p.seoTitle, description: desc, og_type: 'website', schema_type: 'Course', priority: 0.9,

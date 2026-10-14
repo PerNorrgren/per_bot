@@ -233,6 +233,13 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   .gate p { color:var(--faint); font-size:14px; margin:10px 0 0; }
   .cta { display:inline-block; font-size:14px; letter-spacing:0.1em; text-transform:uppercase; padding:14px 26px; border-radius:12px; border:1px solid var(--mint-line); background:rgba(180,230,200,0.12); color:var(--mint); text-decoration:none; cursor:pointer; font-family:inherit; }
   .cta.ghost { background:transparent; }
+  .share-box { margin-top:40px; padding:20px 22px; border-radius:16px; border:1px dashed var(--mint-line); }
+  .share-box h2 { margin:0 0 8px; font-size:19px; font-weight:normal; }
+  .share-box p { font-size:15px; color:var(--soft); margin:0 0 12px; }
+  .share-box .credit { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:10px 12px; border-radius:10px; background:var(--card); font-size:14px; color:var(--ink); }
+  .share-box .credit span { flex:1; min-width:200px; word-break:break-word; }
+  .share-box button { font-family:inherit; font-size:13px; padding:7px 14px; border-radius:8px; border:1px solid var(--mint-line); background:transparent; color:var(--mint); cursor:pointer; }
+  .share-box .also { margin:12px 0 0; font-size:14px; }
   .more { margin-top:46px; padding:22px 24px; border-radius:18px; background:var(--card); border:1px solid var(--card-line); }
   .more h2 { margin:0 0 8px; font-size:20px; font-weight:normal; }
   .more p { font-size:16px; margin:0 0 10px; color:var(--soft); }
@@ -284,7 +291,7 @@ ${extraHead}
 </header>
 ${inner}
 <footer>
-  <a href="/">Home</a><a href="/blog">Blog</a><a href="/poems">Poems</a><a href="/learn">Learn</a><a href="/courses">Courses</a><a href="/login">Log in</a>
+  <a href="/">Home</a><a href="/blog">Blog</a><a href="/poems">Poems</a><a href="/learn">Learn</a><a href="/courses">Courses</a><a href="/podcasts">Podcasts &amp; talks</a><a href="/login">Log in</a>
   <p>© ${new Date().getUTCFullYear()} Deeper Mindfulness · Per Norrgren</p>
 </footer>
 </body>
@@ -312,6 +319,22 @@ ${inner}
     return { lead: kids.slice(0, cut).map(n => n.toString()).join('\n'), rest: kids.slice(cut).map(n => n.toString()).join('\n') };
   }
 
+  // Per App 38 (19) — Per's request: invite people to share the poems and
+  // quote the blogs, with a credit line ready to copy, so they link back.
+  function shareBox(kind, title, url) {
+    const credit = kind === 'poem' ? `"${title}" by Per Norrgren, ${url}` : `From "${title}" by Per Norrgren, ${url}`;
+    const text = kind === 'poem'
+      ? 'You are welcome to share this poem, in a newsletter, a class, a post or on your own site. Please keep it as it is, credit Per Norrgren and link to this page.'
+      : 'You are welcome to quote a short passage from this post, in a newsletter, a class or on your own site. Please credit Per Norrgren and link to this page so readers can find the rest.';
+    return `<div class="share-box">
+    <h2>${kind === 'poem' ? 'Share this poem' : 'Quote this post'}</h2>
+    <p>${text}</p>
+    <div class="credit"><span>${esc(credit)}</span><button type="button" class="copy-credit" data-credit="${esc(credit)}">Copy</button></div>
+    <p class="also">Podcast hosts and editors: <a href="/podcasts">Per is happy to talk about this</a>.</p>
+  </div>
+  <script>document.querySelectorAll('.copy-credit').forEach(function (b) { b.addEventListener('click', function () { var t = b.getAttribute('data-credit'); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1800); }).catch(function () { window.prompt('Copy this credit line:', t); }); }); });</script>`;
+  }
+
   async function renderItem(r) {
     const f = db.getLibraryFile(r.file_id);
     if (!f || f.archived) return null;
@@ -330,6 +353,7 @@ ${inner}
     <div class="byline">A poem by Per Norrgren${when ? ' · ' + esc(when) : ''}</div>
     ${article.innerHTML}
   </article>
+  ${shareBox('poem', title, urlFor(r))}
   <div class="more">
     <h2>More poems, and the practices behind them</h2>
     <p>Many of the poems can be listened to in the Deeper Mindfulness app, along with short guided practices, courses and live sessions.</p>
@@ -352,6 +376,7 @@ ${inner}
     <a class="cta" id="continueBtn" href="${links.register}">Continue reading</a>
     <p>Free with an account. No card needed.</p>
   </div>
+  ${shareBox('blog', title, urlFor(r))}
   <div class="more">
     <h2>More from Per</h2>
     <p><a href="/blog">More blogs</a> · <a href="/poems">Poems</a> · <a href="/learn">Learn</a></p>

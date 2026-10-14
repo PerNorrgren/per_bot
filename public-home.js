@@ -361,6 +361,7 @@ function render(data) {
     <a href="/learn">Learn</a>
     <a href="/blog">Blog</a>
     <a href="/poems">Poems</a>
+    <a href="/podcasts">Podcasts &amp; talks</a>
     <a href="/membership">Membership</a>
     <a href="/wired-heart">The Wired Heart</a>
     <a href="/alarm">The Alarm That Would Not Stop</a>
