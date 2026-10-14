@@ -73,7 +73,7 @@ function buildModel(data) {
   }));
   const plans = {};
   for (const p of data.plans || []) plans[p.billing_cycle] = p.price_pence;
-  return { siteUrl, live, selfPaced, meetings, plans, brand: data.brandName || 'Deeper Mindfulness', email: data.contactEmail || '' };
+  return { siteUrl, live, selfPaced, meetings, plans, brand: data.brandName || 'Deeper Mindfulness', email: data.contactEmail || 'per@deepermindfulness.org' };
 }
 
 function priceLine(plans) {
@@ -253,6 +253,7 @@ function render(data) {
     <a href="/poems">Poems</a>
     <a href="#teach">Teach</a>
     <a href="#questions">Questions</a>
+    <a href="#contact">Contact</a>
   </nav>
   <a class="login" href="/login">Log in</a>
 </header>
@@ -338,12 +339,14 @@ function render(data) {
     <p class="center"><a class="cta ghost" href="/teaching-the-felt-way">Teaching the FELT Way</a></p>
   </section>
 
-  <section aria-labelledby="about-h">
+  <section id="contact" aria-labelledby="about-h">
     <p class="eyebrow">About</p>
     <h2 id="about-h">Per Norrgren</h2>
     <div class="about">
       <p>Per is a meditation teacher, a yoga teacher and a long-term practitioner. He created the FELT·FIBRE framework, which brings traditional mindfulness together with current neuroscience. He teaches one to one and in groups, supervises other mindfulness teachers, and wrote The Wired Heart and The Alarm That Would Not Stop.</p>
+      <p>He runs courses for teams and workplaces, one-to-one sessions, and supervision for mindfulness teachers. Get in touch to talk about what you need.</p>
     </div>
+    ${m.email ? `<p class="center" style="margin-top:24px"><a class="cta" href="mailto:${esc(m.email)}?subject=${encodeURIComponent('Enquiry from deepermindfulness.org')}">Get in touch</a></p>` : ''}
   </section>
 
   <section id="questions" class="band" aria-labelledby="faq-h">
@@ -368,6 +371,7 @@ function render(data) {
     <a href="/teaching-the-felt-way">Teaching the FELT Way</a>
     <a href="/samurai">The Modern Samurai</a>
     <a href="/welcome">Why the body</a>
+    ${m.email ? `<a href="mailto:${esc(m.email)}">Contact</a>` : ''}
     <a href="/legal">Legal</a>
     <a href="/login">Log in</a>
   </nav>
