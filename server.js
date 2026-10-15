@@ -19136,6 +19136,12 @@ app.post('/api/admin/newsletters/:id/reconcile', auth.requireAuthApi(['admin']),
 });
 
 
+// Per App 38 (24) — old WordPress addresses (undated posts, course lessons,
+// events, membership pages, uploads, share and feed variants) go to the
+// closest new page. Mounted after every other route, so it only ever sees
+// addresses nothing else answered. See legacy_redirects.js.
+require('./legacy_redirects').mountLegacyRedirects(app, { db, publicPages });
+
 // instead of the request just dying silently (this was the original bug: a 54MB
 // upload via the legacy disk path would hit multer's old 50MB limit and the
 // connection would simply drop with no response at all). ──

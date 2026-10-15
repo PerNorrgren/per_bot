@@ -222,7 +222,10 @@ function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {
   app.get('/courses/', (req, res) => res.redirect(301, '/courses'));
   app.get('/courses/:slug', (req, res, next) => {
     const page = PAGES.find(p => p.slug === req.params.slug);
-    if (!page) return next();
+    // Per App 38 (24) — an old or mistyped course name (not a course id, which
+    // the app's own course overview still handles) goes to the course list
+    // instead of an empty page.
+    if (!page) return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(req.params.slug) ? next() : res.redirect(301, '/courses');
     try { const html = render(page); if (!html) return next(); res.set('Cache-Control', 'no-cache'); res.type('html').send(html); }
     catch (e) { log('[courses] page failed: ' + e.message); res.status(500).send('Sorry, this page could not be shown just now.'); }
   });
