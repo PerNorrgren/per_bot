@@ -2721,6 +2721,8 @@ app.get('/assets/bulk-import-sample.xlsx', (req, res) => res.sendFile(path.join(
 // introduced them.
 app.get('/js/dialogs.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'dialogs.js')));
 app.get('/js/call.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'js', 'call.js')));
+// Per App 38 (21) — automatic working spinner on every admin save button.
+app.get('/js/busy-buttons.js', (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, 'public', 'js', 'busy-buttons.js')); });
 // Per Bot 51 — offline caching's service worker. Must be reachable at
 // the site root (not e.g. /js/service-worker.js) — a service worker's
 // default control scope is everything at or below its own URL path, and
