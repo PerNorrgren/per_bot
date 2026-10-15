@@ -205,7 +205,12 @@ app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next
 // so on) are useful to people but not to search results: tell search
 // engines to leave them out, so the login page stops showing in Google.
 const NOINDEX_PATHS = new Set(['/login', '/register', '/reset-password', '/account', '/setup', '/staff-account', '/join', '/client-form']);
-app.use((req, res, next) => { if (NOINDEX_PATHS.has(req.path.replace(/\/+$/, '') || '/')) res.set('X-Robots-Tag', 'noindex, follow'); next(); });
+app.use((req, res, next) => {
+  // Per App 38 (24) — also anything under them, e.g. /register/monthly-subscription.
+  const p = req.path.replace(/\/+$/, '') || '/';
+  if (NOINDEX_PATHS.has(p) || [...NOINDEX_PATHS].some(x => p.startsWith(x + '/'))) res.set('X-Robots-Tag', 'noindex, follow');
+  next();
+});
 
 // ── Stripe webhook — MUST be registered before app.use(express.json()) below. ──
 // Stripe signature verification needs the exact raw request bytes; if the global
