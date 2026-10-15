@@ -91,7 +91,9 @@ async function getPlaybackUrl(key, options = {}) {
   if (options.noCache) params.ResponseCacheControl = 'no-cache, no-store, must-revalidate';
   if (options.forceUtf8) params.ResponseContentType = 'text/html; charset=utf-8';
   const cmd = new GetObjectCommand(params);
-  return getSignedUrl(client, cmd, { expiresIn: 600 });
+  // Per App 38 (22) — the free practice pages ask for longer (a 30-minute
+  // recording paused and resumed must still play); everything else keeps 10 minutes.
+  return getSignedUrl(client, cmd, { expiresIn: options.expiresIn || 600 });
 }
 
 // Cheap existence check — HEAD, not GET, so it doesn't pull the object body

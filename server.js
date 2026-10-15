@@ -201,6 +201,11 @@ app.use((req, res, next) => {
 // runs, so a route that genuinely wants caching (media with its own
 // max-age/immutable header) still overrides it by setting its own.
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+// Per App 38 (22) — app-only pages (sign in, sign up, password reset and
+// so on) are useful to people but not to search results: tell search
+// engines to leave them out, so the login page stops showing in Google.
+const NOINDEX_PATHS = new Set(['/login', '/register', '/reset-password', '/account', '/setup', '/staff-account', '/join', '/client-form']);
+app.use((req, res, next) => { if (NOINDEX_PATHS.has(req.path.replace(/\/+$/, '') || '/')) res.set('X-Robots-Tag', 'noindex, follow'); next(); });
 
 // ── Stripe webhook — MUST be registered before app.use(express.json()) below. ──
 // Stripe signature verification needs the exact raw request bytes; if the global
@@ -2766,6 +2771,12 @@ const publicPages = require('./public_pages').mountPublicPages(app, {
 const coursePages = require('./course_pages').mountCoursePages(app, {
   db, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
   contactEmail: process.env.ADMIN_EMAIL || 'per@deepermindfulness.org',
+});
+// Per App 38 (22) — free practice pages that the books and slides point
+// to: /the_alarm (The Alarm That Would Not Stop) and /felt (FELT course).
+const practicePages = require('./practice_pages').mountPracticePages(app, {
+  db, media, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
+  cleanLessonTitle: require('./course_pages').cleanLessonTitle,
 });
 // Per App 38 (14) — weekly re-publishing campaign (campaign.js): every
 // Monday a fresh opening for the next public blog and a social post for it
@@ -19187,6 +19198,7 @@ async function runPostDbBootTasks() {
     .then(() => (media.isConfigured() ? publicPages.seedOnce() : null)).catch(e => console.error('[public] first release failed:', e.message));
   try { campaign.start(); } catch (e) { console.error('[campaign] start failed:', e.message); }
   try { coursePages.syncSearch(); } catch (e) { console.error('[courses] search entries failed:', e.message); }
+  try { practicePages.syncSearch(); } catch (e) { console.error('[practice-pages] search entries failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';

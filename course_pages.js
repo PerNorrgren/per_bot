@@ -255,4 +255,4 @@ function mountCoursePages(app, { db, publicPages, seoStore, invalidate = () => {
   return { syncSearch, PAGES };
 }
 
-module.exports = { mountCoursePages, PAGES };
+module.exports = { mountCoursePages, PAGES, cleanLessonTitle };
