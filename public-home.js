@@ -107,12 +107,27 @@ function faqs(m) {
 
 // schema.org for what's on this page. The Organization, Person and WebSite
 // nodes come from the Search Visibility module, referenced here by @id.
+// Per App 38 (23) — each course in the search listing points to its public
+// course page (/courses/<name>), the page written to be found; the booking
+// address stays on the course's instances.
+const COURSE_PAGE = (() => {
+  const map = {};
+  try {
+    for (const p of require('./course_pages').PAGES) {
+      if (p.course) map[p.course] = '/courses/' + p.slug;
+      for (const o of p.options || []) map[o.course] = '/courses/' + p.slug;
+    }
+  } catch (e) { /* course pages not available: keep booking addresses */ }
+  return map;
+})();
+
 function jsonLd(m) {
   const org = { '@id': m.siteUrl + '/#organization' };
+  const pageUrl = (courseId, fallback) => m.siteUrl + (COURSE_PAGE[courseId] || fallback);
   const courses = new Map();
   for (const c of m.selfPaced) {
     courses.set(c.courseId, {
-      '@type': 'Course', name: c.title, description: c.text || c.title, url: m.siteUrl + c.url, provider: org,
+      '@type': 'Course', name: c.title, description: c.text || c.title, url: pageUrl(c.courseId, c.url), provider: org,
       hasCourseInstance: [{ '@type': 'CourseInstance', courseMode: 'online', courseWorkload: 'Self-paced', url: m.siteUrl + c.url }],
     });
   }
@@ -123,7 +138,7 @@ function jsonLd(m) {
     if (l.when) inst.courseSchedule = { '@type': 'Schedule', description: l.when };
     const existing = courses.get(l.courseId);
     if (existing) existing.hasCourseInstance.push(inst);
-    else courses.set(l.courseId, { '@type': 'Course', name: l.title, description: l.instanceTitle || l.title, url: m.siteUrl + l.url, provider: org, hasCourseInstance: [inst] });
+    else courses.set(l.courseId, { '@type': 'Course', name: l.title, description: l.instanceTitle || l.title, url: pageUrl(l.courseId, l.url), provider: org, hasCourseInstance: [inst] });
   }
   const graph = [];
   if (courses.size) {
