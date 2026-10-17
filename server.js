@@ -2784,6 +2784,29 @@ const practicePages = require('./practice_pages').mountPracticePages(app, {
   db, media, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
   cleanLessonTitle: require('./course_pages').cleanLessonTitle,
 });
+// Per App 38 (34) — /links, the page for social media bios: what the
+// current campaign links to, the newest blog / white paper / poem, books,
+// free practices and the fixed pages. Nothing is kept by hand.
+const linksPage = require('./links_page').mountLinksPage(app, {
+  db, publicPages, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
+  getContactEmail: () => ((db.getAppConfig() || {}).contact_email || ''),
+  getTagline: () => ((db.getAppConfig() || {}).tagline || ''),
+  getFeatured: () => {
+    // The first linked piece of the Message of the Day brief that has a public page.
+    const { links } = getMotdTheme();
+    const pub = publicPages.list() || [];
+    for (const l of links || []) {
+      if (l.type !== 'file') continue;
+      const r = pub.find(i => i.file_id === l.id && i.published && i.url);
+      if (!r) continue;
+      const f = db.getLibraryFile(l.id);
+      if (!f || f.archived) continue;
+      return { title: require('./public_pages').cleanTitle(f.title).replace(/\s+v\d+$/i, ''), text: r.description || '',
+        href: String(r.url).replace(/^https?:\/\/[^/]+/i, ''), tag: l.label || '' };
+    }
+    return null;
+  },
+});
 // Per App 38 (14) — weekly re-publishing campaign (campaign.js): every
 // Monday a fresh opening for the next public blog and a social post for it
 // and for the next poem, emailed to Per to approve.
@@ -19539,6 +19562,7 @@ async function runPostDbBootTasks() {
   try { campaign.start(); } catch (e) { console.error('[campaign] start failed:', e.message); }
   try { coursePages.syncSearch(); } catch (e) { console.error('[courses] search entries failed:', e.message); }
   try { practicePages.syncSearch(); } catch (e) { console.error('[practice-pages] search entries failed:', e.message); }
+  try { linksPage.syncSearch(); } catch (e) { console.error('[links] search entry failed:', e.message); }
   const adminEmail = process.env.ADMIN_EMAIL || 'per@deepermindfulness.org';
   const adminPass  = process.env.ADMIN_PASSWORD || 'changeme123';
   const adminName  = process.env.ADMIN_NAME || 'Admin';
