@@ -32,13 +32,15 @@ const { makeResolver, sweepPromoLinks } = require('./fix_blog_links');
 // the app for now.
 const STARTER_BLOGS = ["d712b7b5-9f87-4a50-a3ef-5f5637a1f4e8", "b53d3aa5-928e-45aa-b775-224397e9f49b", "b22d13b9-89c4-4cfb-8956-88c016060655", "95c1f9e6-cdf7-435e-8673-fd87c793e38b", "2b0a3863-8fff-41f2-ab96-78df5edab4f4", "50d1dca5-0e72-4411-a3a7-39517e1fd447", "66280592-a389-4116-a1c1-005f0f3192a7", "f2d69181-2061-44ab-b139-de54693237ad", "ae87d755-a72c-4c58-a437-8758dff99a1c", "e8e4402e-1ad3-4e12-9091-65371b0abe72", "fd850589-ea2d-4c84-b6d2-f58d247715a8", "9c2bd272-620d-452e-953a-101c7febd7b3", "024f8c30-39a8-4375-862c-ab811aba12a0", "789d6979-5b8e-4642-a309-0b87fe8d8cea", "95d89978-b2c7-4e9f-8b9f-172ddaf01a5a", "f44fcd14-35c9-4418-8912-1bcc0fc3b128", "30f9dc6d-0979-4d69-9147-735de09fb8ca", "b5064cff-2588-4267-b42a-653b89288445", "64c6a7eb-1ce0-4e4b-a9ec-9b5ac2891539", "008ee3b6-0823-43c4-835f-dec7fdc3e4f0", "8136110c-f6e3-40a0-9e62-69d6f9e503ce", "9b42540c-2ca4-4bc8-a2e7-48705db79fe2", "cc913bbe-1ac5-452c-b0a2-cdc2c149ee01", "c5f95477-64a4-42b5-b308-8b609e577949", "324e3691-c4b8-4d66-953a-d52925b4ac4f", "2d244b66-84ac-46c5-8e1c-c19e351bee22", "e5438f52-f47d-40a6-b595-d37235323e16", "6e311a47-2981-47bc-ad4e-b356c797175a", "6a1e561a-de0e-493a-968e-682da27fd65d", "1d86cbc7-7b20-4183-975e-182985325bee", "b1a4e8f1-5a9c-47c8-b6cd-ba54d01d6bed", "b1267393-3b44-48a5-bb61-4a96a2adccb3", "8ce8e9d2-ebd0-45d1-b8c2-aec60b657871", "cbe8fe0f-0b1c-42ff-8d5a-ff1ba62681aa", "a57abfc9-0687-4325-8ac7-8c4e21cbf0d1", "20d86f43-3ccb-41ce-a7d2-96ecafb7886b", "b2ca0d1e-421c-4934-a88b-e535904ae4be", "abad0408-67d8-439e-a93d-3961edd5bd1a", "c4fb926c-0d4a-424b-bad8-62a25e41dd32"];
 
-const KIND_PATH = { poem: 'poems', blog: 'blog' };
+const KIND_PATH = { poem: 'poems', blog: 'blog', paper: 'papers' };
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const textOf = el => (el.text || '').replace(/\s+/g, ' ').trim();
 const cleanTitle = t => String(t || '').replace(/^(blog|poem|whitepaper|news)\s*[-–:]?\s*/i, '').replace(/\s+/g, ' ').trim();
 const slugify = t => cleanTitle(t).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
-  .replace(/['’]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80).replace(/-+$/, '') || 'untitled';
-const kindOf = f => (f.content_type === 'poem' ? 'poem' : (['blog', 'whitepaper'].includes(f.content_type) ? 'blog' : null));
+  .replace(/['’]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/^(.{0,80})(-.*)?$/, '$1').slice(0, 80).replace(/-+$/, '') || 'untitled';
+// Per App 38 (26): white papers get their own section (/papers) instead of
+// sitting among the blogs.
+const kindOf = f => ({ poem: 'poem', blog: 'blog', whitepaper: 'paper' }[f.content_type] || null);
 
 function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, siteUrl, heroImg, log = console.log }) {
   const SITE = String(siteUrl || 'https://deepermindfulness.org').replace(/\/+$/, '');
@@ -95,6 +97,9 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
       const h = cleanTitle(textOf(first)).toLowerCase().replace(/[^a-z0-9]+/g, '');
       if (h && t && (h.includes(t) || t.includes(h))) first.remove();
     }
+    // A Word upload's subtitle is already part of the page title.
+    const sub = article.querySelector('p.subtitle');
+    if (sub) { const st = textOf(sub).toLowerCase().replace(/[^a-z0-9]+/g, ''); if (st && t.includes(st)) sub.remove(); }
     for (const a of article.querySelectorAll('a[href]')) {
       const m = (a.getAttribute('href') || '').match(/^(?:https?:\/\/(?:www\.)?deepermindfulness\.org)?\/client\/\?(?:.*&)?file=([\w-]+)/i);
       if (m) {
@@ -111,6 +116,8 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   function describe(article, kind) {
     const lines = [];
     for (const p of article.querySelectorAll('p')) {
+      // The standfirst under the title and byline lines are not the opening.
+      if (/\b(subtitle|meta)\b/.test(p.getAttribute('class') || '')) continue;
       const s = textOf(p);
       if (s.length > 20 && !/^(table of contents|contents)$/i.test(s)) lines.push(s);
       if (lines.join(' ').length > 220) break;
@@ -121,16 +128,19 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   }
 
   // ── Publish / unpublish ──
-  async function setPublished(fileId, on) {
+  async function setPublished(fileId, on, { defaultDate = null } = {}) {
     ensure();
     const f = db.getLibraryFile(fileId);
     if (!f) throw new Error('File not found.');
     const kind = kindOf(f);
-    if (!kind) throw new Error('Only poems and blogs can have a public page.');
+    if (!kind) throw new Error('Only poems, blogs and white papers can have a public page.');
     let r = rowFor(fileId);
     if (!r) {
-      let slug = slugify(f.title), n = 2;
-      while (db.rawAll(`SELECT 1 FROM public_items WHERE kind=? AND slug=?`, [kind, slug]).length) slug = `${slugify(f.title)}-${n++}`;
+      // "Main title: long subtitle" → the address uses the main title only.
+      const main = cleanTitle(f.title).split(/:\s/)[0];
+      const base = main.length >= 12 && main.length < cleanTitle(f.title).length ? slugify(main) : slugify(f.title);
+      let slug = base, n = 2;
+      while (db.rawAll(`SELECT 1 FROM public_items WHERE kind=? AND slug=?`, [kind, slug]).length) slug = `${base}-${n++}`;
       db.rawRun(`INSERT INTO public_items (file_id, kind, slug, published) VALUES (?, ?, ?, 0)`, [fileId, kind, slug]);
       r = rowFor(fileId);
     }
@@ -138,12 +148,13 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
       const { article, date } = prepare(await fileHtml(f), f);
       const description = describe(article, kind);
       db.rawRun(`UPDATE public_items SET published=1, description=?, published_at=COALESCE(published_at, ?), updated_at=datetime('now') WHERE file_id=?`,
-        [description, date || null, fileId]);
+        [description, date || defaultDate || null, fileId]);
     } else {
       db.rawRun(`UPDATE public_items SET published=0, updated_at=datetime('now') WHERE file_id=?`, [fileId]);
     }
     r = rowFor(fileId);
     syncSearchEntry(r, f);
+    if (on && kind === 'paper') syncIndexEntries();
     return { ...r, url: r.published ? urlFor(r) : null };
   }
 
@@ -154,7 +165,12 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
     const title = cleanTitle(f.title);
     const url = urlFor(r);
     const person = { '@type': 'Person', name: 'Per Norrgren', url: SITE };
-    const schema = r.kind === 'poem'
+    const gated = { isAccessibleForFree: false, hasPart: { '@type': 'WebPageElement', isAccessibleForFree: false, cssSelector: '.paywalled' } };
+    const schema = r.kind === 'paper'
+      ? { '@type': 'ScholarlyArticle', headline: title, name: title, description: r.description, url, mainEntityOfPage: url, author: person,
+          publisher: { '@type': 'Organization', name: 'Deeper Mindfulness', url: SITE }, inLanguage: 'en-GB',
+          datePublished: r.published_at || undefined, image: heroImg, ...gated }
+      : r.kind === 'poem'
       ? { '@type': 'CreativeWork', genre: 'Poetry', name: title, headline: title, url, author: person, inLanguage: 'en-GB',
           datePublished: r.published_at || undefined, isAccessibleForFree: true, image: heroImg }
       : { '@type': 'BlogPosting', headline: title, description: r.description, url, mainEntityOfPage: url, author: person,
@@ -164,9 +180,9 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
           hasPart: { '@type': 'WebPageElement', isAccessibleForFree: false, cssSelector: '.paywalled' } };
     seoStore.savePage({
       id: existing ? existing.id : undefined, path,
-      title: r.kind === 'poem' ? `${title}: a poem by Per Norrgren` : `${title} | Per Norrgren`,
+      title: r.kind === 'poem' ? `${title}: a poem by Per Norrgren` : r.kind === 'paper' ? `${title} | White paper, Per Norrgren` : `${title} | Per Norrgren`,
       description: r.description || '', image_url: heroImg, og_type: 'article',
-      schema_type: schema['@type'], schema_json: JSON.stringify(schema), in_sitemap: 1, in_llms: 1, priority: r.kind === 'blog' ? 0.7 : 0.6,
+      schema_type: schema['@type'], schema_json: JSON.stringify(schema), in_sitemap: 1, in_llms: 1, priority: r.kind === 'poem' ? 0.6 : 0.7,
     });
     invalidate();
   }
@@ -191,7 +207,10 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
     for (const [path, title, description] of [
       ['/poems', 'Poems by Per Norrgren', 'Poems by Per Norrgren on stillness, the body, kindness and coming home to the present moment.'],
       ['/blog', 'Blog: Per Norrgren on the body, the mind and how they settle', 'Writing by Per Norrgren on why the body stays on alert, how emotions are made, and small practices that help.'],
+      ['/papers', 'White papers by Per Norrgren', 'White papers by Per Norrgren on the nervous system, rest, attention and the FELT·FIBRE approach, with the research behind them.'],
     ]) {
+      // The papers list goes into search only once there is a paper on it.
+      if (path === '/papers' && !publishedRows('paper').length) continue;
       const existing = seoStore.listPages().find(p => p.path === path);
       if (existing) continue;
       seoStore.savePage({ path, title, description, image_url: heroImg, og_type: 'website', schema_type: 'CollectionPage',
@@ -227,6 +246,14 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   article .wp-block-yoast-seo-table-of-contents h2 { margin:0 0 6px; font-size:16px; letter-spacing:0.06em; text-transform:uppercase; color:var(--faint); }
   article .wp-block-yoast-seo-table-of-contents li, article .wp-block-rank-math-toc-block li { font-size:15px; }
   .poem p { font-size:19px; color:var(--ink); }
+  article p.subtitle { font-size:21px; color:var(--ink); font-style:italic; margin:-4px 0 26px; }
+  article aside.note { margin:26px 0; padding:16px 20px; border-radius:14px; background:var(--card); border:1px solid var(--card-line); border-left:3px solid var(--mint-line); }
+  article aside.note p { font-size:16px; margin:0 0 8px; } article aside.note p:last-child { margin:0; }
+  article .table-wrap { overflow-x:auto; margin:24px 0; }
+  article table { border-collapse:collapse; font-size:15px; color:var(--soft); }
+  article td, article th { border:1px solid var(--card-line); padding:8px 10px; vertical-align:top; }
+  article td p, article th p { font-size:15px; margin:0 0 6px; }
+  article h4 { font-weight:normal; font-size:19px; margin:30px 0 10px; color:var(--ink); }
   .paywalled { position:relative; max-height:240px; overflow:hidden; }
   .paywalled::after { content:''; position:absolute; left:0; right:0; bottom:0; height:200px; background:linear-gradient(to bottom, rgba(10,15,13,0), var(--bg)); }
   .gate { text-align:center; margin:6px 0 10px; }
@@ -260,7 +287,7 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   .gate-card .cta { display:block; margin:10px 0 0; }
   .gate-close { position:absolute; top:10px; right:14px; background:none; border:0; color:var(--faint); font-size:26px; cursor:pointer; }
   footer { border-top:1px solid var(--card-line); padding:36px 20px 52px; text-align:center; color:var(--faint); font-size:14px; }
-  footer a { color:var(--soft); text-decoration:none; margin:0 10px; }
+  footer a { color:var(--soft); text-decoration:none; margin:4px 10px; display:inline-block; }
   @media (max-width:760px) { nav.links { display:none; } article p, article li { font-size:17px; } }
   `;
 
@@ -284,6 +311,7 @@ ${extraHead}
     <a href="/courses">Courses</a>
     <a href="/blog">Blog</a>
     <a href="/poems">Poems</a>
+    <a href="/papers">Papers</a>
     <a href="/learn">Learn</a>
     <a href="/#app">The app</a>
   </nav>
@@ -291,7 +319,7 @@ ${extraHead}
 </header>
 ${inner}
 <footer>
-  <a href="/">Home</a><a href="/blog">Blog</a><a href="/poems">Poems</a><a href="/learn">Learn</a><a href="/courses">Courses</a><a href="/podcasts">Podcasts &amp; talks</a><a href="/login">Log in</a>
+  <a href="/">Home</a><a href="/blog">Blog</a><a href="/poems">Poems</a><a href="/papers">Papers</a><a href="/learn">Learn</a><a href="/courses">Courses</a><a href="/podcasts">Podcasts &amp; talks</a><a href="/login">Log in</a>
   <p>© ${new Date().getUTCFullYear()} Deeper Mindfulness · Per Norrgren</p>
 </footer>
 </body>
@@ -321,13 +349,17 @@ ${inner}
 
   // Per App 38 (19) — Per's request: invite people to share the poems and
   // quote the blogs, with a credit line ready to copy, so they link back.
-  function shareBox(kind, title, url) {
-    const credit = kind === 'poem' ? `"${title}" by Per Norrgren, ${url}` : `From "${title}" by Per Norrgren, ${url}`;
+  function shareBox(kind, title, url, year) {
+    const credit = kind === 'poem' ? `"${title}" by Per Norrgren, ${url}`
+      : kind === 'paper' ? `Norrgren, P. (${year || new Date().getUTCFullYear()}). ${title}. Deeper Mindfulness. ${url}`
+      : `From "${title}" by Per Norrgren, ${url}`;
     const text = kind === 'poem'
       ? 'You are welcome to share this poem, in a newsletter, a class, a post or on your own site. Please keep it as it is, credit Per Norrgren and link to this page.'
+      : kind === 'paper'
+      ? 'You are welcome to cite this paper and quote short passages, in teaching, writing or research. Please use the reference below and link to this page.'
       : 'You are welcome to quote a short passage from this post, in a newsletter, a class or on your own site. Please credit Per Norrgren and link to this page so readers can find the rest.';
     return `<div class="share-box">
-    <h2>${kind === 'poem' ? 'Share this poem' : 'Quote this post'}</h2>
+    <h2>${kind === 'poem' ? 'Share this poem' : kind === 'paper' ? 'Cite this paper' : 'Quote this post'}</h2>
     <p>${text}</p>
     <div class="credit"><span>${esc(credit)}</span><button type="button" class="copy-credit" data-credit="${esc(credit)}">Copy</button></div>
     <p class="also">Podcast hosts and editors: <a href="/podcasts">Per is happy to talk about this</a>.</p>
@@ -364,11 +396,13 @@ ${inner}
     }
     const { lead, rest } = split(article, words);
     const minutes = Math.max(2, Math.round(words / 220));
-    return shell(`${title} | Per Norrgren`, r.description || '', `<main>
-  <div class="crumbs"><a href="/">Home</a> · <a href="/blog">Blog</a></div>
+    const paper = r.kind === 'paper';
+    const year = String(date || r.published_at || '').slice(0, 4);
+    return shell(paper ? `${title} | White paper, Per Norrgren` : `${title} | Per Norrgren`, r.description || '', `<main>
+  <div class="crumbs"><a href="/">Home</a> · ${paper ? '<a href="/papers">White papers</a>' : '<a href="/blog">Blog</a>'}</div>
   <article>
     <h1>${esc(title)}</h1>
-    <div class="byline">Per Norrgren${when ? ' · ' + esc(when) : ''}${updated ? ' · updated ' + esc(updated) : ''} · ${minutes} minute read</div>
+    <div class="byline">${paper ? 'White paper · ' : ''}Per Norrgren${when ? ' · ' + esc(when) : ''}${updated ? ' · updated ' + esc(updated) : ''} · ${minutes} minute read</div>
     ${lead}
     <div class="paywalled">${rest}</div>
   </article>
@@ -376,17 +410,17 @@ ${inner}
     <a class="cta" id="continueBtn" href="${links.register}">Continue reading</a>
     <p>Free with an account. No card needed.</p>
   </div>
-  ${shareBox('blog', title, urlFor(r))}
+  ${shareBox(r.kind, title, urlFor(r), year)}
   <div class="more">
     <h2>More from Per</h2>
-    <p><a href="/blog">More blogs</a> · <a href="/poems">Poems</a> · <a href="/learn">Learn</a></p>
+    <p>${paper ? '<a href="/papers">More white papers</a> · <a href="/blog">Blog</a>' : '<a href="/blog">More blogs</a>'} · <a href="/poems">Poems</a> · <a href="/learn">Learn</a></p>
   </div>
 </main>
 <div class="gate-modal" id="gateModal" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
   <div class="gate-card">
     <button class="gate-close" id="gateClose" aria-label="Close">×</button>
     <h2 id="gateTitle">Read the rest, free</h2>
-    <p>Create a free account, or log in, and this post opens in the Deeper Mindfulness app, with the practices, courses and live sessions that go with it.</p>
+    <p>Create a free account, or log in, and this ${paper ? 'paper' : 'post'} opens in the Deeper Mindfulness app, with the practices, courses and live sessions that go with it.</p>
     <a class="cta" href="${links.register}">Create a free account</a>
     <a class="cta ghost" href="${links.login}">Log in</a>
   </div>
@@ -410,6 +444,13 @@ ${inner}
       return `<a class="item" href="${pathFor(r)}"><h2>${esc(cleanTitle(f.title))}</h2><p>${esc(r.description || '')}</p></a>`;
     }).join('\n');
     const isPoem = kind === 'poem';
+    if (kind === 'paper') return shell('White papers | Per Norrgren', 'White papers by Per Norrgren on the nervous system, rest, attention and the FELT·FIBRE approach.', `<main>
+  <div class="crumbs"><a href="/">Home</a></div>
+  <h1>White papers</h1>
+  <p style="color:var(--soft);font-size:18px">The research behind the practices: what is established, what is emerging and what is still to be tested, written for clinicians, teachers and curious readers.</p>
+  <div class="list">${items || '<p>Nothing here yet.</p>'}</div>
+  <div class="more"><p><a class="cta" href="/register?src=papers-index">Try the app free</a></p></div>
+</main>`);
     return shell(isPoem ? 'Poems by Per Norrgren' : 'Blog | Per Norrgren',
       isPoem ? 'Poems by Per Norrgren.' : 'Writing by Per Norrgren on the body, the mind and how they settle.', `<main>
   <div class="crumbs"><a href="/">Home</a></div>
@@ -423,14 +464,16 @@ ${inner}
   }
 
   // ── Routes ──
-  app.get(['/poems', '/blog'], (req, res) => {
-    try { res.set('Cache-Control', 'no-cache'); res.type('html').send(renderIndex(req.path === '/poems' ? 'poem' : 'blog')); }
+  const kindForPath = p => (p.startsWith('/poems') ? 'poem' : p.startsWith('/papers') ? 'paper' : 'blog');
+  app.get(['/poems', '/blog', '/papers'], (req, res) => {
+    try { res.set('Cache-Control', 'no-cache'); res.type('html').send(renderIndex(kindForPath(req.path))); }
     catch (e) { log('[public] index failed: ' + e.message); res.status(500).send('Sorry, this page could not be shown just now.'); }
   });
-  app.get(['/poems/', '/blog/'], (req, res) => res.redirect(301, req.path.replace(/\/$/, '')));
-  app.get(['/poems/:slug', '/blog/:slug'], async (req, res, next) => {
+  app.get(['/poems/', '/blog/', '/papers/'], (req, res) => res.redirect(301, req.path.replace(/\/$/, '')));
+  app.get(['/white-papers', '/whitepapers'], (req, res) => res.redirect(301, '/papers'));
+  app.get(['/poems/:slug', '/blog/:slug', '/papers/:slug'], async (req, res, next) => {
     try {
-      const kind = req.path.startsWith('/poems/') ? 'poem' : 'blog';
+      const kind = kindForPath(req.path);
       const r = rowBySlug(kind, req.params.slug);
       if (!r) return next();
       const html = await renderItem(r);

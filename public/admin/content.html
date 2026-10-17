@@ -3460,6 +3460,8 @@ async function uploadOneFile(it, cat, sub) {
     // auto-course grouping.
     const legacyData = await res.json().catch(()=>({}));
     it.fileId = legacyData.id || null;
+    it.publicUrl = legacyData.publicUrl || null;
+    it.savedTitle = legacyData.title || title;
     return;
   }
 
@@ -3503,6 +3505,9 @@ async function uploadOneFile(it, cat, sub) {
   // by id, not just by name.
   const savedData = await confirmRes.json().catch(()=>({}));
   it.fileId = savedData.id || null;
+  // Per App 38 (26) — blogs and white papers get their public page at once.
+  it.publicUrl = savedData.publicUrl || null;
+  it.savedTitle = savedData.title || title;
 }
 
 // Opens a library file in a new tab. Asks the server for a playback URL rather than
@@ -4217,6 +4222,16 @@ function showUploadCompletionModal() {
     bodyEl.textContent = toCourse
       ? `Loaded ${st.done}/${st.total} in ${elapsed}. They're in the Library, but not in the course yet — next, check how they'll be grouped into lessons.`
       : `Loaded ${st.done}/${st.total} in ${elapsed}.`;
+    // Per App 38 (26) — blogs and white papers that now have a public page.
+    const pub = upQueue.filter(it => it.done && it.publicUrl);
+    if (pub.length) {
+      _publicMap = null;
+      const box = document.createElement('div');
+      box.style.cssText = 'margin-top:14px;font-size:13px;line-height:1.6';
+      box.innerHTML = '<div style="color:rgba(180,230,200,0.95);margin-bottom:4px">🌐 Now on the website, and sent to Google’s sitemap:</div>' +
+        pub.map(it => `<div><a href="${escHtml(it.publicUrl)}" target="_blank" rel="noopener" style="color:rgba(180,230,200,0.95)">${escHtml(it.savedTitle || it.publicUrl)}</a></div>`).join('');
+      bodyEl.appendChild(box);
+    }
     btnsEl.innerHTML = toCourse
       ? '<button class="modal-ok" onclick="closeUploadCompletionModal(true)">Next — organise into lessons</button>'
       : '<button class="modal-ok" onclick="closeUploadCompletionModal(true)">Close</button>';

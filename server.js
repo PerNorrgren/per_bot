@@ -2769,6 +2769,7 @@ const learn = require('./learn');
 learn.mount(app);
 // Per App 38 (14) — public pages for poems (/poems/…) and blogs (/blog/…),
 // with old WordPress post addresses sent to them. See public_pages.js.
+const articleUpload = require('./article_upload');
 const publicPages = require('./public_pages').mountPublicPages(app, {
   db, media, seoStore: seoApi.store, invalidate: seoApi.invalidate, siteUrl: SEO_SITE, heroImg: SEO_HERO_IMG,
 });
@@ -11863,15 +11864,23 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
           console.error('[pptx-to-slides] Path A conversion attempt failed, falling back to raw pptx:', e.message);
         }
       }
+      // Per App 38 (26) — a blog or white paper sent as a Word file becomes
+      // an HTML article (what the app's reader shows), titled from the document.
+      let finalTitle = title.trim(), finalDescription = req.body.description || '', finalSize = parseInt(req.body.fileSize) || 0;
+      const art = await articleUpload.convertIfWordArticle({ media, uuid: uuidv4, contentKind, contentType: uploadedContentType,
+        originalName: req.body.originalName, title: finalTitle, key: req.body.r2Key });
+      if (art) { mainFilename = art.key; mainContentType = art.contentType; finalTitle = art.title; finalSize = art.size; if (!finalDescription && art.subtitle) finalDescription = art.subtitle; }
       db.addLibraryFile(
-        id, title.trim(), req.body.description || '', mainFilename, req.body.originalName || req.body.r2Key,
-        mainContentType, parseInt(req.body.fileSize) || 0,
+        id, finalTitle, finalDescription, mainFilename, req.body.originalName || req.body.r2Key,
+        mainContentType, finalSize,
         categoryId, subcategoryId || null, visibility || 'client', 'r2', facilitatorResource,
         contentKind, externalLink, assignedClientId
       );
       if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
       tags.forEach(t => db.addFileTag(id, t));
-      return res.json({ id });
+      // …and gets its public page on the website straight away.
+      const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, fileType: mainContentType, assignedClientId, facilitatorResource });
+      return res.json({ id, publicUrl, title: finalTitle });
     }
 
     // Path B — legacy direct-to-disk upload, kept for now so nothing breaks mid-migration.
@@ -11903,10 +11912,19 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
         console.error('[pptx-to-slides] Path B conversion attempt failed, falling back to raw pptx:', e.message);
       }
     }
-    db.addLibraryFile(id, title.trim(), req.body.description || '', mainFilename, req.file.originalname, mainContentType, req.file.size, categoryId, subcategoryId || null, visibility || 'client', mainStorageType, facilitatorResource, contentKind, externalLink, assignedClientId);
+    let finalTitle = title.trim(), finalDescription = req.body.description || '', finalSize = req.file.size;
+    const art = await articleUpload.convertIfWordArticle({ media, uuid: uuidv4, contentKind, contentType: req.file.mimetype,
+      originalName: req.file.originalname, title: finalTitle, buffer: fs.readFileSync(req.file.path) });
+    if (art) {
+      fs.unlink(req.file.path, () => {});
+      mainFilename = art.key; mainContentType = art.contentType; mainStorageType = 'r2'; finalTitle = art.title; finalSize = art.size;
+      if (!finalDescription && art.subtitle) finalDescription = art.subtitle;
+    }
+    db.addLibraryFile(id, finalTitle, finalDescription, mainFilename, req.file.originalname, mainContentType, finalSize, categoryId, subcategoryId || null, visibility || 'client', mainStorageType, facilitatorResource, contentKind, externalLink, assignedClientId);
     if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
     tags.forEach(t => db.addFileTag(id, t));
-    res.json({ id });
+    const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, fileType: mainContentType, assignedClientId, facilitatorResource });
+    res.json({ id, publicUrl, title: finalTitle });
   } catch (e) {
     console.error('library upload error:', e.message);
     res.status(500).json({ error: e.message });
@@ -13261,6 +13279,16 @@ function maybeReunpackReplacedEpub(fileId, mainContentType) {
     .catch(e => console.error('[replace-file re-unpack] failed:', e.message));
   return true;
 }
+// Per App 38 (26) — a replaced blog, poem or white paper that already has a
+// public page gets its description and Search entry refreshed.
+async function refreshPublicPage(fileId) {
+  try {
+    const r = publicPages.list().find(i => i.file_id === fileId && i.published);
+    if (!r) return null;
+    const item = await publicPages.setPublished(fileId, true);
+    return item && item.url || null;
+  } catch (e) { console.error('[replace-file] public page refresh failed:', e.message); return null; }
+}
 app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin']), upload.single('file'), async (req, res) => {
   try {
     const file = db.getLibraryFile(req.params.id);
@@ -13295,11 +13323,16 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
           console.error('[replace-file pdf conversion] Path A conversion attempt failed, falling back to PDF:', e.message);
         }
       }
-      const fileSize = Number(req.body.fileSize) || 0;
+      let fileSize = Number(req.body.fileSize) || 0;
       const originalName = req.body.originalName || key;
+      // Per App 38 (26) — a new Word version of a blog or white paper.
+      const art = await articleUpload.convertIfWordArticle({ media, uuid: uuidv4, contentKind: file.content_type, contentType: uploadedContentType,
+        originalName, title: file.title, key });
+      if (art) { mainFilename = art.key; mainContentType = art.contentType; fileSize = art.size; }
       db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, fileSize, originalName, 'r2', originalPdfKey);
       const unpacking = maybeReunpackReplacedEpub(file.id, mainContentType);
-      return res.json({ ok: true, unpacking });
+      const publicUrl = await refreshPublicPage(file.id);
+      return res.json({ ok: true, unpacking, publicUrl });
     }
 
     // Path B — legacy fallback: presign failed, or an older client.
@@ -13325,6 +13358,11 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
       }
     }
     if (!mainFilename) {
+      const art = await articleUpload.convertIfWordArticle({ media, uuid: uuidv4, contentKind: file.content_type, contentType: req.file.mimetype,
+        originalName: req.file.originalname, title: file.title, buffer: newBuffer });
+      if (art) { mainFilename = art.key; mainContentType = art.contentType; req.file.size = art.size; }
+    }
+    if (!mainFilename) {
       // Not a PDF, or conversion wasn't viable (e.g. a scanned PDF with
       // no real text layer) — stored as-is, same as any other plain
       // library upload.
@@ -13337,7 +13375,8 @@ app.post('/api/content/library/:id/replace-file', auth.requireAuthApi(['admin'])
 
     db.replaceLibraryFileContent(file.id, mainFilename, mainContentType, req.file.size, req.file.originalname, 'r2', originalPdfKey);
     const unpacking = maybeReunpackReplacedEpub(file.id, mainContentType);
-    res.json({ ok: true, unpacking });
+    const publicUrl = await refreshPublicPage(file.id);
+    res.json({ ok: true, unpacking, publicUrl });
   } catch (e) {
     console.error('[replace-file]', e.message);
     res.status(500).json({ error: 'Could not replace this file — please try again.' });

@@ -40,6 +40,7 @@ const FIXED = {
   'courses': '/courses', 'courses-4': '/courses', 'events': '/courses', 'event': '/courses', 'series': '/courses', 'organiser': '/courses',
   'felt': '/felt', 'felt-calm': '/felt', '1-existential-safety': '/felt',
   'mare': 'https://mare.deepermindfulness.org/',
+  'wellbeing-gratitude': '/blog', 'meditation-timer-3': '/register',
   'meditation-timer-background-and-bells': '/register', 'meditation-player': '/register', 'meditations-3': '/register',
   'what-to-practice-v3': '/learn', 'attuned-breath-coach-abc-v2': '/learn', 'self-compassionate-touch': '/learn',
   'emotional-complexes': '/learn', 'feltfibre_paper_1': '/learn', 'mmpm-white-papers': '/learn',
