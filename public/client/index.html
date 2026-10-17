@@ -1328,6 +1328,8 @@
         <div id="activitySummary" style="display:none; font-size:12px; color:rgba(180,230,200,0.84); margin-bottom:-13px; margin-top:4px;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15);"></div>
         <div id="calmMotdText" style="font-size:16px; line-height:1.7; color:rgba(255,255,255,0.96); font-style:italic; max-width:480px; width:100%; margin:14px auto 0; text-align:center;">—</div>
+        <!-- Per App 38 (33) — "From the blog: … →" when today's message drew on a piece -->
+        <div id="calmMotdFrom" style="display:none; font-size:13px; line-height:1.6; color:rgba(180,230,200,0.8); max-width:480px; width:100%; margin:-4px auto 0; text-align:center;"></div>
         <div style="width:60px; height:1px; background:rgba(255,255,255,0.15); margin-bottom:-13px;"></div>
         <div style="width:100%; max-width:420px; margin:0 auto; text-align:center;">
           <!-- Per Bot 24 — "What's New" home promo (item 11), replacing
@@ -8197,6 +8199,17 @@
     window.open(m.meeting_url, '_blank');
   }
 
+  function renderCalmMotdFrom(links) {
+    const el = document.getElementById('calmMotdFrom');
+    if (!el) return;
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    if (!links.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.innerHTML = links.map(l => {
+      const inApp = /\/client\/\?file=/.test(l.url || '');
+      return `<div>${esc(l.words)}: <a href="${esc(l.url)}"${inApp ? '' : ' target="_blank" rel="noopener"'} style="color:rgba(180,230,200,0.95)">${esc(l.title)}</a> →</div>`;
+    }).join('');
+    el.style.display = '';
+  }
   async function loadCalmLandingContent() {
     try {
       const account = await getFullAccount();
@@ -8209,6 +8222,7 @@
       if (Array.isArray(list) && list.length) {
         document.getElementById('calmMotdText').textContent = list[0].body;
         try { localStorage.setItem('dm_motd_cache', list[0].body); } catch (e) {}
+        renderCalmMotdFrom(list[0].links || []);
       }
     } catch(e) {
       // Per's report — this went blank offline instead of showing what

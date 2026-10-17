@@ -996,8 +996,7 @@
     // Per App 38 (29) — opts.aiPolishAllowEmpty: an editor whose AI Help can
     // write from nothing (the Message of the Day theme, from what it's linked to).
     const eo = (containerId && editorOpts[containerId]) || {};
-    const allowEmpty = typeof eo.aiPolishAllowEmpty === 'function' ? !!eo.aiPolishAllowEmpty() : !!eo.aiPolishAllowEmpty; // (32) may depend on links
-    if (!q.getText().trim() && !allowEmpty) { window.appAlert('Write something first.'); return; }
+    // (33) the empty-box check moved to Generate: with an instruction, AI Help can write from nothing.
     if (!panel) { // fallback for any editor instance that somehow has no panel (shouldn't happen — see mountRich)
       window.appAlert('Could not open AI Help here — please try reloading the page.');
       return;
@@ -1014,11 +1013,29 @@
     // where they're looking, regardless of how long the message is or
     // where in it they clicked from.
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    startAiPolish(containerId);
+    // Per App 38 (33) — Per's request: AI Help no longer starts the moment
+    // it's pressed. The panel opens with a box for what he wants, and
+    // nothing runs until he presses Generate (or Enter in that box).
+    document.getElementById(`${containerId}_polishRetry`).style.display = 'none';
+    document.getElementById(`${containerId}_polishInsert`).style.display = 'none';
+    document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.45);font-style:italic">Say what you'd like above if you want to (shorter, warmer, for beginners, about sleep…), then press Generate.</span>`;
+    const ins = document.getElementById(`${containerId}_polishInstr`);
+    if (ins) setTimeout(() => ins.focus(), 0);
   }
   async function startAiPolish(containerId) {
     const st = aiPolishState[containerId];
-    if (!st) return;
+    if (!st || st.running) return;
+    const eo0 = editorOpts[containerId] || {};
+    st.html = st.q.root.innerHTML; // what's in the editor now, not when the panel opened
+    const instruction = ((document.getElementById(`${containerId}_polishInstr`) || {}).value || '').trim();
+    const allowEmpty = typeof eo0.aiPolishAllowEmpty === 'function' ? !!eo0.aiPolishAllowEmpty() : !!eo0.aiPolishAllowEmpty;
+    if (!st.q.getText().trim() && !allowEmpty && !instruction) {
+      document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,120,100,0.85)">Write something first, or say above what you'd like written.</span>`;
+      return;
+    }
+    const goBtn = document.getElementById(`${containerId}_polishGo`);
+    st.running = true;
+    if (goBtn) { if (typeof window.setBtnLoading === 'function') window.setBtnLoading(goBtn, true, 'Generating…'); else { goBtn.disabled = true; goBtn.textContent = 'Generating…'; } }
     document.getElementById(`${containerId}_polishRetry`).style.display = 'none';
     document.getElementById(`${containerId}_polishInsert`).style.display = 'none';
     // Per App 38 (29) — opts.aiPolishEndpoint / opts.aiPolishBody let one
@@ -1029,7 +1046,7 @@
     document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">${working}</span>`;
     try {
       const extra = typeof eo.aiPolishBody === 'function' ? (eo.aiPolishBody() || {}) : {};
-      const res = await fetch(eo.aiPolishEndpoint || '/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ html: st.html, marketingContext: st.marketingContext }, extra)) });
+      const res = await fetch(eo.aiPolishEndpoint || '/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ html: st.html, marketingContext: st.marketingContext, instruction }, extra)) });
       const data = await res.json();
       if (!res.ok || !data.html) throw new Error(data.error || 'Could not get a suggestion right now.');
       st.result = data.html;
@@ -1039,6 +1056,9 @@
     } catch (e) {
       document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,120,100,0.85)">${e.message || 'Something went wrong — please try again.'}</span>`;
       document.getElementById(`${containerId}_polishRetry`).style.display = '';
+    } finally {
+      st.running = false;
+      if (goBtn) { if (typeof window.setBtnLoading === 'function') window.setBtnLoading(goBtn, false); else { goBtn.disabled = false; goBtn.textContent = 'Generate'; } }
     }
   }
   function retryAiPolish(containerId) { startAiPolish(containerId); }
@@ -1491,6 +1511,11 @@
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <strong style="font-size:12px;color:rgba(255,255,255,0.7)">✨ AI Help</strong>
           <button type="button" onclick="MessageEditor.closeAiPolishPreview('${containerId}')" style="background:none;border:none;color:rgba(255,255,255,0.4);cursor:pointer;font-size:16px;line-height:1">×</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input type="text" id="${containerId}_polishInstr" placeholder="What would you like? (optional)" style="flex:1;font-size:12px"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();MessageEditor.retryAiPolish('${containerId}');}"/>
+          <button type="button" class="btn sm primary" id="${containerId}_polishGo" onclick="MessageEditor.retryAiPolish('${containerId}')">Generate</button>
         </div>
         <div class="me-ai-body" id="${containerId}_polishBody"></div>
         <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">

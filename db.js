@@ -3400,6 +3400,10 @@ async function getDb() {
     // practices, lessons, courses): JSON [{type,id,title,label}]. Their
     // text is given to the batch so the messages draw on them.
     "ALTER TABLE app_config ADD COLUMN motd_theme_links TEXT DEFAULT NULL",
+    // Per App 38 (33) — the pieces a generated message drew on: JSON
+    // [{type,id,title,label}]. The email and the home screen show a
+    // "From the blog: … →" line under the stanza for each.
+    "ALTER TABLE messages_of_the_day ADD COLUMN source_links TEXT DEFAULT NULL",
     // Per's request — free preview limits are now configurable per
     // course/lesson/file (preview_configs, see the table below), not a
     // single hardcoded 180s for every file everywhere. Since the same
@@ -9414,6 +9418,9 @@ function getAllMotd(statusFilter) {
 function approveMotd(id) {
   getDbSync().run("UPDATE messages_of_the_day SET status='approved' WHERE id=?", [id]); save();
 }
+function setMotdSourceLinks(id, json) {
+  getDbSync().run('UPDATE messages_of_the_day SET source_links=? WHERE id=?', [json || null, id]); save();
+}
 function updateMotd(id, body, scheduledDate) {
   getDbSync().run('UPDATE messages_of_the_day SET body=?,scheduled_date=? WHERE id=?', [body, scheduledDate||null, id]); save();
 }
@@ -11919,7 +11926,7 @@ module.exports = {
   // Signal lines (Per Bot 17 phase 6)
   getAllSignalLines, getActiveSignalLines, getRandomActiveSignalLine, createSignalLine, updateSignalLine, deleteSignalLine,
   // MOTD
-  addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd,
+  addMotd, getMotd, getAllMotd, approveMotd, updateMotd, deleteMotd, setMotdSourceLinks,
   markMotdSent, countApprovedMotd, getNextMotdToSend, getMotdRecipients,
   getActiveMotdForDate, getStaleActiveMotd, activateMotd, getMotdNotificationCandidates, markMotdSentForUser,
   addNewsletter, getNewsletter, getAllNewsletters, updateNewsletter, deleteNewsletterDraft, markNewsletterSent, updateNewsletterStatus, getNewsletterRecipients,

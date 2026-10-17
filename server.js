@@ -8206,7 +8206,8 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     // Per App 38 (32) — the newsletter editor can send linked pieces
     // (blogs, white papers, practices, lessons, courses). Admin only.
     const links = (req.user && req.user.role === 'admin') ? cleanMotdLinks(req.body.links) : [];
-    if (!plain && !links.length) return res.status(400).json({ error: 'Write something first, or link a blog, white paper, practice or lesson.' });
+    const instruction = String(req.body.instruction || '').trim().slice(0, 1000); // (33) what Per asked for in the AI Help box
+    if (!plain && !links.length && !instruction) return res.status(400).json({ error: 'Write something first, say above what you would like, or link a blog, white paper, practice or lesson.' });
     const b = brand();
     const language = getAdminLanguage();
     // Per App 32 — this endpoint is shared by every rich editor in the
@@ -8245,6 +8246,11 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     // thrown error here means that replace never happens and the
     // person's original message is left untouched; a truncated .html
     // used to mean it got silently overwritten and lost.
+    if (instruction) {
+      systemPrompt += `\n\nPER'S REQUEST FOR THIS VERSION (follow it; it overrides the general guidance above where they differ, but never the rule to output only the message HTML): ${instruction}` +
+        (!plain && !links.length ? `\nThe message is empty: write it from this request. Use simple HTML only (<p>, <h2>, <strong>, <em>, <a>, <ul>, <li>).` : '');
+      if (!plain && !links.length) userContent = '<p></p>' + (marketingContext ? getCurrentTrendBlock() : '');
+    }
     if (links.length) {
       const sources = await motdSourcesText(links);
       const linkList = links.map(l => `- ${l.label || l.type}: "${l.title}" — ${linkPublicUrl(l)}`).join('\n');
@@ -8255,8 +8261,9 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
       const reply = await anthropicFetch(systemPrompt, [{ role: 'user', content: userContent }], 8000, 90000, true);
       return res.json({ html: String(reply || '').trim() });
     }
-    const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userContent }], 6000, true);
-    res.json({ html: reply.trim() });
+    // (33) 90s rather than 25s: writing a whole newsletter from a request can take longer.
+    const reply = await anthropicFetch(systemPrompt, [{ role: 'user', content: userContent }], 6000, 90000, true);
+    res.json({ html: String(reply || '').trim() });
   } catch(e) {
     console.error('ai-polish error:', e.message);
     res.status(500).json({ error: 'Could not get a suggestion right now. Please try again.' });
@@ -16832,7 +16839,8 @@ app.get('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
     const messages = db.getAllMotd(status || null);
     const approvedCount = db.countApprovedMotd();
     const { html: theme, links: themeLinks } = getMotdTheme();
-    res.json({ messages, approvedCount, lowStock: approvedCount <= 5, theme, themeLinks });
+    const withLinks = messages.map(m => ({ ...m, links: motdLinksFor(m) })); // (33)
+    res.json({ messages: withLinks, approvedCount, lowStock: approvedCount <= 5, theme, themeLinks });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -16998,14 +17006,16 @@ app.post('/api/admin/motd/theme-help', auth.requireAuthApi(['admin']), async (re
   try {
     const current = htmlToText(String(req.body?.html || ''));
     const links = cleanMotdLinks(req.body?.links);
-    if (!current && !links.length) return res.status(400).json({ error: 'Write a few words, or link a blog, practice or lesson first.' });
+    const instruction = String(req.body?.instruction || '').trim().slice(0, 1000); // (33)
+    if (!current && !links.length && !instruction) return res.status(400).json({ error: 'Write a few words, say what you would like above, or link a blog, practice or lesson first.' });
     const sources = await motdSourcesText(links);
-    const system = `You help Per Norrgren of Deeper Mindfulness set the theme for a batch of "Message of the Day" pieces: short five-line stanzas sent daily, rooted in the body and the nervous system (the FELT·FIBRE way: settling, grounding, breath, warmth, belonging, feeling enough). The theme you write is a brief for that writer, not something readers see.
+    const system = `You help Per Norrgren of Deeper Mindfulness set the theme for a batch of "Message of the Day" pieces: short five-line stanzas sent daily, rooted in the body and the nervous system (the FELT·FIBRE way: settling, grounding, breath, warmth, belonging, feeling enough). What you write is the brief for that writer, not something readers see. Per's box may hold a theme, instructions on what and how to write, a sample message of his own, or a mix; keep whatever kind it is and make it clearer and more useful.
 
-Write the theme as two to four short sentences in plain words: what the series is about, the feeling or shift it moves toward, and a few concrete body-based ways in (a movement, a sensation, a moment in the day). If source material is given, draw the theme and the ways in from it, in your own words. Keep Per's own idea and wording where he gave one; sharpen it, don't replace it. No clinical or framework terms (never "brake", "Moro", "prior", "vagal"), no religious or spiritual language, nothing tied to one country or season.
+If it is a theme, write it as two to four short sentences in plain words: what the series is about, the feeling or shift it moves toward, and a few concrete body-based ways in (a movement, a sensation, a moment in the day). If source material is given, draw the theme and the ways in from it, in your own words. Keep Per's own idea and wording where he gave one; sharpen it, don't replace it. No clinical or framework terms (never "brake", "Moro", "prior", "vagal"), no religious or spiritual language, nothing tied to one country or season.
 
 Reply with only the theme text, no heading, no quotes, no preamble.`;
-    const user = (current ? `Per's theme so far:\n${current}\n\n` : 'Per has not written a theme yet. Write one from the source material.\n\n') +
+    const user = (instruction ? `Per's request for this version: ${instruction}\n\n` : '') +
+      (current ? `Per's brief so far:\n${current}\n\n` : (links.length ? 'Per has not written a brief yet. Write a theme from the source material.\n\n' : 'Per has not written a brief yet. Write one from his request.\n\n')) +
       (sources ? `Source material the theme is linked to:\n\n${sources}` : '');
     // Per App 38 (32) — thinking off: with thinking on it shares the
     // max_tokens budget, and a long linked piece let it use the whole
@@ -17029,7 +17039,7 @@ Reply with only the theme text, no heading, no quotes, no preamble.`;
 app.get('/api/motd/archive', auth.requireAuthApi(['client']), (req, res) => {
   try {
     const sent = db.getAllMotd('sent')
-      .map(m => ({ id: m.id, body: m.body, sent_at: m.sent_at }))
+      .map(m => ({ id: m.id, body: m.body, sent_at: m.sent_at, links: motdLinksFor(m) }))
       .sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
     res.json(sent);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -17062,11 +17072,12 @@ app.post('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
 async function generateMotdChunk(count, attempt = 1, theme = '', avoid = [], sources = '') {
   let userMessage;
   if (theme) {
-    userMessage = `Write ${count} new Message of the Day drafts on this theme:
+    userMessage = `Write ${count} new Message of the Day drafts from Per's brief below.
 
-THEME: ${theme}
+PER'S BRIEF:
+${theme}
 
-Every message must be clearly about this theme — someone reading the ${count} together should feel they belong to one series. Come at the theme from a different side each time (a different moment, a different part of the body, a different way in), and still use a spread of the signal range to work it, so the theme is felt in the body, not just named. Keep every voice and form rule.`;
+The brief may be a theme, instructions on what and how to write (follow them, unless they conflict with the five-line form or the voice rules above), a sample message of his own (write new ones in its spirit; never copy it), or a mix. Every message must clearly follow the brief — someone reading the ${count} together should feel they belong to one series. Come at the theme from a different side each time (a different moment, a different part of the body, a different way in), and still use a spread of the signal range to work it, so the theme is felt in the body, not just named. Keep every voice and form rule.`;
     if (sources) userMessage += `\n\nThe theme is linked to the pieces below. Draw ideas, practices and images from them, but write fresh lines in the message voice: do not quote them, do not name them, and do not mention that they exist.\n\n${sources}`;
   } else if (sources) {
     userMessage = `Write ${count} new Message of the Day drafts drawn from the pieces below, so the ${count} read as one series. Take ideas, practices and images from them, but write fresh lines in the message voice: do not quote them, do not name them, and do not mention that they exist. Use a spread of the signal range.\n\n${sources}`;
@@ -17151,7 +17162,12 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
         if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
         generated
           .filter(msg => typeof msg === 'string' && msg.trim())
-          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); insertedCount++; });
+          .forEach(msg => {
+            const mid = uuidv4();
+            db.addMotd(mid, msg.trim(), null);
+            if (themeLinks.length) db.setMotdSourceLinks(mid, JSON.stringify(themeLinks)); // (33) shown as "From the blog: …"
+            insertedCount++;
+          });
       } catch (e) {
         // Per's suggestion: keep enough detail here that a repeat failure
         // is actually diagnosable from the error message alone, not just
@@ -18065,10 +18081,26 @@ app.delete('/api/admin/motd/:id', auth.requireAuthApi(['admin']), (req, res) => 
 // ── MOTD email markup — shared by the real send (sendDailyMotd) and the ──
 // admin test-send endpoint below, so a test email is pixel-identical to
 // what a real recipient gets. Only extracted, not changed.
-function buildMotdHtml(body, b) {
+// Per App 38 (33) — the pieces a message drew on, as lines to show under
+// it: "From the blog: <title> →" linking to the piece's page.
+const MOTD_FROM_WORDS = { Blog: 'From the blog', 'White paper': 'From the white paper', Practice: 'Try the practice', Poem: 'From the poem', Book: 'From the book', Video: 'Watch', Lesson: 'From the lesson', Course: 'From the course' };
+function motdLinksFor(row) {
+  let ls = [];
+  try { ls = JSON.parse((row && row.source_links) || '[]'); } catch (e) { ls = []; }
+  if (!Array.isArray(ls)) return [];
+  let clean = t => t;
+  try { clean = require('./public_pages').cleanTitle || clean; } catch (e) {}
+  return ls.slice(0, 3).map(l => ({
+    words: MOTD_FROM_WORDS[l.label] || 'Read more',
+    title: clean(String(l.title || '')).replace(/\s+v\d+$/i, '').trim() || 'Read more',
+    url: linkPublicUrl(l),
+  }));
+}
+function buildMotdHtml(body, b, links = []) {
+  const from = (links || []).map(l => `<p style="font-size:14px;line-height:1.6;color:#555;margin:0 0 6px">${escapeHtmlText(l.words)}: <a href="${escapeHtmlText(l.url)}" style="color:#2d6a4f">${escapeHtmlText(l.title)}</a> →</p>`).join('');
   return `<div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;padding:32px;color:#2a2a2a">
         <div style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#888;margin-bottom:24px">${b.name}</div>
-        <p style="font-size:17px;line-height:1.8;color:#1a1a1a;margin-bottom:32px">${body.replace(/\n/g, '<br/>')}</p>
+        <p style="font-size:17px;line-height:1.8;color:#1a1a1a;margin-bottom:${from ? '20px' : '32px'}">${body.replace(/\n/g, '<br/>')}</p>${from ? `\n        <div style="margin-bottom:28px">${from}</div>` : ''}
         <hr style="border:none;border-top:1px solid #e0e0e0;margin:28px 0"/>
         <p style="font-size:12px;color:#aaa">
           You're receiving this because you're a member of ${b.name}.
@@ -18234,7 +18266,7 @@ async function sendDailyMotd() {
   let sent = 0;
   const b = brand();
   for (const user of recipients) {
-    await sendEmail(user.email, `From ${b.name} — a moment for today`, buildMotdHtml(motd.body, b));
+    await sendEmail(user.email, `From ${b.name} — a moment for today`, buildMotdHtml(motd.body, b, motdLinksFor(motd)));
     sent++;
   }
 
@@ -18363,11 +18395,12 @@ async function sendScheduledMotd() {
     if (user.motd_last_sent_date === local.dateStr) continue; // already sent for their local day
 
     if (user.pref_email_motd && user.email) {
-      await sendEmail(user.email, `From ${b.name} — a moment for today`, buildMotdHtml(active.body, b));
+      await sendEmail(user.email, `From ${b.name} — a moment for today`, buildMotdHtml(active.body, b, motdLinksFor(active)));
       sentEmail++;
     }
     if (user.pref_sms && user.phone) {
-      const result = await sms.sendSms(user.phone, `${b.name}: ${active.body}`);
+      const firstLink = motdLinksFor(active)[0];
+      const result = await sms.sendSms(user.phone, `${b.name}: ${active.body}` + (firstLink ? `\n${firstLink.words}: ${firstLink.url}` : ''));
       if (result.ok) sentSms++;
     }
     db.markMotdSentForUser(user.id, local.dateStr);
@@ -18410,14 +18443,15 @@ app.post('/api/admin/motd/send-daily', auth.requireAuthApi(['admin']), async (re
 // that be overridden for testing a different inbox.
 app.post('/api/admin/motd/test-send', auth.requireAuthApi(['admin']), async (req, res) => {
   try {
-    const { body, to } = req.body;
+    const { body, to, id } = req.body;
     if (!body || !body.trim()) return res.status(400).json({ error: 'Message body is empty.' });
+    const testLinks = id ? motdLinksFor(db.getMotd(id)) : []; // (33) the draft's own links
 
     const toEmail = resolveTestEmail(to, req.user.email);
     if (!toEmail) return res.status(400).json({ error: 'No address to send to — override the address or check your admin account has an email set.' });
 
     const b = brand();
-    await sendEmail(toEmail, `[TEST] From ${b.name} — a moment for today`, buildMotdHtml(body, b));
+    await sendEmail(toEmail, `[TEST] From ${b.name} — a moment for today`, buildMotdHtml(body, b, testLinks));
     res.json({ ok: true, to: toEmail });
   } catch (e) {
     console.error('motd test-send error:', e.message);

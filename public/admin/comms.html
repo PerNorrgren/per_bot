@@ -368,7 +368,7 @@
            standard editor (with AI Help), and linked to the pieces it draws
            on. Saved, and kept until changed. -->
       <div class="motd-theme">
-        <div class="motd-theme-label">Theme for generated batches</div>
+        <div class="motd-theme-label">Brief for generated batches</div>
         <div id="motdThemeEditor"></div>
         <div class="motd-theme-label" style="margin-top:14px">Linked to</div>
         <div class="motd-links" id="motdThemeLinks"></div>
@@ -379,7 +379,7 @@
         </div>
         <div class="motd-theme-row">
           <span class="motd-theme-status" id="motdThemeStatus"></span>
-          <button class="btn sm" onclick="saveMotdTheme()" id="saveMotdThemeBtn">Save theme</button>
+          <button class="btn sm" onclick="saveMotdTheme()" id="saveMotdThemeBtn">Save brief</button>
         </div>
       </div>
       <div class="stock-bar" id="stockBar"><span class="stock-dot"></span><span>Loading…</span></div>
@@ -830,6 +830,7 @@
         <span class="badge ${badgeClass}">${m.status}</span>
         <div class="msg-body">
           <div class="msg-text">${escHtml(m.body)}</div>
+          ${(m.links || []).map(l => `<div class="msg-meta" style="color:rgba(180,230,200,0.7)">${escHtml(l.words)}: <a href="${escHtml(l.url)}" target="_blank" rel="noopener" style="color:rgba(180,230,200,0.9)">${escHtml(l.title)}</a> →</div>`).join('')}
           <div class="msg-meta">${dateStr}</div>
         </div>
         <div class="msg-actions">
@@ -919,7 +920,7 @@
     try {
       const res  = await fetch('/api/admin/motd/test-send', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ body, to: to || undefined })
+        body: JSON.stringify({ body, to: to || undefined, id: document.getElementById('motdEditId').value || undefined }) // (33) so the test shows its From the blog line
       });
       const data = await res.json();
       if (data.ok) { fb.textContent = `Sent to ${data.to}`; fb.className = 'feedback ok'; }
@@ -1002,12 +1003,12 @@
   function mountMotdThemeEditor(html) {
     MessageEditor.mountRich(MOTD_THEME_ED, '', {
       toolbar: 'simple',
-      placeholder: 'What should this run of messages be about? For example: letting go at the end of the day. Leave empty, with nothing linked, for a mixed batch.',
+      placeholder: 'Write a message of your own, let ✨ AI Help write one, or give instructions: what to write about and how. Link a piece below to draw on it; each message will link to it. Leave empty, with nothing linked, for a mixed batch.',
       aiPolishEndpoint: '/api/admin/motd/theme-help',
       aiPolishBody: () => ({ links: motdLinks }),
       aiPolishAllowEmpty: true,
-      aiPolishWorking: 'Working on the theme…',
-      aiPolishTooltip: 'Improve the theme, or write one from what it is linked to',
+      aiPolishWorking: 'Working on the brief…',
+      aiPolishTooltip: 'Improve the brief, or write one from what it is linked to',
     });
     const q = MessageEditor.getInstance(MOTD_THEME_ED);
     q.root.innerHTML = html || '';
@@ -1075,8 +1076,8 @@
     const st = document.getElementById('motdThemeStatus');
     if (!st) return;
     const has = !!(motdThemeHtml() || motdLinks.length);
-    if (motdThemeUnsaved()) { st.className = 'motd-theme-status unsaved'; st.textContent = 'Not saved yet. Save theme, or Generate batch saves it too.'; }
-    else if (has) { st.className = 'motd-theme-status'; st.textContent = 'Every batch follows this theme until you change it.'; }
+    if (motdThemeUnsaved()) { st.className = 'motd-theme-status unsaved'; st.textContent = 'Not saved yet. Save brief, or Generate batch saves it too.'; }
+    else if (has) { st.className = 'motd-theme-status'; st.textContent = 'Every batch follows this brief until you change it.'; }
     else { st.className = 'motd-theme-status'; st.textContent = 'No theme: batches are mixed.'; }
   }
   function motdThemeSummary(text, links) {
@@ -1099,9 +1100,9 @@
       renderMotdLinks();
       motdThemeDirty();
       const sum = motdThemeSummary(data.themeText, data.themeLinks);
-      appAlert(sum ? `Theme saved. Every batch will follow ${sum} until you change it.` : 'Theme cleared. Batches will be mixed again.');
+      appAlert(sum ? `Brief saved. Every batch will follow ${sum} until you change it.` : 'Brief cleared. Batches will be mixed again.');
     } catch (e) {
-      appAlert('Could not save the theme. Please try again.');
+      appAlert('Could not save the brief. Please try again.');
     }
   }
 
@@ -1160,7 +1161,7 @@
     const div = document.createElement('div'); div.innerHTML = html;
     const sum = motdThemeSummary(div.textContent || '', motdLinks);
     const ask = sum
-      ? `Generate a new batch of message-of-the-day drafts on ${sum}? They'll be added to Drafts for you to review, edit, and approve — nothing sends automatically.`
+      ? `Generate a new batch of message-of-the-day drafts following ${sum}? They'll be added to Drafts for you to review, edit, and approve — nothing sends automatically.`
       : 'Generate a new mixed batch of message-of-the-day drafts? They\'ll be added to Drafts for you to review, edit, and approve — nothing sends automatically.';
     if (!(await appConfirm(ask))) return;
     const btn = document.getElementById('generateMotdBtn');
@@ -1175,7 +1176,7 @@
         motdSaved = { html: motdThemeHtml(), links: motdLinks.slice() };
         motdThemeDirty();
         loadMotd();
-        const about = (data.theme || data.linkedCount) ? ' on the theme' : '';
+        const about = (data.theme || data.linkedCount) ? ' from the brief' : '';
         appAlert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'}${about} to the queue. Review them under Drafts.`);
       } else {
         appAlert(data.error || 'Could not generate messages. Please try again.');
