@@ -163,6 +163,7 @@
         <div class="row" style="margin-top:10px">
           <button class="btn" id="pSuggestBtn" data-t="pSuggest"></button>
           <a class="btn" id="pOpen" target="_blank" rel="noopener" data-t="pOpenLive"></a>
+          <button class="btn" id="pCopy" type="button" data-t="pCopyLink"></button>
         </div>
         <label><span data-t="pTitle"></span> <span class="count" id="c_title"></span></label>
         <input type="text" id="p_title">
@@ -280,7 +281,7 @@ const T = {
     confirmRemoveQ: 'Remove this question? Its past results stay in the history.',
     pagesList: 'Pages', pNew: 'New page', pNone: 'No pages yet. Add the public pages people should find: home, courses, books.',
     pHelp: 'These tags are added to the page as it is sent, so Google and AI crawlers see them without running any script. Only public pages belong here.',
-    pPath: 'Page address (the part after the domain)', pSuggest: 'Suggest with AI', pOpenLive: 'Open page',
+    pPath: 'Page address (the part after the domain)', pSuggest: 'Suggest with AI', pOpenLive: 'Open page', pCopyLink: 'Copy link', pCopied: 'Copied', pCopyRow: 'Copy this page\'s web address',
     pTitle: 'Title', pDesc: 'Description', pImage: 'Share image URL', pCanonical: 'Canonical URL (leave empty for the normal address)',
     pSchemaType: 'Schema type', pSchemaTypeHint: 'Choosing a type fills in a starting template if the box below is empty.', pOgType: 'Share type',
     pSchemaJson: 'Schema (JSON-LD) — facts only, never invented prices, ratings or reviews',
@@ -322,7 +323,7 @@ const T = {
     confirmRemoveQ: 'Deze vraag verwijderen? Eerdere resultaten blijven bewaard.',
     pagesList: 'Pagina\'s', pNew: 'Nieuwe pagina', pNone: 'Nog geen pagina\'s. Voeg de openbare pagina\'s toe die mensen moeten vinden: home, cursussen, boeken.',
     pHelp: 'Deze tags worden aan de pagina toegevoegd terwijl hij verstuurd wordt, zodat Google en AI-crawlers ze zien zonder script. Alleen openbare pagina\'s horen hier.',
-    pPath: 'Paginaadres (het deel na de domeinnaam)', pSuggest: 'Laten voorstellen door AI', pOpenLive: 'Pagina openen',
+    pPath: 'Paginaadres (het deel na de domeinnaam)', pSuggest: 'Laten voorstellen door AI', pOpenLive: 'Pagina openen', pCopyLink: 'Link kopiëren', pCopied: 'Gekopieerd', pCopyRow: 'Webadres van deze pagina kopiëren',
     pTitle: 'Titel', pDesc: 'Beschrijving', pImage: 'URL van deelafbeelding', pCanonical: 'Canonieke URL (leeg laten voor het gewone adres)',
     pSchemaType: 'Schematype', pSchemaTypeHint: 'Een type kiezen vult een startsjabloon in als het vak hieronder leeg is.', pOgType: 'Deeltype',
     pSchemaJson: 'Schema (JSON-LD) — alleen feiten, nooit verzonnen prijzen, beoordelingen of recensies',
@@ -561,6 +562,7 @@ const PAGE_GROUPS = [
   { key: 'courses', en: 'Courses', nl: 'Cursussen', test: p => /^\/courses(\/|$)/.test(p) },
   { key: 'blog', en: 'Blog', nl: 'Blog', test: p => /^\/blog(\/|$)/.test(p) },
   { key: 'poems', en: 'Poems', nl: 'Gedichten', test: p => /^\/poems(\/|$)/.test(p) },
+  { key: 'papers', en: 'White papers', nl: 'Whitepapers', test: p => /^\/papers(\/|$)/.test(p) },
   { key: 'learn', en: 'Learn articles', nl: 'Leren', test: p => /^\/learn(\/|$)/.test(p) },
 ];
 const openGroups = new Set();
@@ -572,13 +574,15 @@ function renderPageList() {
   if (sel) openGroups.add(pageGroupOf(sel.path));
   // Two lines each (address, title) so about ten fit in an open group; the
   // schema, sitemap and llms settings show in the editor on the right.
-  const item = p => `<div class="list-item ${p.id === editingId ? 'on' : ''}" data-pid="${p.id}" title="${esc([p.schema_type, p.in_sitemap ? 'sitemap' : '', p.in_llms ? 'llms' : ''].filter(Boolean).join(' · '))}"><div class="t" style="min-width:0"><strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.path)}</strong><span class="hint" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title || '—')}</span></div></div>`;
+  // Per App 38 (30) — a 🔗 on each row copies the page's full address.
+  const item = p => `<div class="list-item ${p.id === editingId ? 'on' : ''}" data-pid="${p.id}" title="${esc([p.schema_type, p.in_sitemap ? 'sitemap' : '', p.in_llms ? 'llms' : ''].filter(Boolean).join(' · '))}" style="display:flex;align-items:center;gap:8px"><div class="t" style="min-width:0;flex:1"><strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.path)}</strong><span class="hint" style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.title || '—')}</span></div><button type="button" class="btn sm pcopy" data-copy="${esc(p.path)}" title="${esc(t('pCopyRow'))}" style="flex:none">🔗</button></div>`;
   el.innerHTML = PAGE_GROUPS.map(g => {
     const rows = S.pages.filter(p => pageGroupOf(p.path) === g.key);
     if (!rows.length) return '';
     return `<details class="pgroup" data-group="${g.key}" ${openGroups.has(g.key) ? 'open' : ''}><summary>${esc(LANG === 'nl' ? g.nl : g.en)} <span class="count">(${rows.length})</span></summary><div class="pg-scroll">${rows.map(item).join('')}</div></details>`;
   }).join('');
   el.querySelectorAll('details.pgroup').forEach(d => d.addEventListener('toggle', () => { if (d.open) openGroups.add(d.dataset.group); else openGroups.delete(d.dataset.group); }));
+  el.querySelectorAll('button.pcopy').forEach(b => b.onclick = (e) => { e.stopPropagation(); copyPageLink(b.dataset.copy, b); });
   el.querySelectorAll('[data-pid]').forEach(d => d.onclick = () => { editingId = Number(d.dataset.pid); fillPage(S.pages.find(p => p.id === editingId)); renderPageList(); });
   if (editingId !== null && !S.pages.some(p => p.id === editingId)) editingId = null;
   if (editingId === null) fillPage(null);
@@ -597,6 +601,22 @@ function updateCounts() {
   ct.textContent = tl + ' / 60'; ct.className = 'count' + (tl > 60 ? ' over' : '');
   cd.textContent = dl + ' / 160'; cd.className = 'count' + (dl > 160 ? ' over' : '');
 }
+function fullPageUrl(path) {
+  if (!path) return '';
+  const base = (S && S.siteUrl) ? S.siteUrl : location.origin;
+  return base.replace(/\/$/, '') + (path.startsWith('/') ? path : '/' + path);
+}
+async function copyPageLink(path, btn) {
+  const url = fullPageUrl(path);
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    const orig = btn.textContent;
+    btn.textContent = '✓ ' + t('pCopied');
+    setTimeout(() => { btn.textContent = orig; }, 1600);
+  } catch (e) { window.prompt(url, url); }
+}
+document.getElementById('pCopy').onclick = function () { copyPageLink(document.getElementById('p_path').value.trim(), this); };
 function updateOpenLink() {
   const p = document.getElementById('p_path').value.trim();
   const a = document.getElementById('pOpen');

@@ -2128,7 +2128,8 @@ function publicBtns(f) {
   const p = _publicMap && _publicMap.get(f.id);
   if (p && p.published) {
     return `<button class="btn sm" style="color:rgba(180,230,200,0.95);border-color:rgba(180,230,200,0.5)" title="Has a public page: ${p.url}. Click to take it off the website." onclick="togglePublic('${f.id}', false, this)">🌐 Public</button>`
-      + `<a class="btn sm" href="${p.url}" target="_blank" rel="noopener" title="Open the public page">↗</a>`;
+      + `<a class="btn sm" href="${p.url}" target="_blank" rel="noopener" title="Open the public page">↗</a>`
+      + `<button class="btn sm" data-url="${escHtml(p.url)}" onclick="copyPublicUrl(this.dataset.url, this)" title="Copy the public page's web address">🔗</button>`;
   }
   return `<button class="btn sm" title="Give this its own public page on the website" onclick="togglePublic('${f.id}', true, this)">🌐 Make public</button>`;
 }
@@ -4306,7 +4307,7 @@ function showUploadCompletionModal() {
       const box = document.createElement('div');
       box.style.cssText = 'margin-top:14px;font-size:13px;line-height:1.6';
       box.innerHTML = '<div style="color:rgba(180,230,200,0.95);margin-bottom:4px">🌐 Now on the website, and sent to Google’s sitemap:</div>' +
-        pub.map(it => `<div><a href="${escHtml(it.publicUrl)}" target="_blank" rel="noopener" style="color:rgba(180,230,200,0.95)">${escHtml(it.savedTitle || it.publicUrl)}</a></div>`).join('');
+        pub.map(it => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0"><a href="${escHtml(it.publicUrl)}" target="_blank" rel="noopener" style="color:rgba(180,230,200,0.95)">${escHtml(it.savedTitle || it.publicUrl)}</a><button type="button" class="btn sm" data-url="${escHtml(it.publicUrl)}" onclick="copyPublicUrl(this.dataset.url, this)" title="Copy the page's web address">🔗 Copy link</button></div>`).join('');
       bodyEl.appendChild(box);
     }
     btnsEl.innerHTML = toCourse
@@ -4791,6 +4792,20 @@ function renderInstances(){
 // itself shows a "Choose your start date" picker whenever the course has
 // more than one open instance (see the multi-instance picker built
 // earlier), so it's never wrong to share whichever one's link is handy.
+// Per App 38 (30) — copy a public page's full address, with "Copied" on
+// the button for a moment. Falls back to showing the address to copy by
+// hand if the browser blocks the clipboard.
+async function copyPublicUrl(url, btn) {
+  const full = /^https?:/i.test(url) ? url : location.origin + url;
+  try {
+    await navigator.clipboard.writeText(full);
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.textContent = '✓ Copied';
+      setTimeout(() => { btn.innerHTML = orig; }, 1600);
+    }
+  } catch (e) { appAlert(full); }
+}
 async function copyInstancePublicLink(id, btn){
   const url = `${location.origin}/course-instance/${id}`;
   try {
