@@ -16818,19 +16818,164 @@ app.get('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
     const { status } = req.query;
     const messages = db.getAllMotd(status || null);
     const approvedCount = db.countApprovedMotd();
-    const theme = ((db.getAppConfig() || {}).motd_theme || '').trim();
-    res.json({ messages, approvedCount, lowStock: approvedCount <= 5, theme });
+    const { html: theme, links: themeLinks } = getMotdTheme();
+    res.json({ messages, approvedCount, lowStock: approvedCount <= 5, theme, themeLinks });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Per App 38 (28) — save the Message of the Day theme. It stays until Per
-// changes it; saving an empty box goes back to mixed batches.
+// ── Per App 38 (28)/(29) — Message of the Day theme ──
+// The theme is written in the standard editor (so it is HTML) and can be
+// linked to blogs, white papers, practices, poems, books, lessons and
+// courses. It stays until Per changes it; an empty theme with no links
+// goes back to mixed batches.
+const MOTD_LINK_LABELS = { blog: 'Blog', whitepaper: 'White paper', meditation: 'Practice', poem: 'Poem', book: 'Book', video_lesson: 'Video' };
+function motdFileLabel(f) {
+  if (MOTD_LINK_LABELS[f.content_type]) return MOTD_LINK_LABELS[f.content_type];
+  if (String(f.content_type || '').startsWith('course_material')) return 'Course material';
+  return 'Library';
+}
+function getMotdTheme() {
+  const cfg = db.getAppConfig() || {};
+  let html = String(cfg.motd_theme || '').trim();
+  if (html && !html.startsWith('<')) html = '<p>' + escapeHtmlText(html) + '</p>'; // a theme saved as plain text in (28)
+  let links = [];
+  try { links = JSON.parse(cfg.motd_theme_links || '[]'); } catch (e) { links = []; }
+  if (!Array.isArray(links)) links = [];
+  return { html, text: htmlToText(html), links };
+}
+function cleanMotdLinks(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const l of list.slice(0, 8)) {
+    const type = ['file', 'lesson', 'course'].includes(l && l.type) ? l.type : null;
+    const id = String((l && l.id) || '').slice(0, 80);
+    if (!type || !id || out.some(o => o.type === type && o.id === id)) continue;
+    out.push({ type, id, title: String(l.title || '').slice(0, 200), label: String(l.label || '').slice(0, 40) });
+  }
+  return out;
+}
+function saveMotdTheme(html, links) {
+  const clean = String(html || '').trim().slice(0, 20000);
+  const empty = !htmlToText(clean);
+  const ls = cleanMotdLinks(links);
+  db.updateAppConfig({ motd_theme: empty ? null : clean, motd_theme_links: ls.length ? JSON.stringify(ls) : null });
+}
+
+// The words inside one linked piece, as plain text, so the batch can draw
+// on it. Blogs and poems are stored as web pages; PDFs (white papers and
+// most blogs Per uploads) are read for their text; anything else (audio,
+// video) gives its title and description.
+async function motdLinkText(link, maxChars = 6000) {
+  try {
+    if (link.type === 'file') {
+      const f = db.getLibraryFile(link.id);
+      if (!f) return '';
+      let body = '';
+      try {
+        let key = null;
+        if (f.file_type === 'text/html') key = f.filename;
+        else {
+          const r = (db.rawAll('SELECT html_key FROM public_items WHERE file_id=?', [f.id]) || [])[0];
+          if (r && r.html_key) key = r.html_key;
+        }
+        const { readKey, pdfToArticle } = require('./article_upload');
+        if (key && f.storage_type !== 'disk') {
+          body = htmlToText((await readKey(media, key)).toString('utf8'));
+        } else {
+          const pdfKey = f.original_pdf_filename || (f.file_type === 'application/pdf' ? f.filename : null);
+          if (pdfKey && f.storage_type !== 'disk') {
+            const art = await pdfToArticle(await readKey(media, pdfKey));
+            if (art && art.html) body = htmlToText(art.html);
+          }
+        }
+      } catch (e) { /* fall back to the description */ }
+      const head = `${motdFileLabel(f)}: "${f.title}"` + (f.description ? `\n${htmlToText(f.description)}` : '');
+      return (head + (body ? `\n\n${body}` : '')).slice(0, maxChars);
+    }
+    if (link.type === 'lesson') {
+      const l = db.getLesson(link.id);
+      if (!l) return '';
+      const c = l.course_id ? db.getCourse(l.course_id) : null;
+      const files = db.rawAll(`SELECT f.title, f.description, f.content_type FROM lesson_file_refs r JOIN library_files f ON f.id = r.file_id WHERE r.lesson_id=? ORDER BY r.sort_order`, [l.id]) || [];
+      return (`Lesson: "${l.title}"` + (c ? ` (course "${c.title}")` : '') +
+        (l.description ? `\n${htmlToText(l.description)}` : '') +
+        (files.length ? '\nIn this lesson:\n' + files.map(f => `- ${f.title}${f.description ? ': ' + htmlToText(f.description).slice(0, 300) : ''}`).join('\n') : '')
+      ).slice(0, maxChars);
+    }
+    if (link.type === 'course') {
+      const c = db.getCourse(link.id);
+      if (!c) return '';
+      const lessons = db.rawAll(`SELECT title, description FROM lessons WHERE course_id=? ORDER BY sort_order, lesson_number`, [c.id]) || [];
+      return (`Course: "${c.title}"` + (c.description ? `\n${htmlToText(c.description)}` : '') +
+        (lessons.length ? '\nLessons:\n' + lessons.map(l => `- ${l.title}${l.description ? ': ' + htmlToText(l.description).slice(0, 300) : ''}`).join('\n') : '')
+      ).slice(0, maxChars);
+    }
+  } catch (e) { console.error('motd link text failed:', e.message); }
+  return '';
+}
+async function motdSourcesText(links) {
+  if (!links || !links.length) return '';
+  const per = Math.max(2500, Math.floor(15000 / links.length));
+  const parts = [];
+  for (const l of links) { const t = await motdLinkText(l, per); if (t) parts.push(t); }
+  return parts.join('\n\n---\n\n');
+}
+
 app.post('/api/admin/motd/theme', auth.requireAuthApi(['admin']), (req, res) => {
   try {
-    const theme = String(req.body?.theme || '').trim().slice(0, 1000);
-    db.updateAppConfig({ motd_theme: theme || null });
-    res.json({ ok: true, theme });
+    saveMotdTheme(req.body?.html ?? req.body?.theme, req.body?.links);
+    const t = getMotdTheme();
+    res.json({ ok: true, theme: t.html, themeText: t.text, themeLinks: t.links });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Things the theme can link to: library pieces (not archived, not
+// assigned to one person), lessons and courses. Newest first when empty.
+app.get('/api/admin/motd/sources', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const like = '%' + q.replace(/[%_]/g, '') + '%';
+    const files = db.rawAll(`SELECT id, title, content_type, created_at FROM library_files
+      WHERE (archived IS NULL OR archived=0) AND (assigned_client_id IS NULL OR assigned_client_id='')
+        AND (content_type IS NULL OR content_type NOT IN ('timer_bell','timer_music')) AND (?='' OR lower(title) LIKE ?)
+      ORDER BY created_at DESC LIMIT 25`, [q, like]) || [];
+    const lessons = db.rawAll(`SELECT l.id, l.title, c.title AS course_title, l.created_at FROM lessons l LEFT JOIN courses c ON c.id = l.course_id
+      WHERE (?='' OR lower(l.title) LIKE ? OR lower(c.title) LIKE ?) ORDER BY l.created_at DESC LIMIT 15`, [q, like, like]) || [];
+    const courses = db.rawAll(`SELECT id, title, created_at FROM courses WHERE (?='' OR lower(title) LIKE ?) ORDER BY created_at DESC LIMIT 10`, [q, like]) || [];
+    const items = [
+      ...files.map(f => ({ type: 'file', id: f.id, title: f.title, label: motdFileLabel(f), date: f.created_at })),
+      ...lessons.map(l => ({ type: 'lesson', id: l.id, title: l.title, label: 'Lesson', sub: l.course_title || '', date: l.created_at })),
+      ...courses.map(c => ({ type: 'course', id: c.id, title: c.title, label: 'Course', date: c.created_at })),
+    ];
+    if (!q) items.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    res.json({ items: items.slice(0, 30) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// AI Help on the theme box: improves what Per wrote, or, when the box is
+// empty, writes a theme from what it is linked to. The result goes into
+// the editor's own preview panel ("Use this version"), never straight in.
+app.post('/api/admin/motd/theme-help', auth.requireAuthApi(['admin']), async (req, res) => {
+  try {
+    const current = htmlToText(String(req.body?.html || ''));
+    const links = cleanMotdLinks(req.body?.links);
+    if (!current && !links.length) return res.status(400).json({ error: 'Write a few words, or link a blog, practice or lesson first.' });
+    const sources = await motdSourcesText(links);
+    const system = `You help Per Norrgren of Deeper Mindfulness set the theme for a batch of "Message of the Day" pieces: short five-line stanzas sent daily, rooted in the body and the nervous system (the FELT·FIBRE way: settling, grounding, breath, warmth, belonging, feeling enough). The theme you write is a brief for that writer, not something readers see.
+
+Write the theme as two to four short sentences in plain words: what the series is about, the feeling or shift it moves toward, and a few concrete body-based ways in (a movement, a sensation, a moment in the day). If source material is given, draw the theme and the ways in from it, in your own words. Keep Per's own idea and wording where he gave one; sharpen it, don't replace it. No clinical or framework terms (never "brake", "Moro", "prior", "vagal"), no religious or spiritual language, nothing tied to one country or season.
+
+Reply with only the theme text, no heading, no quotes, no preamble.`;
+    const user = (current ? `Per's theme so far:\n${current}\n\n` : 'Per has not written a theme yet. Write one from the source material.\n\n') +
+      (sources ? `Source material the theme is linked to:\n\n${sources}` : '');
+    const raw = String(await callClaudeRaw(system, [{ role: 'user', content: user }], 600) || '').trim();
+    if (!raw) throw new Error('No suggestion came back. Please try again.');
+    const html = raw.split(/\n\s*\n/).map(p => '<p>' + escapeHtmlText(p.trim()).replace(/\n/g, '<br>') + '</p>').join('');
+    res.json({ html });
+  } catch(e) {
+    console.error('motd theme help error:', e);
+    res.status(500).json({ error: 'Could not get a suggestion: ' + (e.message || 'unknown error') });
+  }
 });
 
 // ── Message of the day — client archive ── Every stanza that's ever gone
@@ -16872,7 +17017,7 @@ app.post('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
 // fixes, since regenerating a few stanzas is harmless and idempotent).
 // Per App 38 (28) — optional theme, plus the most recent messages so a
 // theme kept across several batches doesn't keep landing on the same lines.
-async function generateMotdChunk(count, attempt = 1, theme = '', avoid = []) {
+async function generateMotdChunk(count, attempt = 1, theme = '', avoid = [], sources = '') {
   let userMessage;
   if (theme) {
     userMessage = `Write ${count} new Message of the Day drafts on this theme:
@@ -16880,6 +17025,9 @@ async function generateMotdChunk(count, attempt = 1, theme = '', avoid = []) {
 THEME: ${theme}
 
 Every message must be clearly about this theme — someone reading the ${count} together should feel they belong to one series. Come at the theme from a different side each time (a different moment, a different part of the body, a different way in), and still use a spread of the signal range to work it, so the theme is felt in the body, not just named. Keep every voice and form rule.`;
+    if (sources) userMessage += `\n\nThe theme is linked to the pieces below. Draw ideas, practices and images from them, but write fresh lines in the message voice: do not quote them, do not name them, and do not mention that they exist.\n\n${sources}`;
+  } else if (sources) {
+    userMessage = `Write ${count} new Message of the Day drafts drawn from the pieces below, so the ${count} read as one series. Take ideas, practices and images from them, but write fresh lines in the message voice: do not quote them, do not name them, and do not mention that they exist. Use a spread of the signal range.\n\n${sources}`;
   } else {
     userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count.`;
   }
@@ -16904,7 +17052,7 @@ Every message must be clearly about this theme — someone reading the ${count} 
     if (attempt >= 3) throw e;
     console.error(`motd generate chunk failed (attempt ${attempt}/3): ${e.name || 'Error'}: ${e.message} — retrying`);
     await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, then 2s
-    return generateMotdChunk(count, attempt + 1, theme, avoid);
+    return generateMotdChunk(count, attempt + 1, theme, avoid, sources);
   }
 }
 
@@ -16927,11 +17075,11 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
 
     // Per App 38 (28) — a theme sent with the click is saved first, so what
     // he typed is what the batch follows, and it stays for the next batch.
-    if (typeof req.body?.theme === 'string') {
-      const t = req.body.theme.trim().slice(0, 1000);
-      db.updateAppConfig({ motd_theme: t || null });
+    if (typeof req.body?.html === 'string' || typeof req.body?.theme === 'string') {
+      saveMotdTheme(req.body.html ?? req.body.theme, req.body.links);
     }
-    const theme = ((db.getAppConfig() || {}).motd_theme || '').trim();
+    const { text: theme, links: themeLinks } = getMotdTheme();
+    const sources = await motdSourcesText(themeLinks);
     // Newest 30 drafts, approved and sent, plus whatever this batch adds.
     const avoid = (db.getAllMotd(null) || [])
       .slice()
@@ -16945,7 +17093,7 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
 
     for (const chunkCount of chunks) {
       try {
-        const generated = await generateMotdChunk(chunkCount, 1, theme, avoid);
+        const generated = await generateMotdChunk(chunkCount, 1, theme, avoid, sources);
         if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
         generated
           .filter(msg => typeof msg === 'string' && msg.trim())
@@ -16966,6 +17114,7 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
       ok: true,
       count: insertedCount,
       theme,
+      linkedCount: themeLinks.length,
       partial: chunkErrors.length > 0,
       note: chunkErrors.length ? `${insertedCount} added, but ${chunkErrors.length} chunk(s) failed after retries — you can generate another batch to top up.` : undefined,
     });

@@ -992,7 +992,10 @@
     if (!btn) return;
     const containerId = btn.closest('.me-ql-wrap') ? btn.closest('.me-ql-wrap').id : null;
     const panel = containerId ? document.getElementById(`${containerId}_polishPanel`) : null;
-    if (!q.getText().trim()) { window.appAlert('Write something first.'); return; }
+    // Per App 38 (29) — opts.aiPolishAllowEmpty: an editor whose AI Help can
+    // write from nothing (the Message of the Day theme, from what it's linked to).
+    const eo = (containerId && editorOpts[containerId]) || {};
+    if (!q.getText().trim() && !eo.aiPolishAllowEmpty) { window.appAlert('Write something first.'); return; }
     if (!panel) { // fallback for any editor instance that somehow has no panel (shouldn't happen — see mountRich)
       window.appAlert('Could not open AI Help here — please try reloading the page.');
       return;
@@ -1016,9 +1019,15 @@
     if (!st) return;
     document.getElementById(`${containerId}_polishRetry`).style.display = 'none';
     document.getElementById(`${containerId}_polishInsert`).style.display = 'none';
-    document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">Improving your message…</span>`;
+    // Per App 38 (29) — opts.aiPolishEndpoint / opts.aiPolishBody let one
+    // editor send AI Help to its own route with extra fields, while keeping
+    // this same preview panel. Every other editor is unchanged.
+    const eo = editorOpts[containerId] || {};
+    const working = eo.aiPolishWorking || 'Improving your message…';
+    document.getElementById(`${containerId}_polishBody`).innerHTML = `<span style="color:rgba(255,255,255,0.4);font-style:italic">${working}</span>`;
     try {
-      const res = await fetch('/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html: st.html, marketingContext: st.marketingContext }) });
+      const extra = typeof eo.aiPolishBody === 'function' ? (eo.aiPolishBody() || {}) : {};
+      const res = await fetch(eo.aiPolishEndpoint || '/api/ai-polish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ html: st.html, marketingContext: st.marketingContext }, extra)) });
       const data = await res.json();
       if (!res.ok || !data.html) throw new Error(data.error || 'Could not get a suggestion right now.');
       st.result = data.html;
