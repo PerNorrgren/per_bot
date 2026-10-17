@@ -54,6 +54,9 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
     db.rawRun(`CREATE UNIQUE INDEX IF NOT EXISTS idx_public_items_slug ON public_items(kind, slug)`);
     // Per App 38 (14) — set when the weekly campaign freshens a page.
     if (!db.rawAll(`PRAGMA table_info(public_items)`).some(c => c.name === 'freshened_at')) db.rawRun(`ALTER TABLE public_items ADD COLUMN freshened_at TEXT`);
+    // Per App 38 (27) — for a PDF blog or white paper: the public page's own
+    // HTML, built from the PDF's text (the app keeps showing the PDF itself).
+    if (!db.rawAll(`PRAGMA table_info(public_items)`).some(c => c.name === 'html_key')) db.rawRun(`ALTER TABLE public_items ADD COLUMN html_key TEXT`);
     ready = true;
   }
   const rowFor = id => { ensure(); return db.rawAll(`SELECT * FROM public_items WHERE file_id=?`, [id])[0] || null; };
@@ -67,7 +70,13 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
   async function fileHtml(f) {
     const hit = cache.get(f.id);
     if (hit && hit.size === f.file_size && Date.now() - hit.at < 30 * 60 * 1000) return hit.html;
-    const obj = await media.getPublicObject(f.filename);
+    let key = f.filename;
+    if (f.file_type !== 'text/html') {
+      const r = rowFor(f.id);
+      if (!r || !r.html_key) throw new Error('This file has no web version yet.');
+      key = r.html_key;
+    }
+    const obj = await media.getPublicObject(key);
     const chunks = []; for await (const c of obj.Body) chunks.push(Buffer.from(c));
     const html = Buffer.concat(chunks).toString('utf8');
     cache.set(f.id, { html, size: f.file_size, at: Date.now() });
@@ -127,6 +136,21 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
     return d;
   }
 
+  // Per App 38 (27) — a PDF (or a PDF shown in the app's reader as a book)
+  // gets its public page from the PDF's text. Rebuilt each time it is
+  // published, so a replaced file updates the page too.
+  async function buildFromPdf(f, r) {
+    const pdfKey = f.original_pdf_filename || (f.file_type === 'application/pdf' ? f.filename : null);
+    if (!pdfKey || f.storage_type === 'disk') throw new Error('Only PDFs (or Word files) can have a public page made from them.');
+    const { pdfToArticle, readKey } = require('./article_upload');
+    const art = await pdfToArticle(await readKey(media, pdfKey), { date: String(r.published_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10) });
+    if (!art) throw new Error('This PDF has no text a web page can be made from (it may be a scanned image).');
+    const key = `public-html/${f.id}.html`;
+    await media.putObject(key, Buffer.from(art.html, 'utf8'), 'text/html');
+    db.rawRun(`UPDATE public_items SET html_key=? WHERE file_id=?`, [key, f.id]);
+    cache.delete(f.id);
+  }
+
   // ── Publish / unpublish ──
   async function setPublished(fileId, on, { defaultDate = null } = {}) {
     ensure();
@@ -144,6 +168,7 @@ function mountPublicPages(app, { db, media, seoStore, invalidate = () => {}, sit
       db.rawRun(`INSERT INTO public_items (file_id, kind, slug, published) VALUES (?, ?, ?, 0)`, [fileId, kind, slug]);
       r = rowFor(fileId);
     }
+    if (on && f.file_type !== 'text/html') await buildFromPdf(f, r);
     if (on) {
       const { article, date } = prepare(await fileHtml(f), f);
       const description = describe(article, kind);

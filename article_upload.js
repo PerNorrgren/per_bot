@@ -1,7 +1,15 @@
-// article_upload.js — Per App 38 (26): blogs and white papers straight from Word.
+// article_upload.js — Per App 38 (26/27): blogs and white papers get their
+// public page automatically.
 //
 // Per (17 Oct 2026): "when I upload a whitepaper or blog it automatically
-// adds it as an external page as well please".
+// adds it as an external page as well please" … "I never (or rarely) upload
+// word documents, only .pdf".
+//
+// PDF (the usual case, round 27): the app keeps showing the file exactly as
+// before (the PDF, or its reader version). The public page is built from the
+// PDF's text (the same converter the app's reader uses), saved separately,
+// and rebuilt whenever the file is replaced. If the title is just the file
+// name, the PDF's own title and subtitle are used.
 //
 // When a file is uploaded to the Library as a Blog or a Whitepaper:
 //  - A Word file (.docx) is turned into the same simple HTML article the
@@ -43,6 +51,13 @@ async function docxToArticle(buffer, { date } = {}) {
       "p[style-name='Heading 4'] => h4:fresh",
     ],
   });
+  return tidyArticle(value, { date });
+}
+
+// Rough article HTML (from Word or a PDF) → { html, title, subtitle }:
+// title block recognised, byline lines dropped, headings below the page
+// title, boxed notes and tables made readable, wrapped as a full article.
+function tidyArticle(value, { date } = {}) {
   const root = parse(`<div id="doc">${value}</div>`);
   const doc = root.querySelector('#doc');
 
@@ -61,17 +76,24 @@ async function docxToArticle(buffer, { date } = {}) {
   }
   for (let i = 0; i < 5; i++) {
     const el = kids()[0];
-    if (!el || el.tagName !== 'P') break;
+    if (!el || !/^(P|H2|H3|H4)$/.test(el.tagName)) break;
     const t = textOf(el);
-    if (t.length > 170) break;
+    if (t.length > 220) break;
     const cls = el.getAttribute('class') || '';
+    // A PDF subtitle often arrives as a smaller heading straight under the title.
+    if (el.tagName !== 'P' && !(title && !subtitle && i === 0)) break;
     if (/·|\bPer Norrgren\b|\b(draft|edition|version)\b/i.test(t) && !/subtitle/.test(cls)) { el.remove(); continue; }
-    if (!subtitle && title && (/subtitle/.test(cls) || !/[.!?]$/.test(t))) { subtitle = t; el.remove(); continue; }
+    if (!subtitle && title && t.length <= 170 && (/subtitle/.test(cls) || el.tagName !== 'P' || !/[.!?]$/.test(t))) { subtitle = t; el.remove(); continue; }
     break;
   }
 
   // Any other top-level heading 1 becomes a section heading.
   for (const h of doc.querySelectorAll('h1')) h.tagName = 'h2';
+  // Headings from a PDF arrive wrapped in bold; the page styles them already.
+  for (const h of doc.querySelectorAll('h2, h3, h4')) {
+    const only = h.childNodes.filter(n => n.nodeType === 1 || textOf(n));
+    if (only.length === 1 && only[0].tagName === 'STRONG') h.set_content(only[0].innerHTML);
+  }
 
   // Word tables: a single-cell table is a boxed note; real tables scroll on phones.
   for (const table of doc.querySelectorAll('table')) {
@@ -101,6 +123,25 @@ ${doc.innerHTML}
 </body>
 </html>`;
   return { html, title, subtitle };
+}
+
+// PDF → { html, title, subtitle }, or null when it has no usable text
+// (a scanned PDF, say).
+async function pdfToArticle(buffer, { date } = {}) {
+  const { pdfToHtml } = require('./pdf-to-epub');
+  const raw = await pdfToHtml(buffer);
+  return raw ? tidyArticle(raw, { date }) : null;
+}
+
+// For the upload route: the PDF's own "Title: subtitle", when the upload's
+// title is just the file name. Returns null to keep the title as it is.
+async function titleFromPdf({ media, key = null, buffer = null, contentKind, title, originalName, log = console.log }) {
+  if (!WRITING.includes(contentKind) || !(key || buffer) || !isFileNameTitle(title, originalName)) return null;
+  try {
+    const art = await pdfToArticle(buffer || await readKey(media, key));
+    if (!art || !art.title) return null;
+    return { title: art.subtitle ? `${art.title}: ${art.subtitle}` : art.title, subtitle: art.subtitle };
+  } catch (e) { log('[article-upload] could not read the PDF title: ' + e.message); return null; }
 }
 
 // True when the title is just the uploaded file's name (the upload form's
@@ -141,12 +182,12 @@ async function convertIfWordArticle({ media, uuid, contentKind, contentType, ori
 
 // Gives a newly uploaded blog or white paper its public page. Returns the
 // address, or null (not public writing, private to someone, or it failed).
-async function autoPublish(publicPages, fileId, { contentKind, fileType, assignedClientId, facilitatorResource, log = console.log }) {
-  if (!WRITING.includes(contentKind) || fileType !== 'text/html' || assignedClientId || facilitatorResource) return null;
+async function autoPublish(publicPages, fileId, { contentKind, assignedClientId, facilitatorResource, log = console.log }) {
+  if (!WRITING.includes(contentKind) || assignedClientId || facilitatorResource) return null;
   try {
     const item = await publicPages.setPublished(fileId, true, { defaultDate: new Date().toISOString().slice(0, 10) });
     return item && item.url || null;
   } catch (e) { log('[article-upload] public page not made: ' + e.message); return null; }
 }
 
-module.exports = { docxToArticle, convertIfWordArticle, autoPublish, isFileNameTitle, DOCX_MIME, WRITING };
+module.exports = { docxToArticle, tidyArticle, pdfToArticle, titleFromPdf, readKey, convertIfWordArticle, autoPublish, isFileNameTitle, DOCX_MIME, WRITING };

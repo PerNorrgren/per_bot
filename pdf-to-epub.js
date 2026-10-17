@@ -222,4 +222,20 @@ async function convertPdfToEpub(pdfBuffer, title, author) {
   }
 }
 
-module.exports = { convertPdfToEpub };
+// Per App 38 (27) — the same structured HTML, for public pages of PDF blogs and white papers.
+async function pdfToHtml(pdfBuffer) {
+  const tmpPdfPath = path.join(os.tmpdir(), `pdf-html-${randomUUID()}.pdf`);
+  try {
+    fs.writeFileSync(tmpPdfPath, pdfBuffer);
+    const { stdout: xml } = await execFileAsync('pdftohtml', ['-xml', '-stdout', tmpPdfPath], { maxBuffer: 50 * 1024 * 1024 });
+    const html = structuredHtmlFromPdftohtmlXml(xml);
+    return html && html.trim() ? html : null;
+  } catch (e) {
+    console.error('[pdf-to-html] failed:', e.message);
+    return null;
+  } finally {
+    fs.unlink(tmpPdfPath, () => {});
+  }
+}
+
+module.exports = { convertPdfToEpub, pdfToHtml };

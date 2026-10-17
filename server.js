@@ -11870,6 +11870,12 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
       const art = await articleUpload.convertIfWordArticle({ media, uuid: uuidv4, contentKind, contentType: uploadedContentType,
         originalName: req.body.originalName, title: finalTitle, key: req.body.r2Key });
       if (art) { mainFilename = art.key; mainContentType = art.contentType; finalTitle = art.title; finalSize = art.size; if (!finalDescription && art.subtitle) finalDescription = art.subtitle; }
+      // Per App 38 (27) — a PDF blog or white paper named only by its file
+      // name takes the PDF's own title and subtitle.
+      if (!art && uploadedContentType === 'application/pdf') {
+        const t = await articleUpload.titleFromPdf({ media, key: originalPdfKey || req.body.r2Key, contentKind, title: finalTitle, originalName: req.body.originalName });
+        if (t) { finalTitle = t.title; if (!finalDescription && t.subtitle) finalDescription = t.subtitle; }
+      }
       db.addLibraryFile(
         id, finalTitle, finalDescription, mainFilename, req.body.originalName || req.body.r2Key,
         mainContentType, finalSize,
@@ -11879,7 +11885,7 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
       if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
       tags.forEach(t => db.addFileTag(id, t));
       // …and gets its public page on the website straight away.
-      const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, fileType: mainContentType, assignedClientId, facilitatorResource });
+      const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, assignedClientId, facilitatorResource });
       return res.json({ id, publicUrl, title: finalTitle });
     }
 
@@ -11920,10 +11926,15 @@ app.post('/api/content/library', auth.requireAuthApi(['admin']), upload.single('
       mainFilename = art.key; mainContentType = art.contentType; mainStorageType = 'r2'; finalTitle = art.title; finalSize = art.size;
       if (!finalDescription && art.subtitle) finalDescription = art.subtitle;
     }
+    if (!art && req.file.mimetype === 'application/pdf') {
+      let pdfBuf = null; try { pdfBuf = fs.readFileSync(req.file.path); } catch (e) { /* already moved to storage */ }
+      const t = await articleUpload.titleFromPdf({ media, key: pdfBuf ? null : originalPdfKey, buffer: pdfBuf, contentKind, title: finalTitle, originalName: req.file.originalname });
+      if (t) { finalTitle = t.title; if (!finalDescription && t.subtitle) finalDescription = t.subtitle; }
+    }
     db.addLibraryFile(id, finalTitle, finalDescription, mainFilename, req.file.originalname, mainContentType, finalSize, categoryId, subcategoryId || null, visibility || 'client', mainStorageType, facilitatorResource, contentKind, externalLink, assignedClientId);
     if (originalPdfKey) db.setLibraryFileOriginalPdf(id, originalPdfKey);
     tags.forEach(t => db.addFileTag(id, t));
-    const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, fileType: mainContentType, assignedClientId, facilitatorResource });
+    const publicUrl = await articleUpload.autoPublish(publicPages, id, { contentKind, assignedClientId, facilitatorResource });
     res.json({ id, publicUrl, title: finalTitle });
   } catch (e) {
     console.error('library upload error:', e.message);
