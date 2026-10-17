@@ -163,6 +163,14 @@
     /* ── Edit inline ── */
     .inline-input { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:5px 9px; font-size:13px; color:rgba(255,255,255,0.8); font-family:'Georgia',serif; outline:none; width:90px; }
     .inline-input:focus { border-color:rgba(180,230,200,0.3); }
+    .motd-theme { padding:14px 20px; border-bottom:1px solid rgba(255,255,255,0.06); }
+    .motd-theme-label { display:block; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:rgba(255,255,255,0.45); margin-bottom:8px; }
+    .motd-theme textarea { width:100%; box-sizing:border-box; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:10px 12px; font-size:15px; line-height:1.6; color:rgba(255,255,255,0.85); font-family:'Georgia',serif; outline:none; resize:vertical; }
+    .motd-theme textarea:focus { border-color:rgba(180,230,200,0.35); }
+    .motd-theme textarea::placeholder { color:rgba(255,255,255,0.25); }
+    .motd-theme-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:8px; flex-wrap:wrap; }
+    .motd-theme-status { font-size:13px; color:rgba(180,230,200,0.7); }
+    .motd-theme-status.unsaved { color:rgba(230,200,140,0.85); }
 
     /* ── Modal ── */
     .modal-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:20px; }
@@ -338,6 +346,15 @@
           <button class="btn primary" onclick="openMotdModal()">+ Write message</button>
           <button class="btn" onclick="generateMotdBatch()" id="generateMotdBtn">✨ Generate batch</button>
           <button class="btn warn sm" onclick="sendTodayMotd()" id="sendMotdBtn">Send today's message</button>
+        </div>
+      </div>
+      <!-- Per App 38 (28) — theme for generated batches. Saved, and kept until changed. -->
+      <div class="motd-theme">
+        <label for="motdTheme" class="motd-theme-label">Theme for generated batches</label>
+        <textarea id="motdTheme" rows="2" maxlength="1000" placeholder="For example: letting go at the end of the day. Leave empty for a mixed batch." oninput="motdThemeDirty()"></textarea>
+        <div class="motd-theme-row">
+          <span class="motd-theme-status" id="motdThemeStatus"></span>
+          <button class="btn sm" onclick="saveMotdTheme()" id="saveMotdThemeBtn">Save theme</button>
         </div>
       </div>
       <div class="stock-bar" id="stockBar"><span class="stock-dot"></span><span>Loading…</span></div>
@@ -662,6 +679,7 @@
     const res  = await fetch('/api/admin/motd');
     const data = await res.json();
     motdData   = data.messages || [];
+    showMotdTheme(data.theme || '');
     renderStockBar(data.approvedCount, data.lowStock);
     renderMotdList(motdData);
   }
@@ -930,19 +948,60 @@
     }
   }
 
+  // ── Per App 38 (28) — theme ──
+  let motdSavedTheme = '';
+  function showMotdTheme(theme) {
+    const box = document.getElementById('motdTheme');
+    // Don't overwrite something Per is still typing when the list refreshes.
+    if (box && (box.value.trim() === motdSavedTheme || document.activeElement !== box)) box.value = theme;
+    motdSavedTheme = theme;
+    motdThemeDirty();
+  }
+  function motdThemeDirty() {
+    const box = document.getElementById('motdTheme');
+    const st  = document.getElementById('motdThemeStatus');
+    if (!box || !st) return;
+    const now = box.value.trim();
+    if (now !== motdSavedTheme) { st.className = 'motd-theme-status unsaved'; st.textContent = 'Not saved yet. Save theme, or Generate batch saves it too.'; }
+    else if (now) { st.className = 'motd-theme-status'; st.textContent = 'Every batch follows this theme until you change it.'; }
+    else { st.className = 'motd-theme-status'; st.textContent = 'No theme: batches are mixed.'; }
+  }
+  async function saveMotdTheme() {
+    const theme = document.getElementById('motdTheme').value.trim();
+    try {
+      const res  = await fetch('/api/admin/motd/theme', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme })
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'failed');
+      motdSavedTheme = data.theme || '';
+      motdThemeDirty();
+      appAlert(motdSavedTheme ? `Theme saved. Every batch will follow "${motdSavedTheme}" until you change it.` : 'Theme cleared. Batches will be mixed again.');
+    } catch (e) {
+      appAlert('Could not save the theme. Please try again.');
+    }
+  }
+
   async function generateMotdBatch() {
-    if (!(await appConfirm('Generate a new batch of message-of-the-day drafts? They\'ll be added to Drafts for you to review, edit, and approve — nothing sends automatically.'))) return;
+    const theme = (document.getElementById('motdTheme')?.value || '').trim();
+    const ask = theme
+      ? `Generate a new batch of message-of-the-day drafts on the theme "${theme}"? They'll be added to Drafts for you to review, edit, and approve — nothing sends automatically.`
+      : 'Generate a new mixed batch of message-of-the-day drafts? They\'ll be added to Drafts for you to review, edit, and approve — nothing sends automatically.';
+    if (!(await appConfirm(ask))) return;
     const btn = document.getElementById('generateMotdBtn');
     btn.disabled = true; btn.textContent = 'Generating…';
     try {
       const res  = await fetch('/api/admin/motd/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: 12 })
+        body: JSON.stringify({ count: 12, theme })
       });
       const data = await res.json();
       if (data.ok) {
+        motdSavedTheme = data.theme || '';
         loadMotd();
-        appAlert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'} to the queue. Review them under Drafts.`);
+        const about = data.theme ? ` on "${data.theme}"` : '';
+        appAlert(data.note || `Added ${data.count} new draft${data.count===1?'':'s'}${about} to the queue. Review them under Drafts.`);
       } else {
         appAlert(data.error || 'Could not generate messages. Please try again.');
       }

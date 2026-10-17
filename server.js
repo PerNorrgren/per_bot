@@ -16818,7 +16818,18 @@ app.get('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
     const { status } = req.query;
     const messages = db.getAllMotd(status || null);
     const approvedCount = db.countApprovedMotd();
-    res.json({ messages, approvedCount, lowStock: approvedCount <= 5 });
+    const theme = ((db.getAppConfig() || {}).motd_theme || '').trim();
+    res.json({ messages, approvedCount, lowStock: approvedCount <= 5, theme });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Per App 38 (28) — save the Message of the Day theme. It stays until Per
+// changes it; saving an empty box goes back to mixed batches.
+app.post('/api/admin/motd/theme', auth.requireAuthApi(['admin']), (req, res) => {
+  try {
+    const theme = String(req.body?.theme || '').trim().slice(0, 1000);
+    db.updateAppConfig({ motd_theme: theme || null });
+    res.json({ ok: true, theme });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -16859,8 +16870,23 @@ app.post('/api/admin/motd', auth.requireAuthApi(['admin']), (req, res) => {
 // error seen in practice, which reads like a proxy/connection timeout on a
 // single large generation — are exactly the kind of thing a short retry
 // fixes, since regenerating a few stanzas is harmless and idempotent).
-async function generateMotdChunk(count, attempt = 1) {
-  const userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count. Respond with only the JSON array, nothing else.`;
+// Per App 38 (28) — optional theme, plus the most recent messages so a
+// theme kept across several batches doesn't keep landing on the same lines.
+async function generateMotdChunk(count, attempt = 1, theme = '', avoid = []) {
+  let userMessage;
+  if (theme) {
+    userMessage = `Write ${count} new Message of the Day drafts on this theme:
+
+THEME: ${theme}
+
+Every message must be clearly about this theme — someone reading the ${count} together should feel they belong to one series. Come at the theme from a different side each time (a different moment, a different part of the body, a different way in), and still use a spread of the signal range to work it, so the theme is felt in the body, not just named. Keep every voice and form rule.`;
+  } else {
+    userMessage = `Write ${count} new Message of the Day drafts. Cover as wide a spread of the signal range as you can across these ${count} messages — don't repeat the same signal more than necessary given the count.`;
+  }
+  if (avoid.length) {
+    userMessage += `\n\nThese messages already exist. Do not repeat them, their opening lines, or their central image — write genuinely new ones:\n` + avoid.map(b => '- ' + b.replace(/\n/g, ' / ')).join('\n');
+  }
+  userMessage += `\n\nRespond with only the JSON array, nothing else.`;
   try {
     // callClaudeRaw, not callClaude — callClaude runs stripMarkdown() on the
     // response, which is meant for prose replies but is destructive here:
@@ -16878,7 +16904,7 @@ async function generateMotdChunk(count, attempt = 1) {
     if (attempt >= 3) throw e;
     console.error(`motd generate chunk failed (attempt ${attempt}/3): ${e.name || 'Error'}: ${e.message} — retrying`);
     await new Promise(r => setTimeout(r, 1000 * attempt)); // 1s, then 2s
-    return generateMotdChunk(count, attempt + 1);
+    return generateMotdChunk(count, attempt + 1, theme, avoid);
   }
 }
 
@@ -16899,16 +16925,31 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
     let remaining = count;
     while (remaining > 0) { const n = Math.min(CHUNK_SIZE, remaining); chunks.push(n); remaining -= n; }
 
+    // Per App 38 (28) — a theme sent with the click is saved first, so what
+    // he typed is what the batch follows, and it stays for the next batch.
+    if (typeof req.body?.theme === 'string') {
+      const t = req.body.theme.trim().slice(0, 1000);
+      db.updateAppConfig({ motd_theme: t || null });
+    }
+    const theme = ((db.getAppConfig() || {}).motd_theme || '').trim();
+    // Newest 30 drafts, approved and sent, plus whatever this batch adds.
+    const avoid = (db.getAllMotd(null) || [])
+      .slice()
+      .sort((a, b) => String(b.created_at || b.sent_at || '').localeCompare(String(a.created_at || a.sent_at || '')))
+      .slice(0, 30)
+      .map(m => String(m.body || '').trim())
+      .filter(Boolean);
+
     let insertedCount = 0;
     const chunkErrors = [];
 
     for (const chunkCount of chunks) {
       try {
-        const generated = await generateMotdChunk(chunkCount);
+        const generated = await generateMotdChunk(chunkCount, 1, theme, avoid);
         if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
         generated
           .filter(msg => typeof msg === 'string' && msg.trim())
-          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); insertedCount++; });
+          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); avoid.unshift(msg.trim()); insertedCount++; });
       } catch (e) {
         // Per's suggestion: keep enough detail here that a repeat failure
         // is actually diagnosable from the error message alone, not just
@@ -16924,6 +16965,7 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
     res.json({
       ok: true,
       count: insertedCount,
+      theme,
       partial: chunkErrors.length > 0,
       note: chunkErrors.length ? `${insertedCount} added, but ${chunkErrors.length} chunk(s) failed after retries — you can generate another batch to top up.` : undefined,
     });
