@@ -535,6 +535,17 @@
         <div id="newsletterAiGenerateWrap"></div>
       </div>
       <div class="modal-note" style="margin-top:6px" id="commsAiGenerateNote">Switch to Rich message above to use the generate-and-insert options.</div>
+      <!-- Per App 38 (32) — pieces for AI Help to write from, same picker as
+           the Message of the Day theme. AI Help features each one with a link. -->
+      <div class="motd-theme" style="padding:12px 0 4px;border-bottom:none">
+        <div class="motd-theme-label">Linked to <span style="text-transform:none;letter-spacing:0;color:rgba(255,255,255,0.35)">— ✨ AI Help writes from these and links to each</span></div>
+        <div class="motd-links" id="nlLinks"></div>
+        <div class="motd-link-picker" id="nlLinkPicker">
+          <input type="text" class="motd-link-search" id="nlLinkSearch" placeholder="Add a blog, white paper, practice, poem, lesson or course — search by title…"
+                 oninput="nlLinkSearch(this.value)" onfocus="nlLinkSearch(this.value)" autocomplete="off"/>
+          <div class="motd-link-results" id="nlLinkResults" style="display:none"></div>
+        </div>
+      </div>
       <div class="modal-note" style="margin-top:6px">{{name}} and {{invite_link}} — each person gets their own. For someone with no login yet, {{invite_link}} is their personal one-click link that activates a trial the moment they click it (14 days by default, or whatever the offer below sets); for an existing member it just points to the login page. {{expiry_date}} reads their real membership end date if one's set — blank otherwise.</div>
       <div class="modal-note" style="margin-top:6px">In Rich mode: click an image then use the 🔗 button to make it clickable · ▭ inserts a button (type text and a link) · 1/2/3 col inserts side-by-side columns for text next to an image.</div>
     </div>
@@ -1094,6 +1105,56 @@
     }
   }
 
+  // ── Per App 38 (32) — newsletter "Linked to", for AI Help ──
+  let nlLinks = [];
+  let _nlLinkTimer = null, _nlLinkItems = [];
+  function renderNlLinks() {
+    const box = document.getElementById('nlLinks');
+    if (!box) return;
+    box.innerHTML = nlLinks.map((l, i) => `
+      <span class="motd-chip" title="${motdEsc(l.title)}">
+        <span class="motd-chip-kind">${motdEsc(l.label || l.type)}</span>
+        <span class="motd-chip-title">${motdEsc(l.title)}</span>
+        <button type="button" onclick="nlRemoveLink(${i})" title="Remove this link">×</button>
+      </span>`).join('');
+  }
+  function nlRemoveLink(i) { nlLinks.splice(i, 1); renderNlLinks(); }
+  function nlLinkSearch(query) {
+    clearTimeout(_nlLinkTimer);
+    _nlLinkTimer = setTimeout(async () => {
+      const results = document.getElementById('nlLinkResults');
+      try {
+        const res = await fetch('/api/admin/motd/sources?q=' + encodeURIComponent(query.trim()));
+        const data = await res.json();
+        _nlLinkItems = (data.items || []).filter(it => !nlLinks.some(l => l.type === it.type && l.id === it.id));
+        results.innerHTML = _nlLinkItems.length
+          ? _nlLinkItems.map((it, i) => `
+            <div class="motd-link-row" onmousedown="event.preventDefault()" onclick="nlAddLink(${i})">
+              <span class="k">${motdEsc(it.label)}</span>
+              <span class="t">${motdEsc(it.title)}${it.sub ? ` <span class="s">· ${motdEsc(it.sub)}</span>` : ''}</span>
+              <span class="s">${motdEsc((it.date || '').slice(0, 10))}</span>
+            </div>`).join('')
+          : '<div class="motd-link-row" style="cursor:default;color:rgba(255,255,255,0.4)">Nothing found with that title.</div>';
+        results.style.display = 'block';
+      } catch (e) { results.style.display = 'none'; }
+    }, 180);
+  }
+  function nlAddLink(i) {
+    const it = _nlLinkItems[i];
+    if (!it) return;
+    if (nlLinks.length >= 8) { appAlert('Up to 8 links per newsletter.'); return; }
+    nlLinks.push({ type: it.type, id: it.id, title: it.title, label: it.label });
+    renderNlLinks();
+    document.getElementById('nlLinkSearch').value = '';
+    document.getElementById('nlLinkResults').style.display = 'none';
+    // AI Help lives in the rich editor; an empty plain newsletter switches over.
+    if (newsletterFormat === 'plain' && !document.getElementById('newsletterBody').value.trim()) switchNewsletterFormat('rich');
+  }
+  document.addEventListener('click', (e) => {
+    const picker = document.getElementById('nlLinkPicker');
+    if (picker && !picker.contains(e.target)) { const r = document.getElementById('nlLinkResults'); if (r) r.style.display = 'none'; }
+  });
+
   async function generateMotdBatch() {
     const html = motdThemeHtml();
     const div = document.createElement('div'); div.innerHTML = html;
@@ -1504,7 +1565,13 @@
   // insertNewsletterToken) without having to rewrite each of them.
   function getQuill() {
     if (!MessageEditor.isMounted('newsletterRichEditor')) {
-      MessageEditor.mountRich('newsletterRichEditor', '', { placeholder: 'Write it as it will appear in the email.', marketingContext: true });
+      MessageEditor.mountRich('newsletterRichEditor', '', {
+        placeholder: 'Write it as it will appear in the email, or link pieces below and press ✨ AI Help to start from them.',
+        marketingContext: true,
+        aiPolishBody: () => ({ links: nlLinks }),           // Per App 38 (32)
+        aiPolishAllowEmpty: () => nlLinks.length > 0,
+        aiPolishTooltip: 'Improve the message, or write it from the linked pieces',
+      });
     }
     return MessageEditor.getInstance('newsletterRichEditor');
   }
@@ -1568,6 +1635,7 @@
 
   function openNewsletterModal() {
     document.getElementById('newsletterModalTitle').textContent = 'Write a newsletter';
+    nlLinks = []; renderNlLinks();
     document.getElementById('newsletterEditId').value = '';
     document.getElementById('scheduledMessageEditId').value = '';
     document.getElementById('newsletterSubject').value = '';
@@ -1596,6 +1664,7 @@
   }
 
   function editNewsletter(id) {
+    nlLinks = []; renderNlLinks();
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
     document.getElementById('newsletterModalTitle').textContent = 'Edit newsletter';
@@ -1651,6 +1720,7 @@
   }
 
   function duplicateNewsletter(id) {
+    nlLinks = []; renderNlLinks();
     const n = newslettersData.find(x => x.id === id);
     if (!n) return;
     openNewsletterModal();

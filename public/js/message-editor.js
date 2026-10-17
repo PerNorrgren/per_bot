@@ -105,6 +105,7 @@
       .me-ql-wrap .ql-toolbar.ql-snow { background:#171d1a; border-color:rgba(255,255,255,0.12) !important; border-radius:8px 8px 0 0; position:sticky; top:0; z-index:20; }
       .me-ql-wrap .ql-container.ql-snow { border-color:rgba(255,255,255,0.12) !important; font-family:'Georgia',serif; font-size:14px; border-radius:0 0 8px 8px; }
       .me-ql-wrap .ql-editor { color:rgba(255,255,255,0.85); min-height:140px; }
+      .me-ql-wrap .ql-toolbar button.ql-ai-polish { width:auto !important; white-space:nowrap; padding:3px 8px; } /* Per App 38 (32) — label on one line */
       .me-ql-wrap .ql-editor.ql-blank::before { color:rgba(255,255,255,0.25); font-style:normal; }
       /* Per Bot 25 — contrast fix. Every editor instance in the app had
          this same problem: toolbar icons and picker labels were set to
@@ -995,7 +996,8 @@
     // Per App 38 (29) — opts.aiPolishAllowEmpty: an editor whose AI Help can
     // write from nothing (the Message of the Day theme, from what it's linked to).
     const eo = (containerId && editorOpts[containerId]) || {};
-    if (!q.getText().trim() && !eo.aiPolishAllowEmpty) { window.appAlert('Write something first.'); return; }
+    const allowEmpty = typeof eo.aiPolishAllowEmpty === 'function' ? !!eo.aiPolishAllowEmpty() : !!eo.aiPolishAllowEmpty; // (32) may depend on links
+    if (!q.getText().trim() && !allowEmpty) { window.appAlert('Write something first.'); return; }
     if (!panel) { // fallback for any editor instance that somehow has no panel (shouldn't happen — see mountRich)
       window.appAlert('Could not open AI Help here — please try reloading the page.');
       return;

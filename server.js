@@ -8203,7 +8203,10 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
   try {
     const { html, marketingContext } = req.body;
     const plain = (html || '').replace(/<[^>]+>/g, '').trim();
-    if (!plain) return res.status(400).json({ error: 'Write something first.' });
+    // Per App 38 (32) — the newsletter editor can send linked pieces
+    // (blogs, white papers, practices, lessons, courses). Admin only.
+    const links = (req.user && req.user.role === 'admin') ? cleanMotdLinks(req.body.links) : [];
+    if (!plain && !links.length) return res.status(400).json({ error: 'Write something first, or link a blog, white paper, practice or lesson.' });
     const b = brand();
     const language = getAdminLanguage();
     // Per App 32 — this endpoint is shared by every rich editor in the
@@ -8242,6 +8245,16 @@ app.post('/api/ai-polish', auth.requireAuthApi(), async (req, res) => {
     // thrown error here means that replace never happens and the
     // person's original message is left untouched; a truncated .html
     // used to mean it got silently overwritten and lost.
+    if (links.length) {
+      const sources = await motdSourcesText(links);
+      const linkList = links.map(l => `- ${l.label || l.type}: "${l.title}" — ${linkPublicUrl(l)}`).join('\n');
+      systemPrompt += `\n\nLINKED PIECES FOR THIS MESSAGE: Per has linked the pieces listed after the message content, with their text. They are context to draw on, never part of the message itself. Feature each of them: say plainly, in his voice, what it offers the reader and why it may help now, using ideas from its text in your own words (no long quotes), and give each one a link to its address exactly as listed, as <a href="ADDRESS">a few natural words</a>. Never invent an address.` +
+        (plain ? ` Keep Per's own message, wording and order; weave the pieces into it rather than replacing it.` : ` The message is empty: write the whole message from the linked pieces — a short warm opening, a section for each piece, and a brief close. Use simple HTML only (<p>, <h2>, <strong>, <em>, <a>, <ul>, <li>).`) +
+        ` Do not echo the <linked_pieces> block or its headings.`;
+      userContent = (plain ? html : '<p></p>') + `\n\n<linked_pieces>\nAddresses:\n${linkList}\n\n${sources}\n</linked_pieces>` + (marketingContext ? getCurrentTrendBlock() : '');
+      const reply = await anthropicFetch(systemPrompt, [{ role: 'user', content: userContent }], 8000, 90000, true);
+      return res.json({ html: String(reply || '').trim() });
+    }
     const reply = await callClaudeRaw(systemPrompt, [{ role: 'user', content: userContent }], 6000, true);
     res.json({ html: reply.trim() });
   } catch(e) {
@@ -16913,11 +16926,37 @@ async function motdLinkText(link, maxChars = 6000) {
   } catch (e) { console.error('motd link text failed:', e.message); }
   return '';
 }
+const _motdLinkTextCache = new Map(); // reading a PDF takes a few seconds; keep it 30 minutes
+async function motdLinkTextCached(link, maxChars) {
+  const key = `${link.type}:${link.id}:${maxChars}`;
+  const hit = _motdLinkTextCache.get(key);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.text;
+  const text = await motdLinkText(link, maxChars);
+  if (text) _motdLinkTextCache.set(key, { text, at: Date.now() });
+  return text;
+}
+// Per App 38 (32) — where a linked piece can be read: its public page if
+// it has one, otherwise its place in the app; a lesson or course goes to
+// its public course page (or the course list).
+function linkPublicUrl(link) {
+  try {
+    if (link.type === 'file') {
+      const r = (publicPages.list() || []).find(i => i.file_id === link.id && i.published);
+      if (r && r.url) return /^https?:/i.test(r.url) ? r.url : SEO_SITE + r.url;
+      return `${SEO_SITE}/client/?file=${encodeURIComponent(link.id)}`;
+    }
+    let courseId = link.type === 'course' ? link.id : null;
+    if (link.type === 'lesson') { const l = db.getLesson(link.id); courseId = l && l.course_id; }
+    const pg = (coursePages.PAGES || []).find(p => p.course === courseId || (p.options || []).some(o => o.course === courseId));
+    return pg ? `${SEO_SITE}/courses/${pg.slug}` : `${SEO_SITE}/courses`;
+  } catch (e) { return SEO_SITE; }
+}
 async function motdSourcesText(links) {
   if (!links || !links.length) return '';
   const per = Math.max(2500, Math.floor(15000 / links.length));
   const parts = [];
-  for (const l of links) { const t = await motdLinkText(l, per); if (t) parts.push(t); }
+  const texts = await Promise.all(links.map(l => motdLinkTextCached(l, per)));
+  texts.forEach(t => { if (t) parts.push(t); });
   return parts.join('\n\n---\n\n');
 }
 
@@ -16968,7 +17007,10 @@ Write the theme as two to four short sentences in plain words: what the series i
 Reply with only the theme text, no heading, no quotes, no preamble.`;
     const user = (current ? `Per's theme so far:\n${current}\n\n` : 'Per has not written a theme yet. Write one from the source material.\n\n') +
       (sources ? `Source material the theme is linked to:\n\n${sources}` : '');
-    const raw = String(await callClaudeRaw(system, [{ role: 'user', content: user }], 600) || '').trim();
+    // Per App 38 (32) — thinking off: with thinking on it shares the
+    // max_tokens budget, and a long linked piece let it use the whole
+    // budget before any reply was written.
+    const raw = String(await anthropicFetch(system, [{ role: 'user', content: user }], 1500, 60000, true) || '').trim();
     if (!raw) throw new Error('No suggestion came back. Please try again.');
     const html = raw.split(/\n\s*\n/).map(p => '<p>' + escapeHtmlText(p.trim()).replace(/\n/g, '<br>') + '</p>').join('');
     res.json({ html });
@@ -17041,7 +17083,11 @@ Every message must be clearly about this theme — someone reading the ${count} 
     // stanzas are five lines joined by literal \n inside a JSON string, and
     // stripMarkdown's regexes (bullet-dash stripping, #-stripping) can
     // corrupt that structure before JSON.parse ever sees it.
-    const raw = await callClaudeRaw(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 2000);
+    // Per App 38 (32) — a linked piece makes the request much longer, so
+    // it gets more room (thinking shares max_tokens) and more time.
+    const raw = sources
+      ? await anthropicFetch(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 8000, 80000)
+      : await callClaudeRaw(prompts.MOTD_GENERATION_PROMPT, [{ role: 'user', content: userMessage }], 2000);
     try {
       return JSON.parse(raw);
     } catch {
@@ -17091,13 +17137,21 @@ app.post('/api/admin/motd/generate', auth.requireAuthApi(['admin']), async (req,
     let insertedCount = 0;
     const chunkErrors = [];
 
-    for (const chunkCount of chunks) {
+    // Per App 38 (32) — chunks run side by side, so a batch with a long
+    // linked piece finishes well inside the ~100s a web request may take.
+    // Each is given its own half of the angles so the two don't overlap.
+    const results = await Promise.allSettled(chunks.map((chunkCount, i) => {
+      const part = chunks.length > 1 ? `\n(This is part ${i + 1} of ${chunks.length} of the batch: favour ${i % 2 === 0 ? 'the more physical, body-first' : 'the more reflective, noticing'} angles.)` : '';
+      return generateMotdChunk(chunkCount, 1, theme ? theme + part : '', avoid, sources);
+    }));
+    for (const r of results) {
       try {
-        const generated = await generateMotdChunk(chunkCount, 1, theme, avoid, sources);
+        if (r.status === 'rejected') throw r.reason;
+        const generated = r.value;
         if (!Array.isArray(generated) || !generated.length) throw new Error('Model did not return a usable list of messages.');
         generated
           .filter(msg => typeof msg === 'string' && msg.trim())
-          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); avoid.unshift(msg.trim()); insertedCount++; });
+          .forEach(msg => { db.addMotd(uuidv4(), msg.trim(), null); insertedCount++; });
       } catch (e) {
         // Per's suggestion: keep enough detail here that a repeat failure
         // is actually diagnosable from the error message alone, not just
